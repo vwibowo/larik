@@ -12,6 +12,7 @@ import (
 	"larik/internal/checkpoint"
 	"larik/internal/hooks"
 	"larik/internal/llm"
+	"larik/internal/lsp"
 	"larik/internal/permission"
 	"larik/internal/session"
 	"larik/internal/skills"
@@ -47,6 +48,9 @@ type Options struct {
 	// Skills expands "/skill-name args" prompts; nil disables that.
 	Skills *skills.Set
 
+	// LSP feeds language-server diagnostics back after edits; nil disables.
+	LSP *lsp.Manager
+
 	// Subagent is the agent type when this agent runs as a subagent; it
 	// switches off session-level hooks and uses SubagentStop.
 	Subagent string
@@ -77,6 +81,10 @@ func New(opts Options) *Agent {
 	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup"}
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = func(path string) { _ = opts.Checkpoints.Capture(path) }
+	}
+	if opts.LSP.Enabled() {
+		a.env.Diagnostics = opts.LSP.Diagnostics
+		a.env.Touch = opts.LSP.Touch
 	}
 	return a
 }

@@ -21,6 +21,7 @@ import (
 	"larik/internal/headless"
 	"larik/internal/hooks"
 	"larik/internal/llm"
+	"larik/internal/lsp"
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
@@ -160,6 +161,12 @@ func run() error {
 		system += "\n\n" + idx
 		childContext += "\n\n" + idx
 	}
+	lspMgr := lsp.NewManager(cfg.LSP, cwd, agent.GitRoot(cwd), filepath.Join(cfg.DataDir, "logs"))
+	defer lspMgr.Close()
+	if lspMgr.Enabled() {
+		baseTools = append(baseTools, lsp.Tool{M: lspMgr})
+	}
+
 	agentDefs := subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
 	baseTools = append(baseTools, &subagent.Tool{
 		Set:     agentDefs,
@@ -192,6 +199,7 @@ func run() error {
 		LoadTools:   mcpMgr.Registry,
 		Hooks:       hookRunner,
 		Skills:      skillSet,
+		LSP:         lspMgr,
 	})
 	if state != nil {
 		a.Restore(state)
@@ -222,6 +230,7 @@ func run() error {
 		Hooks:         hookRunner,
 		Skills:        skillSet,
 		Agents:        agentDefs,
+		LSP:           lspMgr,
 		Version:       version,
 	})
 }

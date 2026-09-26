@@ -37,6 +37,12 @@ type Env struct {
 	// so checkpoints can snapshot it.
 	BeforeWrite func(path string)
 
+	// Diagnostics, if set, returns compiler/linter feedback for a file just
+	// written (from language servers); it's appended to edit/write results.
+	Diagnostics func(ctx context.Context, path string) string
+	// Touch, if set, is told about files the agent reads (to warm up LSP).
+	Touch func(path string)
+
 	mu    sync.Mutex
 	reads map[string]time.Time // path -> mtime when last read
 }
@@ -136,4 +142,15 @@ func (r *Registry) Specs() []llm.ToolSpec {
 		out[i] = t.Spec()
 	}
 	return out
+}
+
+// afterWrite appends diagnostics for a modified file to a tool result.
+func (e *Env) afterWrite(ctx context.Context, path string, res Result) Result {
+	if e.Diagnostics == nil || res.IsError {
+		return res
+	}
+	if d := e.Diagnostics(ctx, path); d != "" {
+		res.Content += "\n\n" + d
+	}
+	return res
 }

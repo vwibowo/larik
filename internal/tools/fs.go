@@ -85,6 +85,9 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	env.markRead(path)
+	if env.Touch != nil {
+		env.Touch(path)
+	}
 	if line == 0 {
 		return Result{Content: "(empty file)"}
 	}
@@ -136,7 +139,7 @@ func (Write) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		verb = "Overwrote"
 	}
 	lines := strings.Count(strings.TrimSuffix(in.Content, "\n"), "\n") + 1
-	return Result{Content: fmt.Sprintf("%s %s (%d lines)", verb, path, lines)}
+	return env.afterWrite(ctx, path, Result{Content: fmt.Sprintf("%s %s (%d lines)", verb, path, lines)})
 }
 
 // Edit replaces an exact string in a file.
@@ -194,10 +197,10 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	env.markRead(path)
-	return Result{
+	return env.afterWrite(ctx, path, Result{
 		Content: fmt.Sprintf("Edited %s (%d replacement(s))", path, map[bool]int{true: n, false: 1}[in.ReplaceAll]),
 		Display: miniDiff(in.Old, in.New),
-	}
+	})
 }
 
 // miniDiff renders removed/added lines for the UI.

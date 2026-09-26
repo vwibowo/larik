@@ -51,6 +51,7 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/hooks approve` | Allow the project's shared hooks to run |
 | `/skills` | List skills |
 | `/agents` | List subagents |
+| `/lsp` | Language servers and status |
 | `/<skill-name> [args]` | Run a skill |
 
 ## Permissions
@@ -169,6 +170,29 @@ You are a meticulous code reviewer. ...
 - The `task` call itself never asks for permission; each tool call inside the subagent is checked on its own.
 - `/agents` lists the available agents.
 
+## Language servers (LSP)
+
+Larik runs language servers so the model gets compiler feedback on its own edits and can navigate code semantically.
+
+- **Diagnostics after edits:** when `edit` or `write` changes a file, Larik syncs it to the file's language server and appends new errors and warnings to the tool result, for example `ERROR 5:19 undefined: gret (compiler)`. Errors the change caused in other files are summarized. Reading a file warms up the server in the background.
+- **The `lsp` tool** (read-only) offers `definition`, `references`, `hover`, `symbols`, `workspace_symbols` and `diagnostics`, using the 1-based line and column that `read` shows.
+- **Built-in servers** are enabled automatically when their binary is on your `PATH`: gopls, typescript-language-server, pyright-langserver, rust-analyzer and clangd. Each starts on the first matching file, once per project root (found from markers like `go.mod`, `package.json` or `Cargo.toml`). Servers shut down when Larik exits, and their logs go to `~/.local/share/larik/logs/lsp-<name>.log`.
+- **Configuration:**
+
+  ```json
+  {
+    "lsp": {
+      "gopls": { "initialization_options": { "staticcheck": true } },
+      "clangd": { "disabled": true },
+      "zls": { "command": ["zls"], "extensions": [".zig"], "root_markers": ["build.zig"] }
+    }
+  }
+  ```
+
+  New server commands are honored only from personal files (`~/.config/larik/config.json`, `.larik/settings.local.json`). A shared `.larik/settings.json` can only disable servers.
+- **Timing:** edits wait for fresh diagnostics for up to 3s (15s while a server is still loading the project). Servers that stay silent on clean files get a shorter wait.
+- `/lsp` shows servers and their status.
+
 ## Hooks
 
 Hooks are shell commands that run at points in the agent lifecycle. The format matches Claude Code's, so existing hook scripts work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
@@ -227,6 +251,7 @@ internal/mcp        MCP client: server lifecycle, approval, tool adapter
 internal/hooks      lifecycle hook runner (Claude Code-compatible format)
 internal/skills     Agent Skills discovery, index, skill tool, /name expansion
 internal/subagent   subagent definitions and the task tool
+internal/lsp        language server client, edit diagnostics, lsp tool
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -248,4 +273,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, background subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, background subagents, LSP pull diagnostics and code actions, OS-level sandboxing, and in-TUI session switching (use `--resume`).

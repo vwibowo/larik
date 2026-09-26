@@ -19,6 +19,7 @@ import (
 	"larik/internal/config"
 	"larik/internal/hooks"
 	"larik/internal/llm"
+	"larik/internal/lsp"
 	"larik/internal/mcp"
 	"larik/internal/skills"
 	"larik/internal/subagent"
@@ -35,6 +36,7 @@ type Options struct {
 	Hooks         *hooks.Runner
 	Skills        *skills.Set
 	Agents        *subagent.Set
+	LSP           *lsp.Manager
 }
 
 func Run(opts Options) error {

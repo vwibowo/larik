@@ -204,6 +204,12 @@ func (m *model) renderToolCard(e agent.Event) string {
 			body = m.st.dim.Render(truncateLines(out, 6))
 		}
 	}
+	if diag := diagnosticLines(e.Output); diag != "" && e.ToolName != "lsp" {
+		if body != "" {
+			body += "\n"
+		}
+		body += m.st.warn.Render(diag)
+	}
 	card := head
 	if body != "" {
 		card += "\n" + prefixLines(body, "  ⎿ ", "    ")
@@ -248,6 +254,18 @@ func toolTitle(name string, input []byte) string {
 		arg = str(in["pattern"])
 	case "skill":
 		arg = str(in["name"])
+	case "lsp":
+		name = "lsp › " + str(in["operation"])
+		arg = str(in["path"])
+		if l, ok := in["line"].(float64); ok {
+			arg += fmt.Sprintf(":%d", int(l))
+			if c, ok := in["column"].(float64); ok {
+				arg += fmt.Sprintf(":%d", int(c))
+			}
+		}
+		if q := str(in["query"]); q != "" {
+			arg = q
+		}
 	case "task":
 		name = "task › " + str(in["subagent_type"])
 		arg = str(in["description"])
@@ -359,4 +377,18 @@ func indentAfterFirst(s, indent string) string {
 func homeDir() string {
 	h, _ := os.UserHomeDir()
 	return h
+}
+
+// diagnosticLines extracts LSP feedback appended to edit/write results.
+func diagnosticLines(out string) string {
+	if !strings.Contains(out, "<diagnostics") {
+		return ""
+	}
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "ERROR ") || strings.HasPrefix(l, "WARN ") || strings.HasPrefix(l, "This change introduced") {
+			lines = append(lines, "⚠ "+l)
+		}
+	}
+	return truncateLines(strings.Join(lines, "\n"), 5)
 }

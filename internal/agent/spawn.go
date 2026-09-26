@@ -56,6 +56,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		Checkpoints: a.opts.Checkpoints,
 		OnAllowRule: a.opts.OnAllowRule,
 		Hooks:       a.opts.Hooks,
+		LSP:         a.opts.LSP,
 		Subagent:    o.Type,
 	})
 }

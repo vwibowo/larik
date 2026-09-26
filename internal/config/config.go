@@ -17,6 +17,7 @@ import (
 
 	"larik/internal/hooks"
 	"larik/internal/llm"
+	"larik/internal/lsp"
 	"larik/internal/permission"
 )
 
@@ -45,6 +46,10 @@ type Config struct {
 	// ApprovedHooks is the hash of the approved project hook set (from
 	// .larik/settings.json). Only honored from settings.local.json.
 	ApprovedHooks string `json:"approved_project_hooks,omitempty"`
+
+	// LSP configures language servers. Shared project files may only
+	// disable servers; commands are honored from personal files only.
+	LSP map[string]lsp.ServerConfig `json:"lsp,omitempty"`
 
 	// TrustedHooks come from personal files; ProjectHooks from shared ones.
 	TrustedHooks hooks.Config `json:"-"`
@@ -129,6 +134,19 @@ func (c *Config) merge(path string, trusted bool) error {
 			srv.Name, srv.Source, srv.Trusted = name, path, trusted
 			c.MCPServers[name] = srv
 		}
+	}
+	for name, srv := range o.LSP {
+		if c.LSP == nil {
+			c.LSP = map[string]lsp.ServerConfig{}
+		}
+		if !trusted {
+			// A shared file can't make Larik run a new command.
+			prev := c.LSP[name]
+			prev.Disabled = srv.Disabled
+			c.LSP[name] = prev
+			continue
+		}
+		c.LSP[name] = srv
 	}
 	if trusted {
 		c.TrustedHooks = c.TrustedHooks.Merge(o.Hooks)

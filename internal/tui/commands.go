@@ -30,6 +30,7 @@ const helpText = `Commands
   /hooks approve            allow the hooks in .larik/settings.json to run
   /skills                   list available skills
   /agents                   list subagents the model can delegate to
+  /lsp                      language servers and their status
   /<skill-name> [args]      run a skill
   /quit                     exit
 
@@ -155,6 +156,9 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/agents":
 		return m.agentsCommand(info)
+
+	case "/lsp":
+		return m.lspCommand(info)
 
 	case "/sessions":
 		infos, err := session.List(m.opts.SessionDir)
@@ -326,5 +330,25 @@ func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
 		fmt.Fprintf(&b, "  ! %s\n", w)
 	}
 	b.WriteString("define more in .larik/agents/<name>.md or .claude/agents/<name>.md")
+	return info(b.String())
+}
+
+func (m *model) lspCommand(info func(string) tea.Cmd) tea.Cmd {
+	statuses := m.opts.LSP.Statuses()
+	if len(statuses) == 0 {
+		return info("no language servers found on PATH (gopls, typescript-language-server, pyright-langserver, rust-analyzer, clangd), and none configured under \"lsp\"")
+	}
+	var b strings.Builder
+	for _, st := range statuses {
+		state := "idle (starts on first matching file)"
+		if len(st.Running) > 0 {
+			state = "running in " + strings.Join(st.Running, ", ")
+		}
+		if len(st.Failed) > 0 {
+			state = "failed: " + strings.Join(st.Failed, "; ")
+		}
+		fmt.Fprintf(&b, "%-11s %s\n  %s · %s\n", st.Name, st.Command, st.Languages, state)
+	}
+	b.WriteString("server logs: ~/.local/share/larik/logs/lsp-<name>.log")
 	return info(b.String())
 }
