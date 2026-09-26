@@ -1,0 +1,48 @@
+package llm
+
+import (
+	"context"
+	"errors"
+	"iter"
+)
+
+type EventType int
+
+const (
+	EventTextDelta EventType = iota
+	EventThinkingDelta
+	EventToolUseStart
+	EventDone
+)
+
+// StreamEvent is emitted while a response streams. Deltas are for display
+// only; EventDone carries the fully assembled message, which is the source
+// of truth for the transcript.
+type StreamEvent struct {
+	Type EventType
+	Text string // delta text, or tool name for EventToolUseStart
+
+	// EventDone only.
+	Message    Message
+	Usage      Usage
+	StopReason StopReason
+}
+
+type Provider interface {
+	Name() string
+	Stream(ctx context.Context, req Request) iter.Seq2[StreamEvent, error]
+}
+
+// ErrContextOverflow is wrapped by adapters when the prompt exceeds the
+// model's context window, so the agent can compact and retry.
+var ErrContextOverflow = errors.New("context window exceeded")
+
+// APIError lets adapters expose retryability without leaking SDK types.
+type APIError struct {
+	Status    int
+	Retryable bool
+	Err       error
+}
+
+func (e *APIError) Error() string { return e.Err.Error() }
+func (e *APIError) Unwrap() error { return e.Err }

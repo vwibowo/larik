@@ -1,0 +1,327 @@
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"larik/internal/agent"
+	"larik/internal/llm"
+	"larik/internal/permission"
+)
+
+func (m *model) View() tea.View {
+	var parts []string
+
+	if m.running || m.busyLabel != "" {
+		if live := m.liveView(); live != "" {
+			parts = append(parts, live)
+		}
+	}
+
+	if m.perm != nil {
+		parts = append(parts, m.permissionView())
+	} else {
+		parts = append(parts, m.st.box.Width(max(m.width-2, 10)).Render(m.input.View()))
+	}
+	parts = append(parts, m.statusLine())
+
+	v := tea.NewView(strings.Join(parts, "\n"))
+	v.WindowTitle = "larik"
+	return v
+}
+
+// liveView shows the in-flight response, clipped to the screen.
+func (m *model) liveView() string {
+	var b []string
+	if t := strings.TrimSpace(m.thinking.String()); t != "" && m.stream.Len() == 0 {
+		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(t, m.width-4), 3)))
+	}
+	if s := m.stream.String(); s != "" {
+		limit := max(m.height-12, 5)
+		b = append(b, lastLines(wrap(s, m.width-2), limit))
+	}
+	for _, t := range m.tools {
+		b = append(b, m.st.accent.Render(m.spin.View()+" ")+toolTitle(t.name, t.input))
+	}
+	label := ""
+	switch {
+	case m.busyLabel != "":
+		label = m.busyLabel
+	case m.calling != "":
+		label = "writing " + m.calling + " call…"
+	case len(m.tools) == 0 && m.stream.Len() == 0:
+		label = "thinking…"
+	}
+	if label != "" {
+		b = append(b, m.st.accent.Render(m.spin.View())+" "+m.st.dim.Render(label))
+	}
+	if len(m.queue) > 0 {
+		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued", len(m.queue))))
+	}
+	return strings.Join(b, "\n")
+}
+
+func (m *model) permissionView() string {
+	e := m.perm
+	var body strings.Builder
+	body.WriteString(m.st.accent.Render("Allow this "+e.ToolName+" call?") + "\n\n")
+	body.WriteString(m.permDetail(e) + "\n\n")
+	opts := []string{"Yes", "Yes, and always allow " + e.SuggestedRule, "No, tell the model to do something else"}
+	for i, o := range opts {
+		cursor := "  "
+		line := fmt.Sprintf("%d. %s", i+1, o)
+		if i == m.permIdx {
+			cursor = m.st.accent.Render("› ")
+			line = m.st.accent.Render(line)
+		}
+		body.WriteString(cursor + line + "\n")
+	}
+	body.WriteString(m.st.dim.Render("\n↑/↓ select · enter confirm · y/a/n · esc deny"))
+	return m.st.modal.Width(max(m.width-2, 10)).Render(body.String())
+}
+
+func (m *model) permDetail(e *agent.Event) string {
+	var in map[string]any
+	_ = json.Unmarshal(e.Input, &in)
+	switch e.ToolName {
+	case "bash":
+		return lipgloss.NewStyle().Bold(true).Render("$ " + str(in["command"]))
+	case "write":
+		content := strings.TrimSuffix(str(in["content"]), "\n")
+		return str(in["path"]) + m.st.dim.Render(fmt.Sprintf("  (%d lines)", strings.Count(content, "\n")+1)) + "\n" +
+			m.st.diffAdd.Render(truncateLines(prefixLines(content, "+ "), 12))
+	case "edit":
+		return str(in["path"]) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
+	}
+	return string(e.Input)
+}
+
+func (m *model) statusLine() string {
+	mode := m.agent.Perms().Mode()
+	modeLabel := map[permission.Mode]string{
+		permission.ModeDefault:     "default",
+		permission.ModeAcceptEdits: "⏵⏵ accept edits",
+		permission.ModePlan:        "⏸ plan mode",
+		permission.ModeYolo:        "⚠ yolo",
+	}[mode]
+	left := m.st.statusMode.Render(modeLabel) + m.st.dim.Render(" (shift+tab)")
+
+	var right []string
+	right = append(right, m.agent.ProviderName()+"/"+m.agent.Model())
+	if e := m.agent.Effort(); e != "" {
+		right = append(right, "effort "+string(e))
+	}
+	if m.stats.ContextWindow > 0 && m.stats.ContextTokens > 0 {
+		right = append(right, fmt.Sprintf("ctx %d%%", m.stats.ContextTokens*100/m.stats.ContextWindow))
+	}
+	if m.stats.CostUSD > 0 {
+		right = append(right, fmt.Sprintf("$%.2f", m.stats.CostUSD))
+	}
+	if m.running {
+		right = append(right, "esc to interrupt")
+	} else if m.quitArmed {
+		right = append(right, "ctrl+c again to quit")
+	}
+	r := m.st.dim.Render(strings.Join(right, " · "))
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(r)
+	if gap < 1 {
+		return left + "\n" + r
+	}
+	return left + strings.Repeat(" ", gap) + r
+}
+
+// renderAssistant formats a finished assistant message for scrollback.
+func (m *model) renderAssistant(msg llm.Message) string {
+	var out []string
+	for _, b := range msg.Blocks {
+		switch b.Type {
+		case llm.BlockThinking:
+			if t := strings.TrimSpace(b.Text); t != "" {
+				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, m.width-4), 6)))
+			}
+		case llm.BlockText:
+			if t := strings.TrimSpace(b.Text); t != "" {
+				out = append(out, m.renderMarkdown(t))
+			}
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m *model) renderMarkdown(s string) string {
+	if m.md == nil {
+		return s
+	}
+	r, err := m.md.Render(s)
+	if err != nil {
+		return s
+	}
+	return strings.Trim(r, "\n")
+}
+
+func (m *model) renderToolCard(e agent.Event) string {
+	bullet := m.st.ok.Render("●")
+	if e.IsError {
+		bullet = m.st.err.Render("●")
+	}
+	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input))
+	var body string
+	switch {
+	case e.Display != "":
+		body = m.diff(e.Display, 20)
+	case e.IsError:
+		body = m.st.err.Render(truncateLines(strings.TrimSpace(e.Output), 6))
+	default:
+		out := strings.TrimSpace(e.Output)
+		n := strings.Count(out, "\n") + 1
+		switch e.ToolName {
+		case "read":
+			body = m.st.dim.Render(fmt.Sprintf("read %d lines", n))
+		case "grep", "glob":
+			body = m.st.dim.Render(truncateLines(out, 4))
+		default:
+			body = m.st.dim.Render(truncateLines(out, 6))
+		}
+	}
+	if body == "" {
+		return head
+	}
+	return head + "\n" + prefixLines(body, "  ⎿ ", "    ")
+}
+
+func (m *model) diff(s string, maxLines int) string {
+	lines := strings.Split(truncateLines(s, maxLines), "\n")
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "+"):
+			lines[i] = m.st.diffAdd.Render(l)
+		case strings.HasPrefix(l, "-"):
+			lines[i] = m.st.diffDel.Render(l)
+		default:
+			lines[i] = m.st.dim.Render(l)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// toolTitle is a one-line summary like `bash(go test ./...)`.
+func toolTitle(name string, input []byte) string {
+	var in map[string]any
+	_ = json.Unmarshal(input, &in)
+	arg := ""
+	switch name {
+	case "bash":
+		arg = str(in["command"])
+	case "read", "write", "edit":
+		arg = str(in["path"])
+	case "grep":
+		arg = str(in["pattern"])
+		if p := str(in["path"]); p != "" {
+			arg += " in " + p
+		}
+	case "glob":
+		arg = str(in["pattern"])
+	}
+	arg = strings.Join(strings.Fields(arg), " ")
+	if len(arg) > 80 {
+		arg = arg[:77] + "…"
+	}
+	return fmt.Sprintf("%s(%s)", name, arg)
+}
+
+func (m *model) printBanner() tea.Cmd {
+	cwd := m.opts.Config.Cwd
+	if home := homeDir(); home != "" && strings.HasPrefix(cwd, home) {
+		cwd = "~" + strings.TrimPrefix(cwd, home)
+	}
+	lines := []string{
+		m.st.accent.Render("larik") + m.st.dim.Render(" v"+m.opts.Version),
+		m.st.dim.Render(m.agent.ProviderName() + "/" + m.agent.Model() + " · " + cwd),
+		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /help"),
+	}
+	if id := m.agent.SessionID(); id != "" {
+		lines = append(lines, m.st.dim.Render("session "+id+" · resume with larik --resume "+id))
+	}
+	return m.println(m.st.box.Render(strings.Join(lines, "\n")))
+}
+
+func (m *model) printHistory() tea.Cmd {
+	var b []string
+	for _, msg := range m.opts.History {
+		switch msg.Role {
+		case llm.RoleUser:
+			if t := strings.TrimSpace(msg.Text()); t != "" {
+				b = append(b, "\n"+m.st.user.Render("› "+indentAfterFirst(t, "  ")))
+			}
+		case llm.RoleAssistant:
+			if out := m.renderAssistant(msg); out != "" {
+				b = append(b, out)
+			}
+			for _, u := range msg.ToolUses() {
+				b = append(b, m.st.dim.Render("● "+toolTitle(u.Name, u.Input)))
+			}
+		}
+	}
+	b = append(b, m.st.dim.Render("── resumed ──"))
+	return m.println(strings.Join(b, "\n"))
+}
+
+func str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func wrap(s string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	return lipgloss.Wrap(s, width, " ")
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n… +%d lines", len(lines)-n)
+}
+
+// prefixLines prefixes the first line with first and the rest with rest
+// (rest defaults to first).
+func prefixLines(s, first string, rest ...string) string {
+	other := first
+	if len(rest) > 0 {
+		other = rest[0]
+	}
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		if i == 0 {
+			lines[i] = first + lines[i]
+		} else {
+			lines[i] = other + lines[i]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indentAfterFirst(s, indent string) string {
+	return strings.ReplaceAll(s, "\n", "\n"+indent)
+}
+
+func homeDir() string {
+	h, _ := os.UserHomeDir()
+	return h
+}

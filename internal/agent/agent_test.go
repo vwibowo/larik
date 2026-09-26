@@ -1,0 +1,200 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"iter"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"larik/internal/checkpoint"
+	"larik/internal/llm"
+	"larik/internal/permission"
+	"larik/internal/session"
+	"larik/internal/tools"
+)
+
+// fakeProvider replays scripted assistant messages and records requests.
+type fakeProvider struct {
+	script   []llm.Message
+	requests []llm.Request
+}
+
+func (f *fakeProvider) Name() string { return "fake" }
+
+func (f *fakeProvider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		f.requests = append(f.requests, req)
+		msg := f.script[0]
+		f.script = f.script[1:]
+		if t := msg.Text(); t != "" && !yield(llm.StreamEvent{Type: llm.EventTextDelta, Text: t}, nil) {
+			return
+		}
+		stop := llm.StopEnd
+		if len(msg.ToolUses()) > 0 {
+			stop = llm.StopToolUse
+		}
+		yield(llm.StreamEvent{Type: llm.EventDone, Message: msg, StopReason: stop, Usage: llm.Usage{Input: 100, Output: 10}}, nil)
+	}
+}
+
+func toolUse(id, name, input string) llm.Block {
+	return llm.Block{Type: llm.BlockToolUse, ID: id, Name: name, Input: json.RawMessage(input)}
+}
+
+func assistant(blocks ...llm.Block) llm.Message {
+	return llm.Message{Role: llm.RoleAssistant, Blocks: blocks, Model: "m"}
+}
+
+func setup(t *testing.T, mode permission.Mode, script ...llm.Message) (*Agent, *fakeProvider, string) {
+	t.Helper()
+	dir := t.TempDir()
+	fp := &fakeProvider{script: script}
+	sess, err := session.Create(filepath.Join(dir, "sessions"), session.Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Close() })
+	a := New(Options{
+		Provider:    fp,
+		Model:       "m",
+		Cwd:         dir,
+		Tools:       tools.Default(),
+		Perms:       permission.NewChecker(mode, permission.Rules{}, dir),
+		Session:     sess,
+		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt")),
+	})
+	return a, fp, dir
+}
+
+// drain collects events, answering permission prompts with answer.
+func drain(ch <-chan Event, answer PermissionReply) []Event {
+	var evs []Event
+	for e := range ch {
+		if e.Kind == EvPermission {
+			e.Reply <- answer
+		}
+		evs = append(evs, e)
+	}
+	return evs
+}
+
+func kinds(evs []Event) []EventKind {
+	var out []EventKind
+	for _, e := range evs {
+		if e.Kind != EvTextDelta && e.Kind != EvUsage {
+			out = append(out, e.Kind)
+		}
+	}
+	return out
+}
+
+func TestWriteThenUndo(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("t1", "write", `{"path":"hello.txt","content":"hi\n"}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	evs := drain(a.Run(context.Background(), "create hello.txt"), PermissionReply{Allow: true})
+
+	got := kinds(evs)
+	want := []EventKind{EvAssistant, EvPermission, EvToolStart, EvToolEnd, EvAssistant, EvDone}
+	if strings.Join(toStrings(got), ",") != strings.Join(toStrings(want), ",") {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "hello.txt")); string(data) != "hi\n" {
+		t.Fatalf("file content %q", data)
+	}
+	// Second request must carry the tool result in a user message.
+	last := fp.requests[1].Messages
+	res := last[len(last)-1].Blocks[0]
+	if res.Type != llm.BlockToolResult || res.ID != "t1" || res.IsError {
+		t.Fatalf("unexpected tool result %+v", res)
+	}
+
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hello.txt")); !os.IsNotExist(err) {
+		t.Fatalf("undo should delete created file, stat err=%v", err)
+	}
+}
+
+func TestDeniedPermissionReturnsError(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("t1", "bash", `{"command":"touch x"}`)),
+		assistant(llm.TextBlock("ok")),
+	)
+	drain(a.Run(context.Background(), "go"), PermissionReply{Allow: false, Reason: "not now"})
+	if _, err := os.Stat(filepath.Join(dir, "x")); !os.IsNotExist(err) {
+		t.Fatal("denied command ran")
+	}
+	msgs := fp.requests[1].Messages
+	res := msgs[len(msgs)-1].Blocks[0]
+	if !res.IsError || !strings.Contains(res.Content, "not now") {
+		t.Fatalf("expected denial with feedback, got %+v", res)
+	}
+}
+
+func TestPlanModeAndInvalidJSON(t *testing.T) {
+	bad := toolUse("t2", "read", "")
+	bad.Input = nil
+	a, fp, _ := setup(t, permission.ModePlan,
+		assistant(toolUse("t1", "edit", `{"path":"a","old_string":"x","new_string":"y"}`), bad),
+		assistant(llm.TextBlock("ok")),
+	)
+	evs := drain(a.Run(context.Background(), "go"), PermissionReply{})
+	for _, e := range evs {
+		if e.Kind == EvPermission {
+			t.Fatal("plan mode should deny without asking")
+		}
+	}
+	msgs := fp.requests[1].Messages
+	blocks := msgs[len(msgs)-1].Blocks
+	if len(blocks) != 2 || !strings.Contains(blocks[0].Content, "plan mode") || !strings.Contains(blocks[1].Content, "INVALID_JSON") {
+		t.Fatalf("unexpected results %+v", blocks)
+	}
+}
+
+func TestSessionResume(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeYolo, assistant(llm.TextBlock("hello back")))
+	drain(a.Run(context.Background(), "hello"), PermissionReply{})
+	path := a.opts.Session.Path
+	a.opts.Session.Close()
+
+	s, st, err := session.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if len(st.Messages) != 2 || st.Messages[1].Text() != "hello back" || st.Usage.Input != 100 {
+		t.Fatalf("bad restored state: %+v", st)
+	}
+}
+
+func TestCompaction(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(llm.TextBlock("first answer")),
+		assistant(llm.TextBlock("<summary>user said hello</summary>")),
+		assistant(llm.TextBlock("second answer")),
+	)
+	drain(a.Run(context.Background(), "hello"), PermissionReply{})
+	if _, err := a.Compact(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drain(a.Run(context.Background(), "next"), PermissionReply{})
+	msgs := fp.requests[2].Messages
+	// Summary and the new prompt merge into one user turn.
+	if len(msgs) != 1 || len(msgs[0].Blocks) != 2 || !strings.Contains(msgs[0].Blocks[0].Text, "user said hello") || msgs[0].Blocks[1].Text != "next" {
+		t.Fatalf("after compaction got %d messages: %+v", len(msgs), msgs)
+	}
+}
+
+func toStrings(ks []EventKind) []string {
+	out := make([]string, len(ks))
+	for i, k := range ks {
+		out[i] = string(k)
+	}
+	return out
+}
