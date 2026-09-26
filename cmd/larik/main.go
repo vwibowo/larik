@@ -168,7 +168,7 @@ func run() error {
 	}
 
 	agentDefs := subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
-	baseTools = append(baseTools, &subagent.Tool{
+	baseTools = append(baseTools, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
 		Set:     agentDefs,
 		Context: childContext,
 		Resolve: func(spec string) (llm.Provider, string, error) {
@@ -207,6 +207,7 @@ func run() error {
 
 	if *print {
 		defer a.End("other")
+		defer a.StopAllBackground() // runs first: stop children before SessionEnd
 		if !cfg.ProjectHooksApproved() {
 			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
 		}
@@ -220,6 +221,7 @@ func run() error {
 		history = state.All
 	}
 	defer a.End("prompt_input_exit")
+	defer a.StopAllBackground()
 	return tui.Run(tui.Options{
 		Agent:         a,
 		Config:        cfg,

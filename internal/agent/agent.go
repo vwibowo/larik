@@ -72,6 +72,8 @@ type Agent struct {
 	startSource    string // SessionStart source: startup, resume, clear
 	halted         bool   // a hook returned continue:false
 	haltReason     string
+
+	bg *background // lazily created; see background.go
 }
 
 func New(opts Options) *Agent {
@@ -198,22 +200,25 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 	ch := make(chan Event, 64)
 	go func() {
 		defer close(ch)
-		reason := a.run(ctx, prompt, func(e Event) { ch <- e })
+		reason := a.runWith(ctx, prompt, false, func(e Event) { ch <- e })
 		ch <- Event{Kind: EvDone, StopReason: reason}
 	}()
 	return ch
 }
 
-func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string {
+// runWith runs one turn. system marks Larik-generated prompts (background
+// notifications), which skip prompt hooks and skill expansion.
+func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit func(Event)) string {
 	a.loadTools(ctx, emit)
 	sub := a.opts.Subagent != ""
-	if !sub {
+	quiet := sub || system // no session/prompt hooks or skill expansion
+	if !quiet {
 		a.sessionStart(ctx, emit)
 	}
 	a.takeHalt() // clear any stale request
 
 	var res hooks.Result
-	if !sub {
+	if !quiet {
 		res = a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.UserPromptSubmit, Prompt: prompt}, "")
 	}
 	switch {
@@ -224,7 +229,7 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 		emit(Event{Kind: EvNotice, Text: "prompt blocked by hook: " + res.Reason})
 		return "blocked"
 	}
-	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !sub {
+	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running skill /" + name})
 		prompt = expanded
@@ -258,6 +263,12 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 				emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
 			}
 			compactedThisTurn = true
+		}
+
+		// Background results that finished mid-turn ride along with the
+		// next request, appended after the latest user content.
+		if note := a.takeNotifications(); note != "" {
+			a.appendMessage(llm.UserText(note), nil)
 		}
 
 		msg, stop, err := a.stream(ctx, emit)
@@ -491,4 +502,12 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// SetTools replaces the tool registry (tests and embedders; normally tools
+// come from Options or LoadTools).
+func (a *Agent) SetTools(r *tools.Registry) {
+	a.mu.Lock()
+	a.opts.Tools, a.toolsLoaded = r, true
+	a.mu.Unlock()
 }

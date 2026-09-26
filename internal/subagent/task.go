@@ -46,7 +46,8 @@ func (t *Tool) Spec() llm.ToolSpec {
 	b.WriteString("Delegate a task to a subagent with its own fresh context window. Use it for broad searches, multi-step research, " +
 		"or self-contained changes whose details you don't need to keep in your own context. The subagent cannot see this conversation: " +
 		"give it a complete, self-contained prompt with all needed context and say exactly what to report back. Its final message is returned to you. " +
-		"For independent work, call task several times in the same turn to run subagents in parallel; don't parallelize tasks that edit the same files.\n\nAvailable agents:\n")
+		"For independent work, call task several times in the same turn to run subagents in parallel; don't parallelize tasks that edit the same files. " +
+		"Set run_in_background to keep working while a subagent runs: the call returns a task id at once, and the result is delivered to you in a later message when it finishes (use task_wait to block on it, task_stop to cancel).\n\nAvailable agents:\n")
 	for _, d := range t.Set.List() {
 		names = append(names, d.Name)
 		fmt.Fprintf(&b, "- %s: %s", d.Name, d.Description)
@@ -62,7 +63,8 @@ func (t *Tool) Spec() llm.ToolSpec {
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"description":{"type":"string","description":"Short (3-5 word) label for the task"},
 			"prompt":{"type":"string","description":"Complete instructions for the subagent"},
-			"subagent_type":{"type":"string","enum":` + string(enum) + `,"description":"Which agent to use"}},
+			"subagent_type":{"type":"string","enum":` + string(enum) + `,"description":"Which agent to use"},
+			"run_in_background":{"type":"boolean","description":"Return immediately and deliver the result later"}},
 			"required":["description","prompt","subagent_type"]}`),
 	}
 }
@@ -72,6 +74,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 		Description string `json:"description"`
 		Prompt      string `json:"prompt"`
 		Type        string `json:"subagent_type"`
+		Background  bool   `json:"run_in_background"`
 	}
 	if len(input) == 0 || json.Unmarshal(input, &in) != nil || strings.TrimSpace(in.Prompt) == "" {
 		return tools.Result{Content: "INVALID_JSON: expected description, prompt and subagent_type", IsError: true}
@@ -84,15 +87,30 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if !ok {
 		return tools.Result{Content: fmt.Sprintf("unknown subagent_type %q", in.Type), IsError: true}
 	}
-
-	provider, model, notice := t.model(def, parent)
-	if notice != "" {
-		emit(agent.Event{Kind: agent.EvNotice, Text: notice})
-	}
-
 	label := def.Name
 	if d := strings.TrimSpace(in.Description); d != "" {
 		label += ": " + d
+	}
+
+	if in.Background {
+		id, err := parent.StartBackground(label, func(bctx context.Context, bemit func(agent.Event)) (string, bool) {
+			res := t.runChild(bctx, parent, bemit, def, label, in.Prompt)
+			return res.Content, res.IsError
+		})
+		if err != nil {
+			return tools.Result{Content: err.Error(), IsError: true}
+		}
+		return tools.Result{Content: fmt.Sprintf("Started background task %s (%s). Its result will be delivered to you automatically when it finishes. "+
+			"Keep working on other things meanwhile; call task_wait if you need the result before continuing, or task_stop to cancel it.", id, label)}
+	}
+	return t.runChild(ctx, parent, emit, def, label, in.Prompt)
+}
+
+// runChild runs a subagent to completion, forwarding its activity to emit.
+func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agent.Event), def Definition, label, prompt string) tools.Result {
+	provider, model, notice := t.model(def, parent)
+	if notice != "" {
+		emit(agent.Event{Kind: agent.EvNotice, Text: notice})
 	}
 	var sess *session.Session
 	if p := parent.SessionPath(); p != "" {
@@ -115,7 +133,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 
 	var final, failure, stop string
 	calls := 0
-	for e := range child.Run(ctx, in.Prompt) {
+	for e := range child.Run(ctx, prompt) {
 		switch e.Kind {
 		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvNotice:
 			if e.Kind == agent.EvToolEnd {
@@ -142,7 +160,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 
 	switch {
 	case ctx.Err() != nil:
-		return tools.Result{Content: "subagent interrupted by user", IsError: true}
+		return tools.Result{Content: "subagent interrupted before finishing", IsError: true}
 	case failure != "" && final == "":
 		return tools.Result{Content: "subagent failed: " + failure, IsError: true}
 	case final == "":
@@ -171,11 +189,11 @@ func (t *Tool) model(def Definition, parent *agent.Agent) (llm.Provider, string,
 }
 
 // childTools is the parent's registry filtered by the definition, minus
-// task itself (no nested delegation).
+// the delegation tools (no nested or background delegation).
 func childTools(parent *tools.Registry, def Definition) *tools.Registry {
 	var out []tools.Tool
 	for _, spec := range parent.Specs() {
-		if spec.Name == ToolName || !def.toolAllowed(spec.Name) {
+		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || !def.toolAllowed(spec.Name) {
 			continue
 		}
 		if tl, ok := parent.Get(spec.Name); ok {

@@ -134,6 +134,9 @@ func (m *model) statusLine() string {
 	if m.stats.CostUSD > 0 {
 		right = append(right, fmt.Sprintf("$%.2f", m.stats.CostUSD))
 	}
+	if n := m.agent.RunningBackground(); n > 0 {
+		right = append(right, fmt.Sprintf("⧗ %d background", n))
+	}
 	if m.running {
 		right = append(right, "esc to interrupt")
 	} else if m.quitArmed {
@@ -269,6 +272,22 @@ func toolTitle(name string, input []byte) string {
 	case "task":
 		name = "task › " + str(in["subagent_type"])
 		arg = str(in["description"])
+		if bg, _ := in["run_in_background"].(bool); bg {
+			arg += " ⧗"
+		}
+	case "task_wait":
+		if ids, ok := in["ids"].([]any); ok {
+			for i, id := range ids {
+				if i > 0 {
+					arg += ", "
+				}
+				arg += fmt.Sprint(id)
+			}
+		} else {
+			arg = "all"
+		}
+	case "task_stop":
+		arg = str(in["id"])
 	default:
 		if server := mcp.ServerOf(name); server != "" {
 			name = server + " › " + strings.TrimPrefix(name, mcp.Prefix+server+"__")

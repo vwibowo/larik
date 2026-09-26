@@ -24,8 +24,11 @@ import (
 // children get deterministic replies regardless of scheduling.
 type funcProvider struct {
 	respond func(req llm.Request) llm.Message
-	mu      sync.Mutex
-	reqs    []llm.Request
+	// gate, if set, blocks child requests until it closes or ctx ends,
+	// the way a slow real provider would honor cancellation.
+	gate chan struct{}
+	mu   sync.Mutex
+	reqs []llm.Request
 }
 
 func (f *funcProvider) Name() string { return "fake" }
@@ -34,6 +37,14 @@ func (f *funcProvider) Stream(ctx context.Context, req llm.Request) iter.Seq2[ll
 		f.mu.Lock()
 		f.reqs = append(f.reqs, req)
 		f.mu.Unlock()
+		if f.gate != nil && isChild(req) {
+			select {
+			case <-f.gate:
+			case <-ctx.Done():
+				yield(llm.StreamEvent{}, ctx.Err())
+				return
+			}
+		}
 		msg := f.respond(req)
 		msg.Role, msg.Model = llm.RoleAssistant, req.Model
 		stop := llm.StopEnd

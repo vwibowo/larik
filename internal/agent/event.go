@@ -21,6 +21,10 @@ const (
 	EvNotice        EventKind = "notice"
 	EvError         EventKind = "error"
 	EvDone          EventKind = "done"
+	// EvTaskDone arrives on Agent.Background() when a background task ends:
+	// ToolID is the task id, Agent its label, Output the result, StopReason
+	// its status.
+	EvTaskDone EventKind = "task_done"
 )
 
 // Event is the single stream every front end consumes. Fields are set

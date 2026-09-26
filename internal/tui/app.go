@@ -7,6 +7,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -72,6 +73,9 @@ type model struct {
 	tools     []toolRun
 	perm      *agent.Event  // permission prompt being shown
 	permQueue []agent.Event // further prompts (parallel subagents)
+	// bgReplies marks prompts from background tasks, which must survive
+	// the end of the foreground turn.
+	bgReplies map[chan<- agent.PermissionReply]bool
 	permIdx   int
 	queue     []string
 	stats     agent.UsageInfo
@@ -82,6 +86,7 @@ type model struct {
 // Messages.
 type (
 	agentEventMsg agent.Event
+	bgEventMsg    agent.Event
 	runEndedMsg   struct{}
 	compactedMsg  struct {
 		summary string
@@ -140,7 +145,9 @@ func (m *model) Init() tea.Cmd {
 	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
 		cmds = append(cmds, m.submit(p))
 	}
-	return tea.Sequence(cmds...)
+	// The background listener blocks until an event arrives, so it runs
+	// alongside the startup sequence rather than inside it.
+	return tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -168,15 +175,38 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.handleEvent(agent.Event(msg)), m.waitEvent())
 
 	case runEndedMsg:
-		m.running, m.cancel, m.events, m.perm, m.permQueue = false, nil, nil, nil, nil
+		m.running, m.cancel, m.events = false, nil, nil
+		m.dropForegroundPerms()
 		m.resetStream()
 		m.stats = m.agent.Stats()
-		if len(m.queue) > 0 {
+		if len(m.queue) > 0 { // pending background results ride along with it
 			next := m.queue[0]
 			m.queue = m.queue[1:]
 			return m, m.submit(next)
 		}
-		return m, nil
+		return m, m.deliverBackground()
+
+	case bgEventMsg:
+		e := agent.Event(msg)
+		var cmds []tea.Cmd
+		switch e.Kind {
+		case agent.EvTaskDone:
+			cmds = append(cmds, m.println(m.renderTaskDone(e)))
+			if !m.running {
+				cmds = append(cmds, m.deliverBackground())
+			}
+		case agent.EvPermission:
+			if m.bgReplies == nil {
+				m.bgReplies = map[chan<- agent.PermissionReply]bool{}
+			}
+			m.bgReplies[e.Reply] = true
+			cmds = append(cmds, m.handleEvent(e))
+		default:
+			cmds = append(cmds, m.handleEvent(e))
+		}
+		// Re-arm the listener concurrently: it blocks until the next
+		// background event, so it must not sit in the sequence.
+		return m, tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
 
 	case compactedMsg:
 		m.busyLabel = ""
@@ -368,6 +398,7 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	ev := m.perm
 	m.perm = nil
+	delete(m.bgReplies, ev.Reply)
 	if len(m.permQueue) > 0 {
 		next := m.permQueue[0]
 		m.permQueue = m.permQueue[1:]
@@ -385,4 +416,62 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *model) println(s string) tea.Cmd {
 	return tea.Println(s)
+}
+
+// waitBackground reads the agent's background-task stream for its lifetime.
+func (m *model) waitBackground() tea.Cmd {
+	ch := m.agent.Background()
+	return func() tea.Msg { return bgEventMsg(<-ch) }
+}
+
+// deliverBackground starts a turn that hands finished background results
+// to the model, if any are waiting and nothing else is running.
+func (m *model) deliverBackground() tea.Cmd {
+	if m.running || m.agent.PendingNotifications() == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	events, ok := m.agent.RunNotifications(ctx)
+	if !ok {
+		cancel()
+		return nil
+	}
+	m.running, m.cancel, m.events = true, cancel, events
+	return tea.Sequence(
+		m.println("\n"+m.st.dim.Render("⚙ delivering background task results to the model")),
+		tea.Batch(m.waitEvent(), m.spin.Tick),
+	)
+}
+
+// dropForegroundPerms discards prompts from a finished turn but keeps
+// those from background tasks, which are still waiting for an answer.
+func (m *model) dropForegroundPerms() {
+	keep := func(e *agent.Event) bool { return e != nil && m.bgReplies[e.Reply] }
+	var queue []agent.Event
+	for i := range m.permQueue {
+		if keep(&m.permQueue[i]) {
+			queue = append(queue, m.permQueue[i])
+		}
+	}
+	if !keep(m.perm) {
+		m.perm = nil
+		if len(queue) > 0 {
+			m.perm, queue = &queue[0], queue[1:]
+			m.permIdx = 0
+		}
+	}
+	m.permQueue = queue
+}
+
+func (m *model) renderTaskDone(e agent.Event) string {
+	mark := m.st.ok.Render("◆")
+	if e.IsError {
+		mark = m.st.err.Render("◆")
+	}
+	head := fmt.Sprintf("%s background %s %s  %s", mark, e.ToolID, e.StopReason, m.st.dim.Render("("+e.Agent+")"))
+	body := strings.TrimSpace(e.Output)
+	if body == "" {
+		return head
+	}
+	return head + "\n" + prefixLines(m.st.dim.Render(truncateLines(body, 4)), "  ⎿ ", "    ")
 }

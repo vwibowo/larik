@@ -52,6 +52,7 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/skills` | List skills |
 | `/agents` | List subagents |
 | `/lsp` | Language servers and status |
+| `/tasks` / `/tasks stop <id>` | Background subagent tasks |
 | `/<skill-name> [args]` | Run a skill |
 
 ## Permissions
@@ -167,6 +168,14 @@ You are a meticulous code reviewer. ...
 **Other behavior:**
 - Subagent tool calls are shown nested under their task. Their cost is included in the session totals, and each subagent's transcript is saved next to the session file.
 - Subagents can't start further subagents.
+
+**Background subagents:**
+- **Starting one:** with `run_in_background: true`, `task` returns an ID (`bg-1`) immediately and the main agent keeps working.
+- **Delivery:** when the subagent finishes, its result reaches the model as a `<task-notification>`. If the agent is mid-turn, the notification rides along with its next request. If the agent is idle, Larik starts a short turn automatically so the model can act on it.
+- **Tools for the model:** `task_wait` blocks on specific tasks (or all of them) and returns their results. `task_stop` cancels one.
+- **Lifetime:** background tasks survive Esc on the foreground turn. `/tasks` lists them, `/tasks stop <id>` cancels one, and quitting stops them all.
+- **Visibility:** the status bar shows how many are running, and their permission prompts appear even while the agent is idle.
+- **Limits:** at most 8 run at once. In `-p` mode Larik exits only after every background task has finished and been delivered.
 - The `task` call itself never asks for permission; each tool call inside the subagent is checked on its own.
 - `/agents` lists the available agents.
 
@@ -273,4 +282,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, background subagents, LSP pull diagnostics and code actions, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions, OS-level sandboxing, and in-TUI session switching (use `--resume`).

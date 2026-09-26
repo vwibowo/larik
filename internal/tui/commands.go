@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -31,6 +32,8 @@ const helpText = `Commands
   /skills                   list available skills
   /agents                   list subagents the model can delegate to
   /lsp                      language servers and their status
+  /tasks                    background tasks
+  /tasks stop <id>          cancel a background task
   /<skill-name> [args]      run a skill
   /quit                     exit
 
@@ -159,6 +162,9 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/lsp":
 		return m.lspCommand(info)
+
+	case "/tasks":
+		return m.tasksCommand(args, info, fail)
 
 	case "/sessions":
 		infos, err := session.List(m.opts.SessionDir)
@@ -351,4 +357,26 @@ func (m *model) lspCommand(info func(string) tea.Cmd) tea.Cmd {
 	}
 	b.WriteString("server logs: ~/.local/share/larik/logs/lsp-<name>.log")
 	return info(b.String())
+}
+
+func (m *model) tasksCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
+	if len(args) >= 2 && args[0] == "stop" {
+		if err := m.agent.StopBackground(args[1]); err != nil {
+			return fail(err.Error())
+		}
+		return info("stopped " + args[1])
+	}
+	tasks := m.agent.BackgroundTasks()
+	if len(tasks) == 0 {
+		return info("no background tasks (the model starts them with task(run_in_background: true))")
+	}
+	var b strings.Builder
+	for _, t := range tasks {
+		elapsed := time.Since(t.Started)
+		if !t.Finished.IsZero() {
+			elapsed = t.Finished.Sub(t.Started)
+		}
+		fmt.Fprintf(&b, "%-6s %-10s %6s  %s\n", t.ID, t.Status, elapsed.Round(time.Second), t.Label)
+	}
+	return info(strings.TrimRight(b.String(), "\n"))
 }
