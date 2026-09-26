@@ -25,6 +25,7 @@ import (
 	"larik/internal/permission"
 	"larik/internal/providers"
 	"larik/internal/session"
+	"larik/internal/skills"
 	"larik/internal/tools"
 	"larik/internal/tui"
 )
@@ -148,7 +149,17 @@ func run() error {
 
 	// MCP servers connect in the background; the agent waits for them before
 	// its first request.
+	home, _ := os.UserHomeDir()
+	skillSet := skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
+	baseTools := tools.Builtin()
+	system := agent.BuildSystemPrompt(cwd, cfg.ConfigDir)
+	if idx := skillSet.Index(); idx != "" {
+		baseTools = append(baseTools, skills.Tool{Set: skillSet})
+		system += "\n\n" + idx
+	}
+
 	mcpMgr := mcp.NewManager(cfg, version)
+	mcpMgr.Base = baseTools
 	mcpMgr.Start()
 	defer mcpMgr.Close()
 
@@ -158,16 +169,17 @@ func run() error {
 		Provider:    resolved.Provider,
 		Model:       resolved.Model,
 		Effort:      eff,
-		System:      agent.BuildSystemPrompt(cwd, cfg.ConfigDir),
+		System:      system,
 		Cwd:         cwd,
 		MaxTurns:    cfg.MaxTurns,
-		Tools:       tools.Default(),
+		Tools:       tools.NewRegistry(baseTools...),
 		Perms:       permission.NewChecker(permMode, cfg.Permissions, cwd),
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(cfg.DataDir, "checkpoints", sess.ID)),
 		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
 		LoadTools:   mcpMgr.Registry,
 		Hooks:       hookRunner,
+		Skills:      skillSet,
 	})
 	if state != nil {
 		a.Restore(state)
@@ -196,6 +208,7 @@ func run() error {
 		SessionDir:    sessDir,
 		MCP:           mcpMgr,
 		Hooks:         hookRunner,
+		Skills:        skillSet,
 		Version:       version,
 	})
 }

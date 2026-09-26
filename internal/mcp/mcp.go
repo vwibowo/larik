@@ -62,6 +62,10 @@ type Manager struct {
 	logDir  string
 	version string
 
+	// Base is the non-MCP tool set that Registry extends (defaults to the
+	// built-in tools).
+	Base []tools.Tool
+
 	// Dial builds the transport for a server; tests replace it.
 	Dial func(ctx context.Context, s *server) (sdk.Transport, error)
 
@@ -76,6 +80,7 @@ func NewManager(cfg *config.Config, version string) *Manager {
 		logDir:  filepath.Join(cfg.DataDir, "logs"),
 		version: version,
 		servers: map[string]*server{},
+		Base:    tools.Builtin(),
 	}
 	m.Dial = m.dial
 	return m
@@ -292,7 +297,7 @@ func (h headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // tools plus every connected server's tools. Problems are reported via notify.
 func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Registry {
 	if len(m.cfg.MCPServers) == 0 {
-		return tools.Default()
+		return tools.NewRegistry(m.Base...)
 	}
 	m.Start() // picks up servers approved since the last load
 	if n := m.pending(); n > 0 {
@@ -315,7 +320,7 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 			notify(fmt.Sprintf("MCP server %q from %s is not approved yet; review it and run /mcp approve %s", st.Name, filepath.Base(st.Source), st.Name))
 		}
 	}
-	return tools.NewRegistry(append(tools.Builtin(), mcpTools...)...)
+	return tools.NewRegistry(append(append([]tools.Tool(nil), m.Base...), mcpTools...)...)
 }
 
 func (m *Manager) pending() int {

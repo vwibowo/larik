@@ -14,6 +14,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/skills"
 	"larik/internal/tools"
 )
 
@@ -42,6 +43,9 @@ type Options struct {
 
 	// Hooks runs user lifecycle hooks; nil disables them.
 	Hooks *hooks.Runner
+
+	// Skills expands "/skill-name args" prompts; nil disables that.
+	Skills *skills.Set
 }
 
 type Agent struct {
@@ -193,7 +197,13 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 	case res.Block:
 		emit(Event{Kind: EvNotice, Text: "prompt blocked by hook: " + res.Reason})
 		return "blocked"
-	case len(res.Context) > 0:
+	}
+	if expanded, ok := a.opts.Skills.Expand(prompt); ok {
+		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
+		emit(Event{Kind: EvNotice, Text: "running skill /" + name})
+		prompt = expanded
+	}
+	if len(res.Context) > 0 {
 		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)
 	}
 

@@ -20,6 +20,7 @@ import (
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/mcp"
+	"larik/internal/skills"
 )
 
 type Options struct {
@@ -31,6 +32,7 @@ type Options struct {
 	Version       string
 	MCP           *mcp.Manager
 	Hooks         *hooks.Runner
+	Skills        *skills.Set
 }
 
 func Run(opts Options) error {

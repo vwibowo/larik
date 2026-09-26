@@ -34,7 +34,7 @@ func BuildSystemPrompt(cwd, configDir string) string {
 	b.WriteString(basePrompt)
 
 	fmt.Fprintf(&b, "\n\n<env>\nWorking directory: %s\nPlatform: %s/%s\nDate: %s\n", cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
-	if root := gitRoot(cwd); root != "" {
+	if root := GitRoot(cwd); root != "" {
 		fmt.Fprintf(&b, "Git repository root: %s\n", root)
 	}
 	b.WriteString("</env>")
@@ -56,7 +56,7 @@ func InstructionFiles(cwd, configDir string) []string {
 	if p := filepath.Join(configDir, "AGENTS.md"); exists(p) {
 		out = append(out, p)
 	}
-	stop := gitRoot(cwd)
+	stop := GitRoot(cwd)
 	var dirs []string
 	for d := cwd; ; d = filepath.Dir(d) {
 		dirs = append(dirs, d)
@@ -80,7 +80,8 @@ func exists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
-func gitRoot(cwd string) string {
+// GitRoot returns the repository root containing cwd, or "".
+func GitRoot(cwd string) string {
 	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""

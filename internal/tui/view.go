@@ -183,6 +183,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 		switch e.ToolName {
 		case "read":
 			body = m.st.dim.Render(fmt.Sprintf("read %d lines", n))
+		case "skill":
+			body = m.st.dim.Render(fmt.Sprintf("loaded skill (%d lines)", n))
 		case "grep", "glob":
 			body = m.st.dim.Render(truncateLines(out, 4))
 		default:
@@ -227,6 +229,8 @@ func toolTitle(name string, input []byte) string {
 		}
 	case "glob":
 		arg = str(in["pattern"])
+	case "skill":
+		arg = str(in["name"])
 	default:
 		if server := mcp.ServerOf(name); server != "" {
 			name = server + " › " + strings.TrimPrefix(name, mcp.Prefix+server+"__")

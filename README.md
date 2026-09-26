@@ -49,6 +49,8 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/mcp approve <name>` | Allow a project-defined MCP server to start |
 | `/hooks` | List configured hooks |
 | `/hooks approve` | Allow the project's shared hooks to run |
+| `/skills` | List skills |
+| `/<skill-name> [args]` | Run a skill |
 
 ## Permissions
 
@@ -113,6 +115,28 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 - Text results are passed to the model. Images and binary resources are summarized, not sent.
 - OAuth is not supported yet. For token-based remote servers, use `headers`.
 
+## Skills
+
+Larik supports [Agent Skills](https://agentskills.io): folders containing a `SKILL.md` with YAML frontmatter, plus optional scripts and resources.
+
+```markdown
+---
+name: release-notes
+description: Write release notes from git history. Use when asked for a changelog or release notes.
+---
+Collect commits since the last tag with `git log $(git describe --tags --abbrev=0)..HEAD` ...
+```
+
+- **Discovery**, lowest to highest precedence:
+  1. `~/.agents/skills`, `~/.claude/skills`, `~/.config/larik/skills`
+  2. `.agents/skills`, `.claude/skills`, `.larik/skills` in each directory from the repo root down to the working directory
+
+  Existing Claude Code skills work as-is, symlinked skill folders are followed, and a higher-precedence skill with the same name overrides the lower one (`/skills` shows what was shadowed).
+- **Progressive disclosure:** only each skill's `name: description` is in the system prompt. The model loads the full instructions with the read-only `skill` tool when a task matches, and reads bundled files with the normal tools. The index is built at startup and stays fixed for the session, so prompt caches stay valid.
+- **Running a skill yourself:** type `/<skill-name> [args]`, in the TUI or with `-p`. `$ARGUMENTS` in the body is replaced with the args. Otherwise the args are appended.
+- **Frontmatter flags:** `disable-model-invocation: true` keeps a skill out of the model's index, so it only runs when you invoke it. `user-invocable: false` hides it from `/`.
+- Skills are instructions, like `AGENTS.md`. Anything a skill asks the model to run still goes through the normal permission checks.
+
 ## Hooks
 
 Hooks are shell commands that run at points in the agent lifecycle. The format matches Claude Code's, so existing hook scripts work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
@@ -169,6 +193,7 @@ internal/agent      loop, events, compaction, system prompt
 internal/tools      read, write, edit, bash, grep, glob
 internal/mcp        MCP client: server lifecycle, approval, tool adapter
 internal/hooks      lifecycle hook runner (Claude Code-compatible format)
+internal/skills     Agent Skills discovery, index, skill tool, /name expansion
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -190,4 +215,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, skills, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).

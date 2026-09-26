@@ -28,6 +28,8 @@ const helpText = `Commands
   /mcp approve <name>       allow a project-defined MCP server to start
   /hooks                    configured lifecycle hooks
   /hooks approve            allow the hooks in .larik/settings.json to run
+  /skills                   list available skills
+  /<skill-name> [args]      run a skill
   /quit                     exit
 
 Keys
@@ -147,6 +149,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/hooks":
 		return m.hooksCommand(args, info, fail)
 
+	case "/skills":
+		return m.skillsCommand(info)
+
 	case "/sessions":
 		infos, err := session.List(m.opts.SessionDir)
 		if err != nil {
@@ -165,7 +170,14 @@ func (m *model) command(line string) tea.Cmd {
 		b.WriteString("resume with: larik --resume <id>")
 		return info(b.String())
 	}
-	return fail("unknown command " + name + " (try /help)")
+	if sk, ok := m.opts.Skills.Get(strings.TrimPrefix(name, "/")); ok && sk.UserInvocable {
+		if m.running {
+			m.queue = append(m.queue, line)
+			return nil
+		}
+		return m.submit(line) // the agent expands the skill
+	}
+	return fail("unknown command " + name + " (try /help or /skills)")
 }
 
 func (m *model) mcpCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
@@ -253,6 +265,35 @@ func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea
 	}
 	if b.Len() == 0 {
 		return info("no hooks configured (add \"hooks\" to ~/.config/larik/config.json or .larik/settings.json)")
+	}
+	return info(strings.TrimRight(b.String(), "\n"))
+}
+
+func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
+	set := m.opts.Skills
+	if set == nil || len(set.List()) == 0 {
+		return info("no skills found (add <name>/SKILL.md under .larik/skills, ~/.config/larik/skills, or .claude/skills)")
+	}
+	var b strings.Builder
+	for _, sk := range set.List() {
+		flags := []string{sk.Scope}
+		if !sk.ModelInvocable {
+			flags = append(flags, "manual only")
+		}
+		if !sk.UserInvocable {
+			flags = append(flags, "model only")
+		}
+		desc := sk.Description
+		if len(desc) > 90 {
+			desc = desc[:87] + "..."
+		}
+		fmt.Fprintf(&b, "/%-24s %s  [%s]\n", sk.Name, desc, strings.Join(flags, ", "))
+	}
+	for _, sk := range set.Shadowed {
+		fmt.Fprintf(&b, "  shadowed: %s (%s)\n", sk.Name, sk.Path)
+	}
+	for _, w := range set.Warnings {
+		fmt.Fprintf(&b, "  ! %s\n", w)
 	}
 	return info(strings.TrimRight(b.String(), "\n"))
 }

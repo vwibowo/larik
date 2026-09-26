@@ -10,6 +10,7 @@ import (
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/skills"
 	"larik/internal/tools"
 )
 
@@ -163,5 +164,18 @@ func TestSessionStartAndHalt(t *testing.T) {
 	}
 	if len(fp.requests) != 1 || evs[len(evs)-1].StopReason != "hook_stopped" {
 		t.Fatalf("continue:false should end the turn; requests=%d stop=%s", len(fp.requests), evs[len(evs)-1].StopReason)
+	}
+}
+
+func TestSkillCommandExpands(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "greet"), 0o755)
+	os.WriteFile(filepath.Join(root, "greet", "SKILL.md"), []byte("---\nname: greet\ndescription: g\n---\nSay hello to $ARGUMENTS.\n"), 0o644)
+
+	a, fp, _ := withHooks(t, permission.ModeYolo, permission.Rules{}, nil, assistant(llm.TextBlock("hello Ada")))
+	a.opts.Skills = skills.Discover([]skills.Root{{Dir: root, Scope: "project"}})
+	drain(a.Run(context.Background(), "/greet Ada"), PermissionReply{})
+	if got := fp.requests[0].Messages[0].Text(); !strings.Contains(got, "Say hello to Ada.") || !strings.Contains(got, "/greet skill") {
+		t.Fatalf("prompt = %q", got)
 	}
 }
