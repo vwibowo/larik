@@ -265,3 +265,6 @@ func (s *Set) Expand(prompt string) (string, bool) {
 	}
 	return "The user invoked the /" + name + " skill.\n\n" + Render(sk, body, args), true
 }
+
+// SplitFrontmatter separates YAML frontmatter from a markdown body.
+func SplitFrontmatter(data []byte) (fm, body []byte, err error) { return split(data) }

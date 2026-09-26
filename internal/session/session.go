@@ -27,6 +27,7 @@ const (
 	EntryMeta       EntryType = "meta"
 	EntryMessage    EntryType = "message"
 	EntryCompaction EntryType = "compaction"
+	EntryUsage      EntryType = "usage" // spend not tied to a message, e.g. subagents
 )
 
 type Entry struct {
@@ -37,6 +38,7 @@ type Entry struct {
 	Message  *llm.Message `json:"message,omitempty"`
 	Usage    *llm.Usage   `json:"usage,omitempty"`
 	Summary  string       `json:"summary,omitempty"`
+	Model    string       `json:"model,omitempty"` // EntryUsage
 	Meta     *Meta        `json:"meta,omitempty"`
 }
 
@@ -124,6 +126,11 @@ func Open(path string) (*Session, *State, error) {
 				st.Usage.Add(*e.Usage)
 				st.Cost += llm.Lookup(e.Message.Model).Cost(*e.Usage)
 			}
+		case EntryUsage:
+			if e.Usage != nil {
+				st.Usage.Add(*e.Usage)
+				st.Cost += llm.Lookup(e.Model).Cost(*e.Usage)
+			}
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary)}
 		}
@@ -146,6 +153,11 @@ func CompactionMessage(summary string) llm.Message {
 
 func (s *Session) AppendMessage(m llm.Message, usage *llm.Usage) error {
 	return s.append(Entry{Type: EntryMessage, Message: &m, Usage: usage})
+}
+
+// AppendUsage records spend that isn't part of this transcript.
+func (s *Session) AppendUsage(model string, u llm.Usage) error {
+	return s.append(Entry{Type: EntryUsage, Model: model, Usage: &u})
 }
 
 func (s *Session) AppendCompaction(summary string) error {

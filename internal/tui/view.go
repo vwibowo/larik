@@ -47,7 +47,11 @@ func (m *model) liveView() string {
 		b = append(b, lastLines(wrap(s, m.width-2), limit))
 	}
 	for _, t := range m.tools {
-		b = append(b, m.st.accent.Render(m.spin.View()+" ")+toolTitle(t.name, t.input))
+		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input)
+		if t.agent != "" {
+			line = "  ↳ " + line + m.st.dim.Render("  ("+t.agent+")")
+		}
+		b = append(b, line)
 	}
 	label := ""
 	switch {
@@ -70,7 +74,14 @@ func (m *model) liveView() string {
 func (m *model) permissionView() string {
 	e := m.perm
 	var body strings.Builder
-	body.WriteString(m.st.accent.Render("Allow this "+e.ToolName+" call?") + "\n\n")
+	title := "Allow this " + e.ToolName + " call?"
+	if e.Agent != "" {
+		title += m.st.dim.Render("  requested by subagent " + e.Agent)
+	}
+	if n := len(m.permQueue); n > 0 {
+		title += m.st.dim.Render(fmt.Sprintf("  (+%d waiting)", n))
+	}
+	body.WriteString(m.st.accent.Render(title) + "\n\n")
 	body.WriteString(m.permDetail(e) + "\n\n")
 	opts := []string{"Yes", "Yes, and always allow " + e.SuggestedRule, "No, tell the model to do something else"}
 	for i, o := range opts {
@@ -173,6 +184,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input))
 	var body string
 	switch {
+	case e.Agent != "" && !e.IsError:
+		// keep nested subagent activity to one line
 	case e.Display != "":
 		body = m.diff(e.Display, 20)
 	case e.IsError:
@@ -191,10 +204,14 @@ func (m *model) renderToolCard(e agent.Event) string {
 			body = m.st.dim.Render(truncateLines(out, 6))
 		}
 	}
-	if body == "" {
-		return head
+	card := head
+	if body != "" {
+		card += "\n" + prefixLines(body, "  ⎿ ", "    ")
 	}
-	return head + "\n" + prefixLines(body, "  ⎿ ", "    ")
+	if e.Agent != "" { // nest subagent activity under its task
+		card = prefixLines(card, "  ↳ ", "    ") + m.st.dim.Render("  ("+e.Agent+")")
+	}
+	return card
 }
 
 func (m *model) diff(s string, maxLines int) string {
@@ -231,6 +248,9 @@ func toolTitle(name string, input []byte) string {
 		arg = str(in["pattern"])
 	case "skill":
 		arg = str(in["name"])
+	case "task":
+		name = "task › " + str(in["subagent_type"])
+		arg = str(in["description"])
 	default:
 		if server := mcp.ServerOf(name); server != "" {
 			name = server + " › " + strings.TrimPrefix(name, mcp.Prefix+server+"__")

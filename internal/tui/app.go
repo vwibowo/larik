@@ -21,6 +21,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/skills"
+	"larik/internal/subagent"
 )
 
 type Options struct {
@@ -33,6 +34,7 @@ type Options struct {
 	MCP           *mcp.Manager
 	Hooks         *hooks.Runner
 	Skills        *skills.Set
+	Agents        *subagent.Set
 }
 
 func Run(opts Options) error {
@@ -44,6 +46,7 @@ func Run(opts Options) error {
 type toolRun struct {
 	id, name string
 	input    []byte
+	agent    string // subagent label, if any
 }
 
 type model struct {
@@ -65,7 +68,8 @@ type model struct {
 	thinking  strings.Builder
 	calling   string // tool the model is currently writing a call for
 	tools     []toolRun
-	perm      *agent.Event
+	perm      *agent.Event  // permission prompt being shown
+	permQueue []agent.Event // further prompts (parallel subagents)
 	permIdx   int
 	queue     []string
 	stats     agent.UsageInfo
@@ -162,7 +166,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.handleEvent(agent.Event(msg)), m.waitEvent())
 
 	case runEndedMsg:
-		m.running, m.cancel, m.events, m.perm = false, nil, nil, nil
+		m.running, m.cancel, m.events, m.perm, m.permQueue = false, nil, nil, nil, nil
 		m.resetStream()
 		m.stats = m.agent.Stats()
 		if len(m.queue) > 0 {
@@ -299,16 +303,20 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		return m.println(out)
 	case agent.EvToolStart:
-		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input})
+		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent})
 	case agent.EvToolEnd:
 		for i, t := range m.tools {
-			if t.id == e.ToolID {
+			if t.id == e.ToolID && t.agent == e.Agent { // child ids can repeat the parent's
 				m.tools = append(m.tools[:i], m.tools[i+1:]...)
 				break
 			}
 		}
 		return m.println(m.renderToolCard(e))
 	case agent.EvPermission:
+		if m.perm != nil {
+			m.permQueue = append(m.permQueue, e)
+			return nil
+		}
 		ev := e
 		m.perm, m.permIdx = &ev, 0
 	case agent.EvUsage:
@@ -358,6 +366,11 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	ev := m.perm
 	m.perm = nil
+	if len(m.permQueue) > 0 {
+		next := m.permQueue[0]
+		m.permQueue = m.permQueue[1:]
+		m.perm, m.permIdx = &next, 0
+	}
 	ev.Reply <- *reply
 	if !reply.Allow {
 		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input)))

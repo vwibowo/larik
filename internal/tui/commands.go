@@ -29,6 +29,7 @@ const helpText = `Commands
   /hooks                    configured lifecycle hooks
   /hooks approve            allow the hooks in .larik/settings.json to run
   /skills                   list available skills
+  /agents                   list subagents the model can delegate to
   /<skill-name> [args]      run a skill
   /quit                     exit
 
@@ -151,6 +152,9 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/skills":
 		return m.skillsCommand(info)
+
+	case "/agents":
+		return m.agentsCommand(info)
 
 	case "/sessions":
 		infos, err := session.List(m.opts.SessionDir)
@@ -296,4 +300,31 @@ func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 		fmt.Fprintf(&b, "  ! %s\n", w)
 	}
 	return info(strings.TrimRight(b.String(), "\n"))
+}
+
+func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
+	set := m.opts.Agents
+	if set == nil {
+		return info("subagents are disabled")
+	}
+	var b strings.Builder
+	for _, d := range set.List() {
+		tools, model := "all tools", "inherits model"
+		if d.Tools != nil {
+			tools = strings.Join(d.Tools, ", ")
+		}
+		if d.Model != "" && d.Model != "inherit" {
+			model = d.Model
+		}
+		desc := d.Description
+		if len(desc) > 90 {
+			desc = desc[:87] + "..."
+		}
+		fmt.Fprintf(&b, "%-18s %s\n  %s · %s · %s\n", d.Name, desc, tools, model, d.Source)
+	}
+	for _, w := range set.Warnings {
+		fmt.Fprintf(&b, "  ! %s\n", w)
+	}
+	b.WriteString("define more in .larik/agents/<name>.md or .claude/agents/<name>.md")
+	return info(b.String())
 }

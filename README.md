@@ -50,6 +50,7 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/hooks` | List configured hooks |
 | `/hooks approve` | Allow the project's shared hooks to run |
 | `/skills` | List skills |
+| `/agents` | List subagents |
 | `/<skill-name> [args]` | Run a skill |
 
 ## Permissions
@@ -137,6 +138,37 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
 - **Frontmatter flags:** `disable-model-invocation: true` keeps a skill out of the model's index, so it only runs when you invoke it. `user-invocable: false` hides it from `/`.
 - Skills are instructions, like `AGENTS.md`. Anything a skill asks the model to run still goes through the normal permission checks.
 
+## Subagents
+
+The model can delegate work to subagents with the `task` tool. Each subagent gets a fresh context window, its own system prompt and a restricted tool set. Only its final message comes back, so broad searches and self-contained changes don't fill the main context. Several `task` calls in one turn run in parallel.
+
+Built-in agents:
+- **`general-purpose`:** all tools.
+- **`explore`:** read-only search with `read`, `grep` and `glob`.
+
+To add your own, write `<name>.md` in `.larik/agents/` or `.claude/agents/`, or in `~/.config/larik/agents/` or `~/.claude/agents/`. The format is the same as Claude Code's, and a definition overrides a built-in with the same name:
+
+```markdown
+---
+name: reviewer
+description: Reviews a diff for bugs and missing tests. Use after making changes.
+tools: Read, Grep, Glob, Bash      # optional; omit for all tools. mcp__<server> allows a whole server
+model: sonnet                      # optional: inherit (default), opus/sonnet/haiku, or provider/model
+---
+You are a meticulous code reviewer. ...
+```
+
+**What subagents share with the main agent:**
+- **Permissions:** the same rules and mode. Plan mode keeps subagents read-only too, and a subagent's permission prompts appear in your UI, labelled with the subagent and queued when several ask at once.
+- **Hooks:** the same hooks, with `SubagentStop` in place of `Stop`.
+- **Checkpoints:** the same store, so `/undo` reverts subagent edits along with the turn.
+
+**Other behavior:**
+- Subagent tool calls are shown nested under their task. Their cost is included in the session totals, and each subagent's transcript is saved next to the session file.
+- Subagents can't start further subagents.
+- The `task` call itself never asks for permission; each tool call inside the subagent is checked on its own.
+- `/agents` lists the available agents.
+
 ## Hooks
 
 Hooks are shell commands that run at points in the agent lifecycle. The format matches Claude Code's, so existing hook scripts work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
@@ -157,7 +189,7 @@ Hooks are shell commands that run at points in the agent lifecycle. The format m
 | `UserPromptSubmit` | before a prompt is sent | Block it, or add context (stdout) |
 | `PreToolUse` | before the permission check (matcher: tool name) | `allow` (skips the prompt), `deny`, `ask`, or rewrite the input with `updatedInput` |
 | `PostToolUse` | after a tool runs | Send feedback to the model |
-| `Stop` | when the agent would end its turn | `decision: "block"` makes it continue with your `reason` (at most 5 times; `stop_hook_active` is set) |
+| `Stop` / `SubagentStop` | when the agent (or a subagent) would end its turn | `decision: "block"` makes it continue with your `reason` (at most 5 times; `stop_hook_active` is set) |
 | `PreCompact`, `Notification`, `SessionEnd` | compaction, permission prompts, exit | Observe only |
 
 **How a hook's result is read:**
@@ -194,6 +226,7 @@ internal/tools      read, write, edit, bash, grep, glob
 internal/mcp        MCP client: server lifecycle, approval, tool adapter
 internal/hooks      lifecycle hook runner (Claude Code-compatible format)
 internal/skills     Agent Skills discovery, index, skill tool, /name expansion
+internal/subagent   subagent definitions and the task tool
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -215,4 +248,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, background subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).

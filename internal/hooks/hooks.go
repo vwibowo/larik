@@ -33,13 +33,14 @@ const (
 	PreToolUse       Event = "PreToolUse"
 	PostToolUse      Event = "PostToolUse"
 	Stop             Event = "Stop"
+	SubagentStop     Event = "SubagentStop"
 	PreCompact       Event = "PreCompact"
 	Notification     Event = "Notification"
 	SessionEnd       Event = "SessionEnd"
 )
 
 // Events lists every supported event, in lifecycle order.
-var Events = []Event{SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact, Notification, SessionEnd}
+var Events = []Event{SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SubagentStop, PreCompact, Notification, SessionEnd}
 
 const defaultTimeout = 60 * time.Second
 
@@ -112,10 +113,11 @@ type Input struct {
 	ToolResponse   *ToolResponse   `json:"tool_response,omitempty"`
 	Prompt         string          `json:"prompt,omitempty"`
 	StopHookActive bool            `json:"stop_hook_active,omitempty"`
-	Source         string          `json:"source,omitempty"`  // SessionStart: startup, resume, clear
-	Trigger        string          `json:"trigger,omitempty"` // PreCompact: manual, auto
-	Message        string          `json:"message,omitempty"` // Notification
-	Reason         string          `json:"reason,omitempty"`  // SessionEnd
+	Source         string          `json:"source,omitempty"`     // SessionStart: startup, resume, clear
+	Trigger        string          `json:"trigger,omitempty"`    // PreCompact: manual, auto
+	Message        string          `json:"message,omitempty"`    // Notification
+	Reason         string          `json:"reason,omitempty"`     // SessionEnd
+	AgentType      string          `json:"agent_type,omitempty"` // set inside subagents
 }
 
 type ToolResponse struct {

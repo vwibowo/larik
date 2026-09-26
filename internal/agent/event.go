@@ -28,6 +28,10 @@ const (
 type Event struct {
 	Kind EventKind `json:"type"`
 
+	// Agent labels events forwarded from a subagent ("explore: find auth");
+	// empty for the main agent.
+	Agent string `json:"agent,omitempty"`
+
 	Text string `json:"text,omitempty"` // deltas, notices, errors
 
 	Message *llm.Message `json:"message,omitempty"` // EvAssistant

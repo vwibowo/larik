@@ -52,10 +52,10 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 				endsWithNewline = true
 			}
 		case agent.EvToolStart:
-			fmt.Fprintf(stderr, "→ %s %s\n", e.ToolName, compact(e.Input))
+			fmt.Fprintf(stderr, "%s→ %s %s\n", nest(e), e.ToolName, compact(e.Input))
 		case agent.EvToolEnd:
 			if e.IsError {
-				fmt.Fprintf(stderr, "✗ %s: %s\n", e.ToolName, firstLine(e.Output))
+				fmt.Fprintf(stderr, "%s✗ %s: %s\n", nest(e), e.ToolName, firstLine(e.Output))
 			}
 		case agent.EvPermission:
 			fmt.Fprintf(stderr, "✗ %s needs approval (denied in non-interactive mode; add an allow rule or use --mode)\n", e.ToolName)
@@ -85,4 +85,12 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// nest prefixes subagent activity so it reads as part of its task.
+func nest(e agent.Event) string {
+	if e.Agent == "" {
+		return ""
+	}
+	return "  ↳ [" + e.Agent + "] "
 }

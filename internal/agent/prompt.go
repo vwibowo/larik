@@ -30,10 +30,14 @@ var instructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
 // BuildSystemPrompt assembles the system prompt. It is built once per
 // session and kept byte-stable so provider prompt caches stay warm.
 func BuildSystemPrompt(cwd, configDir string) string {
-	var b strings.Builder
-	b.WriteString(basePrompt)
+	return basePrompt + "\n\n" + ContextSections(cwd, configDir)
+}
 
-	fmt.Fprintf(&b, "\n\n<env>\nWorking directory: %s\nPlatform: %s/%s\nDate: %s\n", cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
+// ContextSections is the environment block plus project instruction files,
+// shared by the main agent and subagents.
+func ContextSections(cwd, configDir string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<env>\nWorking directory: %s\nPlatform: %s/%s\nDate: %s\n", cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
 	if root := GitRoot(cwd); root != "" {
 		fmt.Fprintf(&b, "Git repository root: %s\n", root)
 	}

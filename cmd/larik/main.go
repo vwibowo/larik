@@ -26,6 +26,7 @@ import (
 	"larik/internal/providers"
 	"larik/internal/session"
 	"larik/internal/skills"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 	"larik/internal/tui"
 )
@@ -153,10 +154,21 @@ func run() error {
 	skillSet := skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
 	baseTools := tools.Builtin()
 	system := agent.BuildSystemPrompt(cwd, cfg.ConfigDir)
+	childContext := agent.ContextSections(cwd, cfg.ConfigDir)
 	if idx := skillSet.Index(); idx != "" {
 		baseTools = append(baseTools, skills.Tool{Set: skillSet})
 		system += "\n\n" + idx
+		childContext += "\n\n" + idx
 	}
+	agentDefs := subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
+	baseTools = append(baseTools, &subagent.Tool{
+		Set:     agentDefs,
+		Context: childContext,
+		Resolve: func(spec string) (llm.Provider, string, error) {
+			r, err := providers.Resolve(cfg, spec)
+			return r.Provider, r.Model, err
+		},
+	})
 
 	mcpMgr := mcp.NewManager(cfg, version)
 	mcpMgr.Base = baseTools
@@ -209,6 +221,7 @@ func run() error {
 		MCP:           mcpMgr,
 		Hooks:         hookRunner,
 		Skills:        skillSet,
+		Agents:        agentDefs,
 		Version:       version,
 	})
 }

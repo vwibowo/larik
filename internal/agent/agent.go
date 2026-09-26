@@ -46,6 +46,10 @@ type Options struct {
 
 	// Skills expands "/skill-name args" prompts; nil disables that.
 	Skills *skills.Set
+
+	// Subagent is the agent type when this agent runs as a subagent; it
+	// switches off session-level hooks and uses SubagentStop.
+	Subagent string
 }
 
 type Agent struct {
@@ -88,8 +92,16 @@ func (a *Agent) Restore(st *session.State) {
 }
 
 func (a *Agent) Model() string              { return a.opts.Model }
+func (a *Agent) Provider() llm.Provider     { return a.opts.Provider }
+func (a *Agent) Cwd() string                { return a.opts.Cwd }
 func (a *Agent) ProviderName() string       { return a.opts.Provider.Name() }
 func (a *Agent) Perms() *permission.Checker { return a.opts.Perms }
+func (a *Agent) SessionPath() string {
+	if a.opts.Session == nil {
+		return ""
+	}
+	return a.opts.Session.Path
+}
 func (a *Agent) SessionID() string {
 	if a.opts.Session == nil {
 		return ""
@@ -186,10 +198,16 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 
 func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string {
 	a.loadTools(ctx, emit)
-	a.sessionStart(ctx, emit)
+	sub := a.opts.Subagent != ""
+	if !sub {
+		a.sessionStart(ctx, emit)
+	}
 	a.takeHalt() // clear any stale request
 
-	res := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.UserPromptSubmit, Prompt: prompt}, "")
+	var res hooks.Result
+	if !sub {
+		res = a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.UserPromptSubmit, Prompt: prompt}, "")
+	}
 	switch {
 	case res.Halt:
 		emit(Event{Kind: EvNotice, Text: "stopped by UserPromptSubmit hook: " + res.HaltReason})
@@ -198,7 +216,7 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 		emit(Event{Kind: EvNotice, Text: "prompt blocked by hook: " + res.Reason})
 		return "blocked"
 	}
-	if expanded, ok := a.opts.Skills.Expand(prompt); ok {
+	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !sub {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running skill /" + name})
 		prompt = expanded
@@ -207,7 +225,7 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)
 	}
 
-	if a.opts.Checkpoints != nil {
+	if a.opts.Checkpoints != nil && !sub { // subagent edits belong to the parent's turn
 		a.opts.Checkpoints.BeginTurn()
 	}
 	if a.needsCompaction() {
@@ -260,19 +278,23 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 			case llm.StopRefusal:
 				emit(Event{Kind: EvNotice, Text: "the model declined to continue this request"})
 			}
-			res := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.Stop, StopHookActive: stopContinuations > 0}, "")
+			stopEvent, source := hooks.Stop, "Stop"
+			if sub {
+				stopEvent, source = hooks.SubagentStop, "SubagentStop"
+			}
+			res := a.runHook(ctx, emit, hooks.Input{HookEventName: stopEvent, StopHookActive: stopContinuations > 0, AgentType: a.opts.Subagent}, a.opts.Subagent)
 			if res.Halt {
-				emit(Event{Kind: EvNotice, Text: "stopped by Stop hook: " + res.HaltReason})
+				emit(Event{Kind: EvNotice, Text: "stopped by " + source + " hook: " + res.HaltReason})
 				return "hook_stopped"
 			}
 			if res.Block && res.Reason != "" && ctx.Err() == nil {
 				if stopContinuations >= maxStopContinuations {
-					emit(Event{Kind: EvNotice, Text: "Stop hook asked to continue again; ignoring after 5 continuations"})
+					emit(Event{Kind: EvNotice, Text: source + " hook asked to continue again; ignoring after 5 continuations"})
 					return string(stop)
 				}
 				stopContinuations++
-				emit(Event{Kind: EvNotice, Text: "Stop hook asked the agent to continue: " + firstLine(res.Reason)})
-				a.appendMessage(llm.UserText(hookFeedback("Stop", res.Reason)), nil)
+				emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + firstLine(res.Reason)})
+				a.appendMessage(llm.UserText(hookFeedback(source, res.Reason)), nil)
 				continue
 			}
 			return string(stop)
