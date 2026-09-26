@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/permission"
@@ -25,6 +26,8 @@ const helpText = `Commands
   /sessions                 list sessions for this directory
   /mcp                      MCP servers, status and tools
   /mcp approve <name>       allow a project-defined MCP server to start
+  /hooks                    configured lifecycle hooks
+  /hooks approve            allow the hooks in .larik/settings.json to run
   /quit                     exit
 
 Keys
@@ -141,6 +144,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/mcp":
 		return m.mcpCommand(args, info, fail)
 
+	case "/hooks":
+		return m.hooksCommand(args, info, fail)
+
 	case "/sessions":
 		infos, err := session.List(m.opts.SessionDir)
 		if err != nil {
@@ -203,6 +209,50 @@ func (m *model) mcpCommand(args []string, info, fail func(string) tea.Cmd) tea.C
 		for _, t := range st.Tools {
 			fmt.Fprintf(&b, "    %s\n", t)
 		}
+	}
+	return info(strings.TrimRight(b.String(), "\n"))
+}
+
+func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
+	cfg := m.opts.Config
+	if len(args) >= 1 && args[0] == "approve" {
+		if cfg.ProjectHooks.Empty() {
+			return info("no project hooks to approve")
+		}
+		if err := cfg.ApproveProjectHooks(); err != nil {
+			return fail(err.Error())
+		}
+		m.opts.Hooks.SetConfig(cfg.ActiveHooks())
+		return info("project hooks approved (pinned to their current content) and active now")
+	}
+	var b strings.Builder
+	list := func(title string, c hooks.Config) {
+		if c.Empty() {
+			return
+		}
+		b.WriteString(title + "\n")
+		for _, ev := range hooks.Events {
+			for _, mt := range c[ev] {
+				matcher := mt.Matcher
+				if matcher == "" {
+					matcher = "*"
+				}
+				for _, h := range mt.Hooks {
+					fmt.Fprintf(&b, "  %-16s %-12s %s\n", ev, matcher, h.Command)
+				}
+			}
+		}
+	}
+	list("personal (~/.config/larik/config.json, .larik/settings.local.json):", cfg.TrustedHooks)
+	if !cfg.ProjectHooks.Empty() {
+		state := "approved"
+		if !cfg.ProjectHooksApproved() {
+			state = "NOT approved; they will not run until you run /hooks approve"
+		}
+		list("project (.larik/settings.json), "+state+":", cfg.ProjectHooks)
+	}
+	if b.Len() == 0 {
+		return info("no hooks configured (add \"hooks\" to ~/.config/larik/config.json or .larik/settings.json)")
 	}
 	return info(strings.TrimRight(b.String(), "\n"))
 }

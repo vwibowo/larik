@@ -17,6 +17,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/config"
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/mcp"
 )
@@ -29,6 +30,7 @@ type Options struct {
 	SessionDir    string
 	Version       string
 	MCP           *mcp.Manager
+	Hooks         *hooks.Runner
 }
 
 func Run(opts Options) error {

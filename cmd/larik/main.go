@@ -19,6 +19,7 @@ import (
 	"larik/internal/checkpoint"
 	"larik/internal/config"
 	"larik/internal/headless"
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/permission"
@@ -151,6 +152,8 @@ func run() error {
 	mcpMgr.Start()
 	defer mcpMgr.Close()
 
+	hookRunner := hooks.NewRunner(cfg.ActiveHooks(), cwd, sess.ID, sess.Path)
+
 	a := agent.New(agent.Options{
 		Provider:    resolved.Provider,
 		Model:       resolved.Model,
@@ -164,12 +167,17 @@ func run() error {
 		Checkpoints: checkpoint.New(filepath.Join(cfg.DataDir, "checkpoints", sess.ID)),
 		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
 		LoadTools:   mcpMgr.Registry,
+		Hooks:       hookRunner,
 	})
 	if state != nil {
 		a.Restore(state)
 	}
 
 	if *print {
+		defer a.End("other")
+		if !cfg.ProjectHooksApproved() {
+			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return headless.Run(ctx, a, prompt, headless.Format(*output), os.Stdout, os.Stderr)
@@ -179,6 +187,7 @@ func run() error {
 	if state != nil {
 		history = state.All
 	}
+	defer a.End("prompt_input_exit")
 	return tui.Run(tui.Options{
 		Agent:         a,
 		Config:        cfg,
@@ -186,6 +195,7 @@ func run() error {
 		History:       history,
 		SessionDir:    sessDir,
 		MCP:           mcpMgr,
+		Hooks:         hookRunner,
 		Version:       version,
 	})
 }

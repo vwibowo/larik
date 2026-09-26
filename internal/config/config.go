@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
 )
@@ -40,6 +41,14 @@ type Config struct {
 	// ApprovedMCP maps project-scoped server names to the hash of the config
 	// the user approved. Only honored from settings.local.json.
 	ApprovedMCP map[string]string `json:"approved_mcp_servers,omitempty"`
+	Hooks       hooks.Config      `json:"hooks,omitempty"`
+	// ApprovedHooks is the hash of the approved project hook set (from
+	// .larik/settings.json). Only honored from settings.local.json.
+	ApprovedHooks string `json:"approved_project_hooks,omitempty"`
+
+	// TrustedHooks come from personal files; ProjectHooks from shared ones.
+	TrustedHooks hooks.Config `json:"-"`
+	ProjectHooks hooks.Config `json:"-"`
 
 	// Resolved paths, not serialized.
 	ConfigDir string `json:"-"`
@@ -121,9 +130,17 @@ func (c *Config) merge(path string, trusted bool) error {
 			c.MCPServers[name] = srv
 		}
 	}
+	if trusted {
+		c.TrustedHooks = c.TrustedHooks.Merge(o.Hooks)
+	} else {
+		c.ProjectHooks = c.ProjectHooks.Merge(o.Hooks)
+	}
 	if filepath.Base(path) == "settings.local.json" {
 		for k, v := range o.ApprovedMCP {
 			c.ApprovedMCP[k] = v
+		}
+		if o.ApprovedHooks != "" {
+			c.ApprovedHooks = o.ApprovedHooks
 		}
 	}
 	if o.Model != "" {
@@ -182,4 +199,28 @@ func updateLocal(cwd string, edit func(raw map[string]any)) error {
 	}
 	b, _ := json.MarshalIndent(raw, "", "  ")
 	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+// ProjectHooksApproved reports whether shared project hooks may run.
+func (c *Config) ProjectHooksApproved() bool {
+	return c.ProjectHooks.Empty() || c.ApprovedHooks == c.ProjectHooks.Hash()
+}
+
+// ActiveHooks returns the hooks that may run: personal hooks always,
+// project hooks only once approved.
+func (c *Config) ActiveHooks() hooks.Config {
+	if c.ProjectHooksApproved() {
+		return c.TrustedHooks.Merge(c.ProjectHooks)
+	}
+	return c.TrustedHooks
+}
+
+// ApproveProjectHooks records approval of the current project hook set.
+func (c *Config) ApproveProjectHooks() error {
+	hash := c.ProjectHooks.Hash()
+	if err := updateLocal(c.Cwd, func(raw map[string]any) { raw["approved_project_hooks"] = hash }); err != nil {
+		return err
+	}
+	c.ApprovedHooks = hash
+	return nil
 }

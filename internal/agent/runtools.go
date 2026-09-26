@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/tools"
@@ -35,8 +37,9 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 		case use.Input == nil:
 			res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
 		default:
-			allow, reason := a.authorize(ctx, use, tool, emit)
+			allow, reason, input := a.authorize(ctx, use, tool, emit)
 			if allow {
+				use.Input = input
 				queue = append(queue, approved{i, use, tool})
 				continue
 			}
@@ -78,36 +81,71 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 	out := job.tool.Run(ctx, a.env, use.Input)
 	res.Content, res.IsError = out.Content, out.IsError
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: out.Content, Display: out.Display, IsError: out.IsError})
+
+	post := a.runHook(ctx, emit, hooks.Input{
+		HookEventName: hooks.PostToolUse, ToolName: use.Name, ToolInput: use.Input, ToolUseID: use.ID,
+		ToolResponse: &hooks.ToolResponse{Output: out.Content, IsError: out.IsError},
+	}, use.Name)
+	if post.Block && post.Reason != "" {
+		res.Content += "\n\n" + hookFeedback("PostToolUse", post.Reason)
+	}
+	if len(post.Context) > 0 {
+		res.Content += "\n\n" + hookContext("PostToolUse", post.Context)
+	}
+	if post.Halt {
+		a.requestHalt(post.HaltReason)
+	}
 	return res
 }
 
-// authorize applies permission rules, asking the front end when needed.
-func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, emit func(Event)) (bool, string) {
+// authorize runs PreToolUse hooks and permission rules, asking the front
+// end when needed. It returns the (possibly hook-rewritten) input to run.
+// Order: hook deny > rule deny > hook allow/ask > rules/mode > prompt.
+func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, emit func(Event)) (bool, string, json.RawMessage) {
+	input := use.Input
+	pre := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreToolUse, ToolName: use.Name, ToolInput: input, ToolUseID: use.ID}, use.Name)
+	if pre.Halt {
+		a.requestHalt(pre.HaltReason)
+		return false, "Stopped by a PreToolUse hook: " + pre.HaltReason, input
+	}
+	if pre.Block || pre.Permission == "deny" {
+		return false, "Blocked by PreToolUse hook: " + pre.Reason, input
+	}
+	if pre.UpdatedInput != nil {
+		input = pre.UpdatedInput
+	}
+
 	perms := a.opts.Perms
 	if perms == nil {
-		return true, ""
+		return true, "", input
 	}
-	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: tool.ReadOnly(), Input: use.Input})
-	switch decision {
-	case permission.Allow:
-		return true, ""
-	case permission.Deny:
-		return false, "Permission denied: " + reason
+	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: tool.ReadOnly(), Input: input})
+	switch {
+	case decision == permission.Deny:
+		return false, "Permission denied: " + reason, input
+	case pre.Permission == "allow":
+		return true, "", input
+	case pre.Permission == "ask":
+		decision = permission.Ask
+	}
+	if decision == permission.Allow {
+		return true, "", input
 	}
 
 	reply := make(chan PermissionReply, 1)
-	rule := permission.SuggestRule(use.Name, use.Input)
-	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: use.Input, SuggestedRule: rule, Reply: reply})
+	rule := permission.SuggestRule(use.Name, input)
+	a.notify("Larik needs your permission to use " + use.Name)
+	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Reply: reply})
 	select {
 	case <-ctx.Done():
-		return false, "interrupted by user"
+		return false, "interrupted by user", input
 	case r := <-reply:
 		if !r.Allow {
 			msg := "The user denied this tool call."
 			if r.Reason != "" {
 				msg += " Their feedback: " + r.Reason
 			}
-			return false, msg
+			return false, msg, input
 		}
 		if r.Always {
 			perms.AddAllow(rule)
@@ -115,6 +153,6 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 				a.opts.OnAllowRule(rule)
 			}
 		}
-		return true, ""
+		return true, "", input
 	}
 }

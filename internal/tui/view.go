@@ -252,6 +252,9 @@ func (m *model) printBanner() tea.Cmd {
 		m.st.dim.Render(m.agent.ProviderName() + "/" + m.agent.Model() + " · " + cwd),
 		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /help"),
 	}
+	if !m.opts.Config.ProjectHooksApproved() {
+		lines = append(lines, m.st.warn.Render("project hooks in .larik/settings.json are not approved yet · review with /hooks"))
+	}
 	if id := m.agent.SessionID(); id != "" {
 		lines = append(lines, m.st.dim.Render("session "+id+" · resume with larik --resume "+id))
 	}

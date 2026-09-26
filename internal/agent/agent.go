@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"larik/internal/checkpoint"
+	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/session"
@@ -38,6 +39,9 @@ type Options struct {
 	// the prompt prefix, and provider caches, remain stable. notify reports
 	// progress or problems (e.g. an MCP server failing).
 	LoadTools func(ctx context.Context, notify func(string)) *tools.Registry
+
+	// Hooks runs user lifecycle hooks; nil disables them.
+	Hooks *hooks.Runner
 }
 
 type Agent struct {
@@ -51,13 +55,18 @@ type Agent struct {
 	lastContext int
 	notes       []string // prepended to the next user message
 	toolsLoaded bool
+
+	sessionStarted bool
+	startSource    string // SessionStart source: startup, resume, clear
+	halted         bool   // a hook returned continue:false
+	haltReason     string
 }
 
 func New(opts Options) *Agent {
 	if opts.MaxTurns == 0 {
 		opts.MaxTurns = 200
 	}
-	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd)}
+	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup"}
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = func(path string) { _ = opts.Checkpoints.Capture(path) }
 	}
@@ -71,6 +80,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.messages = st.Messages
 	a.usage = st.Usage
 	a.cost = st.Cost
+	a.startSource = "resume"
 }
 
 func (a *Agent) Model() string              { return a.opts.Model }
@@ -114,6 +124,7 @@ func (a *Agent) Stats() UsageInfo {
 func (a *Agent) Clear() {
 	a.mu.Lock()
 	a.messages, a.lastContext, a.toolsLoaded = nil, 0, false
+	a.sessionStarted, a.startSource = false, "clear"
 	a.mu.Unlock()
 }
 
@@ -171,6 +182,21 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 
 func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string {
 	a.loadTools(ctx, emit)
+	a.sessionStart(ctx, emit)
+	a.takeHalt() // clear any stale request
+
+	res := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.UserPromptSubmit, Prompt: prompt}, "")
+	switch {
+	case res.Halt:
+		emit(Event{Kind: EvNotice, Text: "stopped by UserPromptSubmit hook: " + res.HaltReason})
+		return "hook_stopped"
+	case res.Block:
+		emit(Event{Kind: EvNotice, Text: "prompt blocked by hook: " + res.Reason})
+		return "blocked"
+	case len(res.Context) > 0:
+		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)
+	}
+
 	if a.opts.Checkpoints != nil {
 		a.opts.Checkpoints.BeginTurn()
 	}
@@ -189,6 +215,7 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 	a.appendMessage(llm.UserText(prompt), nil)
 
 	compactedThisTurn := false
+	stopContinuations := 0
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
 		if turn > 0 && a.needsCompaction() && !compactedThisTurn {
 			if err := a.compact(ctx, emit, true); err != nil {
@@ -223,6 +250,21 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 			case llm.StopRefusal:
 				emit(Event{Kind: EvNotice, Text: "the model declined to continue this request"})
 			}
+			res := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.Stop, StopHookActive: stopContinuations > 0}, "")
+			if res.Halt {
+				emit(Event{Kind: EvNotice, Text: "stopped by Stop hook: " + res.HaltReason})
+				return "hook_stopped"
+			}
+			if res.Block && res.Reason != "" && ctx.Err() == nil {
+				if stopContinuations >= maxStopContinuations {
+					emit(Event{Kind: EvNotice, Text: "Stop hook asked to continue again; ignoring after 5 continuations"})
+					return string(stop)
+				}
+				stopContinuations++
+				emit(Event{Kind: EvNotice, Text: "Stop hook asked the agent to continue: " + firstLine(res.Reason)})
+				a.appendMessage(llm.UserText(hookFeedback("Stop", res.Reason)), nil)
+				continue
+			}
 			return string(stop)
 		}
 
@@ -230,6 +272,10 @@ func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string
 		a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: results}, nil)
 		if ctx.Err() != nil {
 			return "interrupted"
+		}
+		if halted, reason := a.takeHalt(); halted {
+			emit(Event{Kind: EvNotice, Text: "stopped by hook: " + reason})
+			return "hook_stopped"
 		}
 	}
 	emit(Event{Kind: EvNotice, Text: fmt.Sprintf("stopped after %d model turns (max_turns)", a.opts.MaxTurns)})
@@ -329,15 +375,16 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 		if e.Kind == EvCompacted {
 			summary = e.Summary
 		}
-	}, false)
+	}, false, "manual")
 	return summary, err
 }
 
 func (a *Agent) compact(ctx context.Context, emit func(Event), midTurn bool) error {
-	return a.compactWith(ctx, emit, midTurn)
+	return a.compactWith(ctx, emit, midTurn, "auto")
 }
 
-func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool) error {
+func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool, trigger string) error {
+	a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreCompact, Trigger: trigger}, trigger)
 	a.mu.Lock()
 	msgs := append([]llm.Message(nil), a.messages...)
 	req := llm.Request{
@@ -397,4 +444,11 @@ func extractSummary(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

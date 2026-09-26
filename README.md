@@ -47,6 +47,8 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/sessions` | List sessions for this directory |
 | `/mcp` | MCP server status and tools |
 | `/mcp approve <name>` | Allow a project-defined MCP server to start |
+| `/hooks` | List configured hooks |
+| `/hooks approve` | Allow the project's shared hooks to run |
 
 ## Permissions
 
@@ -111,6 +113,44 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 - Text results are passed to the model. Images and binary resources are summarized, not sent.
 - OAuth is not supported yet. For token-based remote servers, use `headers`.
 
+## Hooks
+
+Hooks are shell commands that run at points in the agent lifecycle. The format matches Claude Code's, so existing hook scripts work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
+
+```json
+{
+  "hooks": {
+    "PreToolUse":  [{ "matcher": "bash", "hooks": [{ "type": "command", "command": "./scripts/guard.sh", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "write|edit", "hooks": [{ "type": "command", "command": "gofmt -l . >&2 && exit 2 || true" }] }],
+    "Stop":        [{ "hooks": [{ "type": "command", "command": "./scripts/require-tests.sh" }] }]
+  }
+}
+```
+
+| Event | Fires | Can do |
+|---|---|---|
+| `SessionStart` | first turn of each fresh context (matcher: `startup`, `resume`, `clear`) | Add context. Stdout goes to the model. |
+| `UserPromptSubmit` | before a prompt is sent | Block it, or add context (stdout) |
+| `PreToolUse` | before the permission check (matcher: tool name) | `allow` (skips the prompt), `deny`, `ask`, or rewrite the input with `updatedInput` |
+| `PostToolUse` | after a tool runs | Send feedback to the model |
+| `Stop` | when the agent would end its turn | `decision: "block"` makes it continue with your `reason` (at most 5 times; `stop_hook_active` is set) |
+| `PreCompact`, `Notification`, `SessionEnd` | compaction, permission prompts, exit | Observe only |
+
+**How a hook's result is read:**
+- **Stdin** is a JSON payload with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, and so on.
+- **Exit 0:** success. Stdout may be JSON: `decision`/`reason`, `continue: false` with `stopReason` (ends the turn), `systemMessage`, and `hookSpecificOutput` (`permissionDecision`, `updatedInput`, `additionalContext`).
+- **Exit 2:** blocks. Stderr is the reason, and it goes to the model.
+- **Other exit codes:** errors that don't block. They're shown to you.
+
+**Environment and timeouts:**
+- `LARIK_PROJECT_DIR` is set, and so is `CLAUDE_PROJECT_DIR` for compatibility.
+- The default timeout is 60s.
+- Matching hooks run in parallel.
+
+**Precedence:** a hook `deny` beats everything. Permission deny rules beat a hook `allow`.
+
+**Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in `~/.config/larik/config.json` and `.larik/settings.local.json` always run.
+
 Instructions are loaded from these files:
 - `AGENTS.md` (or `CLAUDE.md`) in each directory from the repo root down to the working directory.
 - `~/.config/larik/AGENTS.md`.
@@ -128,6 +168,7 @@ internal/providers  "provider/model" resolution
 internal/agent      loop, events, compaction, system prompt
 internal/tools      read, write, edit, bash, grep, glob
 internal/mcp        MCP client: server lifecycle, approval, tool adapter
+internal/hooks      lifecycle hook runner (Claude Code-compatible format)
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -149,4 +190,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, hooks, skills, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, skills, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
