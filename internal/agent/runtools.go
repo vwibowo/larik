@@ -22,10 +22,11 @@ type approved struct {
 func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)) []llm.Block {
 	results := make([]llm.Block, len(uses))
 	var queue []approved
+	registry := a.Tools()
 
 	for i, use := range uses {
 		res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: use.Name}
-		tool, ok := a.opts.Tools.Get(use.Name)
+		tool, ok := registry.Get(use.Name)
 		switch {
 		case ctx.Err() != nil:
 			res.Content, res.IsError = "interrupted by user", true

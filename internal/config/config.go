@@ -4,7 +4,8 @@
 //	./.larik/settings.json           project settings (commit this)
 //	./.larik/settings.local.json     personal project settings, incl. "always allow" rules
 //
-// Later files override scalars; permission rules accumulate.
+// Later files override scalars; permission rules accumulate. MCP servers
+// are also read from the project's .mcp.json (see mcp.go).
 package config
 
 import (
@@ -35,6 +36,10 @@ type Config struct {
 	Providers   map[string]ProviderConfig `json:"providers,omitempty"`
 	Models      map[string]llm.ModelInfo  `json:"models,omitempty"` // catalog additions/overrides
 	Permissions permission.Rules          `json:"permissions,omitempty"`
+	MCPServers  map[string]MCPServer      `json:"mcp_servers,omitempty"`
+	// ApprovedMCP maps project-scoped server names to the hash of the config
+	// the user approved. Only honored from settings.local.json.
+	ApprovedMCP map[string]string `json:"approved_mcp_servers,omitempty"`
 
 	// Resolved paths, not serialized.
 	ConfigDir string `json:"-"`
@@ -64,14 +69,24 @@ func LocalSettingsPath(cwd string) string {
 }
 
 func Load(cwd string) (*Config, error) {
-	cfg := &Config{Providers: map[string]ProviderConfig{}, Models: map[string]llm.ModelInfo{}}
+	cfg := &Config{
+		Providers:   map[string]ProviderConfig{},
+		Models:      map[string]llm.ModelInfo{},
+		MCPServers:  map[string]MCPServer{},
+		ApprovedMCP: map[string]string{},
+	}
 	cfg.ConfigDir, cfg.DataDir, cfg.Cwd = configDir(), dataDir(), cwd
-	for _, path := range []string{
-		filepath.Join(cfg.ConfigDir, "config.json"),
-		filepath.Join(cwd, ".larik", "settings.json"),
-		LocalSettingsPath(cwd),
-	} {
-		if err := cfg.merge(path); err != nil {
+	layers := []struct {
+		path    string
+		trusted bool // servers from this file start without approval
+	}{
+		{filepath.Join(cfg.ConfigDir, "config.json"), true},
+		{filepath.Join(cwd, ".mcp.json"), false},
+		{filepath.Join(cwd, ".larik", "settings.json"), false},
+		{LocalSettingsPath(cwd), true},
+	}
+	for _, l := range layers {
+		if err := cfg.merge(l.path, l.trusted); err != nil {
 			return nil, err
 		}
 	}
@@ -85,7 +100,7 @@ func Load(cwd string) (*Config, error) {
 	return cfg, nil
 }
 
-func (c *Config) merge(path string) error {
+func (c *Config) merge(path string, trusted bool) error {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -93,9 +108,23 @@ func (c *Config) merge(path string) error {
 	if err != nil {
 		return err
 	}
-	var o Config
+	var o struct {
+		Config
+		MCPServersCompat map[string]MCPServer `json:"mcpServers"` // .mcp.json / Claude Code format
+	}
 	if err := json.Unmarshal(data, &o); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
+	}
+	for _, servers := range []map[string]MCPServer{o.MCPServersCompat, o.MCPServers} {
+		for name, srv := range servers {
+			srv.Name, srv.Source, srv.Trusted = name, path, trusted
+			c.MCPServers[name] = srv
+		}
+	}
+	if filepath.Base(path) == "settings.local.json" {
+		for k, v := range o.ApprovedMCP {
+			c.ApprovedMCP[k] = v
+		}
 	}
 	if o.Model != "" {
 		c.Model = o.Model
@@ -122,6 +151,24 @@ func (c *Config) merge(path string) error {
 
 // PersistAllowRule appends an allow rule to the project's local settings.
 func PersistAllowRule(cwd, rule string) error {
+	return updateLocal(cwd, func(raw map[string]any) {
+		perms, _ := raw["permissions"].(map[string]any)
+		if perms == nil {
+			perms = map[string]any{}
+		}
+		allow, _ := perms["allow"].([]any)
+		for _, r := range allow {
+			if r == rule {
+				return
+			}
+		}
+		perms["allow"] = append(allow, rule)
+		raw["permissions"] = perms
+	})
+}
+
+// updateLocal edits settings.local.json as generic JSON so unknown keys survive.
+func updateLocal(cwd string, edit func(raw map[string]any)) error {
 	path := LocalSettingsPath(cwd)
 	raw := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
@@ -129,18 +176,7 @@ func PersistAllowRule(cwd, rule string) error {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 	}
-	perms, _ := raw["permissions"].(map[string]any)
-	if perms == nil {
-		perms = map[string]any{}
-	}
-	allow, _ := perms["allow"].([]any)
-	for _, r := range allow {
-		if r == rule {
-			return nil
-		}
-	}
-	perms["allow"] = append(allow, rule)
-	raw["permissions"] = perms
+	edit(raw)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

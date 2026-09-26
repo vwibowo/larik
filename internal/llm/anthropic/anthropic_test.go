@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -107,5 +110,40 @@ func TestErrors(t *testing.T) {
 	_, _, err := collect(t, New("k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: []llm.Message{llm.UserText("x")}})
 	if !errors.Is(err, llm.ErrContextOverflow) {
 		t.Fatalf("want context overflow, got %v", err)
+	}
+}
+
+func TestThinkingMismatchRetry(t *testing.T) {
+	calls := 0
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"thinking block prefix_binding mismatch"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, llmtest.SSE(
+			"event: message_start\ndata: "+`{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-opus-5","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"event: message_delta\ndata: "+`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
+			"event: message_stop\ndata: "+`{"type":"message_stop"}`,
+		))
+	}))
+	defer srv.Close()
+	history := []llm.Message{
+		llm.UserText("a"),
+		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: []llm.Block{{Type: llm.BlockThinking, Text: "t", Signature: "SIGX", Provider: Name}, llm.TextBlock("b")}},
+		llm.UserText("c"),
+	}
+	_, _, err := collect(t, New("k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: history})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !strings.Contains(bodies[0], "SIGX") || strings.Contains(bodies[1], "SIGX") {
+		t.Fatalf("calls=%d; retry should drop thinking", calls)
 	}
 }

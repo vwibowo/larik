@@ -32,6 +32,12 @@ type Options struct {
 	Session     *session.Session  // optional
 	Checkpoints *checkpoint.Store // optional
 	OnAllowRule func(rule string) // persists "always allow" answers
+
+	// LoadTools, if set, supplies the tool set at the start of each fresh
+	// context (first prompt, and after Clear). The set then stays fixed so
+	// the prompt prefix, and provider caches, remain stable. notify reports
+	// progress or problems (e.g. an MCP server failing).
+	LoadTools func(ctx context.Context, notify func(string)) *tools.Registry
 }
 
 type Agent struct {
@@ -44,6 +50,7 @@ type Agent struct {
 	cost        float64
 	lastContext int
 	notes       []string // prepended to the next user message
+	toolsLoaded bool
 }
 
 func New(opts Options) *Agent {
@@ -106,8 +113,32 @@ func (a *Agent) Stats() UsageInfo {
 // Clear drops the conversation context (the session file keeps history).
 func (a *Agent) Clear() {
 	a.mu.Lock()
-	a.messages, a.lastContext = nil, 0
+	a.messages, a.lastContext, a.toolsLoaded = nil, 0, false
 	a.mu.Unlock()
+}
+
+// Tools returns the current tool registry.
+func (a *Agent) Tools() *tools.Registry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.opts.Tools
+}
+
+func (a *Agent) loadTools(ctx context.Context, emit func(Event)) {
+	a.mu.Lock()
+	load := a.opts.LoadTools
+	needed := !a.toolsLoaded && load != nil
+	a.toolsLoaded = true
+	a.mu.Unlock()
+	if !needed {
+		return
+	}
+	reg := load(ctx, func(msg string) { emit(Event{Kind: EvNotice, Text: msg}) })
+	if reg != nil {
+		a.mu.Lock()
+		a.opts.Tools = reg
+		a.mu.Unlock()
+	}
 }
 
 // Undo reverts the last turn's file changes and tells the model about it
@@ -139,6 +170,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 }
 
 func (a *Agent) run(ctx context.Context, prompt string, emit func(Event)) string {
+	a.loadTools(ctx, emit)
 	if a.opts.Checkpoints != nil {
 		a.opts.Checkpoints.BeginTurn()
 	}

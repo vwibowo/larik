@@ -45,6 +45,8 @@ With no `--model`, Larik picks the default model of the first provider whose key
 | `/clear` | Fresh context |
 | `/cost` | Usage and cost |
 | `/sessions` | List sessions for this directory |
+| `/mcp` | MCP server status and tools |
+| `/mcp approve <name>` | Allow a project-defined MCP server to start |
 
 ## Permissions
 
@@ -87,6 +89,28 @@ Settings are merged in this order, with later files winning:
 
 `models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
 
+## MCP servers
+
+Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio, streamable HTTP, or SSE. It reads servers from `mcp_servers` in any Larik settings file, and from a project `.mcp.json` in the common format, so configs shared with other tools work unchanged:
+
+```json
+{
+  "mcpServers": {
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
+    "fs":     { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/notes"] }
+  }
+}
+```
+
+- Server tools appear as `mcp__<server>__<tool>`. In rules, `mcp__github` covers every tool on that server.
+- `${VAR}` and `${VAR:-default}` are expanded in the command, args, env, URL, and headers.
+- **Trust:** servers from shared project files (`.mcp.json`, `.larik/settings.json`) don't start until you run `/mcp approve <name>`. The approval is stored in `.larik/settings.local.json` and pinned to a hash of the server's config, so editing the command or URL requires re-approval. Servers in `~/.config/larik/config.json` or `settings.local.json` start automatically.
+- **Permissions:** MCP tools ask before running. The exception is tools that declare both `readOnlyHint: true` and `openWorldHint: false`.
+- **Stable tool set:** servers start in the background at launch, and their tools are loaded before the first request. The tool set then stays fixed for that context so prompt caches stay valid. Newly approved or restarted servers join after `/clear` or in a new session.
+- Stdio server stderr is written to `~/.local/share/larik/logs/mcp-<name>.log`.
+- Text results are passed to the model. Images and binary resources are summarized, not sent.
+- OAuth is not supported yet. For token-based remote servers, use `headers`.
+
 Instructions are loaded from these files:
 - `AGENTS.md` (or `CLAUDE.md`) in each directory from the repo root down to the working directory.
 - `~/.config/larik/AGENTS.md`.
@@ -103,6 +127,7 @@ internal/llm        provider-neutral types, catalog, retry
 internal/providers  "provider/model" resolution
 internal/agent      loop, events, compaction, system prompt
 internal/tools      read, write, edit, bash, grep, glob
+internal/mcp        MCP client: server lifecycle, approval, tool adapter
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -124,4 +149,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not in v0.1:** MCP, hooks, skills, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, hooks, skills, subagents, LSP diagnostics, OS-level sandboxing, and in-TUI session switching (use `--resume`).

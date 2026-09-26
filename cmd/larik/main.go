@@ -20,6 +20,7 @@ import (
 	"larik/internal/config"
 	"larik/internal/headless"
 	"larik/internal/llm"
+	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
 	"larik/internal/session"
@@ -144,6 +145,12 @@ func run() error {
 		eff = llm.Effort(*effort)
 	}
 
+	// MCP servers connect in the background; the agent waits for them before
+	// its first request.
+	mcpMgr := mcp.NewManager(cfg, version)
+	mcpMgr.Start()
+	defer mcpMgr.Close()
+
 	a := agent.New(agent.Options{
 		Provider:    resolved.Provider,
 		Model:       resolved.Model,
@@ -156,6 +163,7 @@ func run() error {
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(cfg.DataDir, "checkpoints", sess.ID)),
 		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
+		LoadTools:   mcpMgr.Registry,
 	})
 	if state != nil {
 		a.Restore(state)
@@ -177,6 +185,7 @@ func run() error {
 		InitialPrompt: prompt,
 		History:       history,
 		SessionDir:    sessDir,
+		MCP:           mcpMgr,
 		Version:       version,
 	})
 }

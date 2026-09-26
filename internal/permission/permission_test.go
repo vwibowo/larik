@@ -12,7 +12,7 @@ func call(tool string, readOnly bool, input string) Call {
 func TestDecide(t *testing.T) {
 	rules := Rules{
 		Allow: []string{"bash(go test*)", "edit(docs/**)"},
-		Deny:  []string{"bash(rm -rf*)", "read(.env)"},
+		Deny:  []string{"bash(rm -rf*)", "read(.env)", "mcp__prod-db"},
 	}
 	cases := []struct {
 		name string
@@ -35,6 +35,9 @@ func TestDecide(t *testing.T) {
 		{"plan denies writes", ModePlan, call("edit", false, `{"path":"main.go"}`), Deny},
 		{"plan allows reads", ModePlan, call("grep", true, `{"pattern":"x"}`), Allow},
 		{"yolo", ModeYolo, call("bash", false, `{"command":"make deploy"}`), Allow},
+		{"mcp asks by default", ModeDefault, call("mcp__jira__create", false, `{}`), Ask},
+		{"mcp server deny", ModeYolo, call("mcp__prod-db__drop", false, `{}`), Deny},
+		{"mcp read-only auto", ModeDefault, call("mcp__jira__get", true, `{}`), Allow},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,6 +46,21 @@ func TestDecide(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMCPRules(t *testing.T) {
+	c := NewChecker(ModeDefault, Rules{Allow: []string{"mcp__github", "mcp__docs__search"}}, "/w")
+	cases := map[string]Decision{
+		"mcp__github__create_issue": Allow, // server-wide rule
+		"mcp__docs__search":         Allow, // exact rule
+		"mcp__docs__delete":         Ask,
+		"mcp__githubx__read":        Ask, // prefix must end at the server boundary
+	}
+	for tool, want := range cases {
+		if got, _ := c.Decide(call(tool, false, `{}`)); got != want {
+			t.Errorf("%s: got %v want %v", tool, got, want)
+		}
 	}
 }
 

@@ -3,7 +3,9 @@
 // Rules look like `tool` or `tool(pattern)`: `bash(git status*)`,
 // `edit(src/**)`, `read`. Bash patterns match the command string with `*`
 // as a wildcard; file-tool patterns are globs on the path relative to the
-// working directory. Deny rules always win.
+// working directory. MCP tools are matched by name (`mcp__github__get_issue`)
+// or by server (`mcp__github` covers every tool of that server). Deny rules
+// always win.
 package permission
 
 import (
@@ -157,12 +159,17 @@ func SuggestRule(tool string, input json.RawMessage) string {
 
 var subcommandTools = map[string]bool{"git": true, "go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "docker": true, "kubectl": true, "make": true, "uv": true, "bun": true}
 
-var ruleRe = regexp.MustCompile(`^(\w+)(?:\((.*)\))?$`)
+var ruleRe = regexp.MustCompile(`^([\w-]+)(?:\((.*)\))?$`)
 
 func (c *Checker) matches(rule, tool, subject string) bool {
 	m := ruleRe.FindStringSubmatch(strings.TrimSpace(rule))
-	if m == nil || m[1] != tool {
+	if m == nil {
 		return false
+	}
+	if m[1] != tool {
+		// `mcp__server` covers all of that server's tools.
+		return strings.HasPrefix(m[1], "mcp__") && !strings.Contains(m[1][len("mcp__"):], "__") &&
+			strings.HasPrefix(tool, m[1]+"__") && m[2] == ""
 	}
 	pattern := m[2]
 	if pattern == "" || pattern == "*" {

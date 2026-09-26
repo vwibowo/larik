@@ -41,76 +41,113 @@ func (p *Provider) Name() string { return Name }
 
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		params, err := buildParams(req)
-		if err != nil {
+		started, err := p.attempt(ctx, req, false, yield)
+		// Thinking blocks are bound to the exact prefix that produced them
+		// (system, tools, earlier messages). If that changed — e.g. a resumed
+		// session with different MCP tools — the API rejects them; the
+		// documented recovery is to strip thinking and retry once.
+		if err != nil && !started && thinkingMismatch(err) && hasThinking(req) {
+			started, err = p.attempt(ctx, req, true, yield)
+		}
+		if err != nil && err != errStopped {
 			yield(llm.StreamEvent{}, err)
-			return
 		}
-		stream := p.client.Messages.NewStreaming(ctx, params)
-		defer stream.Close()
-
-		var msg sdk.Message
-		// Eager input streaming skips server-side validation, so a truncated
-		// tool input can arrive; remember which blocks failed to parse.
-		invalidInput := map[int64]bool{}
-		for stream.Next() {
-			ev := stream.Current()
-			if ev.Type == "content_block_stop" && int(ev.Index) < len(msg.Content) {
-				cb := msg.Content[ev.Index]
-				if cb.Type == "tool_use" && len(cb.Input) > 0 && !json.Valid(cb.Input) {
-					invalidInput[ev.Index] = true
-				}
-			}
-			if err := msg.Accumulate(ev); err != nil {
-				yield(llm.StreamEvent{}, err)
-				return
-			}
-			var out llm.StreamEvent
-			switch ev.Type {
-			case "content_block_start":
-				if ev.ContentBlock.Type != "tool_use" {
-					continue
-				}
-				out = llm.StreamEvent{Type: llm.EventToolUseStart, Text: ev.ContentBlock.Name}
-			case "content_block_delta":
-				switch ev.Delta.Type {
-				case "text_delta":
-					out = llm.StreamEvent{Type: llm.EventTextDelta, Text: ev.Delta.Text}
-				case "thinking_delta":
-					out = llm.StreamEvent{Type: llm.EventThinkingDelta, Text: ev.Delta.Thinking}
-				default:
-					continue
-				}
-			default:
-				continue
-			}
-			if !yield(out, nil) {
-				return
-			}
-		}
-		if err := stream.Err(); err != nil {
-			yield(llm.StreamEvent{}, convertErr(err))
-			return
-		}
-		if msg.StopReason == "model_context_window_exceeded" {
-			yield(llm.StreamEvent{}, llm.ErrContextOverflow)
-			return
-		}
-		yield(llm.StreamEvent{
-			Type:       llm.EventDone,
-			Message:    convertMessage(msg, req.Model, invalidInput),
-			StopReason: convertStop(msg.StopReason),
-			Usage: llm.Usage{
-				Input:      int(msg.Usage.InputTokens),
-				Output:     int(msg.Usage.OutputTokens),
-				CacheRead:  int(msg.Usage.CacheReadInputTokens),
-				CacheWrite: int(msg.Usage.CacheCreationInputTokens),
-			},
-		}, nil)
 	}
 }
 
-func buildParams(req llm.Request) (sdk.MessageNewParams, error) {
+// errStopped signals that the consumer stopped iterating.
+var errStopped = errors.New("stopped")
+
+// attempt streams one request, yielding events but returning (not yielding)
+// errors. started reports whether any event reached the consumer.
+func (p *Provider) attempt(ctx context.Context, req llm.Request, stripThinking bool, yield func(llm.StreamEvent, error) bool) (started bool, _ error) {
+	params, err := buildParams(req, stripThinking)
+	if err != nil {
+		return false, err
+	}
+	stream := p.client.Messages.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	var msg sdk.Message
+	// Eager input streaming skips server-side validation, so a truncated
+	// tool input can arrive; remember which blocks failed to parse.
+	invalidInput := map[int64]bool{}
+	for stream.Next() {
+		ev := stream.Current()
+		if ev.Type == "content_block_stop" && int(ev.Index) < len(msg.Content) {
+			cb := msg.Content[ev.Index]
+			if cb.Type == "tool_use" && len(cb.Input) > 0 && !json.Valid(cb.Input) {
+				invalidInput[ev.Index] = true
+			}
+		}
+		if err := msg.Accumulate(ev); err != nil {
+			return started, err
+		}
+		var out llm.StreamEvent
+		switch ev.Type {
+		case "content_block_start":
+			if ev.ContentBlock.Type != "tool_use" {
+				continue
+			}
+			out = llm.StreamEvent{Type: llm.EventToolUseStart, Text: ev.ContentBlock.Name}
+		case "content_block_delta":
+			switch ev.Delta.Type {
+			case "text_delta":
+				out = llm.StreamEvent{Type: llm.EventTextDelta, Text: ev.Delta.Text}
+			case "thinking_delta":
+				out = llm.StreamEvent{Type: llm.EventThinkingDelta, Text: ev.Delta.Thinking}
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+		started = true
+		if !yield(out, nil) {
+			return true, errStopped
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return started, convertErr(err)
+	}
+	if msg.StopReason == "model_context_window_exceeded" {
+		return started, llm.ErrContextOverflow
+	}
+	yield(llm.StreamEvent{
+		Type:       llm.EventDone,
+		Message:    convertMessage(msg, req.Model, invalidInput),
+		StopReason: convertStop(msg.StopReason),
+		Usage: llm.Usage{
+			Input:      int(msg.Usage.InputTokens),
+			Output:     int(msg.Usage.OutputTokens),
+			CacheRead:  int(msg.Usage.CacheReadInputTokens),
+			CacheWrite: int(msg.Usage.CacheCreationInputTokens),
+		},
+	}, nil)
+	return true, nil
+}
+
+func thinkingMismatch(err error) bool {
+	var apiErr *llm.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "thinking") || strings.Contains(msg, "prefix_binding")
+}
+
+func hasThinking(req llm.Request) bool {
+	for _, m := range req.Messages {
+		for _, b := range m.Blocks {
+			if b.Type == llm.BlockThinking && b.Provider == Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func buildParams(req llm.Request, stripThinking bool) (sdk.MessageNewParams, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 64_000
@@ -160,6 +197,9 @@ func buildParams(req llm.Request) (sdk.MessageNewParams, error) {
 	for _, m := range req.Messages {
 		var blocks []sdk.ContentBlockParamUnion
 		for _, b := range llm.ReplayableBlocks(m, Name, req.Model) {
+			if stripThinking && b.Type == llm.BlockThinking {
+				continue
+			}
 			if cb, ok := toParam(b); ok {
 				blocks = append(blocks, cb)
 			}

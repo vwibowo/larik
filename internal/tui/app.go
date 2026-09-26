@@ -18,6 +18,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/config"
 	"larik/internal/llm"
+	"larik/internal/mcp"
 )
 
 type Options struct {
@@ -27,6 +28,7 @@ type Options struct {
 	History       []llm.Message // shown when resuming
 	SessionDir    string
 	Version       string
+	MCP           *mcp.Manager
 }
 
 func Run(opts Options) error {

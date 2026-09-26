@@ -11,6 +11,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/llm"
+	"larik/internal/mcp"
 	"larik/internal/permission"
 )
 
@@ -226,6 +227,13 @@ func toolTitle(name string, input []byte) string {
 		}
 	case "glob":
 		arg = str(in["pattern"])
+	default:
+		if server := mcp.ServerOf(name); server != "" {
+			name = server + " › " + strings.TrimPrefix(name, mcp.Prefix+server+"__")
+		}
+		if len(in) > 0 {
+			arg = string(input)
+		}
 	}
 	arg = strings.Join(strings.Fields(arg), " ")
 	if len(arg) > 80 {

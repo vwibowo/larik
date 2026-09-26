@@ -122,10 +122,11 @@ func NewRegistry(ts ...Tool) *Registry {
 	return r
 }
 
-// Default returns the built-in tool set.
-func Default() *Registry {
-	return NewRegistry(Read{}, Write{}, Edit{}, Bash{}, Grep{}, Glob{})
-}
+// Builtin returns the built-in tools.
+func Builtin() []Tool { return []Tool{Read{}, Write{}, Edit{}, Bash{}, Grep{}, Glob{}} }
+
+// Default returns a registry of the built-in tools.
+func Default() *Registry { return NewRegistry(Builtin()...) }
 
 func (r *Registry) Get(name string) (Tool, bool) { t, ok := r.byName[name]; return t, ok }
 
