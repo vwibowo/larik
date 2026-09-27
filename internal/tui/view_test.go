@@ -112,3 +112,11 @@ func TestShortPaths(t *testing.T) {
 		t.Errorf("tool card should use short paths:\n%s", card)
 	}
 }
+
+func TestResumedThinkingShowsSavedTime(t *testing.T) {
+	m := testModel(t)
+	msg := llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockThinking, Text: "hmm", DurationMS: 14_200}, llm.TextBlock("hi")}}
+	if out := plain(m.renderAssistant(msg, 0)); !strings.Contains(out, "Thought for 14s") {
+		t.Fatalf("resumed history should show the saved time: %q", out)
+	}
+}

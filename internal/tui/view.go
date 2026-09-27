@@ -335,6 +335,9 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 	for _, b := range msg.Blocks {
 		switch b.Type {
 		case llm.BlockThinking:
+			if b.DurationMS > 0 { // measured by the agent and saved with the session
+				thought = time.Duration(b.DurationMS) * time.Millisecond
+			}
 			t := strings.TrimSpace(b.Text)
 			switch {
 			case t == "":

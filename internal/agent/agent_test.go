@@ -226,3 +226,39 @@ func TestConcurrencySafeToolsRunInParallel(t *testing.T) {
 		t.Errorf("3 concurrency-safe calls took %s; want parallel", d)
 	}
 }
+
+// thinkingProvider thinks for a moment before answering.
+type thinkingProvider struct{}
+
+func (thinkingProvider) Name() string { return "fake" }
+func (thinkingProvider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		if !yield(llm.StreamEvent{Type: llm.EventThinkingDelta, Text: "hmm"}, nil) {
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+		if !yield(llm.StreamEvent{Type: llm.EventTextDelta, Text: "hi"}, nil) {
+			return
+		}
+		msg := assistant(llm.Block{Type: llm.BlockThinking, Text: "hmm"}, llm.TextBlock("hi"))
+		yield(llm.StreamEvent{Type: llm.EventDone, Message: msg, StopReason: llm.StopEnd}, nil)
+	}
+}
+
+func TestThinkingTimeIsSaved(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeYolo)
+	a.opts.Provider = thinkingProvider{}
+	drain(a.Run(context.Background(), "hello"), PermissionReply{})
+	path := a.opts.Session.Path
+	a.opts.Session.Close()
+
+	s, st, err := session.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	think := st.Messages[1].Blocks[0]
+	if think.Type != llm.BlockThinking || think.DurationMS < 30 || think.DurationMS > 5000 {
+		t.Fatalf("resumed thinking block should carry how long it took: %+v", think)
+	}
+}

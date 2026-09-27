@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"larik/internal/checkpoint"
 	"larik/internal/hooks"
@@ -358,6 +359,16 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 	a.checkTools(ctx, provider, req.Model, len(req.Tools) > 0, emit)
 
 	var partial strings.Builder
+	// How long the model thought: from sending the request until its
+	// first text or tool call. Measured this way because some providers
+	// send reasoning only at the end, just before the answer.
+	start := time.Now()
+	var thought time.Duration
+	endThinking := func() {
+		if thought == 0 {
+			thought = time.Since(start)
+		}
+	}
 	for ev, err := range provider.Stream(ctx, req) {
 		if err != nil {
 			if ctx.Err() != nil {
@@ -368,14 +379,25 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		}
 		switch ev.Type {
 		case llm.EventTextDelta:
+			endThinking()
 			partial.WriteString(ev.Text)
 			emit(Event{Kind: EvTextDelta, Text: ev.Text})
 		case llm.EventThinkingDelta:
 			emit(Event{Kind: EvThinkingDelta, Text: ev.Text})
 		case llm.EventToolUseStart:
+			endThinking()
 			emit(Event{Kind: EvToolCallDelta, ToolName: ev.Text})
 		case llm.EventDone:
+			endThinking()
 			msg := ev.Message
+			if thought > 0 {
+				for i := range msg.Blocks {
+					if msg.Blocks[i].Type == llm.BlockThinking {
+						msg.Blocks[i].DurationMS = thought.Milliseconds()
+						break
+					}
+				}
+			}
 			if len(msg.Blocks) == 0 {
 				msg.Blocks = []llm.Block{llm.TextBlock("(empty response)")}
 			}

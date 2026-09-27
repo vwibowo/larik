@@ -35,6 +35,9 @@ type Block struct {
 	Signature string `json:"signature,omitempty"`
 	// Redacted marks encrypted thinking whose payload lives in Signature.
 	Redacted bool `json:"redacted,omitempty"`
+	// DurationMS is how long the model thought, for display; adapters
+	// don't send it.
+	DurationMS int64 `json:"duration_ms,omitempty"`
 
 	// tool_use / tool_result
 	ID      string          `json:"id,omitempty"`
