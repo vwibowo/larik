@@ -65,7 +65,7 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
-| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, notifications, response language, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config verbose=true` sets one without the screen |
+| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config verbose=true` sets one without the screen |
 | `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
@@ -261,6 +261,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
 - `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
+- `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from `~/.config/larik/config.json` or `.larik/settings.local.json`.
 
 `models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
 

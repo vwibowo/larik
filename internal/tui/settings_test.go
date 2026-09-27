@@ -145,6 +145,33 @@ func TestConfigKeyValue(t *testing.T) {
 	}
 }
 
+func TestUndoHistorySetting(t *testing.T) {
+	m := testModel(t)
+	spec, _ := settingByKey("checkpoint_retention_days")
+	if spec.get(m) != "7" {
+		t.Fatalf("default = %q", spec.get(m))
+	}
+	m.command("/config checkpoint_retention_days=14")
+	if m.opts.Config.CheckpointRetentionDays != 14 || !strings.Contains(savedConfig(t, m), `"checkpoint_retention_days": 14`) {
+		t.Fatalf("any number of days should apply and save: %s", savedConfig(t, m))
+	}
+	if spec.label(spec.get(m)) != "14 days" {
+		t.Fatalf("label = %q", spec.label(spec.get(m)))
+	}
+	m.command("/config checkpoint_retention_days=soon")
+	if m.opts.Config.CheckpointRetentionDays != 14 {
+		t.Fatal("an invalid value should change nothing")
+	}
+	m.command("/config checkpoint_retention_days=forever")
+	if m.opts.Config.CheckpointRetention() != 0 || !strings.Contains(savedConfig(t, m), `"checkpoint_retention_days": -1`) {
+		t.Fatalf("forever should keep snapshots: %s", savedConfig(t, m))
+	}
+	m.command("/config checkpoint_retention_days=7")
+	if strings.Contains(savedConfig(t, m), "checkpoint_retention_days") {
+		t.Fatal("the default should remove the key")
+	}
+}
+
 func TestVerboseShowsMoreToolOutput(t *testing.T) {
 	m := testModel(t)
 	out := strings.Repeat("line\n", 30)

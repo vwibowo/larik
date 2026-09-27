@@ -8,7 +8,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"time"
 
 	"larik/internal/agent"
 	"larik/internal/checkpoint"
@@ -50,9 +49,6 @@ type App struct {
 	tools []tools.Tool
 }
 
-// checkpointRetention is how long /undo snapshots are kept.
-const checkpointRetention = 7 * 24 * time.Hour
-
 // Setup loads config for cwd and starts the shared services. Call Close
 // when done.
 func Setup(cwd, version string) (*App, error) {
@@ -68,7 +64,9 @@ func Setup(cwd, version string) (*App, error) {
 	if projectRoot == "" {
 		projectRoot = cwd
 	}
-	_ = checkpoint.Prune(filepath.Join(cfg.DataDir, "checkpoints"), checkpointRetention)
+	if keep := cfg.CheckpointRetention(); keep > 0 {
+		_ = checkpoint.Prune(filepath.Join(cfg.DataDir, "checkpoints"), keep)
+	}
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools := tools.Builtin()
 	a.Sandbox, a.SandboxNote = sandbox.New(cfg.Sandbox, projectRoot, home)

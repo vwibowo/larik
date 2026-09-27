@@ -93,8 +93,8 @@ func TestBackgroundDeliveredWhenIdle(t *testing.T) {
 	if evs[len(evs)-1].StopReason != "end_turn" {
 		t.Fatalf("foreground turn should end while child runs")
 	}
-	reqs := h.fp.requests()
-	if res := toolResults(reqs[len(reqs)-1]); !strings.Contains(res[0].Content, "Started background task bg-1") {
+	reqs := h.fp.parentRequests()
+	if res := toolResults(reqs[len(reqs)-1]); len(res) == 0 || !strings.Contains(res[0].Content, "Started background task bg-1") {
 		t.Fatalf("task result = %+v", res)
 	}
 	if h.a.RunningBackground() != 1 {
@@ -114,7 +114,7 @@ func TestBackgroundDeliveredWhenIdle(t *testing.T) {
 		t.Fatal("expected a notification turn")
 	}
 	drain(ch, true)
-	reqs = h.fp.requests()
+	reqs = h.fp.parentRequests()
 	last := lastUserText(reqs[len(reqs)-1])
 	if !strings.Contains(last, `<task-notification id="bg-1" agent="general-purpose: bg job" status="completed">`) || !strings.Contains(last, "child result for: research X") {
 		t.Fatalf("notification turn prompt:\n%s", last)
@@ -141,13 +141,7 @@ func TestBackgroundInjectedMidTurn(t *testing.T) {
 		}
 	})
 	drain(h.a.Run(context.Background(), "go"), true)
-	reqs := h.fp.requests()
-	var parentReqs []llm.Request
-	for _, r := range reqs {
-		if !isChild(r) {
-			parentReqs = append(parentReqs, r)
-		}
-	}
+	parentReqs := h.fp.parentRequests()
 	last := lastUserText(parentReqs[len(parentReqs)-1])
 	if !strings.Contains(last, "<task-notification") || !strings.Contains(last, "child result for: side job") {
 		t.Fatalf("result should ride along with the next request:\n%s", last)
@@ -190,13 +184,7 @@ func TestTaskWaitAndStop(t *testing.T) {
 	h.a.SetTools(tools.NewRegistry(append(ts, WaitTool{}, StopTool{})...))
 
 	drain(h.a.Run(context.Background(), "go"), true)
-	reqs := h.fp.requests()
-	var parent []llm.Request
-	for _, r := range reqs {
-		if !isChild(r) {
-			parent = append(parent, r)
-		}
-	}
+	parent := h.fp.parentRequests()
 	idA, idB := idOf(h.a, "explore: a"), idOf(h.a, "explore: b")
 	if res := toolResults(parent[2]); res[0].Content != "Stopped "+idB+"." {
 		t.Errorf("stop = %+v", res)

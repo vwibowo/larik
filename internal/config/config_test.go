@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, content string) {
@@ -226,5 +227,33 @@ func TestUISettings(t *testing.T) {
 	write(t, LocalSettingsPath(cwd), `{"notifications":"loud"}`)
 	if _, err := Load(cwd); err == nil {
 		t.Fatal("an unknown notifications value should be an error")
+	}
+}
+
+func TestCheckpointRetention(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, _ := Load(cwd)
+	if cfg.CheckpointRetention() != 7*24*time.Hour {
+		t.Fatalf("default retention = %v", cfg.CheckpointRetention())
+	}
+
+	// A shared project file can't change it: the cleanup covers every project.
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"checkpoint_retention_days": 1}`)
+	cfg, _ = Load(cwd)
+	if cfg.CheckpointRetention() != 7*24*time.Hour {
+		t.Fatalf("shared file changed retention to %v", cfg.CheckpointRetention())
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.local.json"), `{"checkpoint_retention_days": 30}`)
+	cfg, _ = Load(cwd)
+	if cfg.CheckpointRetention() != 30*24*time.Hour {
+		t.Fatalf("personal retention = %v", cfg.CheckpointRetention())
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.local.json"), `{"checkpoint_retention_days": -1}`)
+	cfg, _ = Load(cwd)
+	if cfg.CheckpointRetention() != 0 {
+		t.Fatalf("negative should keep forever, got %v", cfg.CheckpointRetention())
 	}
 }

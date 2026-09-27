@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -41,6 +42,10 @@ type Config struct {
 	Effort   llm.Effort      `json:"effort,omitempty"`
 	Mode     permission.Mode `json:"mode,omitempty"`
 	MaxTurns int             `json:"max_turns,omitempty"`
+	// CheckpointRetentionDays is how long /undo snapshots are kept: 0
+	// means the default (7), a negative value keeps them forever. The
+	// cleanup covers every project, so only personal files may set it.
+	CheckpointRetentionDays int `json:"checkpoint_retention_days,omitempty"`
 	// Theme picks the TUI colors: "auto" (follow the terminal's
 	// background, the default), "dark" or "light".
 	Theme string `json:"theme,omitempty"`
@@ -229,6 +234,9 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.MaxTurns != 0 {
 		c.MaxTurns = o.MaxTurns
 	}
+	if trusted && o.CheckpointRetentionDays != 0 {
+		c.CheckpointRetentionDays = o.CheckpointRetentionDays
+	}
 	if o.Theme != "" {
 		if _, err := ParseTheme(o.Theme); err != nil {
 			return fmt.Errorf("%s: %w", path, err)
@@ -348,6 +356,20 @@ func on(b *bool, def bool) bool {
 		return def
 	}
 	return *b
+}
+
+// CheckpointRetention is how long /undo snapshots are kept; 0 means
+// keep them forever.
+func (c *Config) CheckpointRetention() time.Duration {
+	switch d := c.CheckpointRetentionDays; {
+	case d < 0:
+		return 0
+	case d == 0:
+		d = 7
+		fallthrough
+	default:
+		return time.Duration(d) * 24 * time.Hour
+	}
 }
 
 // AutoCompactOn reports whether auto-compaction is enabled (default on).

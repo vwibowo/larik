@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -57,6 +58,9 @@ type settingSpec struct {
 	store func(v string) any
 	// set applies a checked value to the config and this session.
 	set func(m *model, v string)
+	// other, for a choice, accepts a typed value that isn't one of the
+	// choices (e.g. any number of days), returning it normalized.
+	other func(v string) (string, bool)
 }
 
 func toggle(key, title, section string, get func(c *config.Config) bool, set func(m *model, on bool)) settingSpec {
@@ -148,6 +152,54 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
+		key: "checkpoint_retention_days", title: "Undo history", section: "behavior", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "1", label: "1 day"},
+			{value: "7", label: "7 days", desc: "the default"},
+			{value: "30", label: "30 days"},
+			{value: "90", label: "90 days"},
+			{value: "forever", label: "Forever", desc: "never delete old snapshots"},
+		},
+		later: "old snapshots are deleted when larik starts",
+		get: func(m *model) string {
+			switch d := m.opts.Config.CheckpointRetentionDays; {
+			case d < 0:
+				return "forever"
+			case d == 0:
+				return "7"
+			default:
+				return strconv.Itoa(d)
+			}
+		},
+		store: func(v string) any {
+			switch v {
+			case "7":
+				return nil
+			case "forever":
+				return -1
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		set: func(m *model, v string) {
+			switch v {
+			case "7":
+				m.opts.Config.CheckpointRetentionDays = 0
+			case "forever":
+				m.opts.Config.CheckpointRetentionDays = -1
+			default:
+				m.opts.Config.CheckpointRetentionDays, _ = strconv.Atoi(v)
+			}
+		},
+		other: func(v string) (string, bool) {
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(v, "days")), "d"))
+			if err != nil || n < 1 {
+				return "", false
+			}
+			return strconv.Itoa(n), true
+		},
+	},
+	{
 		key: "mode", title: "Permission mode", section: "defaults", kind: kindChoice,
 		choices: []settingChoice{
 			{value: "default", label: modeLabels[permission.ModeDefault], desc: "ask before edits and commands"},
@@ -219,6 +271,11 @@ func (s settingSpec) label(v string) string {
 			return c.label
 		}
 	}
+	if s.other != nil {
+		if n, ok := s.other(v); ok {
+			return n + " days"
+		}
+	}
 	return v
 }
 
@@ -241,6 +298,12 @@ func (s settingSpec) check(v string) (string, error) {
 				return c.value, nil
 			}
 			names = append(names, c.value)
+		}
+		if s.other != nil {
+			if n, ok := s.other(v); ok {
+				return n, nil
+			}
+			return "", fmt.Errorf("%s is a number of days, or forever", s.key)
 		}
 		return "", fmt.Errorf("%s is one of %s", s.key, strings.Join(names, ", "))
 	case kindAction:

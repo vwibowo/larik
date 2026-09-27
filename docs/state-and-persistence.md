@@ -99,11 +99,11 @@ stateDiagram-v2
     Restoring --> TurnOpen: agent queues a note: "user reverted … re-read these files"
 ```
 
-`Undo` skips turns that changed no files, so it always reverts the most recent turn that did something.
+`Undo` skips turns that changed no files, so it always reverts the most recent turn that did something. Afterwards the agent queues a `<system-note>` for the next message telling the model which files were reverted, so it re-reads them instead of trusting stale content.
 
 **Across runs.** Each turn's manifest and blobs are on disk under `checkpoints/<session-id>/<n>/`, so `checkpoint.New` reloads them when a session is resumed (`larik -c`, `--resume`, `/resume`), and `/undo` keeps working. New turns are numbered after the last saved one. A branch (`/fork`, `/rewind`) is a new session id, so it starts with no undo history.
 
-**Retention.** At startup `app.Setup` calls `checkpoint.Prune`, which deletes turns whose snapshots are older than 7 days, and session directories left empty. Afterwards the agent queues a `<system-note>` for the next message telling the model which files were reverted, so it re-reads them instead of trusting stale content.
+**Retention.** At startup `app.Setup` calls `checkpoint.Prune`, which deletes turns whose snapshots are older than `checkpoint_retention_days` (default 7; negative keeps them forever), and session directories left empty. The cleanup covers every project, so the setting is honored only from personal files.
 
 Scope: the store covers `write` and `edit` (and subagents sharing the store). It does not capture changes made by `bash` commands or MCP tools. Worktree subagents skip checkpoints entirely; their branch is the undo.
 

@@ -61,6 +61,18 @@ func (f *funcProvider) requests() []llm.Request {
 	return append([]llm.Request(nil), f.reqs...)
 }
 
+// parentRequests leaves out subagents' requests, which interleave with the
+// parent's when a background child is running.
+func (f *funcProvider) parentRequests() []llm.Request {
+	var out []llm.Request
+	for _, r := range f.requests() {
+		if !isChild(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func use(id, name, input string) llm.Block {
 	return llm.Block{Type: llm.BlockToolUse, ID: id, Name: name, Input: json.RawMessage(input)}
 }
