@@ -385,9 +385,9 @@ func (m *model) renderToolCard(e agent.Event) string {
 		n := strings.Count(out, "\n") + 1
 		switch e.ToolName {
 		case "read":
-			body = m.st.dim.Render(fmt.Sprintf("read %d lines", n))
+			body = m.st.dim.Render("read " + plural(n, "line"))
 		case "skill":
-			body = m.st.dim.Render(fmt.Sprintf("loaded skill (%d lines)", n))
+			body = m.st.dim.Render("loaded skill (" + plural(n, "line") + ")")
 		case "web_fetch":
 			body = m.st.dim.Render(e.Display)
 			if strings.Contains(out, "redirected (HTTP") {

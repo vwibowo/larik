@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"larik/internal/chatgpt"
 	"larik/internal/config"
 	"larik/internal/llm/ollama"
 	"larik/internal/providers"
@@ -55,6 +57,20 @@ type wizard struct {
 	models picker
 	model  string
 
+	// A ChatGPT sign-in in progress, if signingIn is set.
+	signingIn bool
+	loginURL  string
+	loginStop context.CancelFunc
+	loginURLs chan string
+	loginDone chan error
+
+	// An Ollama model download in progress, if pulling is set.
+	pulling  string
+	pullP    providers.PullProgress
+	pullStop context.CancelFunc
+	pullProg chan providers.PullProgress
+	pullDone chan error
+
 	saveRow     int // 0 user config, 1 project, 2 default toggle
 	scope       int // 0 user config, 1 project
 	makeDefault bool
@@ -81,7 +97,31 @@ type (
 		models []providers.Model
 		err    error
 	}
+	// wizPullMsg is download progress, or its end when done is set.
+	wizPullMsg struct {
+		gen  int
+		p    providers.PullProgress
+		done bool
+		err  error
+	}
+	// wizLoginMsg is the sign-in page's URL, or the sign-in's end when
+	// done is set.
+	wizLoginMsg struct {
+		gen  int
+		url  string
+		done bool
+		err  error
+	}
+	// wizRelistMsg is the model list after a download.
+	wizRelistMsg struct {
+		gen    int
+		models []providers.Model
+		err    error
+	}
 )
+
+// pickDownload is a model row that downloads the model when chosen.
+type pickDownload struct{ id string }
 
 // Custom provider value in the provider list.
 type wizCustom struct{}
@@ -156,6 +196,12 @@ func (w *wizard) buildProviders() {
 }
 
 func keySource(cfg *config.Config, c providers.Choice) string {
+	if c.SignIn {
+		if t, err := chatgpt.Load(chatgpt.Path(cfg.ConfigDir)); err == nil && t.Email != "" {
+			return "signed in as " + t.Email
+		}
+		return "signed in"
+	}
 	pc := cfg.Providers[c.Name]
 	switch {
 	case pc.APIKey != "":
@@ -191,6 +237,10 @@ func (w *wizard) enterConnect(c providers.Choice, custom bool) tea.Cmd {
 		w.newField("API key", "", "optional", true)
 	case c.Local:
 		w.newField("Base URL", providers.EndpointFor(w.cfg, c.Name).BaseURL, c.BaseURL, false)
+	case c.SignIn:
+		if chatgpt.SignedIn(chatgpt.Path(w.cfg.ConfigDir)) {
+			w.savedKey, w.useSaved = keySource(w.cfg, c), true
+		}
 	default:
 		w.savedKey = providers.EndpointFor(w.cfg, c.Name).Key
 		w.useSaved = w.savedKey != ""
@@ -230,8 +280,29 @@ func (w *wizard) update(msg tea.Msg) tea.Cmd {
 		}
 		w.enterModels(msg.models)
 		return nil
+	case wizPullMsg:
+		return w.pullUpdate(msg)
+	case wizLoginMsg:
+		return w.loginUpdate(msg)
+	case wizRelistMsg:
+		if msg.gen != w.gen {
+			return nil
+		}
+		id := w.pulling
+		w.pulling = ""
+		if msg.err != nil {
+			w.err = msg.err.Error()
+			return nil
+		}
+		w.enterModels(msg.models)
+		w.chooseModel(id) // downloaded on purpose, so go on to saving it
+		return nil
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			w.stopPull()
+			if w.signingIn {
+				w.loginStop()
+			}
 			w.canceled = true
 			return nil
 		}
@@ -279,6 +350,12 @@ func (w *wizard) providerKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (w *wizard) connectKey(msg tea.KeyPressMsg) tea.Cmd {
+	if w.signingIn {
+		if msg.String() == "esc" {
+			w.loginStop()
+		}
+		return nil
+	}
 	if w.busy {
 		if msg.String() == "esc" { // abandon the test
 			w.gen++
@@ -317,7 +394,7 @@ func (w *wizard) connectKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
-	if w.useSaved {
+	if w.useSaved || len(w.fields) == 0 {
 		return nil
 	}
 	var cmd tea.Cmd
@@ -350,6 +427,13 @@ func (w *wizard) test() tea.Cmd {
 		}
 		pc = config.ProviderConfig{Type: "openai-compatible", BaseURL: val(1), APIKey: val(2)}
 		w.choice.Name = name
+	case w.choice.SignIn:
+		if !w.useSaved {
+			return w.startLogin()
+		}
+		w.pc = pc
+		w.endpoint = providers.EndpointFor(w.cfg, name)
+		return w.listModels()
 	case w.choice.Local:
 		u := val(0)
 		if err := checkURL(u); err != nil {
@@ -372,6 +456,11 @@ func (w *wizard) test() tea.Cmd {
 	}
 	w.pc = pc
 	w.endpoint = providers.EndpointOf(name, pc)
+	return w.listModels()
+}
+
+// listModels tests the endpoint by listing its models.
+func (w *wizard) listModels() tea.Cmd {
 	w.busy, w.err = true, ""
 	w.gen++
 	gen, ep := w.gen, w.endpoint
@@ -381,6 +470,64 @@ func (w *wizard) test() tea.Cmd {
 		ms, err := ep.ListModels(ctx)
 		return wizTestedMsg{gen: gen, models: ms, err: err}
 	}
+}
+
+// startLogin runs the ChatGPT browser sign-in in the background.
+func (w *wizard) startLogin() tea.Cmd {
+	w.gen++
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	w.signingIn, w.loginURL, w.loginStop, w.err = true, "", cancel, ""
+	w.loginURLs, w.loginDone = make(chan string, 1), make(chan error, 1)
+	urls, done, path := w.loginURLs, w.loginDone, chatgpt.Path(w.cfg.ConfigDir)
+	go func() {
+		t, err := chatgpt.Login(ctx, func(u string) {
+			urls <- u
+			openBrowser(u)
+		})
+		if err == nil {
+			err = chatgpt.Save(path, t)
+		}
+		done <- err
+	}()
+	return w.waitLogin()
+}
+
+func (w *wizard) waitLogin() tea.Cmd {
+	gen, urls, done := w.gen, w.loginURLs, w.loginDone
+	return func() tea.Msg {
+		select {
+		case u := <-urls:
+			return wizLoginMsg{gen: gen, url: u}
+		case err := <-done:
+			return wizLoginMsg{gen: gen, done: true, err: err}
+		}
+	}
+}
+
+func (w *wizard) loginUpdate(msg wizLoginMsg) tea.Cmd {
+	if msg.gen != w.gen || !w.signingIn {
+		return nil
+	}
+	if !msg.done {
+		w.loginURL = msg.url
+		return w.waitLogin()
+	}
+	w.loginStop()
+	w.signingIn = false
+	switch {
+	case errors.Is(msg.err, context.Canceled):
+		w.err = "sign-in canceled"
+		return nil
+	case errors.Is(msg.err, context.DeadlineExceeded):
+		w.err = "sign-in timed out; press enter to try again"
+		return nil
+	case msg.err != nil:
+		w.err = msg.err.Error()
+		return nil
+	}
+	w.savedKey, w.useSaved = keySource(w.cfg, w.choice), true
+	w.endpoint = providers.EndpointFor(w.cfg, w.choice.Name)
+	return w.listModels()
 }
 
 func checkURL(s string) error {
@@ -393,16 +540,35 @@ func checkURL(s string) error {
 
 func (w *wizard) enterModels(models []providers.Model) {
 	w.step = wizModel
-	w.models = picker{filterable: true, height: 10, items: modelItems(models, "", "")}
+	ollamaServer := w.endpoint.IsOllama()
+	items := modelItems(models, "", "")
+	if ollamaServer {
+		var downloads []pickItem
+		for _, s := range providers.OllamaSuggestions {
+			if !containsModel(models, s.ID) {
+				downloads = append(downloads, pickItem{section: "download from ollama.com", label: "↓ " + s.ID, detail: s.Desc, value: pickDownload{s.ID}})
+			}
+		}
+		if len(downloads) > 0 && len(items) > 0 {
+			for i := range items {
+				items[i].section = "installed"
+			}
+		}
+		items = append(items, downloads...)
+	}
+	w.models = picker{filterable: true, height: 10, items: items}
 	w.models.extra = func(f string) []pickItem {
 		f = strings.TrimSpace(f)
-		if f == "" {
+		if f == "" || containsModel(models, f) {
 			return nil
 		}
-		for _, m := range models {
-			if m.ID == f {
-				return nil
+		for _, s := range providers.OllamaSuggestions {
+			if s.ID == f {
+				return nil // already offered
 			}
+		}
+		if ollamaServer {
+			return []pickItem{{label: "↓ Download “" + f + "”", detail: "from ollama.com", value: pickDownload{f}}}
 		}
 		return []pickItem{{label: "Use “" + f + "”", detail: "as the model id", value: f}}
 	}
@@ -486,6 +652,12 @@ func humanTokens(n int) string {
 }
 
 func (w *wizard) modelKey(msg tea.KeyPressMsg) tea.Cmd {
+	if w.pulling != "" {
+		if msg.String() == "esc" {
+			w.stopPull()
+		}
+		return nil
+	}
 	if msg.String() == "esc" {
 		if w.models.filter != "" {
 			w.models.filter = ""
@@ -499,11 +671,112 @@ func (w *wizard) modelKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	it, _ := w.models.selected()
-	w.model = it.value.(string)
-	w.step = wizSave
+	if d, ok := it.value.(pickDownload); ok {
+		return w.startPull(d.id)
+	}
+	w.chooseModel(it.value.(string))
+	return nil
+}
+
+// chooseModel moves on to the save step with model.
+func (w *wizard) chooseModel(model string) {
+	w.model = model
+	w.step, w.err = wizSave, ""
 	w.saveRow, w.scope = 0, 0
 	w.makeDefault = w.firstRun || w.cfg.Model == ""
-	return nil
+}
+
+// startPull downloads model into the Ollama server in the background.
+func (w *wizard) startPull(model string) tea.Cmd {
+	w.gen++
+	ctx, cancel := context.WithCancel(context.Background())
+	w.pulling, w.pullP, w.pullStop, w.err = model, providers.PullProgress{Status: "starting"}, cancel, ""
+	// Progress updates may be dropped when the screen is behind; the
+	// result channel never blocks, so the goroutine always finishes.
+	w.pullProg, w.pullDone = make(chan providers.PullProgress, 8), make(chan error, 1)
+	ep, prog, done := w.endpoint, w.pullProg, w.pullDone
+	go func() {
+		done <- ep.Pull(ctx, model, func(p providers.PullProgress) {
+			select {
+			case prog <- p:
+			default:
+			}
+		})
+	}()
+	return w.waitPull()
+}
+
+func (w *wizard) waitPull() tea.Cmd {
+	gen, prog, done := w.gen, w.pullProg, w.pullDone
+	return func() tea.Msg {
+		select {
+		case p := <-prog:
+			return wizPullMsg{gen: gen, p: p}
+		case err := <-done:
+			return wizPullMsg{gen: gen, done: true, err: err}
+		}
+	}
+}
+
+func (w *wizard) pullUpdate(msg wizPullMsg) tea.Cmd {
+	if msg.gen != w.gen || w.pulling == "" {
+		return nil
+	}
+	if !msg.done {
+		w.pullP = msg.p
+		return w.waitPull()
+	}
+	w.pullStop()
+	switch {
+	case errors.Is(msg.err, context.Canceled):
+		w.pulling, w.err = "", "download stopped; Ollama keeps what it fetched, so starting it again resumes"
+		return nil
+	case msg.err != nil:
+		w.pulling, w.err = "", msg.err.Error()
+		return nil
+	}
+	w.pullP = providers.PullProgress{Status: "listing models"}
+	gen, ep := w.gen, w.endpoint
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ms, err := ep.ListModels(ctx)
+		return wizRelistMsg{gen: gen, models: ms, err: err}
+	}
+}
+
+// stopPull cancels a running download; its end arrives as a wizPullMsg.
+func (w *wizard) stopPull() {
+	if w.pulling != "" && w.pullStop != nil {
+		w.pullStop()
+	}
+}
+
+// pullView shows a download's progress.
+func (w *wizard) pullView(st styles, width int) []string {
+	p := w.pullP
+	status := p.Status
+	switch {
+	case status == "pulling manifest":
+		status = "fetching the manifest"
+	case strings.HasPrefix(status, "pulling "):
+		status = "downloading"
+	case strings.HasPrefix(status, "verifying"):
+		status = "verifying"
+	case status == "writing manifest":
+		status = "finishing"
+	}
+	lines := []string{st.accent.Render("Downloading "+w.pulling) + st.dim.Render(" from ollama.com"), ""}
+	if p.Total > 0 && status == "downloading" {
+		const cells = 30
+		pct := int(p.Completed * 100 / p.Total)
+		full := min(int(p.Completed*cells/p.Total), cells)
+		lines = append(lines, st.accent.Render(strings.Repeat("▰", full))+st.dim.Render(strings.Repeat("▱", cells-full))+
+			fmt.Sprintf(" %d%%", pct)+st.dim.Render("  "+humanBytes(p.Completed)+" of "+humanBytes(p.Total)))
+	} else {
+		lines = append(lines, st.accent.Render("… ")+st.dim.Render(status))
+	}
+	return lines
 }
 
 func (w *wizard) saveKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -572,6 +845,33 @@ func (w *wizard) preview() string {
 	return string(b)
 }
 
+// signInView is the connect step for a sign-in provider (ChatGPT).
+func (w *wizard) signInView(st styles) []string {
+	if w.signingIn {
+		lines := []string{st.accent.Render("… ") + st.dim.Render("waiting for you to sign in to ChatGPT in your browser")}
+		if w.loginURL != "" {
+			lines = append(lines, "", st.dim.Render("If the browser didn't open, go to:"), w.loginURL)
+		}
+		return lines
+	}
+	if w.savedKey != "" {
+		var lines []string
+		for i, o := range []string{"Use your ChatGPT sign-in (" + w.savedKey + ")", "Sign in again"} {
+			if (i == 0) == w.useSaved {
+				lines = append(lines, st.accent.Render("› "+o))
+			} else {
+				lines = append(lines, "  "+o)
+			}
+		}
+		return lines
+	}
+	return []string{
+		"Sign in with the ChatGPT account whose plan you want to use.",
+		st.dim.Render("Enter opens the sign-in page in your browser. larik keeps its own sign-in,"),
+		st.dim.Render("readable only by you, in " + tildePath(chatgpt.Path(w.cfg.ConfigDir)) + "."),
+	}
+}
+
 // view renders the current step to fit width × height.
 func (w *wizard) view(st styles, width, height int) string {
 	title := st.accent.Render("Connect a provider")
@@ -607,6 +907,10 @@ func (w *wizard) view(st styles, width, height int) string {
 	case wizConnect:
 		body, hint = w.connectView(st, width)
 	case wizModel:
+		if w.pulling != "" {
+			body, hint = w.pullView(st, width), "esc stop the download"
+			break
+		}
 		w.models.height = max(min(10, height-10), 3)
 		body = append(body,
 			st.accent.Render("Choose a model")+st.dim.Render(" · from "+w.choice.Title+" at "+hostOf(w.endpoint.BaseURL)),
@@ -649,6 +953,15 @@ func (w *wizard) connectView(st styles, width int) ([]string, string) {
 		body = append(body, st.dim.Render("Base URL"), "  "+w.fields[0].View())
 		if strings.TrimSpace(w.fields[0].Value()) == c.BaseURL {
 			body = append(body, st.dim.Render("  the "+c.Title+" default · no API key needed"))
+		}
+	case c.SignIn:
+		body = append(body, w.signInView(st)...)
+		hint = "enter sign in · esc back"
+		if w.savedKey != "" && !w.signingIn {
+			hint = "↑/↓ choose · enter continue · esc back"
+		}
+		if w.signingIn {
+			hint = "esc cancel the sign-in"
 		}
 	default:
 		body = append(body, st.dim.Render("API key"))

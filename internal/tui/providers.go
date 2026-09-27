@@ -3,12 +3,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/chatgpt"
 	"larik/internal/llm/ollama"
 	"larik/internal/providers"
 )
@@ -50,7 +52,10 @@ func (m *model) providerStatus(name string) (status string, ok, warn bool) {
 	if m.provs != nil && m.provs.testing[name] {
 		return "checking…", false, false
 	}
-	if builtin && !c.Local && providers.EndpointFor(cfg, name).Key == "" {
+	if builtin && c.SignIn && providers.EndpointFor(cfg, name).Token == nil {
+		return "needs sign-in", false, true
+	}
+	if builtin && !c.Local && !c.SignIn && providers.EndpointFor(cfg, name).Key == "" {
 		return "needs a key", false, true
 	}
 	res, loaded := m.modelLists[name]
@@ -169,6 +174,25 @@ func (m *model) removeProvider(name string, confirmed bool) tea.Cmd {
 	case name == m.agent.ProviderName():
 		pm.note, pm.noteErr = name+" is in use; switch model first (alt+p)", true
 		return nil
+	case name == providers.Codex:
+		path := chatgpt.Path(cfg.ConfigDir)
+		if !chatgpt.SignedIn(path) {
+			pm.note, pm.noteErr = "not signed in to ChatGPT", true
+			return nil
+		}
+		if !confirmed {
+			pm.confirm = name
+			pm.note, pm.noteErr = "press d again to sign out of ChatGPT", true
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			pm.note, pm.noteErr = err.Error(), true
+			return nil
+		}
+		pm.note, pm.noteErr = "signed out of ChatGPT", false
+		delete(m.modelLists, name)
+		m.buildProviders()
+		return nil
 	case cfg.ProviderInShared(name):
 		pm.note, pm.noteErr = name+" is defined in .larik/settings.json, shared with the project; edit that file to remove it", true
 		return nil
@@ -259,6 +283,14 @@ func (m *model) providerDetail(name string) []string {
 
 	var key string
 	switch {
+	case builtin && c.SignIn:
+		row := func(k, v string) string { return m.st.dim.Render(pad(k, 11)) + v }
+		auth := m.st.warn.Render("not signed in") + m.st.dim.Render(" · enter to sign in")
+		if ep.Token != nil {
+			auth = keySource(cfg, c) + m.st.dim.Render(" · d to sign out")
+		}
+		lines := []string{m.st.accent.Render(name) + m.st.dim.Render(" · "+kind), row("endpoint", ep.BaseURL), row("account", auth)}
+		return append(lines, m.modelLines(name, row)...)
 	case pc.APIKey != "":
 		key = "saved in config " + m.st.dim.Render("(••••"+pc.APIKey[max(len(pc.APIKey)-4, 0):]+")")
 	case pc.APIKeyEnv != "":
@@ -282,24 +314,28 @@ func (m *model) providerDetail(name string) []string {
 		}
 		lines = append(lines, row("context", window+m.st.dim.Render(` · "context_length" in settings`)))
 	}
+	return append(lines, m.modelLines(name, row)...)
+}
+
+// modelLines is the models row, or the error listing them gave.
+func (m *model) modelLines(name string, row func(k, v string) string) []string {
 	res, loaded := m.modelLists[name]
 	switch {
 	case !loaded:
+		return nil
 	case res.err != nil:
-		lines = append(lines, row("error", m.st.err.Render(res.err.Error())))
-	default:
-		var ids []string
-		for _, md := range res.models {
-			if md.Chat {
-				ids = append(ids, md.ID)
-			}
-		}
-		more := ""
-		if len(ids) > 4 {
-			more = m.st.dim.Render(fmt.Sprintf(" +%d more", len(ids)-4))
-			ids = ids[:4]
-		}
-		lines = append(lines, row("models", strings.Join(ids, ", ")+more))
+		return []string{row("error", m.st.err.Render(res.err.Error()))}
 	}
-	return lines
+	var ids []string
+	for _, md := range res.models {
+		if md.Chat {
+			ids = append(ids, md.ID)
+		}
+	}
+	more := ""
+	if len(ids) > 4 {
+		more = m.st.dim.Render(fmt.Sprintf(" +%d more", len(ids)-4))
+		ids = ids[:4]
+	}
+	return []string{row("models", strings.Join(ids, ", ")+more)}
 }

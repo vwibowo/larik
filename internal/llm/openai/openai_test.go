@@ -3,6 +3,9 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -78,5 +81,57 @@ func TestReasoningModel(t *testing.T) {
 		if got := reasoningModel(m); got != want {
 			t.Errorf("%s: got %v", m, got)
 		}
+	}
+}
+
+func TestChatGPTHeadersAndParams(t *testing.T) {
+	var got *http.Request
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		got, body = r, string(data)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, llmtest.SSE(`{"type":"response.completed","sequence_number":1,"response":{"id":"r","object":"response","status":"completed","model":"gpt-6-luna","output":[{"id":"m","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi","annotations":[]}]}],"usage":{"input_tokens":5,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":6}}}`))
+	}))
+	defer srv.Close()
+	p := NewChatGPT("codex", srv.URL, func(context.Context) (string, string, error) { return "tok_1", "acct_1", nil })
+	var done llm.StreamEvent
+	for ev, err := range p.Stream(context.Background(), llm.Request{Model: "gpt-6-luna", System: "sys", MaxTokens: 100, Messages: []llm.Message{llm.UserText("hi")}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		done = ev
+	}
+	if done.Message.Text() != "hi" || p.Name() != "codex" {
+		t.Fatalf("done %+v name %q", done, p.Name())
+	}
+	if got.Header.Get("Authorization") != "Bearer tok_1" || got.Header.Get("chatgpt-account-id") != "acct_1" || got.URL.Path != "/responses" {
+		t.Fatalf("request %s headers %v", got.URL.Path, got.Header)
+	}
+	if strings.Contains(body, "max_output_tokens") || !strings.Contains(body, `"store":false`) {
+		t.Fatalf("body: %s", body)
+	}
+}
+
+// The ChatGPT backend streams finished items but completes with an empty
+// output list; the answer must come from the streamed items.
+func TestOutputFromStreamedItems(t *testing.T) {
+	call := `{"id":"fc_1","type":"function_call","call_id":"call_1","name":"glob","arguments":"{\"pattern\":\"*\"}","status":"completed"}`
+	msg := `{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Looking.","annotations":[]}]}`
+	srv := llmtest.NewServer(t, 200, llmtest.SSE(
+		`{"type":"response.output_item.done","output_index":0,"item":`+msg+`,"sequence_number":1}`,
+		`{"type":"response.output_item.done","output_index":1,"item":`+call+`,"sequence_number":2}`,
+		`{"type":"response.completed","sequence_number":3,"response":{"id":"r","object":"response","status":"completed","model":"gpt-6-luna","output":[],"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":15}}}`,
+	))
+	p := NewChatGPT("codex", srv.URL, func(context.Context) (string, string, error) { return "t", "a", nil })
+	var done llm.StreamEvent
+	for ev, err := range p.Stream(context.Background(), llm.Request{Model: "gpt-6-luna", Messages: []llm.Message{llm.UserText("go")}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		done = ev
+	}
+	if done.Message.Text() != "Looking." || len(done.Message.ToolUses()) != 1 || done.StopReason != llm.StopToolUse {
+		t.Fatalf("answer lost: %+v", done)
 	}
 }

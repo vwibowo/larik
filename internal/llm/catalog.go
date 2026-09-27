@@ -30,6 +30,14 @@ func init() {
 		{ID: "gemini-3.8-flash", Provider: "gemini", ContextWindow: 1_048_576, MaxOutput: 65_536},
 		{ID: "gemini-3.1-pro-preview", Provider: "gemini", ContextWindow: 1_048_576, MaxOutput: 65_536},
 		{ID: "claude-haiku-4-5", Provider: "anthropic", ContextWindow: 200_000, MaxOutput: 64_000, InputPrice: 1, OutputPrice: 5, CacheRead: 0.1, CacheWrite: 1.25},
+		// Codex models on a ChatGPT plan (no per-token price). No provider,
+		// so bare ids keep routing to openai by name.
+		{ID: "gpt-6-astra", ContextWindow: 272_000, MaxOutput: 128_000},
+		{ID: "gpt-6-sol", ContextWindow: 272_000, MaxOutput: 128_000},
+		{ID: "gpt-6-luna", ContextWindow: 272_000, MaxOutput: 128_000},
+		{ID: "gpt-5.6-sol", ContextWindow: 272_000, MaxOutput: 128_000},
+		{ID: "gpt-5.6-terra", ContextWindow: 272_000, MaxOutput: 128_000},
+		{ID: "gpt-5.6-luna", ContextWindow: 272_000, MaxOutput: 128_000},
 	} {
 		Catalog[m.ID] = m
 	}

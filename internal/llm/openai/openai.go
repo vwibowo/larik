@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 	"strings"
 
 	sdk "github.com/openai/openai-go/v3"
@@ -23,6 +24,10 @@ const DefaultModel = "gpt-5.5"
 
 type Provider struct {
 	client sdk.Client
+	name   string
+	// noMaxTokens leaves out max_output_tokens, which the ChatGPT
+	// backend does not accept.
+	noMaxTokens bool
 }
 
 func New(apiKey, baseURL string) *Provider {
@@ -33,22 +38,55 @@ func New(apiKey, baseURL string) *Provider {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &Provider{client: sdk.NewClient(opts...)}
+	return &Provider{client: sdk.NewClient(opts...), name: Name}
 }
 
-func (p *Provider) Name() string { return Name }
+// TokenFunc returns a bearer token and ChatGPT account id per request.
+type TokenFunc func(ctx context.Context) (token, account string, err error)
+
+// NewChatGPT talks to the Responses API behind a ChatGPT sign-in (Codex
+// models on the user's plan). token is called for every request, so it
+// can refresh the sign-in.
+func NewChatGPT(name, baseURL string, token TokenFunc) *Provider {
+	auth := func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		tok, account, err := token(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Authorization", "Bearer "+tok)
+		r.Header.Set("chatgpt-account-id", account)
+		r.Header.Set("originator", "larik")
+		r.Header.Set("OpenAI-Beta", "responses=experimental")
+		return next(r)
+	}
+	client := sdk.NewClient(
+		option.WithAPIKey("chatgpt-sign-in"), // replaced per request
+		option.WithBaseURL(baseURL),
+		option.WithMiddleware(auth),
+	)
+	return &Provider{client: client, name: name, noMaxTokens: true}
+}
+
+func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		params, opts := buildParams(req)
+		params, opts := p.buildParams(req)
 		stream := p.client.Responses.NewStreaming(ctx, params, opts...)
 		defer stream.Close()
 
 		var final *responses.Response
+		// Finished output items as they stream. The ChatGPT backend sends
+		// its response.completed with an empty output list, so these are
+		// the only copy of the answer there.
+		var done []responses.ResponseOutputItemUnion
 		for stream.Next() {
 			ev := stream.Current()
 			var out llm.StreamEvent
 			switch ev.Type {
+			case "response.output_item.done":
+				done = append(done, ev.Item)
+				continue
 			case "response.output_text.delta":
 				out = llm.StreamEvent{Type: llm.EventTextDelta, Text: ev.Delta}
 			case "response.reasoning_summary_text.delta":
@@ -85,7 +123,11 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			yield(llm.StreamEvent{}, errors.New("openai: stream ended without a completed response"))
 			return
 		}
-		msg := convertOutput(final.Output, req.Model)
+		output := final.Output
+		if len(output) == 0 {
+			output = done
+		}
+		msg := convertOutput(output, req.Model, p.name)
 		stop := llm.StopEnd
 		switch {
 		case len(msg.ToolUses()) > 0:
@@ -123,7 +165,7 @@ func reasoningModel(model string) bool {
 		strings.Contains(m, "codex")
 }
 
-func buildParams(req llm.Request) (responses.ResponseNewParams, []option.RequestOption) {
+func (p *Provider) buildParams(req llm.Request) (responses.ResponseNewParams, []option.RequestOption) {
 	params := responses.ResponseNewParams{
 		Model: shared.ResponsesModel(req.Model),
 		// Stateless: history is resent each turn, so reasoning must come back
@@ -133,7 +175,7 @@ func buildParams(req llm.Request) (responses.ResponseNewParams, []option.Request
 	if req.System != "" {
 		params.Instructions = sdk.String(req.System)
 	}
-	if req.MaxTokens > 0 {
+	if req.MaxTokens > 0 && !p.noMaxTokens {
 		params.MaxOutputTokens = sdk.Int(int64(req.MaxTokens))
 	}
 	if reasoningModel(req.Model) {
@@ -154,17 +196,17 @@ func buildParams(req llm.Request) (responses.ResponseNewParams, []option.Request
 			"strict":      false,
 		})
 	}
-	opts := []option.RequestOption{option.WithJSONSet("input", inputItems(req))}
+	opts := []option.RequestOption{option.WithJSONSet("input", inputItems(req, p.name))}
 	if len(tools) > 0 {
 		opts = append(opts, option.WithJSONSet("tools", tools))
 	}
 	return params, opts
 }
 
-func inputItems(req llm.Request) []any {
+func inputItems(req llm.Request, name string) []any {
 	items := []any{}
 	for _, m := range req.Messages {
-		blocks := llm.ReplayableBlocks(m, Name, req.Model)
+		blocks := llm.ReplayableBlocks(m, name, req.Model)
 		if m.Role == llm.RoleUser {
 			var content []map[string]any
 			for _, b := range blocks {
@@ -202,7 +244,7 @@ func inputItems(req llm.Request) []any {
 	return items
 }
 
-func convertOutput(output []responses.ResponseOutputItemUnion, model string) llm.Message {
+func convertOutput(output []responses.ResponseOutputItemUnion, model, name string) llm.Message {
 	msg := llm.Message{Role: llm.RoleAssistant, Model: model}
 	for _, item := range output {
 		switch item.Type {
@@ -223,9 +265,9 @@ func convertOutput(output []responses.ResponseOutputItemUnion, model string) llm
 			}
 			// Display copy for the transcript; the opaque item is what replays.
 			if summary.Len() > 0 {
-				msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockThinking, Text: summary.String(), Provider: Name + "-display"})
+				msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockThinking, Text: summary.String(), Provider: name + "-display"})
 			}
-			msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockOpaque, Provider: Name, Raw: json.RawMessage(item.RawJSON())})
+			msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockOpaque, Provider: name, Raw: json.RawMessage(item.RawJSON())})
 		case "function_call":
 			args := item.Arguments.OfString
 			input := json.RawMessage(args)

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"larik/internal/chatgpt"
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/llm/anthropic"
@@ -30,7 +32,11 @@ type Choice struct {
 	KeyEnv  string // environment variable holding its key; empty for local servers
 	BaseURL string // default endpoint
 	Local   bool
+	SignIn  bool // authenticates by signing in (ChatGPT) instead of a key
 }
+
+// Codex runs OpenAI's Codex models on a ChatGPT plan, via sign-in.
+const Codex = "codex"
 
 // Choices lists the built-in providers in the order the wizard shows them.
 func Choices() []Choice {
@@ -38,6 +44,7 @@ func Choices() []Choice {
 		{Name: anthropic.Name, Title: "Anthropic", Desc: "Claude models", KeyEnv: "ANTHROPIC_API_KEY", BaseURL: "https://api.anthropic.com"},
 		{Name: openai.Name, Title: "OpenAI", Desc: "GPT models", KeyEnv: "OPENAI_API_KEY", BaseURL: "https://api.openai.com/v1"},
 		{Name: gemini.Name, Title: "Google Gemini", Desc: "Gemini models", KeyEnv: "GEMINI_API_KEY", BaseURL: "https://generativelanguage.googleapis.com"},
+		{Name: Codex, Title: "ChatGPT (Codex)", Desc: "Codex models on your ChatGPT plan, via sign-in", BaseURL: chatgpt.BaseURL, SignIn: true},
 	}
 	for _, c := range []struct{ name, title, desc string }{
 		{"openrouter", "OpenRouter", "many vendors behind one key"},
@@ -85,16 +92,22 @@ func EnvKey(name string) string {
 // Endpoint is where and how to reach a provider's API.
 type Endpoint struct {
 	Name    string
-	Kind    string // anthropic, openai, gemini, or an openai-compatible preset / "openai-compatible"
+	Kind    string // anthropic, openai, gemini, codex, or an openai-compatible preset / "openai-compatible"
 	BaseURL string
 	Key     string
+	// Token authenticates a signed-in provider (codex) per request.
+	Token func(ctx context.Context) (token, account string, err error)
 }
 
 // EndpointFor resolves a provider's endpoint from config, presets and the
 // environment, the same way the provider itself is built.
 func EndpointFor(cfg *config.Config, name string) Endpoint {
 	pc := cfg.Providers[name]
-	return EndpointOf(name, pc)
+	e := EndpointOf(name, pc)
+	if e.Kind == Codex && chatgpt.SignedIn(chatgpt.Path(cfg.ConfigDir)) {
+		e.Token = chatgpt.NewSource(chatgpt.Path(cfg.ConfigDir)).Token
+	}
+	return e
 }
 
 // EndpointOf resolves the endpoint for an explicit provider config.
@@ -135,6 +148,8 @@ type Model struct {
 // ListModels asks the provider which models it serves.
 func (e Endpoint) ListModels(ctx context.Context) ([]Model, error) {
 	switch {
+	case e.Kind == Codex:
+		return e.codexModels(ctx)
 	case e.Kind == anthropic.Name:
 		return e.anthropicModels(ctx)
 	case e.Kind == gemini.Name:
@@ -253,6 +268,117 @@ func (e Endpoint) geminiModels(ctx context.Context) ([]Model, error) {
 	return out, nil
 }
 
+// CodexModels are the Codex models offered, in Codex's order, when the
+// account's own list can't be fetched.
+var CodexModels = []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"}
+
+// codexModels lists the models the signed-in ChatGPT account can use,
+// falling back to CodexModels when the list isn't available.
+func (e Endpoint) codexModels(ctx context.Context) ([]Model, error) {
+	if e.Token == nil {
+		return nil, errors.New("not signed in to ChatGPT; run /connect codex")
+	}
+	tok, account, err := e.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Models []struct {
+			Slug          string `json:"slug"`
+			Visibility    string `json:"visibility"`
+			ContextWindow int    `json:"context_window"`
+		} `json:"models"`
+	}
+	h := map[string]string{"Authorization": "Bearer " + tok, "chatgpt-account-id": account, "originator": "larik"}
+	var out []Model
+	if getJSON(ctx, strings.TrimRight(e.BaseURL, "/")+"/models?client_version=1.0.0", h, &list) == nil {
+		for _, m := range list.Models {
+			if m.Visibility == "list" {
+				out = append(out, Model{ID: m.Slug, Context: m.ContextWindow, Chat: true, Tools: true, CapsKnown: true})
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, id := range CodexModels {
+			out = append(out, withCatalog(Model{ID: id, Chat: true, Tools: true, CapsKnown: true}))
+		}
+	}
+	return out, nil
+}
+
+// PullProgress is one update from an Ollama download.
+type PullProgress struct {
+	Status    string // e.g. "pulling manifest", "verifying sha256 digest"
+	Completed int64  // bytes of the current layer
+	Total     int64
+}
+
+// Pull downloads model into an Ollama server, calling progress for each
+// update. Cancel ctx to stop; Ollama keeps what it fetched for next time.
+func (e Endpoint) Pull(ctx context.Context, model string, progress func(PullProgress)) error {
+	if !e.IsOllama() {
+		return fmt.Errorf("%s can't download models", e.Name)
+	}
+	native := strings.TrimSuffix(strings.TrimRight(e.BaseURL, "/"), "/v1")
+	body, _ := json.Marshal(map[string]any{"model": model, "stream": true})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, native+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("can't reach %s (is the server running?)", req.URL.Host)
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var line struct {
+			Status    string `json:"status"`
+			Completed int64  `json:"completed"`
+			Total     int64  `json:"total"`
+			Error     string `json:"error"`
+		}
+		if err := dec.Decode(&line); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, io.EOF) {
+				return fmt.Errorf("the download of %s ended early", model)
+			}
+			return err
+		}
+		switch {
+		case line.Error != "":
+			if strings.Contains(line.Error, "file does not exist") {
+				return fmt.Errorf("ollama.com has no model named %s", model)
+			}
+			return errors.New(line.Error)
+		case resp.StatusCode != http.StatusOK:
+			return fmt.Errorf("%s: %s", req.URL.Host, resp.Status)
+		case line.Status == "success":
+			return nil
+		}
+		progress(PullProgress{Status: line.Status, Completed: line.Completed, Total: line.Total})
+	}
+}
+
+// Suggestion is a model worth offering to download.
+type Suggestion struct {
+	ID   string
+	Desc string
+}
+
+// OllamaSuggestions are tool-capable models the wizard offers to download.
+var OllamaSuggestions = []Suggestion{
+	{"qwen3:4b", "small and capable · tools, thinking"},
+	{"qwen3:8b", "stronger, needs more memory · tools, thinking"},
+	{"qwen2.5-coder:7b", "tuned for code · tools"},
+	{"llama3.2:3b", "fast on modest machines · tools"},
+}
+
 // withCatalog fills in what the built-in catalog knows about a model.
 func withCatalog(m Model) Model {
 	if info, ok := llm.Catalog[m.ID]; ok && m.Context == 0 {
@@ -296,7 +422,7 @@ func Detect(ctx context.Context, cfg *config.Config) map[string]Detection {
 	for _, c := range Choices() {
 		e := EndpointFor(cfg, c.Name)
 		if !c.Local {
-			out[c.Name] = Detection{Name: c.Name, HasKey: e.Key != ""}
+			out[c.Name] = Detection{Name: c.Name, HasKey: e.Key != "" || e.Token != nil}
 			continue
 		}
 		wg.Go(func() {
@@ -323,7 +449,8 @@ func Usable(cfg *config.Config) []string {
 		}
 	}
 	for _, c := range Choices() {
-		if _, ok := cfg.Providers[c.Name]; ok || c.Local || EnvKey(c.Name) != "" {
+		signedIn := c.SignIn && chatgpt.SignedIn(chatgpt.Path(cfg.ConfigDir))
+		if _, ok := cfg.Providers[c.Name]; ok || c.Local || EnvKey(c.Name) != "" || signedIn {
 			add(c.Name)
 		}
 	}

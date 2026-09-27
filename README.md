@@ -13,7 +13,7 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
 ./larik
 ```
 
-The first time you run `larik` in a terminal with nothing configured, a setup wizard walks you through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models, and saves your choice to `~/.config/larik/config.json` or `.larik/settings.local.json`. Run `/connect` at any time to set up another provider.
+The first time you run `larik` in a terminal with nothing configured, a setup wizard walks you through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models (with Ollama, it can also download a recommended model, or any model you name, with a progress bar), and saves your choice to `~/.config/larik/config.json` or `.larik/settings.local.json`. Run `/connect` at any time to set up another provider.
 
 With no `--model` and no saved default, Larik picks the default model of the first provider whose key is set:
 
@@ -33,6 +33,14 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 ./larik --resume 20260926-2358                    # resume by id prefix
 ./larik -c --fork                                 # branch the last session instead of appending
 ./larik serve                                     # HTTP + SSE API (see Server mode)
+```
+
+### ChatGPT plan (Codex models)
+
+To use Codex models on your ChatGPT plan instead of an API key, run `/connect codex` (or pick "ChatGPT (Codex)" in the first-run wizard). larik opens the ChatGPT sign-in page in your browser and receives the result on `localhost:1455`, the same OAuth flow the Codex CLI uses. It keeps its own sign-in in `~/.config/larik/chatgpt-auth.json`, readable only by you, refreshes it before it expires, and never touches the Codex CLI's login. Sign out from `/providers` (select codex, press `d` twice).
+
+```bash
+./larik --model codex/gpt-6-luna   # the fast, affordable one; good for testing
 ```
 
 ### Local models with Ollama

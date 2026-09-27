@@ -138,13 +138,16 @@ func (m *model) buildModelList() {
 			rows[i].value = pickModel{n, rows[i].label}
 		}
 		items = append(items, rows...)
+		if providers.EndpointFor(m.opts.Config, n).IsOllama() {
+			items = append(items, pickItem{section: title, label: "↓ Download a model…", detail: "from ollama.com", value: pickConnect{n}})
+		}
 	}
 	for _, c := range providers.Choices() {
 		if c.Local || slices.Contains(names, c.Name) {
 			continue
 		}
 		switch c.Name {
-		case "anthropic", "openai", "gemini":
+		case "anthropic", "openai", "gemini", providers.Codex:
 			items = append(items, pickItem{section: "not set up", label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{c.Name}})
 		}
 	}

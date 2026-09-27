@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"larik/internal/chatgpt"
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/llm/anthropic"
@@ -93,7 +94,7 @@ func split(cfg *config.Config, spec string) (provider, model string) {
 
 func isBuiltin(name string) bool {
 	switch name {
-	case anthropic.Name, openai.Name, gemini.Name:
+	case anthropic.Name, openai.Name, gemini.Name, Codex:
 		return true
 	}
 	_, ok := openaicompat.Presets[name]
@@ -102,7 +103,7 @@ func isBuiltin(name string) bool {
 
 // Names lists the built-in provider names for help text.
 func Names() []string {
-	names := []string{anthropic.Name, openai.Name, gemini.Name}
+	names := []string{anthropic.Name, openai.Name, gemini.Name, Codex}
 	for n := range openaicompat.Presets {
 		names = append(names, n)
 	}
@@ -135,6 +136,17 @@ func build(cfg *config.Config, name string) (llm.Provider, error) {
 			return nil, fmt.Errorf("gemini: set GEMINI_API_KEY")
 		}
 		return llm.WithRetry(gemini.New(key, pc.BaseURL), 4), nil
+	}
+	if kind == Codex {
+		path := chatgpt.Path(cfg.ConfigDir)
+		if !chatgpt.SignedIn(path) {
+			return nil, fmt.Errorf("codex: not signed in to ChatGPT; run /connect codex")
+		}
+		baseURL := pc.BaseURL
+		if baseURL == "" {
+			baseURL = chatgpt.BaseURL
+		}
+		return openai.NewChatGPT(name, baseURL, chatgpt.NewSource(path).Token), nil
 	}
 	if kind == ollama.Name {
 		baseURL := pc.BaseURL
