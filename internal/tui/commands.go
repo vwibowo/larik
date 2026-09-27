@@ -38,6 +38,8 @@ const helpText = `Commands
   /sandbox                  bash sandbox status
   /tasks                    background tasks
   /tasks stop <id>          cancel a background task
+  /worktrees                git worktrees kept by isolated subagents
+  /worktrees remove <b|all> delete a kept worktree and its branch
   /<skill-name> [args]      run a skill
   /quit                     exit
 
@@ -180,6 +182,9 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/tasks":
 		return m.tasksCommand(args, info, fail)
+
+	case "/worktrees":
+		return m.worktreesCommand(args, info, fail)
 
 	case "/sessions", "/resume", "/new", "/fork", "/rewind":
 		return m.sessionCommand(name, args, info, fail)

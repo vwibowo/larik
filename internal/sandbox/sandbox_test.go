@@ -135,3 +135,48 @@ func TestProfileAndArgs(t *testing.T) {
 		t.Error("protected binds must follow writable binds")
 	}
 }
+
+func TestWorktreeSandbox(t *testing.T) {
+	// The repository must live outside the temp dirs the sandbox always
+	// allows, as real projects do.
+	realHome, _ := os.UserHomeDir()
+	root, err := os.MkdirTemp(realHome, ".larik-sandbox-wt-")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer os.RemoveAll(root)
+	root = real(root)
+	sb, _ := New(Config{}, root, real(t.TempDir()))
+	if sb == nil {
+		t.Skip("no sandbox on this machine")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	git := func(dir string, args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git(root, "init", "-q")
+	git(root, "commit", "-q", "--allow-empty", "-m", "init")
+	wt := filepath.Join(real(t.TempDir()), "wt")
+	git(root, "worktree", "add", "-q", "-b", "larik/t", wt)
+	w := sb.ForWorktree(wt, filepath.Join(root, ".git"))
+
+	// The worktree is writable, and committing there works: git writes
+	// objects and refs into the main repository's .git.
+	if out, err := run(t, w, wt, `echo hi > f.txt && git -c user.name=t -c user.email=t@t add f.txt && git -c user.name=t -c user.email=t@t commit -qm wt && echo ok`); err != nil || !strings.Contains(out, "ok") {
+		t.Fatalf("commit in worktree: %v %s", err, out)
+	}
+	// The original checkout is not writable, nor are the shared hooks and
+	// config or the worktree's .git pointer.
+	for _, p := range []string{filepath.Join(root, "escape.txt"), filepath.Join(root, ".git", "hooks", "pre-commit"), filepath.Join(root, ".git", "config"), filepath.Join(wt, ".git")} {
+		if _, err := run(t, w, wt, "echo x >> "+p); err == nil {
+			t.Errorf("write to %s must fail", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape.txt")); err == nil {
+		t.Error("escaped into the original checkout")
+	}
+}

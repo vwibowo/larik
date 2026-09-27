@@ -69,6 +69,7 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 | `/agents` | List subagents |
 | `/lsp` | Language servers and status |
 | `/tasks` / `/tasks stop <id>` | Background subagent tasks |
+| `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents |
 | `/sandbox` | Sandbox status |
 | `/<skill-name> [args]` | Run a skill |
 
@@ -291,6 +292,7 @@ name: reviewer
 description: Reviews a diff for bugs and missing tests. Use after making changes.
 tools: Read, Grep, Glob, Bash      # optional; omit for all tools. mcp__<server> allows a whole server
 model: sonnet                      # optional: inherit (default), opus/sonnet/haiku, or provider/model
+isolation: worktree                # optional: always run in its own git worktree
 ---
 You are a meticulous code reviewer. ...
 ```
@@ -298,11 +300,20 @@ You are a meticulous code reviewer. ...
 **What subagents share with the main agent:**
 - **Permissions:** the same rules and mode. Plan mode keeps subagents read-only too, and a subagent's permission prompts appear in your UI, labelled with the subagent and queued when several ask at once.
 - **Hooks:** the same hooks, with `SubagentStop` in place of `Stop`.
-- **Checkpoints:** the same store, so `/undo` reverts subagent edits along with the turn.
+- **Checkpoints:** the same store, so `/undo` reverts subagent edits along with the turn. Worktree subagents are the exception (see below).
 
 **Other behavior:**
 - Subagent tool calls are shown nested under their task. Their cost is included in the session totals, and each subagent's transcript is saved next to the session file.
 - Subagents can't start further subagents.
+
+**Worktree isolation:** inside a git repository, `task` accepts `isolation: "worktree"`, or an agent definition can set it. The subagent then works in its own git worktree on a new branch `larik/task-xxxxxx`, so parallel agents never overwrite each other's edits or yours.
+- **Where it runs:** the worktree is created under `~/.local/share/larik/worktrees/` from the current `HEAD` commit. Uncommitted changes in your checkout are not included. The subagent's working directory, path permissions and relative paths all point into the worktree.
+- **Confinement:** file writes outside the worktree ask for permission, as for any path outside the working directory. When the sandbox is on, `bash` may write only to the worktree and to the repository's `.git`, so commits work. `.git/hooks` and `.git/config` stay read-only.
+- **Finishing:** when the subagent ends, leftover changes are committed on its branch.
+  - If nothing changed, the worktree and branch are deleted.
+  - Otherwise both are kept, and the result tells the main agent the branch name, the changed files, and how to review (`git diff base...branch`), merge and clean up. Nothing reaches your working tree until someone merges.
+- **Not shared:** worktree subagents skip `/undo` checkpoints (the branch is the undo) and don't use the `lsp` tool, because the language servers index your checkout.
+- **Cleanup:** `/worktrees` lists kept worktrees and how many commits each has that aren't in `HEAD`. `/worktrees remove <branch|all>` deletes a worktree and its branch.
 
 **Background subagents:**
 - **Starting one:** with `run_in_background: true`, `task` returns an ID (`bg-1`) immediately and the main agent keeps working.
@@ -396,6 +407,7 @@ internal/mcp        MCP client: server lifecycle, approval, tool adapter
 internal/hooks      lifecycle hook runner (Claude Code-compatible format)
 internal/skills     Agent Skills discovery, index, skill tool, /name expansion
 internal/subagent   subagent definitions and the task tool
+internal/worktree   git worktrees for isolated subagents
 internal/lsp        language server client, edit diagnostics, lsp tool
 internal/sandbox    Seatbelt / bubblewrap confinement for bash
 internal/web        web_fetch (HTML to Markdown) and web_search backends

@@ -73,6 +73,33 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	return s, ""
 }
 
+// ForWorktree derives a sandbox for a git worktree at dir: writable are
+// the worktree (instead of the project) and gitDir, the repository's
+// shared .git that commits in the worktree write to; its hooks and config
+// stay protected, as do the worktree's own protected paths.
+func (s *Sandbox) ForWorktree(dir, gitDir string) *Sandbox {
+	w := *s
+	w.root = real(dir)
+	gitDir = real(gitDir)
+	w.writable = []string{w.root, gitDir}
+	for _, p := range s.writable {
+		if p != s.root {
+			w.writable = append(w.writable, p)
+		}
+	}
+	w.writable = uniq(w.writable)
+	w.protected = []string{filepath.Join(gitDir, "hooks"), filepath.Join(gitDir, "config")}
+	for _, name := range protectedNames {
+		w.protected = append(w.protected, filepath.Join(w.root, name))
+	}
+	// In a worktree .git is a file pointing at the repository; keep it.
+	w.protected = append(w.protected, filepath.Join(w.root, ".git"))
+	if w.kind == "seatbelt" {
+		w.profile = w.seatbeltProfile()
+	}
+	return &w
+}
+
 func defaultWritable(home string) []string {
 	paths := []string{"/tmp", os.TempDir()}
 	if runtime.GOOS == "darwin" {

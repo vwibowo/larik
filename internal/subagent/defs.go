@@ -23,6 +23,7 @@ type Definition struct {
 	Prompt      string   // system prompt body
 	Tools       []string // allowed tool names; nil means all (except task)
 	Model       string   // "", "inherit", an alias (opus, sonnet, haiku) or provider/model
+	Isolation   string   // "worktree" to always run in a git worktree
 	Source      string   // "builtin" or the file path
 }
 
@@ -58,6 +59,7 @@ type frontmatter struct {
 	Description string `yaml:"description"`
 	Tools       any    `yaml:"tools"` // "Read, Grep" or [Read, Grep]
 	Model       string `yaml:"model"`
+	Isolation   string `yaml:"isolation"`
 }
 
 // Dirs lists definition directories in increasing precedence.
@@ -131,7 +133,7 @@ func parse(path string) (Definition, error) {
 	if desc == "" {
 		return Definition{}, fmt.Errorf("%s: description is required", path)
 	}
-	def := Definition{Name: name, Description: desc, Prompt: strings.TrimSpace(string(body)), Model: strings.TrimSpace(meta.Model), Source: path}
+	def := Definition{Name: name, Description: desc, Prompt: strings.TrimSpace(string(body)), Model: strings.TrimSpace(meta.Model), Isolation: strings.TrimSpace(meta.Isolation), Source: path}
 	switch t := meta.Tools.(type) {
 	case string:
 		for _, n := range strings.Split(t, ",") {

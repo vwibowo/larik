@@ -101,6 +101,14 @@ func Setup(cwd, version string) (*App, error) {
 			r, err := a.Resolve(cfg, spec)
 			return r.Provider, r.Model, err
 		},
+		Repo:         gitRoot,
+		WorktreeRoot: filepath.Join(cfg.DataDir, "worktrees"),
+		SandboxFor: func(dir, gitDir string) tools.Sandbox {
+			if a.Sandbox == nil {
+				return nil // a nil interface, not a typed nil
+			}
+			return a.Sandbox.ForWorktree(dir, gitDir)
+		},
 	})
 	a.tools = baseTools
 

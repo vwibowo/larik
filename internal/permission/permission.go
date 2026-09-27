@@ -53,10 +53,16 @@ type Rules struct {
 }
 
 type Checker struct {
+	*state
+	cwd string // relative paths and path rules resolve against it
+}
+
+// state is shared by a checker and those derived from it with WithCwd,
+// so mode changes and "always allow" answers apply to all of them.
+type state struct {
 	mu    sync.Mutex
 	mode  Mode
 	rules Rules
-	cwd   string
 	// sandboxed: bash runs confined by the OS sandbox, so sandboxed
 	// commands need no prompt; opting out with "sandbox": false does.
 	sandboxed bool
@@ -86,7 +92,13 @@ func wantsSandbox(input json.RawMessage) bool {
 }
 
 func NewChecker(mode Mode, rules Rules, cwd string) *Checker {
-	return &Checker{mode: mode, rules: rules, cwd: cwd}
+	return &Checker{state: &state{mode: mode, rules: rules}, cwd: cwd}
+}
+
+// WithCwd returns a checker for another directory (e.g. a subagent's git
+// worktree) that shares this one's mode and rules.
+func (c *Checker) WithCwd(cwd string) *Checker {
+	return &Checker{state: c.state, cwd: cwd}
 }
 
 func (c *Checker) Mode() Mode {

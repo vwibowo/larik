@@ -1,14 +1,17 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/agent"
 	"larik/internal/app"
 	"larik/internal/session"
+	"larik/internal/worktree"
 )
 
 // sessionCommand handles /sessions, /resume, /new, /fork and /rewind.
@@ -169,4 +172,62 @@ func oneLine(s string, n int) string {
 		s = string([]rune(s)[:n-1]) + "…"
 	}
 	return s
+}
+
+// worktreesCommand lists or removes worktrees kept by isolated subagents.
+func (m *model) worktreesCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
+	repo := agent.GitRoot(m.agent.Cwd())
+	if repo == "" {
+		return info("not in a git repository")
+	}
+	ctx := context.Background()
+	if len(args) >= 2 && args[0] == "remove" {
+		var targets []string
+		if args[1] == "all" {
+			list, err := worktree.List(ctx, repo)
+			if err != nil {
+				return fail(err.Error())
+			}
+			for _, in := range list {
+				targets = append(targets, in.Branch)
+			}
+		} else {
+			targets = args[1:]
+		}
+		var done []string
+		for _, name := range targets {
+			w, err := worktree.Open(ctx, repo, name)
+			if err == nil {
+				err = w.Remove(ctx)
+			}
+			if err != nil {
+				return fail(name + ": " + err.Error())
+			}
+			done = append(done, w.Branch)
+		}
+		if len(done) == 0 {
+			return info("no worktrees to remove")
+		}
+		return info("removed " + strings.Join(done, ", ") + " (worktree and branch)")
+	}
+	list, err := worktree.List(ctx, repo)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if len(list) == 0 {
+		return info("no worktrees from isolated subagents")
+	}
+	var b strings.Builder
+	for _, in := range list {
+		state := fmt.Sprintf("%d commit(s) not in HEAD", in.Commits)
+		if in.Commits == 0 {
+			state = "merged or empty"
+		}
+		if in.Dirty {
+			state += ", uncommitted changes"
+		}
+		fmt.Fprintf(&b, "%s  %s\n    %s\n", in.Branch, m.st.dim.Render(state), in.Path)
+	}
+	b.WriteString("merge with: git merge <branch> · remove with: /worktrees remove <branch|all>")
+	return info(b.String())
 }

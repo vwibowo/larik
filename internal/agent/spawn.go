@@ -35,6 +35,14 @@ type SpawnOptions struct {
 	Tools    *tools.Registry
 	Session  *session.Session // optional transcript for the child
 	MaxTurns int
+
+	// Cwd, when set, runs the child in another directory, such as its own
+	// git worktree: paths and path rules resolve there, bash uses Sandbox
+	// (which should be confined to that directory), and its file changes
+	// are neither checkpointed nor sent to the parent's language servers,
+	// which belong to the parent's tree.
+	Cwd     string
+	Sandbox tools.Sandbox
 }
 
 // Spawn creates a subagent that shares this agent's permissions (and mode),
@@ -43,7 +51,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
 	effort := a.opts.Effort
 	a.mu.Unlock()
-	return New(Options{
+	opts := Options{
 		Provider:    o.Provider,
 		Model:       o.Model,
 		Effort:      effort,
@@ -59,7 +67,16 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		LSP:         a.opts.LSP,
 		Sandbox:     a.opts.Sandbox,
 		Subagent:    o.Type,
-	})
+	}
+	if o.Cwd != "" && o.Cwd != a.opts.Cwd {
+		opts.Cwd = o.Cwd
+		if opts.Perms != nil {
+			opts.Perms = opts.Perms.WithCwd(o.Cwd)
+		}
+		opts.Sandbox = o.Sandbox
+		opts.Checkpoints, opts.LSP = nil, nil
+	}
+	return New(opts)
 }
 
 // AddUsage adds spend made on this agent's behalf (e.g. by a subagent) to
