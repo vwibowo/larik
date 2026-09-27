@@ -24,9 +24,15 @@ func (m *model) View() tea.View {
 		}
 	}
 
-	if m.perm != nil {
+	switch {
+	case m.perm != nil:
 		parts = append(parts, m.permissionView())
-	} else {
+	case m.wizard != nil:
+		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.height)))
+	default:
+		if m.mpick != nil {
+			parts = append(parts, m.modelPickerView())
+		}
 		parts = append(parts, m.st.box.Width(max(m.width-2, 10)).Render(m.input.View()))
 	}
 	parts = append(parts, m.statusLine())
@@ -342,7 +348,7 @@ func (m *model) printBanner() tea.Cmd {
 	lines := []string{
 		m.st.accent.Render("larik") + m.st.dim.Render(" v"+m.opts.Version),
 		m.st.dim.Render(m.agent.ProviderName() + "/" + m.agent.Model() + " · " + cwd),
-		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /help"),
+		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /model switch model · /help"),
 	}
 	switch {
 	case m.opts.Sandbox != nil:

@@ -107,3 +107,40 @@ func TestProjectCannotRedirectSearch(t *testing.T) {
 		t.Error("shared settings may disable web_fetch")
 	}
 }
+
+func TestSaveProvider(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := cfg.UserConfigPath()
+	write(t, path, `{"effort":"high","providers":{"groq":{"api_key_env":"MY_GROQ"}}}`)
+
+	if err := cfg.SaveProvider(path, "vllm", ProviderConfig{Type: "openai-compatible", BaseURL: "http://localhost:8000/v1", APIKey: "secret"}, "vllm/qwen"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("a file holding a key must be private, got %v", fi.Mode().Perm())
+	}
+	if cfg.Model != "vllm/qwen" || cfg.Providers["vllm"].APIKey != "secret" {
+		t.Fatalf("in-memory config not updated: %+v", cfg)
+	}
+	cfg, err = Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "vllm/qwen" || cfg.Effort != "high" || cfg.Providers["groq"].APIKeyEnv != "MY_GROQ" || cfg.Providers["vllm"].BaseURL != "http://localhost:8000/v1" {
+		t.Fatalf("saved config lost or garbled settings: %+v", cfg)
+	}
+
+	// A zero provider config only sets the model.
+	if err := cfg.SaveProvider(path, "ollama", ProviderConfig{}, "ollama/qwen3:4b"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = Load(cwd)
+	if _, ok := cfg.Providers["ollama"]; ok || cfg.Model != "ollama/qwen3:4b" {
+		t.Fatalf("unexpected result: model %q providers %v", cfg.Model, cfg.Providers)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"larik/internal/app"
 	"larik/internal/config"
 	"larik/internal/headless"
+	"larik/internal/providers"
 	"larik/internal/session"
 	"larik/internal/tui"
 )
@@ -90,6 +91,21 @@ func run() error {
 	}
 	if *print && prompt == "" {
 		return errors.New("-p needs a prompt argument or piped stdin")
+	}
+
+	// First start with nothing configured: walk through connecting a
+	// provider instead of failing.
+	interactive := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	if !*print && interactive && *model == "" && *resume == "" && !*cont && !providers.HasDefault(cfg) {
+		spec, err := tui.RunSetup(cfg)
+		if err != nil {
+			return err
+		}
+		if spec == "" {
+			fmt.Println("No model set up. Run larik again to connect one, or edit " + cfg.UserConfigPath())
+			return nil
+		}
+		*model = spec
 	}
 
 	a, err := app.Setup(cwd, version)

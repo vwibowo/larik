@@ -56,7 +56,8 @@ func defaultSpec() (string, error) {
 		return gemini.Name + "/" + gemini.DefaultModel, nil
 	}
 	return "", fmt.Errorf("no model configured and no API key found.\n" +
-		"Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY, or pass --model provider/model (e.g. ollama/qwen3-coder)")
+		"Run larik in a terminal to set one up, set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY,\n" +
+		"or pass --model provider/model (e.g. ollama/qwen3-coder)")
 }
 
 func geminiKey() string {

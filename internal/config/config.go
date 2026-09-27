@@ -241,7 +241,13 @@ func PersistAllowRule(cwd, rule string) error {
 
 // updateLocal edits settings.local.json as generic JSON so unknown keys survive.
 func updateLocal(cwd string, edit func(raw map[string]any)) error {
-	path := LocalSettingsPath(cwd)
+	return updateJSON(LocalSettingsPath(cwd), 0o644, edit)
+}
+
+// updateJSON edits a settings file as generic JSON so unknown keys survive.
+// A file that exists keeps its permissions, unless perm is private (no
+// group or other access), which is then enforced.
+func updateJSON(path string, perm os.FileMode, edit func(raw map[string]any)) error {
 	raw := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &raw); err != nil {
@@ -252,8 +258,59 @@ func updateLocal(cwd string, edit func(raw map[string]any)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	if fi, err := os.Stat(path); err == nil {
+		private := perm&0o077 == 0
+		perm = fi.Mode().Perm()
+		if private {
+			perm &^= 0o077
+		}
+	}
 	b, _ := json.MarshalIndent(raw, "", "  ")
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	if err := os.WriteFile(path, append(b, '\n'), perm); err != nil {
+		return err
+	}
+	return os.Chmod(path, perm) // WriteFile keeps an existing file's mode
+}
+
+// UserConfigPath is the personal config file shared by all projects.
+func (c *Config) UserConfigPath() string {
+	return filepath.Join(c.ConfigDir, "config.json")
+}
+
+// SaveProvider records a provider in the settings file at path (the user
+// config or LocalSettingsPath) and, when model is set, makes model the
+// default. A zero pc writes no provider entry. It also updates c.
+func (c *Config) SaveProvider(path, name string, pc ProviderConfig, model string) error {
+	perm := os.FileMode(0o644)
+	if pc.APIKey != "" {
+		perm = 0o600 // the file now holds a secret
+	}
+	err := updateJSON(path, perm, func(raw map[string]any) {
+		if pc != (ProviderConfig{}) {
+			ps, _ := raw["providers"].(map[string]any)
+			if ps == nil {
+				ps = map[string]any{}
+			}
+			var entry map[string]any
+			b, _ := json.Marshal(pc)
+			_ = json.Unmarshal(b, &entry)
+			ps[name] = entry
+			raw["providers"] = ps
+		}
+		if model != "" {
+			raw["model"] = model
+		}
+	})
+	if err != nil {
+		return err
+	}
+	if pc != (ProviderConfig{}) {
+		c.Providers[name] = pc
+	}
+	if model != "" {
+		c.Model = model
+	}
+	return nil
 }
 
 // ProjectHooksApproved reports whether shared project hooks may run.

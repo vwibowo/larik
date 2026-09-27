@@ -99,6 +99,10 @@ type model struct {
 	stats     agent.UsageInfo
 	busyLabel string // non-agent background work, e.g. compaction
 	quitArmed bool
+
+	mpick      *modelPicker              // the /model dropdown, when open
+	modelLists map[string]providerModels // last model lists, by provider
+	wizard     *wizard                   // the connect wizard, when open
 }
 
 // Messages.
@@ -242,11 +246,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.println(m.st.dim.Render("✓ Conversation compacted. Summary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
 
+	case modelsLoadedMsg:
+		m.modelLists = msg.lists
+		if m.mpick != nil {
+			m.mpick.loading = false
+			m.buildModelList()
+		}
+		return m, nil
+
+	case wizDetectedMsg, wizTestedMsg:
+		if m.wizard == nil {
+			return m, nil
+		}
+		return m, m.handleWizard(msg)
+
 	case tea.KeyPressMsg:
-		if m.perm != nil {
+		switch {
+		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
+		case m.wizard != nil:
+			return m, m.handleWizard(msg)
+		case m.mpick != nil:
+			return m, m.handleModelPickerKey(msg)
 		}
 		return m.handleKey(msg)
+	}
+
+	if m.wizard != nil { // e.g. cursor blinks for its text fields
+		return m, m.handleWizard(msg)
 	}
 
 	var cmd tea.Cmd
@@ -284,6 +311,11 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "shift+tab":
 		return m, m.cycleMode()
+	case "alt+p":
+		if m.running {
+			return m, m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))
+		}
+		return m, m.openModelPicker()
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {

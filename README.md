@@ -13,7 +13,9 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
 ./larik
 ```
 
-With no `--model`, Larik picks the default model of the first provider whose key is set:
+The first time you run `larik` in a terminal with nothing configured, a setup wizard walks you through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models, and saves your choice to `~/.config/larik/config.json` or `.larik/settings.local.json`. Run `/connect` at any time to set up another provider.
+
+With no `--model` and no saved default, Larik picks the default model of the first provider whose key is set:
 
 | Key | Default model |
 |---|---|
@@ -45,11 +47,12 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 
 ## Keys and commands
 
-`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
 |---|---|
-| `/model [provider/model]` | Show or switch model mid-session |
+| `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
+| `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Permission mode |
 | `/undo` | Revert the file changes from the last turn |

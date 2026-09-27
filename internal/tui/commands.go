@@ -16,7 +16,8 @@ import (
 )
 
 const helpText = `Commands
-  /model [provider/model]   show or switch model (e.g. /model openai/gpt-5.5)
+  /model [provider/model]   pick a model from a list, or switch directly (e.g. /model openai/gpt-5.5)
+  /connect [provider]       set up a provider: pick it, connect, choose a model, save
   /effort [level]           show or set reasoning effort: low medium high xhigh max default
   /mode [mode]              show or set permission mode: default accept-edits plan yolo
   /undo                     revert file changes from the last turn that made any
@@ -45,7 +46,7 @@ const helpText = `Commands
 
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  shift+tab cycle permission mode · ctrl+c clear input / interrupt / quit`
+  shift+tab cycle permission mode · alt+p switch model · ctrl+c clear input / interrupt / quit`
 
 var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModePlan}
 
@@ -72,7 +73,7 @@ func (m *model) command(line string) tea.Cmd {
 	// Commands that would race with a running turn.
 	if m.running {
 		switch name {
-		case "/model", "/undo", "/compact", "/clear", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/undo", "/compact", "/clear", "/resume", "/new", "/fork", "/rewind":
 			return fail(name + " is unavailable while a turn is running (esc to interrupt)")
 		}
 	}
@@ -86,15 +87,17 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/model":
 		if arg == "" {
-			return info("model: " + m.agent.ProviderName() + "/" + m.agent.Model() + "\nproviders: " + strings.Join(providers.Names(), ", "))
+			return m.openModelPicker()
 		}
-		r, err := providers.Resolve(m.opts.Config, arg)
-		if err != nil {
-			return fail(err.Error())
+		return m.switchModel(arg, m.agent.Effort())
+
+	case "/connect":
+		if arg != "" {
+			if _, ok := providers.ChoiceFor(arg); !ok {
+				return fail("unknown provider " + arg + " (known: " + strings.Join(providers.Names(), ", ") + ")")
+			}
 		}
-		m.agent.SetModel(r.Provider, r.Model)
-		m.stats = m.agent.Stats()
-		return info("switched to " + r.String())
+		return m.openWizard(arg)
 
 	case "/effort":
 		if arg == "" {
