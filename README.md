@@ -71,7 +71,7 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
 | `/undo` | Revert the file changes from the last turn |
 | `/compact` | Summarize the conversation to free context |
-| `/clear` | Fresh context |
+| `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
 | `/cost` | Usage and cost |
 | `/sessions` | List sessions for this directory (`*` current, `⑂` branch) |
 | `/resume <id>` | Switch to another session (a unique id prefix is enough) |
@@ -303,7 +303,7 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
   2. `.agents/skills`, `.claude/skills`, `.larik/skills` in each directory from the repo root down to the working directory
 
   Existing Claude Code skills work as-is, symlinked skill folders are followed, and a higher-precedence skill with the same name overrides the lower one (`/skills` shows what was shadowed).
-- **Progressive disclosure:** only each skill's `name: description` is in the system prompt. The model loads the full instructions with the read-only `skill` tool when a task matches, and reads bundled files with the normal tools. The index is built at startup and stays fixed for the session, so prompt caches stay valid.
+- **Progressive disclosure:** only each skill's `name: description` is in the system prompt. The model loads the full instructions with the read-only `skill` tool when a task matches, and reads bundled files with the normal tools. The index is rebuilt at each fresh context (a new session or `/clear`) and stays fixed within it, so prompt caches stay valid. Add or edit a skill, then `/clear` to use it.
 - **Running a skill yourself:** type `/<skill-name> [args]`, in the TUI or with `-p`. `$ARGUMENTS` in the body is replaced with the args. Otherwise the args are appended.
 - **Frontmatter flags:** `disable-model-invocation: true` keeps a skill out of the model's index, so it only runs when you invoke it. `user-invocable: false` hides it from `/`.
 - Skills are instructions, like `AGENTS.md`. Anything a skill asks the model to run still goes through the normal permission checks.
@@ -422,6 +422,8 @@ Instructions are loaded from these files:
 - `AGENTS.md` (or `CLAUDE.md`) in each directory from the repo root down to the working directory.
 - `~/.config/larik/AGENTS.md`.
 
+They are read at the start of each fresh context, so after editing one, `/clear` picks up the change.
+
 ## Architecture
 
 For a deep dive with diagrams (the agent loop, permissions, providers, persistence, security, and how Larik compares with other harnesses), see [docs/](docs/README.md).
@@ -455,7 +457,7 @@ internal/tui        Bubble Tea UI
 
 `agent.Run` returns a channel of events. The TUI, headless mode and the HTTP server all consume it, so none of them needs changes to the loop.
 
-Transcripts are append-only. Thinking and reasoning blocks are replayed only to the model that produced them. Compaction replaces the whole history with a single summary. Together these keep provider prompt caches warm and satisfy Anthropic's thinking-block binding rules.
+Transcripts are append-only. Thinking and reasoning blocks are replayed only to the model that produced them. Compaction replaces the whole history with a single summary that names the transcript file, so the model can grep it for details the summary left out. Together these keep provider prompt caches warm and satisfy Anthropic's thinking-block binding rules.
 
 Data (sessions and checkpoints) lives under `~/.local/share/larik`.
 

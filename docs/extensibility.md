@@ -115,7 +115,7 @@ Files are `<name>.md` with YAML frontmatter (`name`, `description`, `tools`, `mo
 [skills.go](../internal/skills/skills.go) implements [Agent Skills](https://agentskills.io) with **progressive disclosure**:
 
 1. At startup, `Discover` scans the skill roots (user dirs, then `.agents/skills`, `.claude/skills`, `.larik/skills` from repo root to cwd; later overrides earlier).
-2. Only `name: description` lines go into the system prompt (`Set.Index`). The index is fixed for the session.
+2. Only `name: description` lines go into the system prompt (`Set.Index`). The index is rebuilt at each fresh context (`App.SystemPrompt` calls `Set.Reload`), so a new or edited skill is picked up after `/clear`.
 3. When a task matches, the model calls the read-only `skill` tool to load the full body, then reads bundled files with normal tools.
 4. The user can run a skill directly with `/name args`; `Set.Expand` replaces the prompt with the body (`$ARGUMENTS` substituted).
 

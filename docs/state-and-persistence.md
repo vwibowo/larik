@@ -51,7 +51,7 @@ classDiagram
 |---|---|---|
 | `meta` | Session created (first line) | Cwd, provider/model, fork origin |
 | `message` | Every user or assistant message, with usage on assistant messages | Appended to both `Messages` (the context) and `All` (display history) |
-| `compaction` | After a successful compaction | `Messages` is reset to the single summary message; `All` keeps everything |
+| `compaction` | After a successful compaction | `Messages` is reset to the single summary message, which names this file so the model can grep it; `All` keeps everything |
 | `usage` | Spend made on this session's behalf outside its transcript (subagents) | Added to usage and cost |
 
 Every entry has an `id` and the `parent_id` of the previous entry, so the file is also a linked list. `read` tolerates a torn last line after a crash.
@@ -99,9 +99,13 @@ stateDiagram-v2
     Restoring --> TurnOpen: agent queues a note: "user reverted … re-read these files"
 ```
 
-`Undo` skips turns that changed no files, so it always reverts the most recent turn that did something. Afterwards the agent queues a `<system-note>` for the next message telling the model which files were reverted, so it re-reads them instead of trusting stale content.
+`Undo` skips turns that changed no files, so it always reverts the most recent turn that did something.
 
-Scope: the store covers `write` and `edit` (and subagents sharing the store). It does not capture changes made by `bash` commands. Worktree subagents skip checkpoints entirely; their branch is the undo.
+**Across runs.** Each turn's manifest and blobs are on disk under `checkpoints/<session-id>/<n>/`, so `checkpoint.New` reloads them when a session is resumed (`larik -c`, `--resume`, `/resume`), and `/undo` keeps working. New turns are numbered after the last saved one. A branch (`/fork`, `/rewind`) is a new session id, so it starts with no undo history.
+
+**Retention.** At startup `app.Setup` calls `checkpoint.Prune`, which deletes turns whose snapshots are older than 7 days, and session directories left empty. Afterwards the agent queues a `<system-note>` for the next message telling the model which files were reverted, so it re-reads them instead of trusting stale content.
+
+Scope: the store covers `write` and `edit` (and subagents sharing the store). It does not capture changes made by `bash` commands or MCP tools. Worktree subagents skip checkpoints entirely; their branch is the undo.
 
 ## Configuration layers
 

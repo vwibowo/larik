@@ -51,7 +51,7 @@ sequenceDiagram
 
 ### 1. Load tools once per context
 
-`loadTools` ([agent.go:208](../internal/agent/agent.go:208)) calls `Options.LoadTools`, which in practice is `mcp.Manager.Registry`: it waits (bounded) for MCP servers to connect and returns the built-in tools plus every connected server's tools, sorted by name. It runs on the first prompt and again only after `Clear`. The tool set then stays fixed, so the tool definitions (which sit near the start of every request) don't change and the provider's prompt cache stays valid. An MCP server that finishes connecting later joins after `/clear`.
+`loadTools` ([agent.go:208](../internal/agent/agent.go:208)) calls `Options.LoadTools`, which in practice is `App.loadTools`: it waits (bounded) for MCP servers to connect and returns the built-in tools plus every connected server's tools, sorted by name, plus the `skill` tool when skills exist. It runs on the first prompt and again only after `Clear`. The tool set then stays fixed, so the tool definitions (which sit near the start of every request) don't change and the provider's prompt cache stays valid. An MCP server that finishes connecting later joins after `/clear`.
 
 ### 2. Session and prompt hooks
 
@@ -131,7 +131,7 @@ Esc cancels the turn's context. If text was already streaming, `keepPartial` ([a
 
 Compaction ([agent.go:509](../internal/agent/agent.go:509)) asks the same model, with the same system prompt and tools, to summarize the conversation inside `<summary>` tags. Using the same prefix means the request itself hits the prompt cache. The prompt asks it to keep the user's words close to verbatim and condense the assistant's own reasoning.
 
-Then the entire message list is replaced with one user message: "This session continues from an earlier conversation that was summarized…" plus the summary. Nothing from before is replayed. A `compaction` entry is appended to the session file, so resuming reconstructs the same state. Mid-turn compaction adds "Continue the task from where it left off."
+Then the entire message list is replaced with one user message: "This session continues from an earlier conversation that was summarized…" plus the summary, plus the path of the session file with a hint to grep it for exact details (a command, an error, a path) the summary left out. Nothing from before is replayed, but it stays one `grep` away. A `compaction` entry is appended to the session file, so resuming reconstructs the same state. Mid-turn compaction adds "Continue the task from where it left off."
 
 Triggers: automatic at 80% (unless `auto_compact` is off), on context overflow, and `/compact`. `PreCompact` hooks fire first.
 

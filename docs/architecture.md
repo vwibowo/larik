@@ -183,7 +183,7 @@ sequenceDiagram
 
 `App` holds what every session in a directory shares: MCP connections, language servers, the sandbox, skills, agent definitions and the tool list ([app.go:29](../internal/app/app.go:29)). `app.Session` holds what one conversation owns: its `Agent`, its hook runner, and its session file. `larik serve` keeps one `App` and many `Session`s.
 
-The system prompt is built once in `Setup` and never changes for the life of a context. It is `basePrompt` + an `<env>` block (cwd, platform, date, git root) + every `AGENTS.md`/`CLAUDE.md` from the repo root down to cwd + the sandbox summary + the skills index ([prompt.go](../internal/agent/prompt.go)). Keeping it byte-stable is what lets provider prompt caches hit on every request.
+The system prompt is built by `App.SystemPrompt` for each fresh context (a new session, or `Agent.Clear` through `Options.BuildSystem`) and never changes within one. It is `basePrompt` + an `<env>` block (cwd, platform, date, git root) + every `AGENTS.md`/`CLAUDE.md` from the repo root down to cwd + the sandbox summary + the skills index, rescanned each time ([prompt.go](../internal/agent/prompt.go)). Keeping it byte-stable is what lets provider prompt caches hit on every request.
 
 ## One event stream, three front ends
 

@@ -190,6 +190,10 @@ func TestCompaction(t *testing.T) {
 	if len(msgs) != 1 || len(msgs[0].Blocks) != 2 || !strings.Contains(msgs[0].Blocks[0].Text, "user said hello") || msgs[0].Blocks[1].Text != "next" {
 		t.Fatalf("after compaction got %d messages: %+v", len(msgs), msgs)
 	}
+	// The summary points at the transcript so details can be looked up.
+	if !strings.Contains(msgs[0].Blocks[0].Text, a.SessionPath()) {
+		t.Fatalf("summary should name the transcript %s: %q", a.SessionPath(), msgs[0].Blocks[0].Text)
+	}
 }
 
 func toStrings(ks []EventKind) []string {
@@ -288,5 +292,18 @@ func TestLanguageAppliesOnFreshContext(t *testing.T) {
 	a.Clear()
 	if a.opts.System != "base" {
 		t.Fatalf("clearing should apply the new language: %q", a.opts.System)
+	}
+}
+
+func TestClearRebuildsSystemPrompt(t *testing.T) {
+	version := "v1"
+	a := New(Options{System: "base v1", BuildSystem: func() string { return "base " + version }, Language: "Indonesian"})
+	version = "v2"
+	if a.opts.System != WithLanguage("base v1", "Indonesian") {
+		t.Fatalf("the prompt should stay fixed within a context: %q", a.opts.System)
+	}
+	a.Clear()
+	if a.opts.System != WithLanguage("base v2", "Indonesian") {
+		t.Fatalf("clearing should rebuild the prompt and keep the language: %q", a.opts.System)
 	}
 }

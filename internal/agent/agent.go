@@ -66,6 +66,11 @@ type Options struct {
 	// Language, if set, is what the model replies in. It becomes part of
 	// the system prompt.
 	Language string
+
+	// BuildSystem, if set, rebuilds System (without the language line) at
+	// each fresh context, so edits to instruction files and new skills
+	// apply after Clear. The prompt stays fixed within a context.
+	BuildSystem func() string
 }
 
 type Agent struct {
@@ -186,15 +191,23 @@ func (a *Agent) Stats() UsageInfo {
 	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
 }
 
-// Clear drops the conversation context (the session file keeps history).
+// Clear drops the conversation context (the session file keeps history)
+// and rebuilds the system prompt for the fresh context.
 func (a *Agent) Clear() {
+	var base string
+	if a.opts.BuildSystem != nil {
+		base = a.opts.BuildSystem() // reads files; done outside the lock
+	}
 	a.mu.Lock()
 	a.messages, a.lastContext, a.toolsLoaded = nil, 0, false
 	a.sessionStarted, a.startSource = false, "clear"
+	if a.opts.BuildSystem != nil {
+		a.baseSystem = base
+	}
 	if a.nextLang != nil {
 		a.opts.Language, a.nextLang = *a.nextLang, nil
-		a.opts.System = WithLanguage(a.baseSystem, a.opts.Language)
 	}
+	a.opts.System = WithLanguage(a.baseSystem, a.opts.Language)
 	a.mu.Unlock()
 }
 
@@ -543,7 +556,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 
 	a.mu.Lock()
-	a.messages = []llm.Message{session.CompactionMessage(summary)}
+	a.messages = []llm.Message{session.CompactionMessage(summary, a.SessionPath())}
 	a.lastContext = 0
 	a.mu.Unlock()
 	if a.opts.Session != nil {

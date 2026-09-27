@@ -155,7 +155,7 @@ func (s *Session) read() (*State, error) {
 				st.Cost += llm.Lookup(e.Model).Cost(*e.Usage)
 			}
 		case EntryCompaction:
-			st.Messages = []llm.Message{CompactionMessage(e.Summary)}
+			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -164,9 +164,16 @@ func (s *Session) read() (*State, error) {
 	return st, nil
 }
 
-// CompactionMessage is how a summary re-enters the context.
-func CompactionMessage(summary string) llm.Message {
-	return llm.UserText("This session continues from an earlier conversation that was summarized to save context. Summary:\n\n" + summary)
+// CompactionMessage is how a summary re-enters the context. When the
+// transcript path is known, the model is told where to look up details
+// the summary left out.
+func CompactionMessage(summary, transcript string) llm.Message {
+	text := "This session continues from an earlier conversation that was summarized to save context. Summary:\n\n" + summary
+	if transcript != "" {
+		text += "\n\nThe full transcript, including everything before this summary, is in " + transcript +
+			" (JSONL, one entry per line). If you need an exact detail the summary left out, such as a command, an error message or a file path, search it with grep instead of guessing."
+	}
+	return llm.UserText(text)
 }
 
 func (s *Session) AppendMessage(m llm.Message, usage *llm.Usage) error {

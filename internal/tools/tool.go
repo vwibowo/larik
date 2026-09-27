@@ -132,6 +132,11 @@ func NewRegistry(ts ...Tool) *Registry {
 	return r
 }
 
+// With returns a new registry with ts appended.
+func (r *Registry) With(ts ...Tool) *Registry {
+	return NewRegistry(append(append([]Tool(nil), r.list...), ts...)...)
+}
+
 // Builtin returns the built-in tools.
 func Builtin() []Tool { return []Tool{Read{}, Write{}, Edit{}, Bash{}, Grep{}, Glob{}} }
 

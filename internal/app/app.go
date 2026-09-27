@@ -4,9 +4,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"larik/internal/agent"
 	"larik/internal/checkpoint"
@@ -45,9 +47,11 @@ type App struct {
 	SandboxNote string
 	SearchNote  string
 
-	system string
-	tools  []tools.Tool
+	tools []tools.Tool
 }
+
+// checkpointRetention is how long /undo snapshots are kept.
+const checkpointRetention = 7 * 24 * time.Hour
 
 // Setup loads config for cwd and starts the shared services. Call Close
 // when done.
@@ -64,19 +68,10 @@ func Setup(cwd, version string) (*App, error) {
 	if projectRoot == "" {
 		projectRoot = cwd
 	}
+	_ = checkpoint.Prune(filepath.Join(cfg.DataDir, "checkpoints"), checkpointRetention)
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools := tools.Builtin()
 	a.Sandbox, a.SandboxNote = sandbox.New(cfg.Sandbox, projectRoot, home)
-	a.system = agent.BuildSystemPrompt(cwd, cfg.ConfigDir)
-	if a.Sandbox != nil {
-		a.system += "\n\n<sandbox>\n" + a.Sandbox.Summary() + "\n</sandbox>"
-	}
-	childContext := agent.ContextSections(cwd, cfg.ConfigDir)
-	if idx := a.Skills.Index(); idx != "" {
-		baseTools = append(baseTools, skills.Tool{Set: a.Skills})
-		a.system += "\n\n" + idx
-		childContext += "\n\n" + idx
-	}
 	if !cfg.Web.FetchDisabled {
 		baseTools = append(baseTools, web.FetchTool{F: web.NewFetcher()})
 	}
@@ -95,8 +90,8 @@ func Setup(cwd, version string) (*App, error) {
 
 	a.AgentDefs = subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools = append(baseTools, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
-		Set:     a.AgentDefs,
-		Context: childContext,
+		Set:         a.AgentDefs,
+		ContextFunc: a.childContext,
 		Resolve: func(spec string) (llm.Provider, string, error) {
 			r, err := a.Resolve(cfg, spec)
 			return r.Provider, r.Model, err
@@ -118,6 +113,40 @@ func Setup(cwd, version string) (*App, error) {
 	a.MCP.Base = baseTools
 	a.MCP.Start()
 	return a, nil
+}
+
+// SystemPrompt builds the main agent's system prompt from the current
+// instruction files and skills. It rescans skills first, so it is called
+// once per fresh context (a new session or /clear), never mid-context.
+func (a *App) SystemPrompt() string {
+	a.Skills.Reload()
+	system := agent.BuildSystemPrompt(a.Cwd, a.Cfg.ConfigDir)
+	if a.Sandbox != nil {
+		system += "\n\n<sandbox>\n" + a.Sandbox.Summary() + "\n</sandbox>"
+	}
+	if idx := a.Skills.Index(); idx != "" {
+		system += "\n\n" + idx
+	}
+	return system
+}
+
+// childContext is what subagent prompts share with the main agent's.
+func (a *App) childContext() string {
+	ctx := agent.ContextSections(a.Cwd, a.Cfg.ConfigDir)
+	if idx := a.Skills.Index(); idx != "" {
+		ctx += "\n\n" + idx
+	}
+	return ctx
+}
+
+// loadTools is each agent's tool set for a fresh context: the built-in
+// tools and MCP servers' tools, plus the skill tool when skills exist.
+func (a *App) loadTools(ctx context.Context, notify func(string)) *tools.Registry {
+	reg := a.MCP.Registry(ctx, notify)
+	if a.Skills.Index() != "" {
+		reg = reg.With(skills.Tool{Set: a.Skills})
+	}
+	return reg
 }
 
 // Close shuts down the shared services.
@@ -244,7 +273,8 @@ func (a *App) Open(o Options) (*Session, error) {
 		Provider:    resolved.Provider,
 		Model:       resolved.Model,
 		Effort:      eff,
-		System:      a.system,
+		System:      a.SystemPrompt(),
+		BuildSystem: a.SystemPrompt,
 		Cwd:         cwd,
 		MaxTurns:    a.Cfg.MaxTurns,
 		Tools:       tools.NewRegistry(a.tools...),
@@ -252,7 +282,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(a.Cfg.DataDir, "checkpoints", sess.ID)),
 		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
-		LoadTools:   a.MCP.Registry,
+		LoadTools:   a.loadTools,
 		Hooks:       hookRunner,
 		Skills:      a.Skills,
 		LSP:         a.LSP,

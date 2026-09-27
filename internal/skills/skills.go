@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,8 +40,11 @@ type frontmatter struct {
 	UserInvocable          *bool  `yaml:"user-invocable"`
 }
 
-// Set is the discovered skills, keyed by name.
+// Set is the discovered skills, keyed by name. Reload rescans the same
+// roots in place, so every session sharing the set sees new skills.
 type Set struct {
+	mu       sync.RWMutex
+	roots    []Root
 	byName   map[string]Skill
 	Shadowed []Skill  // lower-precedence duplicates
 	Warnings []string // unreadable or malformed skills
@@ -78,7 +82,7 @@ func Roots(home, configDir, cwd, repoRoot string) []Root {
 
 // Discover loads skills from roots; later roots override earlier ones.
 func Discover(roots []Root) *Set {
-	s := &Set{byName: map[string]Skill{}}
+	s := &Set{roots: roots, byName: map[string]Skill{}}
 	for _, root := range roots {
 		entries, err := os.ReadDir(root.Dir)
 		if err != nil {
@@ -105,6 +109,17 @@ func Discover(roots []Root) *Set {
 		}
 	}
 	return s
+}
+
+// Reload rescans the roots the set was discovered from.
+func (s *Set) Reload() {
+	if s == nil {
+		return
+	}
+	fresh := Discover(s.roots)
+	s.mu.Lock()
+	s.byName, s.Shadowed, s.Warnings = fresh.byName, fresh.Shadowed, fresh.Warnings
+	s.mu.Unlock()
 }
 
 func sameFile(a, b string) bool {
@@ -177,6 +192,8 @@ func (s *Set) Get(name string) (Skill, bool) {
 	if s == nil {
 		return Skill{}, false
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	sk, ok := s.byName[name]
 	return sk, ok
 }
@@ -186,6 +203,8 @@ func (s *Set) List() []Skill {
 	if s == nil {
 		return nil
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]Skill, 0, len(s.byName))
 	for _, sk := range s.byName {
 		out = append(out, sk)
@@ -196,7 +215,7 @@ func (s *Set) List() []Skill {
 
 // Body returns a skill's instructions without frontmatter.
 func (s *Set) Body(name string) (Skill, string, error) {
-	sk, ok := s.byName[name]
+	sk, ok := s.Get(name)
 	if !ok {
 		return Skill{}, "", fmt.Errorf("no skill named %q", name)
 	}
@@ -215,12 +234,13 @@ func (s *Set) Body(name string) (Skill, string, error) {
 // It is empty when there are none.
 func (s *Set) Index() string {
 	var lines []string
-	for _, sk := range s.List() {
+	all := s.List()
+	for _, sk := range all {
 		if !sk.ModelInvocable {
 			continue
 		}
 		if len(lines) == maxIndexed {
-			lines = append(lines, fmt.Sprintf("- (%d more skills not listed)", len(s.byName)-maxIndexed))
+			lines = append(lines, fmt.Sprintf("- (%d more skills not listed)", len(all)-maxIndexed))
 			break
 		}
 		lines = append(lines, "- "+sk.Name+": "+sk.Description)
@@ -255,7 +275,7 @@ func (s *Set) Expand(prompt string) (string, bool) {
 	}
 	name, args, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 	name = strings.TrimSpace(name)
-	sk, ok := s.byName[name]
+	sk, ok := s.Get(name)
 	if !ok || !sk.UserInvocable {
 		return prompt, false
 	}

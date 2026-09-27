@@ -36,7 +36,10 @@ type Tool struct {
 	Resolve Resolver
 	// Context is appended to every child system prompt (env block and
 	// project instructions, plus the skills index when available).
-	Context string
+	// ContextFunc, if set, is used instead and read for each child, so
+	// children see the current instruction files.
+	Context     string
+	ContextFunc func() string
 
 	// Repo is the git repository root; worktree isolation is offered only
 	// when it is set. Worktrees are created under WorktreeRoot.
@@ -157,11 +160,15 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 		emit(agent.Event{Kind: agent.EvNotice, Text: notice})
 	}
 
+	shared := t.Context
+	if t.ContextFunc != nil {
+		shared = t.ContextFunc()
+	}
 	spawn := agent.SpawnOptions{
 		Type:     def.Name,
 		Provider: provider,
 		Model:    model,
-		System:   def.Prompt + "\n\n" + footer + "\n\n" + t.Context,
+		System:   def.Prompt + "\n\n" + footer + "\n\n" + shared,
 		MaxTurns: childMaxTurns,
 	}
 	cwd := parent.Cwd()

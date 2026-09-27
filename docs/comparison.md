@@ -32,7 +32,7 @@ The OpenAI adapter uses the Responses API statelessly (`store: false` + encrypte
 
 Several choices exist only to keep the prompt prefix byte-identical between requests, so every request after the first reads from the provider's cache (cheaper and faster):
 
-- The system prompt is built once; a language change waits for `/clear`.
+- The system prompt changes only at a fresh context: instruction-file edits, new skills and a language change all wait for `/clear`.
 - The tool set (including MCP tools) is fixed per context, sorted by name; late MCP servers join after `/clear`.
 - The transcript is append-only: `/undo` becomes a note on the next message rather than an edit.
 - Compaction is one clean cut to a single summary, done with the same prefix so the summary request is itself cached.
@@ -72,10 +72,10 @@ The Ollama adapter uses the native API to request a usable context window (Ollam
 Choices that cost something:
 
 - **No text-based edit formats.** Larik requires native tool calling. Models without it (some small local ones) can't work, where Aider's diff formats would. Larik only warns when a model can't call tools.
-- **Nothing is pruned.** Session files keep everything, including history from before compaction. Checkpoint snapshots are full copies of every file edited, possibly including secrets, and only `/undo` removes them. Worktrees kept by subagents stay until `/worktrees remove`. All of it accumulates under `~/.local/share/larik`.
-- **`/undo` has a narrow reach.** It only restores what `write` and `edit` changed. A `sed -i` or a generator run from bash, or a file written by an MCP tool, isn't captured. It also only reaches turns since the process started: after `larik -c` or `--resume`, earlier turns can't be undone. Git remains the safety net.
+- **Sessions are never pruned.** Session files keep everything, including history from before compaction. Worktrees kept by subagents stay until `/worktrees remove`. Checkpoint snapshots, which are full copies of edited files and may include secrets, are kept for 7 days so `/undo` works after a resume, then deleted at startup.
+- **`/undo` has a narrow reach.** It only restores what `write` and `edit` changed. A `sed -i` or a generator run from bash, or a file written by an MCP tool, isn't captured. It reaches back 7 days within a session (including after `larik -c`), but a branch starts with no undo history. Git remains the safety net.
 - **Fixed tool set per context.** An MCP server approved mid-session needs `/clear` to appear, in exchange for cache stability.
-- **Prompt changes need a restart.** The system prompt, including `AGENTS.md`/`CLAUDE.md` and the skills index, is built once at startup. `/clear` doesn't rebuild it, so edits to instruction files or new skills take effect in a new `larik` process.
-- **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. Details the summary leaves out are gone from the model's view, though still in the session file.
+- **Prompt changes wait for a fresh context.** Edits to `AGENTS.md`/`CLAUDE.md` and new skills take effect after `/clear` or in a new session, not mid-conversation.
+- **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. The summary names the transcript file so the model can grep it for exact details, but it has to think to look.
 - **Unix only.** Larik builds for macOS and Linux, not Windows. On Linux without `bwrap` the sandbox is off and every command asks.
 - **Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions.

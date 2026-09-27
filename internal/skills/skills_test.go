@@ -98,3 +98,16 @@ func TestTool(t *testing.T) {
 		t.Error("missing skill should error")
 	}
 }
+
+func TestReload(t *testing.T) {
+	root := t.TempDir()
+	set := Discover([]Root{{root, "project"}})
+	if set.Index() != "" {
+		t.Fatal("no skills yet")
+	}
+	mk(t, root, "notes", "---\nname: notes\ndescription: Take notes\n---\nbody\n")
+	set.Reload()
+	if _, ok := set.Get("notes"); !ok || !strings.Contains(set.Index(), "notes: Take notes") {
+		t.Fatalf("reload should find the new skill: %q", set.Index())
+	}
+}
