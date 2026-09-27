@@ -253,6 +253,12 @@ func (w *routingWizard) optionKey(k, role string) bool {
 		} else {
 			o.Isolation = "worktree"
 		}
+	case "c":
+		if o.Context == "minimal" {
+			o.Context = ""
+		} else {
+			o.Context = "minimal"
+		}
 	case "+", "=":
 		if o.MaxTurns == 0 {
 			return true // already the default, 100
@@ -281,6 +287,9 @@ func optionNote(o config.RoleOption) string {
 	var parts []string
 	if o.Isolation == "worktree" {
 		parts = append(parts, "worktree")
+	}
+	if o.Context == "minimal" {
+		parts = append(parts, "minimal context")
 	}
 	if o.MaxTurns > 0 {
 		parts = append(parts, fmt.Sprintf("%d turns", o.MaxTurns))
@@ -566,8 +575,9 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		if w.r.Roles[providers.RoleCompact] != "" {
 			body = append(body, "", st.dim.Render("With prompt caching, compacting on the main model can cost less than a cheaper model reading the whole conversation."))
 		}
-		body = append(body, "", st.dim.Render("worktree: the subagent edits its own git branch; the main agent reviews and merges it."))
-		hint = "↑/↓ move · enter change · d inherit · w worktree · +/- turns · n next · esc back"
+		body = append(body, "", st.dim.Render("worktree: the subagent edits its own git branch; the main agent reviews and merges it."),
+			st.dim.Render("minimal context: no global instructions or skills index, just this project — a smaller prompt a small model won't wander off from."))
+		hint = "↑/↓ move · enter change · d inherit · w worktree · c minimal context · +/- turns · n next · esc back"
 	case w.step == rtFallbacks:
 		body = append(body, st.dim.Render("When a model is rate-limited, out of quota or down, larik switches to the next one before any output."), "")
 		body = append(body, w.rowsView(st, w.fallbackRows(), func(role string) string {

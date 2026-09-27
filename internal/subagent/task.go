@@ -36,6 +36,11 @@ type Role struct {
 	// unless the task or definition says otherwise; MaxTurns caps them.
 	Isolation string
 	MaxTurns  int
+	// Context "minimal" gives subagents on this role the smaller prompt
+	// from MinimalContextFunc instead of ContextFunc: no global
+	// instructions, no skills index. A small model is less likely to
+	// wander off into something unrelated with less to read.
+	Context string
 }
 
 // Tool is the task tool. It is ReadOnly because the call itself changes
@@ -54,6 +59,10 @@ type Tool struct {
 	// children see the current instruction files.
 	Context     string
 	ContextFunc func() string
+	// MinimalContextFunc, if set, is used instead of ContextFunc for
+	// roles with Context "minimal". Falls back to ContextFunc/Context
+	// when unset.
+	MinimalContextFunc func() string
 
 	// Repo is the git repository root; worktree isolation is offered only
 	// when it is set. Worktrees are created under WorktreeRoot.
@@ -179,7 +188,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	default:
 		return tools.Result{Content: fmt.Sprintf("unknown isolation %q (only \"worktree\")", isolation), IsError: true}
 	}
-	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns}
+	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns, minimalContext: role.Context == "minimal"}
 	if role.MaxTurns > 0 {
 		c.maxTurns = role.MaxTurns
 	}
@@ -199,12 +208,13 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 }
 
 type childRun struct {
-	def      Definition
-	label    string
-	prompt   string
-	worktree bool
-	model    string // role or spec asked for by the caller; overrides def.Model
-	maxTurns int
+	def            Definition
+	label          string
+	prompt         string
+	worktree       bool
+	model          string // role or spec asked for by the caller; overrides def.Model
+	maxTurns       int
+	minimalContext bool
 }
 
 // runChild runs a subagent to completion, forwarding its activity to emit.
@@ -221,6 +231,9 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	shared := t.Context
 	if t.ContextFunc != nil {
 		shared = t.ContextFunc()
+	}
+	if c.minimalContext && t.MinimalContextFunc != nil {
+		shared = t.MinimalContextFunc()
 	}
 	spawn := agent.SpawnOptions{
 		Type:     def.Name,

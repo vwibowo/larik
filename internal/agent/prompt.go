@@ -45,6 +45,18 @@ func WithLanguage(system, lang string) string {
 // ContextSections is the environment block plus project instruction files,
 // shared by the main agent and subagents.
 func ContextSections(cwd, configDir string) string {
+	return contextSections(cwd, InstructionFiles(cwd, configDir))
+}
+
+// MinimalContextSections is ContextSections without the user's global
+// instruction file (~/.config/larik/AGENTS.md) or the skills index, for
+// a cheap subagent's role: a smaller prompt, centered on this project,
+// that a small model is less likely to wander off from.
+func MinimalContextSections(cwd string) string {
+	return contextSections(cwd, ProjectInstructionFiles(cwd))
+}
+
+func contextSections(cwd string, files []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<env>\nWorking directory: %s\nPlatform: %s/%s\nDate: %s\n", cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
 	if root := GitRoot(cwd); root != "" {
@@ -52,7 +64,7 @@ func ContextSections(cwd, configDir string) string {
 	}
 	b.WriteString("</env>")
 
-	for _, f := range InstructionFiles(cwd, configDir) {
+	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 			continue
@@ -62,13 +74,21 @@ func ContextSections(cwd, configDir string) string {
 	return b.String()
 }
 
-// InstructionFiles lists instruction files that apply to cwd, general first.
-// In each directory AGENTS.md wins over CLAUDE.md.
+// InstructionFiles lists instruction files that apply to cwd, general
+// first: the user's global file, then the project's own, root to cwd. In
+// each directory AGENTS.md wins over CLAUDE.md.
 func InstructionFiles(cwd, configDir string) []string {
 	var out []string
 	if p := filepath.Join(configDir, "AGENTS.md"); exists(p) {
 		out = append(out, p)
 	}
+	return append(out, ProjectInstructionFiles(cwd)...)
+}
+
+// ProjectInstructionFiles is InstructionFiles without the user's global
+// file: just the project's own, from the repository root down to cwd.
+func ProjectInstructionFiles(cwd string) []string {
+	var out []string
 	stop := GitRoot(cwd)
 	var dirs []string
 	for d := cwd; ; d = filepath.Dir(d) {

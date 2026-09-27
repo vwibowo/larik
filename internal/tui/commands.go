@@ -161,6 +161,9 @@ func (m *model) command(line string) tea.Cmd {
 				}
 				out += fmt.Sprintf("\n  %-32s %9s · in %d · out %d · cache read %d", sp.Model, c, sp.Usage.Input, sp.Usage.Output, sp.Usage.CacheRead)
 			}
+			if note := routingSavingsNote(m.agent.Model(), s.Total, s.CostUSD); note != "" {
+				out += "\n" + note
+			}
 		}
 		return info(out)
 
@@ -428,8 +431,13 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 					}
 				}
 				o.MaxTurns = n
+			case "context":
+				if val != "" && val != "minimal" {
+					return fail("context is minimal or empty")
+				}
+				o.Context = val
 			default:
-				return fail("unknown role option " + opt + " (isolation, max_turns)")
+				return fail("unknown role option " + opt + " (isolation, max_turns, context)")
 			}
 			r.Options[role] = o
 			continue
@@ -464,4 +472,26 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 		return fail(err.Error())
 	}
 	return info("✓ saved to " + tildePath(cfg.UserConfigPath()) + "\n" + routingSummary(cfg))
+}
+
+// routingSavingsNote compares what this session actually spent against
+// what running every request on mainModel alone would have cost, so
+// routing to cheaper models shows its payoff. It says nothing when the
+// main model itself has no known price, since there is nothing to
+// compare against.
+func routingSavingsNote(mainModel string, total llm.Usage, actualUSD float64) string {
+	info := llm.Lookup(mainModel)
+	if info.InputPrice+info.OutputPrice == 0 {
+		return ""
+	}
+	counterfactual := info.Cost(total)
+	if counterfactual <= 0 {
+		return ""
+	}
+	saved := counterfactual - actualUSD
+	if saved <= 0 {
+		return fmt.Sprintf("  (on %s alone this would have cost $%.4f)", mainModel, counterfactual)
+	}
+	return fmt.Sprintf("  routing saved $%.4f (%.0f%%) versus running everything on %s ($%.4f)",
+		saved, 100*saved/counterfactual, mainModel, counterfactual)
 }

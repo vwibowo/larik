@@ -120,6 +120,11 @@ type RoleOption struct {
 	Isolation string `json:"isolation,omitempty"`
 	// MaxTurns caps their model requests; zero keeps the default (100).
 	MaxTurns int `json:"max_turns,omitempty"`
+	// Context "minimal" drops the global instructions and skills index
+	// from their prompt, keeping only this project's own instructions.
+	// Smaller and more focused for a small model; zero value ("") keeps
+	// the full context.
+	Context string `json:"context,omitempty"`
 }
 
 // Budget caps what a session may spend, subagents included.
@@ -319,6 +324,9 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		if v.MaxTurns < 0 {
 			return fmt.Errorf("%s: role_options.%s.max_turns must not be negative", path, k)
+		}
+		if v.Context != "" && v.Context != "minimal" {
+			return fmt.Errorf("%s: role_options.%s.context must be \"minimal\" or \"\"", path, k)
 		}
 		if c.RoleOptions == nil {
 			c.RoleOptions = map[string]RoleOption{}

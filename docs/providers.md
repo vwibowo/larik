@@ -181,6 +181,10 @@ flowchart LR
     FB -- no --> P["plain adapter"]
 ```
 
+## Benchmarking a routing choice
+
+[internal/bench](../internal/bench) and `larik bench` run a handful of small, self-checking coding tasks (a failing test to fix, a stub to implement, a rename across two files) against one or more models, so a role's model can be judged by outcome instead of price and name alone. Each `bench.Task` sets up its own throwaway directory and checks the result by running `go test`, so there is no LLM-as-judge and no extra API cost for grading. `bench.Run` builds a plain `Agent` in `permission.ModeYolo` (the directory is discarded afterwards, so there is nothing to protect) and reports pass/fail, cost and wall time.
+
 `SuggestRouting` fills the `/routing` presets.
 - **Ranking:** models are ranked by `cheapness`. Local models come first, then ChatGPT-plan models, then the catalog list price weighted towards input. Unpriced models are placed by a guess from their name.
 - **Excluded:** tool-less models are skipped, and local models under 7B are never picked as `worker`.

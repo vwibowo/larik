@@ -74,12 +74,12 @@ func TestNegativeBudgetRejected(t *testing.T) {
 func TestRoleOptions(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	write(t, LocalSettingsPath(cwd), `{"role_options":{"worker":{"isolation":"worktree","max_turns":40}}}`)
+	write(t, LocalSettingsPath(cwd), `{"role_options":{"worker":{"isolation":"worktree","max_turns":40,"context":"minimal"}}}`)
 	cfg, err := Load(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := cfg.Routing().Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != 40 {
+	if o := cfg.Routing().Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != 40 || o.Context != "minimal" {
 		t.Fatalf("options = %+v", o)
 	}
 	r := cfg.Routing()
@@ -93,7 +93,7 @@ func TestRoleOptions(t *testing.T) {
 		t.Errorf("saved %s", data)
 	}
 
-	for _, bad := range []string{`{"role_options":{"w":{"isolation":"docker"}}}`, `{"role_options":{"w":{"max_turns":-1}}}`} {
+	for _, bad := range []string{`{"role_options":{"w":{"isolation":"docker"}}}`, `{"role_options":{"w":{"max_turns":-1}}}`, `{"role_options":{"w":{"context":"full"}}}`} {
 		write(t, LocalSettingsPath(cwd), bad)
 		if _, err := Load(cwd); err == nil {
 			t.Errorf("accepted %s", bad)

@@ -38,6 +38,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		return runServe(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "bench" {
+		return runBench(os.Args[2:])
+	}
 	var (
 		print   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")
@@ -51,7 +54,8 @@ func run() error {
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n"+
+			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

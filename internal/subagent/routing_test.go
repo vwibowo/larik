@@ -229,3 +229,37 @@ func TestRoleWorktreeWithoutRepoRunsInPlace(t *testing.T) {
 		t.Errorf("result = %q", out)
 	}
 }
+
+func TestMinimalContextRole(t *testing.T) {
+	fp := &funcProvider{}
+	fp.respond = func(req llm.Request) llm.Message {
+		if isChild(req) {
+			return text("done")
+		}
+		return llm.Message{Blocks: []llm.Block{use("p1", "task", `{"description":"work","prompt":"do it","subagent_type":"general-purpose","model":"worker"}`)}}
+	}
+	dir := t.TempDir()
+	task := &Tool{
+		Set:                Discover(nil),
+		ContextFunc:        func() string { return "<full>everything, including skills</full>" },
+		MinimalContextFunc: func() string { return "<minimal>just this project</minimal>" },
+		Roles:              func() []Role { return []Role{{Name: "worker", Context: "minimal"}} },
+	}
+	a := agent.New(agent.Options{
+		Provider: fp, Model: "m", Cwd: dir,
+		Tools: tools.NewRegistry(append(tools.Builtin(), task)...),
+		Perms: permission.NewChecker(permission.ModeAcceptEdits, permission.Rules{}, dir),
+	})
+	drain(a.Run(context.Background(), "go"), true)
+
+	var child llm.Request
+	for _, r := range fp.requests() {
+		if isChild(r) {
+			child = r
+			break
+		}
+	}
+	if !strings.Contains(child.System, "<minimal>") || strings.Contains(child.System, "<full>") {
+		t.Errorf("a minimal-context role should get the minimal prompt, not the full one:\n%s", child.System)
+	}
+}

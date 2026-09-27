@@ -165,11 +165,11 @@ func TestSuggestRouting(t *testing.T) {
 	if bal.Roles["explore"] != "ollama/qwen3:4b" || bal.Roles["worker"] != "ollama/qwen3-coder" || bal.Roles["smart"] != main {
 		t.Errorf("balanced roles = %v", bal.Roles)
 	}
-	if o := bal.Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != DefaultWorkerTurns {
+	if o := bal.Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != DefaultWorkerTurns || o.Context != "minimal" {
 		t.Errorf("worker options = %+v", o)
 	}
-	if o := bal.Options["explore"]; o.Isolation != "" || o.MaxTurns != DefaultExploreTurns {
-		t.Errorf("explore options = %+v; a read-only role needs no worktree", o)
+	if o := bal.Options["explore"]; o.Isolation != "" || o.MaxTurns != DefaultExploreTurns || o.Context != "minimal" {
+		t.Errorf("explore options = %+v; a read-only role needs no worktree, but still a smaller prompt", o)
 	}
 	if fb := bal.Fallbacks["worker"]; len(fb) != 1 || strings.HasPrefix(fb[0], "ollama/") || fb[0] == main {
 		t.Errorf("worker fallback = %v, want one model on another provider", fb)

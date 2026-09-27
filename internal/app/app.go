@@ -88,8 +88,9 @@ func Setup(cwd, version string) (*App, error) {
 
 	a.AgentDefs = subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools = append(baseTools, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
-		Set:         a.AgentDefs,
-		ContextFunc: a.childContext,
+		Set:                a.AgentDefs,
+		ContextFunc:        a.childContext,
+		MinimalContextFunc: a.minimalChildContext,
 		Resolve: func(spec string) (llm.Provider, string, error) {
 			r, err := a.Resolve(cfg, spec)
 			return r.Provider, r.Model, err
@@ -136,6 +137,12 @@ func (a *App) childContext() string {
 		ctx += "\n\n" + idx
 	}
 	return ctx
+}
+
+// minimalChildContext is childContext without the user's global
+// instructions or the skills index, for roles with `context: "minimal"`.
+func (a *App) minimalChildContext() string {
+	return agent.MinimalContextSections(a.Cwd)
 }
 
 // loadTools is each agent's tool set for a fresh context: the built-in
@@ -326,12 +333,12 @@ func (a *App) roles() []subagent.Role {
 		}
 		spec, _ := providers.RoleSpec(a.Cfg, name)
 		o := opts[name]
-		out = append(out, subagent.Role{Name: name, Spec: spec, Hint: providers.RoleHints[name], Price: providers.PriceNote(spec), Isolation: o.Isolation, MaxTurns: o.MaxTurns})
+		out = append(out, subagent.Role{Name: name, Spec: spec, Hint: providers.RoleHints[name], Price: providers.PriceNote(spec), Isolation: o.Isolation, MaxTurns: o.MaxTurns, Context: o.Context})
 	}
 	for _, name := range []string{"opus", "sonnet", "haiku"} {
 		if providers.IsLegacyAlias(a.Cfg, name) {
 			o := opts[name]
-			out = append(out, subagent.Role{Name: name, Legacy: true, Isolation: o.Isolation, MaxTurns: o.MaxTurns})
+			out = append(out, subagent.Role{Name: name, Legacy: true, Isolation: o.Isolation, MaxTurns: o.MaxTurns, Context: o.Context})
 		}
 	}
 	return out

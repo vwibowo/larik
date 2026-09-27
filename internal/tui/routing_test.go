@@ -52,19 +52,21 @@ func TestRoutingWizardSavesPresetAndEdits(t *testing.T) {
 		t.Errorf("roles view lacks the price:\n%s", view)
 	}
 
-	// The preset gives the worker a worktree and a turn cap; w and +/-
-	// change them.
-	if o := w.r.Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != 40 {
+	// The preset gives the worker a worktree, a minimal prompt and a turn
+	// cap; w, c and +/- change them.
+	if o := w.r.Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != 40 || o.Context != "minimal" {
 		t.Fatalf("worker options = %+v", o)
 	}
 	hit(m, tea.KeyDown) // worker
 	typeText(m, "w")
+	typeText(m, "c")
 	typeText(m, "-")
-	if o := w.r.Options["worker"]; o.Isolation != "" || o.MaxTurns != 30 {
-		t.Errorf("after w and -: %+v", o)
+	if o := w.r.Options["worker"]; o.Isolation != "" || o.Context != "" || o.MaxTurns != 30 {
+		t.Errorf("after w, c and -: %+v", o)
 	}
 	typeText(m, "w")
-	if !strings.Contains(plain(w.view(m.st, 120, 40)), "[worktree · 30 turns]") {
+	typeText(m, "c")
+	if !strings.Contains(plain(w.view(m.st, 120, 40)), "[worktree · minimal context · 30 turns]") {
 		t.Errorf("roles view lacks the options:\n%s", plain(w.view(m.st, 120, 40)))
 	}
 
@@ -97,7 +99,7 @@ func TestRoutingWizardSavesPresetAndEdits(t *testing.T) {
 	json.Unmarshal(data, &saved)
 	if saved.Roles["smart"] != "anthropic/claude-opus-5" || saved.Roles["worker"] != "ollama/qwen3-coder" ||
 		saved.Fallbacks["worker"][0] != "anthropic/claude-haiku-4-5" || saved.Budget.SessionUSD != 1.5 ||
-		saved.RoleOptions["worker"] != (config.RoleOption{Isolation: "worktree", MaxTurns: 30}) {
+		saved.RoleOptions["worker"] != (config.RoleOption{Isolation: "worktree", MaxTurns: 30, Context: "minimal"}) {
 		t.Errorf("saved %s", data)
 	}
 	if m.opts.Config.Routing().Roles["smart"] == "" {
@@ -146,6 +148,14 @@ func TestRoutingCommandKeyValue(t *testing.T) {
 	m.command("/routing worker.isolation=docker")
 	if m.opts.Config.Routing().Options["worker"].Isolation != "worktree" {
 		t.Errorf("a bad isolation value was saved")
+	}
+	m.command("/routing worker.context=minimal")
+	if m.opts.Config.Routing().Options["worker"].Context != "minimal" {
+		t.Errorf("worker.context=minimal wasn't saved")
+	}
+	m.command("/routing worker.context=full")
+	if m.opts.Config.Routing().Options["worker"].Context != "minimal" {
+		t.Errorf("a bad context value was saved")
 	}
 	m.command("/routing explore=worker")
 	if m.opts.Config.Routing().Roles["explore"] != "" {

@@ -215,11 +215,11 @@ func SuggestRouting(p Preset, options []ModelOption, main string) config.Routing
 	// agent to review and merge, and both stop sooner.
 	if okE {
 		r.Roles[RoleExplore] = explore.Spec()
-		r.Options[RoleExplore] = config.RoleOption{MaxTurns: DefaultExploreTurns}
+		r.Options[RoleExplore] = config.RoleOption{MaxTurns: DefaultExploreTurns, Context: "minimal"}
 	}
 	if okW {
 		r.Roles[RoleWorker] = worker.Spec()
-		r.Options[RoleWorker] = config.RoleOption{Isolation: "worktree", MaxTurns: DefaultWorkerTurns}
+		r.Options[RoleWorker] = config.RoleOption{Isolation: "worktree", MaxTurns: DefaultWorkerTurns, Context: "minimal"}
 	}
 	// Keep the strong model reachable by name for hard subtasks, in case
 	// the main model is later switched to a cheaper one.

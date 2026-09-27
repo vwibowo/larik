@@ -90,7 +90,7 @@ flowchart TB
 ## Source map
 
 ```
-cmd/larik           main.go (flags, TUI or -p), serve.go (larik serve)
+cmd/larik           main.go (flags, TUI or -p), serve.go (larik serve), bench.go (larik bench)
 internal/app        process-wide setup; opens sessions into agents
 internal/agent      the loop, events, tool dispatch, compaction, subagent spawn, background tasks
 internal/llm        neutral types, catalog, retry; one subpackage per provider
@@ -111,5 +111,6 @@ internal/config     layered settings with a trust model
 internal/chatgpt    ChatGPT (Codex) OAuth sign-in
 internal/headless   -p mode
 internal/server     HTTP + SSE API
+internal/bench      self-checking tasks for comparing models (larik bench)
 internal/tui        Bubble Tea UI
 ```

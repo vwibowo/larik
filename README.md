@@ -33,6 +33,7 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 ./larik --resume 20260926-2358                    # resume by id prefix
 ./larik -c --fork                                 # branch the last session instead of appending
 ./larik serve                                     # HTTP + SSE API (see Server mode)
+./larik bench --models worker,anthropic/claude-haiku-4-5  # compare models on self-checking tasks (see Mixing cheap and strong models)
 ```
 
 ### ChatGPT plan (Codex models)
@@ -94,8 +95,10 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
   - `role_options.<role>.max_turns` caps the role's subagents (default 100).
   - Every subagent is stopped when it repeats the same tool call with the same result 4 times within 8 turns. The main agent is told the subagent got stuck and to check its changes. The main agent itself isn't stopped this way, since you can see it and interrupt it.
 
-  In the wizard, `w` toggles the worktree and `+`/`-` change the turn cap. From the command line: `/routing worker.isolation=worktree worker.max_turns=30`.
+  In the wizard, `w` toggles the worktree, `c` toggles a minimal prompt (below) and `+`/`-` change the turn cap. From the command line: `/routing worker.isolation=worktree worker.max_turns=30`.
+- **A smaller prompt for cheap models:** `role_options.<role>.context: "minimal"` drops your global instruction file (`~/.config/larik/AGENTS.md`) and the skills index from that role's subagents, keeping only this project's own `AGENTS.md`/`CLAUDE.md`. The presets set it for `worker` and `explore`: it's a smaller prompt with less to misread, and it stops a small model from loading a skill that has nothing to do with the task. From the command line: `/routing worker.context=minimal` (or `=` empty for the full prompt).
 - **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free.
+- **Comparing models before you trust one:** `larik bench --models worker,anthropic/claude-haiku-4-5,ollama/qwen3-coder` runs a few small, self-checking coding tasks (fix a failing test, implement a stub, rename a symbol across files) against each model in its own throwaway directory, then reports pass/fail, cost and time — no separate judge model, `go test` is the check. Use it to see whether a role you're about to add is actually good enough, not just cheap. See `larik bench -h`.
 - **Compaction:** the `compact` role is usually best left unset. With prompt caching, the main model re-reads the conversation at the cache price (for Opus, $0.50 per million tokens), which can cost less than a cheap model reading it all uncached.
 - **Quick edits:** `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap).
 
@@ -478,7 +481,7 @@ They are read at the start of each fresh context, so after editing one, `/clear`
 For a deep dive with diagrams (the agent loop, permissions, providers, persistence, security, and how Larik compares with other harnesses), see [docs/](docs/README.md).
 
 ```
-cmd/larik           flags, `serve` subcommand
+cmd/larik           flags, `serve` and `bench` subcommands
 internal/app        shared setup: config, tools, MCP, LSP, sandbox; opens sessions
 internal/llm        provider-neutral types, catalog, retry
   anthropic/        Messages API: adaptive thinking, effort, prompt caching, eager tool streaming
@@ -501,6 +504,7 @@ internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
 internal/headless   -p mode
 internal/server     HTTP + SSE API (larik serve)
+internal/bench      self-checking tasks for comparing models (larik bench)
 internal/tui        Bubble Tea UI
 ```
 
