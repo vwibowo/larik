@@ -66,7 +66,7 @@ func (m *model) liveView() string {
 		b = append(b, lastLines(wrap(s, m.width-2), limit))
 	}
 	for _, t := range m.tools {
-		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input)
+		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input, m.shortPaths)
 		if t.agent != "" {
 			line = "  ↳ " + line + m.st.dim.Render("  ("+t.agent+")")
 		}
@@ -231,14 +231,14 @@ func (m *model) permDetail(e *agent.Event) string {
 		return cmd
 	case "write":
 		content := strings.TrimSuffix(str(in["content"]), "\n")
-		return bold.Render(str(in["path"])) + m.st.dim.Render("  "+plural(strings.Count(content, "\n")+1, "line")) + "\n" +
+		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+plural(strings.Count(content, "\n")+1, "line")) + "\n" +
 			m.st.diffAdd.Render(truncateLines(prefixLines(content, "+ "), 12))
 	case "web_fetch":
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
 		return bold.Render(str(in["query"])) + "\n" + m.st.dim.Render("the query goes to the configured search provider")
 	case "edit":
-		return bold.Render(str(in["path"])) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
+		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
 	}
 	if len(in) == 0 {
 		return m.st.dim.Render("no arguments")
@@ -370,7 +370,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 	if e.IsError {
 		bullet = m.st.err.Render("●")
 	}
-	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input))
+	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input, m.shortPaths))
+	e.Output, e.Display = m.shortPaths(e.Output), m.shortPaths(e.Display)
 	var body string
 	switch {
 	case e.Agent != "" && !e.IsError:
@@ -437,8 +438,9 @@ func (m *model) diff(s string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// toolTitle is a one-line summary like `bash(go test ./...)`.
-func toolTitle(name string, input []byte) string {
+// toolTitle is a one-line summary like `bash(go test ./...)`. shorten,
+// if set, rewrites paths in the argument for display.
+func toolTitle(name string, input []byte, shorten func(string) string) string {
 	var in map[string]any
 	_ = json.Unmarshal(input, &in)
 	arg := ""
@@ -506,6 +508,9 @@ func toolTitle(name string, input []byte) string {
 		}
 	}
 	arg = strings.Join(strings.Fields(arg), " ")
+	if shorten != nil {
+		arg = shorten(arg)
+	}
 	if len(arg) > 80 {
 		arg = arg[:77] + "…"
 	}
@@ -535,6 +540,56 @@ func (m *model) printBanner() tea.Cmd {
 	return m.println(strings.Join(lines, "\n"))
 }
 
+// shortPaths rewrites absolute paths in text for display: inside the
+// project they become relative ("./" for the project itself), elsewhere
+// under the home directory they start with ~. What the model sees is
+// unchanged.
+func (m *model) shortPaths(s string) string {
+	if m.opts.Config != nil {
+		if cwd := strings.TrimRight(m.opts.Config.Cwd, "/"); cwd != "" {
+			s = replacePathPrefix(s, cwd, ".")
+		}
+	}
+	if home := homeDir(); home != "" {
+		s = replacePathPrefix(s, home, "~")
+	}
+	return s
+}
+
+// replacePathPrefix replaces dir where it starts a path: "dir/x" becomes
+// "x" (or "~/x" when with is "~"), and dir on its own becomes with. It
+// leaves dir alone inside a longer name, such as "dir-old/x".
+func replacePathPrefix(s, dir, with string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, dir)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		rest := s[i+len(dir):]
+		startsPath := i == 0 || !isPathByte(s[i-1])
+		switch {
+		case startsPath && strings.HasPrefix(rest, "/"):
+			b.WriteString(s[:i])
+			if with == "~" {
+				b.WriteString("~/")
+			}
+			s = rest[1:]
+		case startsPath && (rest == "" || !isPathByte(rest[0])):
+			b.WriteString(s[:i] + with)
+			s = rest
+		default:
+			b.WriteString(s[:i+len(dir)])
+			s = rest
+		}
+	}
+}
+
+func isPathByte(c byte) bool {
+	return c == '/' || c == '.' || c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
 // shortPath abbreviates the home directory to ~ and keeps long paths to
 // their last two directories.
 func shortPath(p string) string {
@@ -562,7 +617,7 @@ func (m *model) printHistory(label string) tea.Cmd {
 				b = append(b, out)
 			}
 			for _, u := range msg.ToolUses() {
-				b = append(b, m.st.dim.Render("● "+toolTitle(u.Name, u.Input)))
+				b = append(b, m.st.dim.Render("● "+toolTitle(u.Name, u.Input, m.shortPaths)))
 			}
 		}
 	}

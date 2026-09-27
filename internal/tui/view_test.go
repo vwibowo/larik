@@ -88,3 +88,27 @@ func TestShortPath(t *testing.T) {
 		t.Errorf("long path: %q", got)
 	}
 }
+
+func TestShortPaths(t *testing.T) {
+	m := testModel(t)
+	cwd := m.opts.Config.Cwd
+	home := homeDir()
+	cases := []struct{ in, want string }{
+		{cwd + "/b.go\n" + cwd + "/sub/a.txt", "b.go\nsub/a.txt"},
+		{"Created " + cwd + "/hello.txt (1 line)", "Created hello.txt (1 line)"},
+		{"in " + cwd, "in ."},
+		{cwd + "-old/x.go", cwd + "-old/x.go"}, // a sibling whose name starts the same
+		{"/etc/hosts", "/etc/hosts"},
+		{home + "/Code/other/x.go", "~/Code/other/x.go"},
+	}
+	for _, c := range cases {
+		if got := m.shortPaths(c.in); got != c.want {
+			t.Errorf("shortPaths(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	card := plain(m.renderToolCard(agent.Event{ToolName: "grep", Input: []byte(`{"pattern":"TODO","path":"` + cwd + `/internal"}`), Output: cwd + "/internal/a.go:3: TODO"}))
+	if strings.Contains(card, cwd) || !strings.Contains(card, "grep(TODO in internal)") || !strings.Contains(card, "internal/a.go:3: TODO") {
+		t.Errorf("tool card should use short paths:\n%s", card)
+	}
+}

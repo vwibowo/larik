@@ -138,8 +138,11 @@ func (Write) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if existed {
 		verb = "Overwrote"
 	}
-	lines := strings.Count(strings.TrimSuffix(in.Content, "\n"), "\n") + 1
-	return env.afterWrite(ctx, path, Result{Content: fmt.Sprintf("%s %s (%d lines)", verb, path, lines)})
+	lines, noun := strings.Count(strings.TrimSuffix(in.Content, "\n"), "\n")+1, "lines"
+	if lines == 1 {
+		noun = "line"
+	}
+	return env.afterWrite(ctx, path, Result{Content: fmt.Sprintf("%s %s (%d %s)", verb, path, lines, noun)})
 }
 
 // Edit replaces an exact string in a file.

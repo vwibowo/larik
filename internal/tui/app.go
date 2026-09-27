@@ -554,7 +554,7 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	ev.Reply <- *reply
 	if !reply.Allow {
-		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input)))
+		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input, m.shortPaths)))
 	}
 	if reply.Always {
 		return m.println(m.st.dim.Render("  ⎿ won't ask again for " + ev.SuggestedRule + " · saved to .larik/settings.local.json"))
@@ -626,7 +626,7 @@ func (m *model) renderTaskDone(e agent.Event) string {
 		mark = m.st.err.Render("◆")
 	}
 	head := fmt.Sprintf("%s background %s %s  %s", mark, e.ToolID, e.StopReason, m.st.dim.Render("("+e.Agent+")"))
-	body := strings.TrimSpace(e.Output)
+	body := strings.TrimSpace(m.shortPaths(e.Output))
 	if body == "" {
 		return head
 	}
