@@ -74,6 +74,11 @@ type Agent struct {
 	haltReason     string
 
 	bg *background // lazily created; see background.go
+
+	// Runtime facts from providers that can report them (see probe.go).
+	windows map[string]int  // model -> context window actually in use
+	probed  map[string]bool // model -> tool support already checked
+	warned  map[string]bool // model -> truncation warning already shown
 }
 
 func New(opts Options) *Agent {
@@ -143,7 +148,7 @@ func (a *Agent) Effort() llm.Effort {
 func (a *Agent) Stats() UsageInfo {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: llm.Lookup(a.opts.Model).ContextWindow}
+	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
 }
 
 // Clear drops the conversation context (the session file keeps history).
@@ -346,6 +351,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 	}
 	provider := a.opts.Provider
 	a.mu.Unlock()
+	a.checkTools(ctx, provider, req.Model, len(req.Tools) > 0, emit)
 
 	var partial strings.Builder
 	for ev, err := range provider.Stream(ctx, req) {
@@ -369,6 +375,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 			if len(msg.Blocks) == 0 {
 				msg.Blocks = []llm.Block{llm.TextBlock("(empty response)")}
 			}
+			a.probeWindow(ctx, provider, req.Model, ev.Usage, emit)
 			a.recordUsage(ev.Usage, emit)
 			a.appendMessage(msg, &ev.Usage)
 			emit(Event{Kind: EvAssistant, Message: &msg})
@@ -397,7 +404,7 @@ func (a *Agent) recordUsage(u llm.Usage, emit func(Event)) {
 	a.usage.Add(u)
 	a.cost += info.Cost(u)
 	a.lastContext = u.ContextTokens() + u.Output
-	ui := UsageInfo{Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: info.ContextWindow}
+	ui := UsageInfo{Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
 	a.mu.Unlock()
 	emit(Event{Kind: EvUsage, Usage: &ui})
 }
@@ -414,8 +421,13 @@ func (a *Agent) appendMessage(m llm.Message, usage *llm.Usage) {
 func (a *Agent) needsCompaction() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	window := llm.Lookup(a.opts.Model).ContextWindow
-	return a.lastContext > 0 && float64(a.lastContext) > compactThreshold*float64(window)
+	// With only a prompt and an answer there is nothing worth summarizing;
+	// compacting would just throw the conversation away (tiny local windows
+	// can be exceeded by the system prompt alone).
+	if len(a.messages) < 4 {
+		return false
+	}
+	return a.lastContext > 0 && float64(a.lastContext) > compactThreshold*float64(a.windowLocked())
 }
 
 // Compact summarizes the conversation into a single message ("simple

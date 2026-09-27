@@ -146,7 +146,7 @@ func TestExploreSubagent(t *testing.T) {
 	for _, s := range child.Tools {
 		names = append(names, s.Name)
 	}
-	if got := strings.Join(names, ","); got != "read,grep,glob" {
+	if got := strings.Join(names, ","); got != "read,grep,glob" { // lsp isn't registered in this test
 		t.Errorf("explore tools = %s", got)
 	}
 	if child.Messages[0].Text() != "Where is the package clause?" {

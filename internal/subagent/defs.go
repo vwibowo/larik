@@ -37,9 +37,9 @@ var builtins = []Definition{
 	{
 		Name:        "explore",
 		Description: "Fast read-only agent for finding code, files and facts in the codebase. Use it for broad searches when you only need the conclusion, not the file contents.",
-		Prompt: "You are a read-only search subagent. Find what the task asks about using read, grep and glob. Never modify anything. " +
+		Prompt: "You are a read-only search subagent. Find what the task asks about using read, grep and glob (and lsp for definitions and references, when available). Never modify anything. " +
 			"Search broadly first, then read only the relevant parts. Report findings concisely with path:line references.",
-		Tools:  []string{"read", "grep", "glob"},
+		Tools:  []string{"read", "grep", "glob", "lsp"},
 		Source: "builtin",
 	},
 }

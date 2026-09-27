@@ -3,13 +3,17 @@
 package openaicompat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	sdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -39,13 +43,84 @@ var Presets = map[string]Preset{
 type Provider struct {
 	name   string
 	client sdk.Client
+	ollama string // native Ollama API base, when talking to Ollama
 }
 
 func New(name, apiKey, baseURL string) *Provider {
 	if apiKey == "" {
 		apiKey = "none" // local servers ignore it, but the SDK requires one
 	}
-	return &Provider{name: name, client: sdk.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL))}
+	p := &Provider{name: name, client: sdk.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL))}
+	if name == "ollama" || strings.Contains(baseURL, ":11434") {
+		p.ollama = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	}
+	return p
+}
+
+// ContextWindow asks Ollama for the window a loaded model runs with, which
+// defaults to a few thousand tokens regardless of what the model supports.
+func (p *Provider) ContextWindow(ctx context.Context, model string) int {
+	if p.ollama == "" {
+		return 0
+	}
+	var ps struct {
+		Models []struct {
+			Name          string `json:"name"`
+			Model         string `json:"model"`
+			ContextLength int    `json:"context_length"`
+		} `json:"models"`
+	}
+	if ollamaGet(ctx, p.ollama+"/api/ps", nil, &ps) != nil {
+		return 0
+	}
+	for _, m := range ps.Models {
+		if m.Name == model || m.Model == model || m.Name == model+":latest" {
+			return m.ContextLength
+		}
+	}
+	return 0
+}
+
+// SupportsTools checks Ollama's model capabilities.
+func (p *Provider) SupportsTools(ctx context.Context, model string) (bool, bool) {
+	if p.ollama == "" {
+		return false, false
+	}
+	var show struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := ollamaGet(ctx, p.ollama+"/api/show", map[string]string{"model": model}, &show); err != nil || show.Capabilities == nil {
+		return false, false
+	}
+	for _, c := range show.Capabilities {
+		if c == "tools" {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func ollamaGet(ctx context.Context, url string, body any, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	method, reader := http.MethodGet, io.Reader(nil)
+	if body != nil {
+		b, _ := json.Marshal(body)
+		method, reader = http.MethodPost, bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 func (p *Provider) Name() string { return p.name }

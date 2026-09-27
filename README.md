@@ -31,6 +31,16 @@ With no `--model`, Larik picks the default model of the first provider whose key
 ./larik --resume 20260926-2358                    # resume by id prefix
 ```
 
+### Local models with Ollama
+
+Ollama runs models with a small context window by default (4096 tokens), and Larik's system prompt and tool definitions alone can use most of that. Ollama then silently truncates the prompt, and the model stops calling tools. Start Ollama with a larger window:
+
+```bash
+OLLAMA_CONTEXT_LENGTH=32768 ollama serve
+```
+
+Larik asks Ollama which window it's actually using, uses that for the context percentage and compaction, and warns when a request fills it. It also warns if the chosen model can't call tools. Small models such as `qwen3:4b` handle simple read/edit/test loops but can be unreliable with delegation.
+
 ## Keys and commands
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.

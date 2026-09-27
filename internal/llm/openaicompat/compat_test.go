@@ -3,6 +3,9 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -57,5 +60,42 @@ func TestChatStream(t *testing.T) {
 		if !strings.Contains(sent, want) {
 			t.Errorf("request missing %s:\n%s", want, sent)
 		}
+	}
+}
+
+func TestOllamaProbe(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ps", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"models":[{"name":"qwen3:4b","model":"qwen3:4b","context_length":4096}]}`)
+	})
+	mux.HandleFunc("/api/show", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Model string }
+		json.NewDecoder(r.Body).Decode(&in)
+		if in.Model == "embed" {
+			io.WriteString(w, `{"capabilities":["embedding"]}`)
+			return
+		}
+		io.WriteString(w, `{"capabilities":["completion","tools"]}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := New("ollama", "", srv.URL+"/v1")
+	ctx := context.Background()
+
+	if w := p.ContextWindow(ctx, "qwen3:4b"); w != 4096 {
+		t.Errorf("window = %d", w)
+	}
+	if w := p.ContextWindow(ctx, "not-loaded"); w != 0 {
+		t.Errorf("unloaded model should report 0, got %d", w)
+	}
+	if ok, known := p.SupportsTools(ctx, "qwen3:4b"); !ok || !known {
+		t.Error("qwen3 supports tools")
+	}
+	if ok, known := p.SupportsTools(ctx, "embed"); ok || !known {
+		t.Error("embedding model does not support tools")
+	}
+	other := New("groq", "k", srv.URL+"/v1")
+	if other.ContextWindow(ctx, "qwen3:4b") != 0 {
+		t.Error("non-Ollama endpoints must not be probed")
 	}
 }

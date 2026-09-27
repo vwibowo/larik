@@ -36,7 +36,10 @@ var version = "0.1.0-dev"
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "larik:", err)
+		var reported headless.ErrReported
+		if !errors.As(err, &reported) {
+			fmt.Fprintln(os.Stderr, "larik:", err)
+		}
 		os.Exit(1)
 	}
 }

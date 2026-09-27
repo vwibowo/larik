@@ -73,10 +73,16 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 		}
 	}
 	if failure != "" {
-		return fmt.Errorf("%s", failure)
+		return ErrReported{failure}
 	}
 	return nil
 }
+
+// ErrReported is returned when a run failed and the error was already
+// printed, so callers can exit non-zero without printing it again.
+type ErrReported struct{ Msg string }
+
+func (e ErrReported) Error() string { return e.Msg }
 
 type printer struct {
 	format         Format
@@ -111,6 +117,14 @@ func (p *printer) handle(e agent.Event) {
 		}
 		_ = p.enc.Encode(e)
 		return
+	}
+	// Keep stderr lines from gluing onto a partial stdout line.
+	if e.Kind != agent.EvTextDelta && e.Kind != agent.EvAssistant && !p.atLineStart {
+		switch e.Kind {
+		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvTaskDone, agent.EvNotice, agent.EvError:
+			fmt.Fprintln(p.stdout)
+			p.atLineStart = true
+		}
 	}
 	switch e.Kind {
 	case agent.EvTextDelta:
