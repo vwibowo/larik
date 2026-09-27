@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -42,6 +43,9 @@ type Env struct {
 	Diagnostics func(ctx context.Context, path string) string
 	// Touch, if set, is told about files the agent reads (to warm up LSP).
 	Touch func(path string)
+
+	// Sandbox, if set, confines bash commands (unless a call opts out).
+	Sandbox Sandbox
 
 	mu    sync.Mutex
 	reads map[string]time.Time // path -> mtime when last read
@@ -153,4 +157,9 @@ func (e *Env) afterWrite(ctx context.Context, path string, res Result) Result {
 		res.Content += "\n\n" + d
 	}
 	return res
+}
+
+// Sandbox runs a shell script confined by the OS sandbox.
+type Sandbox interface {
+	Command(script, dir string) *exec.Cmd
 }

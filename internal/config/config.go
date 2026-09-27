@@ -19,6 +19,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/lsp"
 	"larik/internal/permission"
+	"larik/internal/sandbox"
 )
 
 type ProviderConfig struct {
@@ -46,6 +47,10 @@ type Config struct {
 	// ApprovedHooks is the hash of the approved project hook set (from
 	// .larik/settings.json). Only honored from settings.local.json.
 	ApprovedHooks string `json:"approved_project_hooks,omitempty"`
+
+	// Sandbox configures the OS sandbox for bash. Shared project files may
+	// only tighten it (enable it); loosening needs a personal file.
+	Sandbox sandbox.Config `json:"sandbox,omitempty"`
 
 	// LSP configures language servers. Shared project files may only
 	// disable servers; commands are honored from personal files only.
@@ -134,6 +139,17 @@ func (c *Config) merge(path string, trusted bool) error {
 			srv.Name, srv.Source, srv.Trusted = name, path, trusted
 			c.MCPServers[name] = srv
 		}
+	}
+	if trusted {
+		if o.Sandbox.Enabled != nil {
+			c.Sandbox.Enabled = o.Sandbox.Enabled
+		}
+		if o.Sandbox.Network {
+			c.Sandbox.Network = true
+		}
+		c.Sandbox.Writable = append(c.Sandbox.Writable, o.Sandbox.Writable...)
+	} else if o.Sandbox.Enabled != nil && *o.Sandbox.Enabled {
+		c.Sandbox.Enabled = o.Sandbox.Enabled // a shared file may only switch it on
 	}
 	for name, srv := range o.LSP {
 		if c.LSP == nil {

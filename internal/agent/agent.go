@@ -51,6 +51,9 @@ type Options struct {
 	// LSP feeds language-server diagnostics back after edits; nil disables.
 	LSP *lsp.Manager
 
+	// Sandbox confines bash commands; nil runs them unconfined.
+	Sandbox tools.Sandbox
+
 	// Subagent is the agent type when this agent runs as a subagent; it
 	// switches off session-level hooks and uses SubagentStop.
 	Subagent string
@@ -89,6 +92,7 @@ func New(opts Options) *Agent {
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = func(path string) { _ = opts.Checkpoints.Capture(path) }
 	}
+	a.env.Sandbox = opts.Sandbox
 	if opts.LSP.Enabled() {
 		a.env.Diagnostics = opts.LSP.Diagnostics
 		a.env.Touch = opts.LSP.Touch

@@ -25,6 +25,7 @@ import (
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
+	"larik/internal/sandbox"
 	"larik/internal/session"
 	"larik/internal/skills"
 	"larik/internal/subagent"
@@ -157,7 +158,17 @@ func run() error {
 	home, _ := os.UserHomeDir()
 	skillSet := skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
 	baseTools := tools.Builtin()
+	projectRoot := agent.GitRoot(cwd)
+	if projectRoot == "" {
+		projectRoot = cwd
+	}
+	sb, sandboxWarning := sandbox.New(cfg.Sandbox, projectRoot, home)
+	var sbTool tools.Sandbox // stays a nil interface when there's no sandbox
 	system := agent.BuildSystemPrompt(cwd, cfg.ConfigDir)
+	if sb != nil {
+		sbTool = sb
+		system += "\n\n<sandbox>\n" + sb.Summary() + "\n</sandbox>"
+	}
 	childContext := agent.ContextSections(cwd, cfg.ConfigDir)
 	if idx := skillSet.Index(); idx != "" {
 		baseTools = append(baseTools, skills.Tool{Set: skillSet})
@@ -187,6 +198,9 @@ func run() error {
 
 	hookRunner := hooks.NewRunner(cfg.ActiveHooks(), cwd, sess.ID, sess.Path)
 
+	perms := permission.NewChecker(permMode, cfg.Permissions, cwd)
+	perms.SetSandboxed(sb != nil)
+
 	a := agent.New(agent.Options{
 		Provider:    resolved.Provider,
 		Model:       resolved.Model,
@@ -195,7 +209,7 @@ func run() error {
 		Cwd:         cwd,
 		MaxTurns:    cfg.MaxTurns,
 		Tools:       tools.NewRegistry(baseTools...),
-		Perms:       permission.NewChecker(permMode, cfg.Permissions, cwd),
+		Perms:       perms,
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(cfg.DataDir, "checkpoints", sess.ID)),
 		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
@@ -203,6 +217,7 @@ func run() error {
 		Hooks:       hookRunner,
 		Skills:      skillSet,
 		LSP:         lspMgr,
+		Sandbox:     sbTool,
 	})
 	if state != nil {
 		a.Restore(state)
@@ -211,6 +226,9 @@ func run() error {
 	if *print {
 		defer a.End("other")
 		defer a.StopAllBackground() // runs first: stop children before SessionEnd
+		if sandboxWarning != "" {
+			fmt.Fprintln(os.Stderr, "! "+sandboxWarning)
+		}
 		if !cfg.ProjectHooksApproved() {
 			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
 		}
@@ -236,6 +254,8 @@ func run() error {
 		Skills:        skillSet,
 		Agents:        agentDefs,
 		LSP:           lspMgr,
+		Sandbox:       sb,
+		SandboxNote:   sandboxWarning,
 		Version:       version,
 	})
 }

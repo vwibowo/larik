@@ -32,6 +32,7 @@ const helpText = `Commands
   /skills                   list available skills
   /agents                   list subagents the model can delegate to
   /lsp                      language servers and their status
+  /sandbox                  bash sandbox status
   /tasks                    background tasks
   /tasks stop <id>          cancel a background task
   /<skill-name> [args]      run a skill
@@ -162,6 +163,17 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/lsp":
 		return m.lspCommand(info)
+
+	case "/sandbox":
+		if m.opts.Sandbox == nil {
+			note := m.opts.SandboxNote
+			if note == "" {
+				note = "disabled in settings (\"sandbox\": {\"enabled\": false})"
+			}
+			return info("no sandbox: " + note)
+		}
+		return info(m.opts.Sandbox.Summary() + "\nwritable: " + strings.Join(m.opts.Sandbox.Writable(), ", ") +
+			"\nsandboxed commands run without asking; commands the model runs with sandbox:false ask first")
 
 	case "/tasks":
 		return m.tasksCommand(args, info, fail)

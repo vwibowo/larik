@@ -22,6 +22,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/lsp"
 	"larik/internal/mcp"
+	"larik/internal/sandbox"
 	"larik/internal/skills"
 	"larik/internal/subagent"
 )
@@ -38,6 +39,8 @@ type Options struct {
 	Skills        *skills.Set
 	Agents        *subagent.Set
 	LSP           *lsp.Manager
+	Sandbox       *sandbox.Sandbox // nil when unavailable or disabled
+	SandboxNote   string           // why there is no sandbox, if any
 }
 
 func Run(opts Options) error {

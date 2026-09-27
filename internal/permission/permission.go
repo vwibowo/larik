@@ -56,6 +56,32 @@ type Checker struct {
 	mode  Mode
 	rules Rules
 	cwd   string
+	// sandboxed: bash runs confined by the OS sandbox, so sandboxed
+	// commands need no prompt; opting out with "sandbox": false does.
+	sandboxed bool
+}
+
+// SetSandboxed records whether bash commands run in the OS sandbox.
+func (c *Checker) SetSandboxed(on bool) {
+	c.mu.Lock()
+	c.sandboxed = on
+	c.mu.Unlock()
+}
+
+// Sandboxed reports whether the sandbox is active.
+func (c *Checker) Sandboxed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sandboxed
+}
+
+// wantsSandbox reports whether a bash call runs sandboxed (the default).
+func wantsSandbox(input json.RawMessage) bool {
+	var in struct {
+		Sandbox *bool `json:"sandbox"`
+	}
+	_ = json.Unmarshal(input, &in)
+	return in.Sandbox == nil || *in.Sandbox
 }
 
 func NewChecker(mode Mode, rules Rules, cwd string) *Checker {
@@ -129,6 +155,9 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	}
 	switch call.Tool {
 	case "bash":
+		if c.sandboxed && wantsSandbox(call.Input) {
+			return Allow, "" // confined by the OS sandbox
+		}
 		if safeCommand(subject) {
 			return Allow, ""
 		}

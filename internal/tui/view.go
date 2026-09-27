@@ -102,7 +102,11 @@ func (m *model) permDetail(e *agent.Event) string {
 	_ = json.Unmarshal(e.Input, &in)
 	switch e.ToolName {
 	case "bash":
-		return lipgloss.NewStyle().Bold(true).Render("$ " + str(in["command"]))
+		cmd := lipgloss.NewStyle().Bold(true).Render("$ " + str(in["command"]))
+		if sb, ok := in["sandbox"].(bool); ok && !sb && m.agent.Perms().Sandboxed() {
+			cmd += "\n" + m.st.warn.Render("runs OUTSIDE the sandbox: full file system and network access")
+		}
+		return cmd
 	case "write":
 		content := strings.TrimSuffix(str(in["content"]), "\n")
 		return str(in["path"]) + m.st.dim.Render(fmt.Sprintf("  (%d lines)", strings.Count(content, "\n")+1)) + "\n" +
@@ -246,6 +250,9 @@ func toolTitle(name string, input []byte) string {
 	switch name {
 	case "bash":
 		arg = str(in["command"])
+		if sb, ok := in["sandbox"].(bool); ok && !sb {
+			name = "bash (unsandboxed)"
+		}
 	case "read", "write", "edit":
 		arg = str(in["path"])
 	case "grep":
@@ -312,6 +319,12 @@ func (m *model) printBanner() tea.Cmd {
 		m.st.accent.Render("larik") + m.st.dim.Render(" v"+m.opts.Version),
 		m.st.dim.Render(m.agent.ProviderName() + "/" + m.agent.Model() + " · " + cwd),
 		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /help"),
+	}
+	switch {
+	case m.opts.Sandbox != nil:
+		lines = append(lines, m.st.dim.Render("sandbox: "+m.opts.Sandbox.Kind()+" · bash runs confined to the project, no network · /sandbox"))
+	case m.opts.SandboxNote != "":
+		lines = append(lines, m.st.warn.Render("no sandbox: "+m.opts.SandboxNote))
 	}
 	if !m.opts.Config.ProjectHooksApproved() {
 		lines = append(lines, m.st.warn.Render("project hooks in .larik/settings.json are not approved yet · review with /hooks"))

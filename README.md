@@ -63,13 +63,14 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 | `/agents` | List subagents |
 | `/lsp` | Language servers and status |
 | `/tasks` / `/tasks stop <id>` | Background subagent tasks |
+| `/sandbox` | Sandbox status |
 | `/<skill-name> [args]` | Run a skill |
 
 ## Permissions
 
 | Mode | Behavior |
 |---|---|
-| `default` | Read-only tools run freely. Edits and commands ask first, except a few side-effect-free commands like `git status` and `ls`. |
+| `default` | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |
 | `accept-edits` | Edits inside the working directory run without asking. Commands still ask. |
 | `plan` | Only read-only tools run. |
 | `yolo` | Everything runs. Deny rules still apply. |
@@ -77,6 +78,30 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
 
 Answering "always allow" writes the rule to `.larik/settings.local.json`.
+
+## Sandbox
+
+`bash` commands run in the operating system's sandbox: Seatbelt (`sandbox-exec`) on macOS, and [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux when installed.
+
+**Inside the sandbox, a command:**
+- **Can** read everything.
+- **Can** write only to the project (the git root), temp directories and common build caches (Go, npm, Cargo, `~/.cache`, `~/Library/Caches`).
+- **Can't** write to `.git/hooks`, `.git/config`, `.larik/`, `.claude/` or `.mcp.json`, even inside the project, because changing them would let a later command or hook escape the sandbox.
+- **Has no network access** except localhost, so tests that start local servers still work.
+- **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.
+
+**How it changes permissions:**
+- In `default` and `accept-edits` mode, sandboxed commands run **without asking**.
+- If a command needs more (installing packages, network access, writing elsewhere), the model re-runs it with `"sandbox": false`. That asks you first, and the prompt says it runs outside the sandbox.
+- Deny rules still apply, and plan mode still blocks `bash`.
+- Without a sandbox (for example on Linux without `bwrap`), every command asks as before, and Larik says so at startup.
+
+```jsonc
+{ "sandbox": { "network": true, "writable": ["~/datasets"] } }   // personal config only
+{ "sandbox": { "enabled": false } }                               // turn it off
+```
+
+Loosening the sandbox (enabling network, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and `.larik/settings.local.json`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
 
 ## Configuration
 
@@ -271,6 +296,7 @@ internal/hooks      lifecycle hook runner (Claude Code-compatible format)
 internal/skills     Agent Skills discovery, index, skill tool, /name expansion
 internal/subagent   subagent definitions and the task tool
 internal/lsp        language server client, edit diagnostics, lsp tool
+internal/sandbox    Seatbelt / bubblewrap confinement for bash
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
@@ -292,4 +318,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions, OS-level sandboxing, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions, and in-TUI session switching (use `--resume`).

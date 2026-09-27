@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,11 +26,14 @@ type Bash struct{}
 func (Bash) ReadOnly() bool { return false }
 func (Bash) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "bash",
-		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands.",
+		Name: "bash",
+		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
+			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost. " +
+			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
 		Schema: schema(`{"type":"object","properties":{
 			"command":{"type":"string"},
-			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"}},
+			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"},
+			"sandbox":{"type":"boolean","description":"Set false to run outside the sandbox; requires user approval"}},
 			"required":["command"]}`),
 	}
 }
@@ -50,6 +54,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	in, err := decode[struct {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
+		Sandbox *bool  `json:"sandbox"`
 	}](input)
 	if err != nil {
 		return errorf("%v", err)
@@ -61,8 +66,14 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.Command("bash", "-c", in.Command)
-	cmd.Dir = env.Cwd
+	sandboxed := env.Sandbox != nil && (in.Sandbox == nil || *in.Sandbox)
+	var cmd *exec.Cmd
+	if sandboxed {
+		cmd = env.Sandbox.Command(in.Command, env.Cwd)
+	} else {
+		cmd = exec.Command("bash", "-c", in.Command)
+		cmd.Dir = env.Cwd
+	}
 	// Own process group so cancellation kills children too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var out lockedBuffer
@@ -90,7 +101,12 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	case errors.Is(runErr, context.Canceled):
 		return Result{Content: output + "\n[command interrupted by user]", IsError: true}
 	case errors.As(runErr, &exitErr):
-		return Result{Content: fmt.Sprintf("%s\n[exit code %d]", output, exitErr.ExitCode()), IsError: true}
+		content := fmt.Sprintf("%s\n[exit code %d]", output, exitErr.ExitCode())
+		if sandboxed && sandboxBlocked(output) {
+			content += "\n[sandbox: this looks blocked by the sandbox (writes outside the project and temp dirs, and network access, are not allowed). " +
+				"If the command really needs that, run it again with \"sandbox\": false; the user will be asked to approve it.]"
+		}
+		return Result{Content: content, IsError: true}
 	case runErr != nil:
 		return errorf("%v", runErr)
 	}
@@ -98,4 +114,21 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		output = "(no output)"
 	}
 	return Result{Content: output}
+}
+
+// sandboxMarkers are error texts typical of a denied write or network call.
+var sandboxMarkers = []string{
+	"Operation not permitted", "Read-only file system", "Permission denied",
+	"Could not resolve host", "Couldn't connect to server", "Network is unreachable", "network is unreachable",
+	"Temporary failure in name resolution", "nodename nor servname", "no such host", "getaddrinfo",
+	"ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "dial tcp", "Failed to establish a new connection",
+}
+
+func sandboxBlocked(output string) bool {
+	for _, m := range sandboxMarkers {
+		if strings.Contains(output, m) {
+			return true
+		}
+	}
+	return false
 }

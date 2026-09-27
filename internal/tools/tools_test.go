@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,5 +108,34 @@ func TestTruncate(t *testing.T) {
 	}
 	if Truncate("short", 50) != "short" {
 		t.Fatal("short strings must pass through")
+	}
+}
+
+// fakeSandbox runs commands normally but marks them as sandboxed.
+type fakeSandbox struct{ calls []string }
+
+func (f *fakeSandbox) Command(script, dir string) *exec.Cmd {
+	f.calls = append(f.calls, script)
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = dir
+	return cmd
+}
+
+func TestBashSandboxRouting(t *testing.T) {
+	env := NewEnv(t.TempDir())
+	fs := &fakeSandbox{}
+	env.Sandbox = fs
+
+	r := run(t, Bash{}, env, `{"command":"echo 'curl: (6) Could not resolve host: x' >&2; exit 6"}`)
+	if len(fs.calls) != 1 || !strings.Contains(r.Content, `"sandbox": false`) {
+		t.Fatalf("sandboxed failure should hint at the escape hatch: %+v", r)
+	}
+	r = run(t, Bash{}, env, `{"command":"echo plain failure; exit 1"}`)
+	if strings.Contains(r.Content, "sandbox:") {
+		t.Error("unrelated failures get no sandbox hint")
+	}
+	run(t, Bash{}, env, `{"command":"echo hi","sandbox":false}`)
+	if len(fs.calls) != 2 {
+		t.Errorf("sandbox:false must bypass the sandbox, calls=%v", fs.calls)
 	}
 }

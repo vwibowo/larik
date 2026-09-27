@@ -98,3 +98,32 @@ func TestWildcard(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxedBash(t *testing.T) {
+	c := NewChecker(ModeDefault, Rules{Deny: []string{"bash(rm -rf*)"}}, "/w")
+	c.SetSandboxed(true)
+	cases := []struct {
+		input string
+		want  Decision
+	}{
+		{`{"command":"npm test"}`, Allow}, // confined: no prompt
+		{`{"command":"npm test","sandbox":true}`, Allow},
+		{`{"command":"npm install","sandbox":false}`, Ask},  // escaping asks
+		{`{"command":"git status","sandbox":false}`, Allow}, // safe list still applies
+		{`{"command":"rm -rf /"}`, Deny},                    // deny rules still win
+	}
+	for _, tc := range cases {
+		if got, _ := c.Decide(call("bash", false, tc.input)); got != tc.want {
+			t.Errorf("%s: got %v want %v", tc.input, got, tc.want)
+		}
+	}
+	c.SetMode(ModePlan)
+	if got, _ := c.Decide(call("bash", false, `{"command":"npm test"}`)); got != Deny {
+		t.Error("plan mode stays read-only even with the sandbox")
+	}
+	c.SetMode(ModeDefault)
+	c.SetSandboxed(false)
+	if got, _ := c.Decide(call("bash", false, `{"command":"npm test"}`)); got != Ask {
+		t.Error("without a sandbox, commands ask as before")
+	}
+}

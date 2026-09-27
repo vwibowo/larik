@@ -72,3 +72,22 @@ func TestProjectCannotAddLSPCommands(t *testing.T) {
 		t.Errorf("project file must not replace a personal command: %v", got)
 	}
 }
+
+func TestProjectCanOnlyTightenSandbox(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"sandbox":{"enabled":false,"network":true,"writable":["/etc"]}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.Enabled != nil || cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 0 {
+		t.Errorf("shared settings must not loosen the sandbox: %+v", cfg.Sandbox)
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"sandbox":{"network":true,"writable":["~/data"]}}`)
+	cfg, _ = Load(cwd)
+	if !cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 1 {
+		t.Errorf("personal settings may loosen it: %+v", cfg.Sandbox)
+	}
+}
