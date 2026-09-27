@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,12 @@ func (m *model) command(line string) tea.Cmd {
 		}
 		return m.openWizard(arg)
 
+	case "/routing":
+		if arg == "" {
+			return m.openRouting(rtPreset)
+		}
+		return m.routingCommand(args, info, fail)
+
 	case "/effort":
 		if arg == "" {
 			e := string(m.agent.Effort())
@@ -140,8 +147,22 @@ func (m *model) command(line string) tea.Cmd {
 		if s.CostUSD > 0 {
 			cost = fmt.Sprintf("$%.4f", s.CostUSD)
 		}
-		return info(fmt.Sprintf("input %d · output %d · cache read %d · cache write %d · cost %s",
-			s.Total.Input, s.Total.Output, s.Total.CacheRead, s.Total.CacheWrite, cost))
+		out := fmt.Sprintf("input %d · output %d · cache read %d · cache write %d · cost %s",
+			s.Total.Input, s.Total.Output, s.Total.CacheRead, s.Total.CacheWrite, cost)
+		if c := m.opts.Config; c != nil && c.Routing().Budget.SessionUSD > 0 {
+			b := c.Routing().Budget
+			out += fmt.Sprintf(" of $%.2f budget", b.SessionUSD)
+		}
+		if spend := m.agent.SpendByModel(); len(spend) > 1 {
+			for _, sp := range spend {
+				c := "unpriced"
+				if sp.Priced {
+					c = fmt.Sprintf("$%.4f", sp.CostUSD)
+				}
+				out += fmt.Sprintf("\n  %-32s %9s · in %d · out %d · cache read %d", sp.Model, c, sp.Usage.Input, sp.Usage.Output, sp.Usage.CacheRead)
+			}
+		}
+		return info(out)
 
 	case "/mcp":
 		return m.mcpCommand(args, info, fail)
@@ -373,4 +394,74 @@ func (m *model) tasksCommand(args []string, info, fail func(string) tea.Cmd) tea
 		fmt.Fprintf(&b, "%-6s %-10s %6s  %s\n", t.ID, t.Status, elapsed.Round(time.Second), t.Label)
 	}
 	return info(strings.TrimRight(b.String(), "\n"))
+}
+
+// routingCommand handles "/routing role=provider/model …", "role=" to
+// make a role inherit again, "budget=2.50" and "show", saving to the user
+// config.
+func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
+	cfg := m.opts.Config
+	if len(args) == 1 && args[0] == "show" {
+		return info("model routing (main model " + m.agent.ProviderName() + "/" + m.agent.Model() + "):\n" + routingSummary(cfg))
+	}
+	r := cfg.Routing()
+	for _, a := range args {
+		key, val, ok := strings.Cut(a, "=")
+		if !ok || key == "" {
+			return fail("usage: /routing [show | role=provider/model | role= | role.isolation=worktree | role.max_turns=<n> | budget=<usd>]")
+		}
+		val = strings.TrimSpace(val)
+		if role, opt, ok := strings.Cut(key, "."); ok {
+			o := r.Options[role]
+			switch opt {
+			case "isolation":
+				if val != "" && val != "worktree" && val != "none" {
+					return fail("isolation is worktree or none")
+				}
+				o.Isolation = val
+			case "max_turns":
+				n := 0
+				if val != "" {
+					var err error
+					if n, err = strconv.Atoi(val); err != nil || n < 1 {
+						return fail("max_turns is a positive number")
+					}
+				}
+				o.MaxTurns = n
+			default:
+				return fail("unknown role option " + opt + " (isolation, max_turns)")
+			}
+			r.Options[role] = o
+			continue
+		}
+		switch key {
+		case "budget":
+			b, err := parseBudget(val, "")
+			if err != nil {
+				return fail(err.Error())
+			}
+			r.Budget.SessionUSD = b.SessionUSD
+		case "fallbacks", "fallback":
+			return fail("set fallbacks with /routing (no arguments)")
+		default:
+			if val != "" && providers.IsRole(cfg, val) {
+				return fail(key + " must name a provider/model, not the role " + val)
+			}
+			if val != "" {
+				if _, err := providers.Resolve(cfg, val); err != nil {
+					return fail(key + ": " + err.Error())
+				}
+			}
+			if val == "" {
+				delete(r.Roles, key)
+				delete(r.Fallbacks, key)
+			} else {
+				r.Roles[key] = val
+			}
+		}
+	}
+	if err := cfg.SaveRouting(cfg.UserConfigPath(), r); err != nil {
+		return fail(err.Error())
+	}
+	return info("✓ saved to " + tildePath(cfg.UserConfigPath()) + "\n" + routingSummary(cfg))
 }

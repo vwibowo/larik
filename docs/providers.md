@@ -148,6 +148,43 @@ Gemini uses `Provider: "gemini-display"` for thought summaries so they are never
 3. A bare id → the catalog's provider, or a naming convention (`claude-*`, `gemini-*`, `gpt-*`, `o3*`, `*codex*`).
 4. `build` constructs the adapter, reading the key from config (`api_key`, `api_key_env`) or the preset's environment variable. Custom endpoints use `"type": "openai-compatible"`.
 
+## Roles and fallbacks
+
+`Resolve` also accepts a **role** name ([routing.go](../internal/providers/routing.go)):
+- `RoleSpec` maps it through the `roles` config.
+- The built-in roles `smart`, `worker`, `explore` and `compact` always exist. An unset role resolves to the main model.
+- `opus`/`sonnet`/`haiku` act as roles that default to the Claude models.
+- A role must name a `provider/model`, never another role.
+
+Config reads go through `Config.Routing()`, a snapshot taken under a lock, because `/routing` can save new roles while subagents resolve on other goroutines.
+
+After resolving, `withFallbacks` looks up `fallbacks[role]`, else `fallbacks[spec]`, and wraps the provider in `llm.WithFallback` ([fallback.go](../internal/llm/fallback.go)). Candidates that can't be built (no key, say) are skipped.
+
+The decorator follows the same rule as `WithRetry`: it only switches while nothing has been yielded.
+- **What triggers a switch:** `ShouldFallBack` accepts rate limits, quota and auth failures (401/402/403/404/408/429) and server errors.
+- **What doesn't:** it rejects `ErrContextOverflow` and bad requests, which would fail anywhere.
+- **The switch itself:** it rewrites `req.Model` for the candidate and yields an `EventNotice`, which the agent shows as a notice.
+- **Cooldown:** a failed candidate is then skipped without a notice, for 1 minute after a rate limit or server error and for 10 minutes otherwise. The last candidate is always tried. The cooldown table is process-wide, keyed by `provider/model`, because each subagent task resolves its own chain.
+
+Adapters stamp the final message with `req.Model`, so two things follow automatically:
+- Usage and cost are attributed to the model that actually answered.
+- `ReplayableBlocks` treats that model's reasoning as its own.
+
+The wrapper also implements `ModelProber` by delegating to the candidate serving the model, so local-server window probing keeps working.
+
+```mermaid
+flowchart LR
+    spec["worker"] --> RS["RoleSpec → groq/llama-4-scout"]
+    RS --> B["build groq adapter"]
+    B --> FB{"fallbacks[worker]?"}
+    FB -- yes --> W["WithFallback(groq, ollama/qwen3-coder, …)"]
+    FB -- no --> P["plain adapter"]
+```
+
+`SuggestRouting` fills the `/routing` presets.
+- **Ranking:** models are ranked by `cheapness`. Local models come first, then ChatGPT-plan models, then the catalog list price weighted towards input. Unpriced models are placed by a guess from their name.
+- **Excluded:** tool-less models are skipped, and local models under 7B are never picked as `worker`.
+
 ## The model catalog
 
 [catalog.go](../internal/llm/catalog.go) lists known models with context window, max output and prices. It drives the context percentage, the compaction threshold and cost reporting. Unknown models get a 128k window and no price. The `models` config key adds or overrides entries.

@@ -96,6 +96,18 @@ type State struct {
 	All      []llm.Message // full history for display
 	Usage    llm.Usage
 	Cost     float64
+	ByModel  map[string]llm.Usage // usage per model that served it
+}
+
+func (st *State) addUsage(model string, u llm.Usage) {
+	st.Usage.Add(u)
+	st.Cost += llm.Lookup(model).Cost(u)
+	if st.ByModel == nil {
+		st.ByModel = map[string]llm.Usage{}
+	}
+	mu := st.ByModel[model]
+	mu.Add(u)
+	st.ByModel[model] = mu
 }
 
 // Open loads a session and reopens it for appending.
@@ -146,13 +158,11 @@ func (s *Session) read() (*State, error) {
 			st.Messages = llm.Append(st.Messages, *e.Message)
 			st.All = append(st.All, *e.Message)
 			if e.Usage != nil {
-				st.Usage.Add(*e.Usage)
-				st.Cost += llm.Lookup(e.Message.Model).Cost(*e.Usage)
+				st.addUsage(e.Message.Model, *e.Usage)
 			}
 		case EntryUsage:
 			if e.Usage != nil {
-				st.Usage.Add(*e.Usage)
-				st.Cost += llm.Lookup(e.Model).Cost(*e.Usage)
+				st.addUsage(e.Model, *e.Usage)
 			}
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}

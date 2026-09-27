@@ -67,6 +67,9 @@ type PermissionReply struct {
 }
 
 type UsageInfo struct {
+	// Model made the Turn's request; it can differ from the agent's model
+	// after a fallback or for compaction.
+	Model         string    `json:"model,omitempty"`
 	Turn          llm.Usage `json:"turn"`
 	Total         llm.Usage `json:"total"`
 	CostUSD       float64   `json:"cost_usd"`

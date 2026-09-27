@@ -22,10 +22,20 @@ const childMaxTurns = 100
 // Resolver turns a model spec ("provider/model" or bare id) into a provider.
 type Resolver func(spec string) (llm.Provider, string, error)
 
-var aliases = map[string]string{
-	"opus":   "claude-opus-5",
-	"sonnet": "claude-sonnet-5",
-	"haiku":  "claude-haiku-4-5",
+// Role is a named model choice from the config ("worker", "explore", …).
+type Role struct {
+	Name string
+	Spec string // provider/model; empty when the role inherits the main model
+	Hint string // what it's for
+	// Legacy marks an unmapped Claude alias (opus, sonnet, haiku), which
+	// only makes sense when the main agent runs on Anthropic.
+	Legacy bool
+	// Price is a short price note such as "$1/$5 per M", if known.
+	Price string
+	// Isolation "worktree" runs subagents on this role in a git worktree
+	// unless the task or definition says otherwise; MaxTurns caps them.
+	Isolation string
+	MaxTurns  int
 }
 
 // Tool is the task tool. It is ReadOnly because the call itself changes
@@ -34,6 +44,10 @@ var aliases = map[string]string{
 type Tool struct {
 	Set     *Set
 	Resolve Resolver
+	// Roles lists the model roles, read for each request so a config
+	// change applies at once. Roles with a Spec are offered to the model
+	// as the task's model input; nil offers none.
+	Roles func() []Role
 	// Context is appended to every child system prompt (env block and
 	// project instructions, plus the skills index when available).
 	// ContextFunc, if set, is used instead and read for each child, so
@@ -65,6 +79,22 @@ func (t *Tool) Spec() llm.ToolSpec {
 			"(uncommitted changes in your working tree are not included). Use it for parallel tasks that edit code, or to try a change without touching your working tree. " +
 			"Its changes come back as a branch for you to review and merge; the result says how.")
 	}
+	offered := t.offeredRoles()
+	if len(offered) > 0 {
+		b.WriteString("\n\nSet model to run a subagent on another model, chosen by role. Spend the strong model on judgement and the cheap ones on volume: " +
+			"give well-specified, mechanical work (searches, routine edits, tests, boilerplate) to a cheap role with a precise prompt, " +
+			"and keep design decisions, ambiguous debugging and final review for yourself or the smart role. Without model, the agent's own default applies.\nModel roles:\n")
+		for _, r := range offered {
+			fmt.Fprintf(&b, "- %s: %s", r.Name, r.Spec)
+			if r.Price != "" {
+				fmt.Fprintf(&b, " (%s)", r.Price)
+			}
+			if r.Hint != "" {
+				fmt.Fprintf(&b, " — %s", r.Hint)
+			}
+			b.WriteString("\n")
+		}
+	}
 	b.WriteString("\n\nAvailable agents:\n")
 	for _, d := range t.Set.List() {
 		names = append(names, d.Name)
@@ -80,6 +110,16 @@ func (t *Tool) Spec() llm.ToolSpec {
 		isolation = `,
 			"isolation":{"type":"string","enum":["worktree"],"description":"Run in an isolated git worktree"}`
 	}
+	model := ""
+	if len(offered) > 0 {
+		names := []string{"inherit"}
+		for _, r := range offered {
+			names = append(names, r.Name)
+		}
+		roles, _ := json.Marshal(names)
+		model = `,
+			"model":{"type":"string","enum":` + string(roles) + `,"description":"Model role for this subagent; inherit uses your own model"}`
+	}
 	return llm.ToolSpec{
 		Name:        ToolName,
 		Description: strings.TrimSpace(b.String()),
@@ -87,7 +127,7 @@ func (t *Tool) Spec() llm.ToolSpec {
 			"description":{"type":"string","description":"Short (3-5 word) label for the task"},
 			"prompt":{"type":"string","description":"Complete instructions for the subagent"},
 			"subagent_type":{"type":"string","enum":` + string(enum) + `,"description":"Which agent to use"},
-			"run_in_background":{"type":"boolean","description":"Return immediately and deliver the result later"}` + isolation + `},
+			"run_in_background":{"type":"boolean","description":"Return immediately and deliver the result later"}` + isolation + model + `},
 			"required":["description","prompt","subagent_type"]}`),
 	}
 }
@@ -99,6 +139,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 		Type        string `json:"subagent_type"`
 		Background  bool   `json:"run_in_background"`
 		Isolation   string `json:"isolation"`
+		Model       string `json:"model"`
 	}
 	if len(input) == 0 || json.Unmarshal(input, &in) != nil || strings.TrimSpace(in.Prompt) == "" {
 		return tools.Result{Content: "INVALID_JSON: expected description, prompt and subagent_type", IsError: true}
@@ -115,9 +156,18 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if d := strings.TrimSpace(in.Description); d != "" {
 		label += ": " + d
 	}
+	role, _ := t.role(in.Model, def)
 	isolation := in.Isolation
 	if isolation == "" {
 		isolation = def.Isolation
+	}
+	if isolation == "" && role.Isolation == "worktree" {
+		// The role asks for it; without a repository it runs in place.
+		if t.Repo != "" {
+			isolation = "worktree"
+		} else {
+			emit(agent.Event{Kind: agent.EvNotice, Text: fmt.Sprintf("role %s runs in a worktree, but this isn't a git repository; the subagent works in place", role.Name)})
+		}
 	}
 	switch isolation {
 	case "", "none":
@@ -129,7 +179,10 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	default:
 		return tools.Result{Content: fmt.Sprintf("unknown isolation %q (only \"worktree\")", isolation), IsError: true}
 	}
-	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree"}
+	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns}
+	if role.MaxTurns > 0 {
+		c.maxTurns = role.MaxTurns
+	}
 
 	if in.Background {
 		id, err := parent.StartBackground(label, func(bctx context.Context, bemit func(agent.Event)) (string, bool) {
@@ -150,14 +203,19 @@ type childRun struct {
 	label    string
 	prompt   string
 	worktree bool
+	model    string // role or spec asked for by the caller; overrides def.Model
+	maxTurns int
 }
 
 // runChild runs a subagent to completion, forwarding its activity to emit.
 func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agent.Event), c childRun) tools.Result {
 	def, label := c.def, c.label
-	provider, model, notice := t.model(def, parent)
+	provider, model, notice := t.model(def, c.model, parent)
 	if notice != "" {
 		emit(agent.Event{Kind: agent.EvNotice, Text: notice})
+	}
+	if model != parent.Model() || provider.Name() != parent.ProviderName() {
+		label += " · " + model // show which tier runs it
 	}
 
 	shared := t.Context
@@ -169,7 +227,7 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 		Provider: provider,
 		Model:    model,
 		System:   def.Prompt + "\n\n" + footer + "\n\n" + shared,
-		MaxTurns: childMaxTurns,
+		MaxTurns: c.maxTurns,
 	}
 	cwd := parent.Cwd()
 	var wt *worktree.Worktree
@@ -220,7 +278,11 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 			e.Agent = label
 			emit(e)
 		case agent.EvUsage:
-			parent.AddUsage(model, e.Usage.Turn)
+			used := e.Usage.Model
+			if used == "" {
+				used = model
+			}
+			parent.AddUsage(used, e.Usage.Turn)
 			st := parent.Stats()
 			emit(agent.Event{Kind: agent.EvUsage, Usage: &st})
 		case agent.EvAssistant:
@@ -236,6 +298,10 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	switch {
 	case ctx.Err() != nil:
 		res = tools.Result{Content: "subagent interrupted before finishing", IsError: true}
+	case stop == "loop":
+		res = tools.Result{Content: "subagent " + strings.TrimPrefix(failure, "stopped: the subagent ") + ". Check what it changed before relying on it." + lastWords(final), IsError: true}
+	case stop == "max_turns":
+		res = tools.Result{Content: fmt.Sprintf("subagent ran out of turns (%d) before finishing. Check what it changed before relying on it.", c.maxTurns) + lastWords(final), IsError: true}
 	case failure != "" && final == "":
 		res = tools.Result{Content: "subagent failed: " + failure, IsError: true}
 	case final == "":
@@ -255,23 +321,66 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	return res
 }
 
-// model picks the child's provider and model from the definition.
-func (t *Tool) model(def Definition, parent *agent.Agent) (llm.Provider, string, string) {
-	spec := def.Model
+// model picks the child's provider and model: the task's model input,
+// else the definition's, else the parent's.
+func (t *Tool) model(def Definition, asked string, parent *agent.Agent) (llm.Provider, string, string) {
+	spec, who := def.Model, "agent "+def.Name
+	if asked != "" {
+		spec, who = asked, "task"
+	}
 	if spec == "" || spec == "inherit" || t.Resolve == nil {
 		return parent.Provider(), parent.Model(), ""
 	}
-	if id, ok := aliases[spec]; ok {
-		if parent.ProviderName() != "anthropic" {
-			return parent.Provider(), parent.Model(), fmt.Sprintf("agent %s asks for model %q, a Claude alias; using %s", def.Name, spec, parent.Model())
+	for _, r := range t.roles() {
+		if r.Name != spec {
+			continue
 		}
-		spec = "anthropic/" + id
+		switch {
+		case r.Legacy && parent.ProviderName() != "anthropic":
+			return parent.Provider(), parent.Model(), fmt.Sprintf("%s asks for model %q, a Claude alias; using %s (map it under roles in config to pick another model)", who, spec, parent.Model())
+		case r.Spec == "" && !r.Legacy:
+			return parent.Provider(), parent.Model(), "" // an unset role inherits
+		}
+		break
 	}
 	p, m, err := t.Resolve(spec)
 	if err != nil {
-		return parent.Provider(), parent.Model(), fmt.Sprintf("agent %s: model %q unavailable (%v); using %s", def.Name, spec, err, parent.Model())
+		return parent.Provider(), parent.Model(), fmt.Sprintf("%s: model %q unavailable (%v); using %s", who, spec, err, parent.Model())
 	}
 	return p, m, ""
+}
+
+// role is the role a task runs on: the task's model input, else the
+// definition's model, when either names a role.
+func (t *Tool) role(asked string, def Definition) (Role, bool) {
+	name := strings.TrimSpace(asked)
+	if name == "" {
+		name = def.Model
+	}
+	for _, r := range t.roles() {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return Role{}, false
+}
+
+func (t *Tool) roles() []Role {
+	if t.Roles == nil {
+		return nil
+	}
+	return t.Roles()
+}
+
+// offeredRoles are the roles mapped to a model of their own.
+func (t *Tool) offeredRoles() []Role {
+	var out []Role
+	for _, r := range t.roles() {
+		if r.Spec != "" && !r.Legacy {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // childTools is the parent's registry filtered by the definition, minus
@@ -292,4 +401,12 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 		}
 	}
 	return tools.NewRegistry(out...)
+}
+
+// lastWords quotes a stopped subagent's last message, if it had one.
+func lastWords(final string) string {
+	if final == "" {
+		return ""
+	}
+	return "\n\nIts last message:\n" + tools.Truncate(final, 4000)
 }

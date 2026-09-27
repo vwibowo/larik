@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"larik/internal/llm"
 	"larik/internal/session"
@@ -76,7 +78,9 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		opts.Sandbox = o.Sandbox
 		opts.Checkpoints, opts.LSP = nil, nil
 	}
-	return New(opts)
+	child := New(opts)
+	child.parent = a
+	return child
 }
 
 // AddUsage adds spend made on this agent's behalf (e.g. by a subagent) to
@@ -85,8 +89,44 @@ func (a *Agent) AddUsage(model string, u llm.Usage) {
 	a.mu.Lock()
 	a.usage.Add(u)
 	a.cost += llm.Lookup(model).Cost(u)
+	a.addModelUsageLocked(model, u)
 	a.mu.Unlock()
 	if a.opts.Session != nil {
 		_ = a.opts.Session.AppendUsage(model, u)
 	}
+}
+
+// ModelSpend is one model's share of the session's usage.
+type ModelSpend struct {
+	Model   string
+	Usage   llm.Usage
+	CostUSD float64
+	Priced  bool // the catalog has a price for the model
+}
+
+func (a *Agent) addModelUsageLocked(model string, u llm.Usage) {
+	if a.byModel == nil {
+		a.byModel = map[string]llm.Usage{}
+	}
+	mu := a.byModel[model]
+	mu.Add(u)
+	a.byModel[model] = mu
+}
+
+// SpendByModel breaks the session's usage down by model, costliest first.
+func (a *Agent) SpendByModel() []ModelSpend {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ModelSpend, 0, len(a.byModel))
+	for m, u := range a.byModel {
+		info := llm.Lookup(m)
+		out = append(out, ModelSpend{Model: m, Usage: u, CostUSD: info.Cost(u), Priced: info.InputPrice+info.OutputPrice > 0})
+	}
+	slices.SortFunc(out, func(x, y ModelSpend) int {
+		if x.CostUSD != y.CostUSD {
+			return cmp.Compare(y.CostUSD, x.CostUSD)
+		}
+		return cmp.Compare(x.Model, y.Model)
+	})
+	return out
 }

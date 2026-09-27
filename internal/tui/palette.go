@@ -24,6 +24,7 @@ var commands = []command{
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},
 	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
+	{"/routing", "[role=provider/model]", "cheaper models for subagents: roles, fallbacks and a session budget", "model and mode", ""},
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
 	{"/clear", "", "start a fresh context (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},

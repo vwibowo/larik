@@ -13,6 +13,9 @@ const (
 	EventThinkingDelta
 	EventToolUseStart
 	EventDone
+	// EventNotice is a message for the user about the request itself, such
+	// as a switch to a fallback model. It carries no model output.
+	EventNotice
 )
 
 // StreamEvent is emitted while a response streams. Deltas are for display

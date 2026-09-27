@@ -12,9 +12,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"larik/internal/hooks"
@@ -60,7 +63,22 @@ type Config struct {
 	// Language is what the model replies in; empty leaves it to the model.
 	Language string `json:"language,omitempty"`
 	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
-	SpinnerTips *bool                     `json:"spinner_tips,omitempty"`
+	SpinnerTips *bool `json:"spinner_tips,omitempty"`
+
+	// Roles name models by job, so subagents and compaction can run on a
+	// cheaper model than the main agent: "worker", "explore", "smart",
+	// "compact" or any name of your own, each a "provider/model" spec.
+	// An empty or missing role inherits the main model.
+	Roles map[string]string `json:"roles,omitempty"`
+	// Fallbacks lists, per role name or model spec, models to switch to
+	// when the primary fails before answering (rate limit, quota, outage).
+	Fallbacks map[string][]string `json:"fallbacks,omitempty"`
+	// RoleOptions limit subagents running on a role: a worktree to keep a
+	// cheap model's edits off your checkout, and a turn cap.
+	RoleOptions map[string]RoleOption `json:"role_options,omitempty"`
+	// Budget caps a session's spend.
+	Budget Budget `json:"budget,omitempty"`
+
 	Providers   map[string]ProviderConfig `json:"providers,omitempty"`
 	Models      map[string]llm.ModelInfo  `json:"models,omitempty"` // catalog additions/overrides
 	Permissions permission.Rules          `json:"permissions,omitempty"`
@@ -93,6 +111,32 @@ type Config struct {
 	ConfigDir string `json:"-"`
 	DataDir   string `json:"-"`
 	Cwd       string `json:"-"`
+}
+
+// RoleOption applies to subagents that run on a role.
+type RoleOption struct {
+	// Isolation "worktree" runs them in their own git worktree, so their
+	// changes come back as a branch to review.
+	Isolation string `json:"isolation,omitempty"`
+	// MaxTurns caps their model requests; zero keeps the default (100).
+	MaxTurns int `json:"max_turns,omitempty"`
+}
+
+// Budget caps what a session may spend, subagents included.
+type Budget struct {
+	// SessionUSD stops the agent before a request once the session's
+	// cost reaches it. Zero means no cap.
+	SessionUSD float64 `json:"session_usd,omitempty"`
+	// WarnAt is the fraction of SessionUSD at which to warn (default 0.8).
+	WarnAt float64 `json:"warn_at,omitempty"`
+}
+
+// WarnFraction is WarnAt, or its default.
+func (b Budget) WarnFraction() float64 {
+	if b.WarnAt <= 0 || b.WarnAt >= 1 {
+		return 0.8
+	}
+	return b.WarnAt
 }
 
 func configDir() string {
@@ -256,6 +300,39 @@ func (c *Config) merge(path string, trusted bool) error {
 		if *b.src != nil {
 			*b.dst = *b.src
 		}
+	}
+	for k, v := range o.Roles {
+		if c.Roles == nil {
+			c.Roles = map[string]string{}
+		}
+		c.Roles[k] = strings.TrimSpace(v)
+	}
+	for k, v := range o.Fallbacks {
+		if c.Fallbacks == nil {
+			c.Fallbacks = map[string][]string{}
+		}
+		c.Fallbacks[k] = v
+	}
+	for k, v := range o.RoleOptions {
+		if v.Isolation != "" && v.Isolation != "worktree" && v.Isolation != "none" {
+			return fmt.Errorf("%s: role_options.%s.isolation must be \"worktree\" or \"none\"", path, k)
+		}
+		if v.MaxTurns < 0 {
+			return fmt.Errorf("%s: role_options.%s.max_turns must not be negative", path, k)
+		}
+		if c.RoleOptions == nil {
+			c.RoleOptions = map[string]RoleOption{}
+		}
+		c.RoleOptions[k] = v
+	}
+	if o.Budget.SessionUSD < 0 || o.Budget.WarnAt < 0 {
+		return fmt.Errorf("%s: budget values must not be negative", path)
+	}
+	if o.Budget.SessionUSD != 0 {
+		c.Budget.SessionUSD = o.Budget.SessionUSD
+	}
+	if o.Budget.WarnAt != 0 {
+		c.Budget.WarnAt = o.Budget.WarnAt
 	}
 	for k, v := range o.Providers {
 		c.Providers[k] = v
@@ -433,6 +510,102 @@ func (c *Config) SaveProvider(path, name string, pc ProviderConfig, model string
 		c.Model = model
 	}
 	return nil
+}
+
+// Routing is what the /routing wizard saves.
+type Routing struct {
+	Roles     map[string]string
+	Fallbacks map[string][]string
+	Options   map[string]RoleOption
+	Budget    Budget
+}
+
+// SaveRouting writes roles, fallbacks and budget to the settings file at
+// path, replacing those keys there (empty ones are removed), and applies
+// them to c.
+func (c *Config) SaveRouting(path string, r Routing) error {
+	roles := map[string]any{}
+	for k, v := range r.Roles {
+		if v = strings.TrimSpace(v); v != "" {
+			roles[k] = v
+		}
+	}
+	// A role cleared here but set in another settings file is saved as ""
+	// so it stays cleared (inherits) when the files are merged again.
+	for k, v := range c.Routing().Roles {
+		if _, kept := roles[k]; !kept && v != "" {
+			roles[k] = ""
+		}
+	}
+	fallbacks := map[string]any{}
+	for k, v := range r.Fallbacks {
+		if len(v) > 0 {
+			fallbacks[k] = v
+		}
+	}
+	options := map[string]any{}
+	for k, v := range r.Options {
+		if v != (RoleOption{}) {
+			options[k] = v
+		}
+	}
+	budget := map[string]any{}
+	if r.Budget.SessionUSD > 0 {
+		budget["session_usd"] = r.Budget.SessionUSD
+	}
+	if r.Budget.WarnAt > 0 {
+		budget["warn_at"] = r.Budget.WarnAt
+	}
+	routingMu.Lock()
+	defer routingMu.Unlock()
+	err := updateJSON(path, 0o644, func(raw map[string]any) {
+		for key, v := range map[string]map[string]any{"roles": roles, "fallbacks": fallbacks, "role_options": options, "budget": budget} {
+			if len(v) == 0 {
+				delete(raw, key)
+			} else {
+				raw[key] = v
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	newRoles, newFallbacks, newOptions := map[string]string{}, map[string][]string{}, map[string]RoleOption{}
+	for k, v := range options {
+		newOptions[k] = v.(RoleOption)
+	}
+	for k, v := range roles {
+		if v != "" {
+			newRoles[k] = v.(string)
+		}
+	}
+	for k, v := range fallbacks {
+		newFallbacks[k] = slices.Clone(v.([]string))
+	}
+	c.Roles, c.Fallbacks, c.RoleOptions, c.Budget = newRoles, newFallbacks, newOptions, r.Budget
+	return nil
+}
+
+// routingMu guards Roles, Fallbacks and Budget, which /routing changes
+// while agents read them.
+var routingMu sync.RWMutex
+
+// Routing returns a copy of the roles, fallbacks and budget, safe to use
+// while another goroutine saves new ones.
+func (c *Config) Routing() Routing {
+	routingMu.RLock()
+	defer routingMu.RUnlock()
+	r := Routing{Roles: make(map[string]string, len(c.Roles)), Fallbacks: make(map[string][]string, len(c.Fallbacks)), Options: maps.Clone(c.RoleOptions), Budget: c.Budget}
+	if r.Options == nil {
+		r.Options = map[string]RoleOption{}
+	}
+	for k, v := range c.Roles {
+		r.Roles[k] = v
+	}
+	for k, v := range c.Fallbacks {
+		r.Fallbacks[k] = slices.Clone(v)
+	}
+	return r
 }
 
 // RemoveProvider deletes a provider from the personal settings files (the

@@ -13,6 +13,7 @@ import (
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/providers"
 )
 
 // settingsPanel is the /config screen: a list of settings, and for the one
@@ -61,6 +62,9 @@ type settingSpec struct {
 	// other, for a choice, accepts a typed value that isn't one of the
 	// choices (e.g. any number of days), returning it normalized.
 	other func(v string) (string, bool)
+	// For an action: the command that changes it, and how to open its screen.
+	cmd  string
+	open func(m *model) tea.Cmd
 }
 
 func toggle(key, title, section string, get func(c *config.Config) bool, set func(m *model, on bool)) settingSpec {
@@ -251,7 +255,35 @@ var settingSpecs = []settingSpec{
 	},
 	{
 		key: "model", title: "Model", section: "defaults", kind: kindAction,
-		get: func(m *model) string { return m.opts.Config.Model },
+		get:  func(m *model) string { return m.opts.Config.Model },
+		cmd:  "/model",
+		open: func(m *model) tea.Cmd { return m.openModelPicker() },
+	},
+	{
+		key: "routing", title: "Model routing", section: "defaults", kind: kindAction,
+		get: func(m *model) string {
+			var set []string
+			r := m.opts.Config.Routing()
+			for _, n := range providers.RoleNames(m.opts.Config) {
+				if spec := r.Roles[n]; spec != "" {
+					set = append(set, n+" "+spec)
+				}
+			}
+			return strings.Join(set, ", ")
+		},
+		cmd:  "/routing",
+		open: func(m *model) tea.Cmd { return m.openRouting(rtPreset) },
+	},
+	{
+		key: "budget", title: "Session budget", section: "defaults", kind: kindAction,
+		get: func(m *model) string {
+			if b := m.opts.Config.Routing().Budget; b.SessionUSD > 0 {
+				return fmt.Sprintf("$%.2f", b.SessionUSD)
+			}
+			return ""
+		},
+		cmd:  "/routing budget=",
+		open: func(m *model) tea.Cmd { return m.openRouting(rtBudget) },
 	},
 }
 
@@ -307,7 +339,7 @@ func (s settingSpec) check(v string) (string, error) {
 		}
 		return "", fmt.Errorf("%s is one of %s", s.key, strings.Join(names, ", "))
 	case kindAction:
-		return "", fmt.Errorf("use /model to change the %s", s.key)
+		return "", fmt.Errorf("use %s to change the %s", s.cmd, s.key)
 	}
 	return v, nil
 }
@@ -386,7 +418,7 @@ func (m *model) buildSettings() {
 			if v == "" {
 				it.detail = "not set"
 			}
-			it.note = "/model"
+			it.note = spec.cmd
 		default:
 			it.detail = spec.label(v)
 		}
@@ -439,10 +471,10 @@ func (m *model) editSetting(key string) tea.Cmd {
 	switch spec.kind {
 	case kindAction:
 		m.settings = nil
-		if m.running {
+		if m.running && spec.key == "model" {
 			return m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))
 		}
-		return m.openModelPicker()
+		return spec.open(m)
 	case kindToggle:
 		next := "on"
 		if cur == "on" {

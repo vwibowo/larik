@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,15 @@ type Options struct {
 	// the system prompt.
 	Language string
 
+	// CompactWith, if set, picks the model that summarizes the
+	// conversation; a nil provider means the agent's own model.
+	CompactWith func() (llm.Provider, string)
+
+	// Budget, if set, returns the session's spending cap in USD (0 for
+	// none) and the fraction of it at which to warn. Subagents are held
+	// to their parent's budget and total.
+	Budget func() (capUSD, warnAt float64)
+
 	// BuildSystem, if set, rebuilds System (without the language line) at
 	// each fresh context, so edits to instruction files and new skills
 	// apply after Clear. The prompt stays fixed within a context.
@@ -91,6 +101,10 @@ type Agent struct {
 	haltReason     string
 
 	bg *background // lazily created; see background.go
+
+	parent       *Agent // set for subagents; spend counts against its budget
+	budgetWarned bool
+	byModel      map[string]llm.Usage // spend per model, subagents included
 
 	// baseSystem is opts.System without the language line. A language
 	// change waits in nextLang for the next fresh context, so the prompt
@@ -128,6 +142,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.messages = st.Messages
 	a.usage = st.Usage
 	a.cost = st.Cost
+	a.byModel = maps.Clone(st.ByModel)
 	a.startSource = "resume"
 }
 
@@ -314,6 +329,7 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 
 	compactedThisTurn := false
 	stopContinuations := 0
+	var loops loopGuard
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
 		if turn > 0 && a.needsCompaction() && !compactedThisTurn {
 			if err := a.compact(ctx, emit, true); err != nil {
@@ -328,6 +344,10 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 			a.appendMessage(llm.UserText(note), nil)
 		}
 
+		if err := a.checkBudget(emit); err != nil {
+			emit(Event{Kind: EvError, Text: err.Error()})
+			return "budget"
+		}
 		msg, stop, err := a.stream(ctx, emit)
 		if errors.Is(err, llm.ErrContextOverflow) && !compactedThisTurn {
 			emit(Event{Kind: EvNotice, Text: "context window full; compacting"})
@@ -380,6 +400,10 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 		a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: results}, nil)
 		if ctx.Err() != nil {
 			return "interrupted"
+		}
+		if sub && loops.see(uses, results) {
+			emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", uses[0].Name, loopRepeats)})
+			return "loop"
 		}
 		if halted, reason := a.takeHalt(); halted {
 			emit(Event{Kind: EvNotice, Text: "stopped by hook: " + reason})
@@ -434,6 +458,8 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		case llm.EventToolUseStart:
 			endThinking()
 			emit(Event{Kind: EvToolCallDelta, ToolName: ev.Text})
+		case llm.EventNotice:
+			emit(Event{Kind: EvNotice, Text: ev.Text})
 		case llm.EventDone:
 			endThinking()
 			msg := ev.Message
@@ -448,8 +474,11 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 			if len(msg.Blocks) == 0 {
 				msg.Blocks = []llm.Block{llm.TextBlock("(empty response)")}
 			}
-			a.probeWindow(ctx, provider, req.Model, ev.Usage, emit)
-			a.recordUsage(ev.Usage, emit)
+			if msg.Model == "" {
+				msg.Model = req.Model
+			}
+			a.probeWindow(ctx, provider, msg.Model, ev.Usage, emit)
+			a.recordUsage(msg.Model, ev.Usage, emit)
 			a.appendMessage(msg, &ev.Usage)
 			emit(Event{Kind: EvAssistant, Message: &msg})
 			return msg, ev.StopReason, nil
@@ -471,13 +500,15 @@ func (a *Agent) keepPartial(text string) {
 	a.appendMessage(llm.Message{Role: llm.RoleAssistant, Model: a.opts.Model, Blocks: []llm.Block{llm.TextBlock(text + "\n\n[interrupted by user]")}}, nil)
 }
 
-func (a *Agent) recordUsage(u llm.Usage, emit func(Event)) {
+// recordUsage adds a request's usage, priced for the model that served it.
+func (a *Agent) recordUsage(model string, u llm.Usage, emit func(Event)) {
 	a.mu.Lock()
-	info := llm.Lookup(a.opts.Model)
+	info := llm.Lookup(model)
 	a.usage.Add(u)
 	a.cost += info.Cost(u)
+	a.addModelUsageLocked(model, u)
 	a.lastContext = u.ContextTokens() + u.Output
-	ui := UsageInfo{Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
+	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
 	a.mu.Unlock()
 	emit(Event{Kind: EvUsage, Usage: &ui})
 }
@@ -531,9 +562,16 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		Effort:    a.opts.Effort,
 	}
 	provider := a.opts.Provider
+	pick := a.opts.CompactWith
 	a.mu.Unlock()
 	if len(msgs) == 0 {
 		return errors.New("nothing to compact")
+	}
+	if pick != nil {
+		if p, m := pick(); p != nil && m != "" {
+			provider, req.Model = p, m
+			req.MaxTokens = min(req.MaxTokens, llm.Lookup(m).MaxOutput)
+		}
 	}
 	req.Messages = withUserText(msgs, compactionPrompt)
 
@@ -542,9 +580,21 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		if err != nil {
 			return err
 		}
-		if ev.Type == llm.EventDone {
+		switch ev.Type {
+		case llm.EventNotice:
+			emit(Event{Kind: EvNotice, Text: ev.Text})
+		case llm.EventDone:
 			final = ev.Message
-			a.recordUsage(ev.Usage, emit)
+			model := final.Model
+			if model == "" {
+				model = req.Model
+			}
+			// The summary replaces the transcript's context rather than
+			// joining it, so its spend is recorded on its own.
+			a.recordUsage(model, ev.Usage, emit)
+			if a.opts.Session != nil {
+				_ = a.opts.Session.AppendUsage(model, ev.Usage)
+			}
 		}
 	}
 	summary := extractSummary(final.Text())

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/providers"
 )
@@ -279,6 +280,9 @@ func (m *model) handleWizard(msg tea.Msg) tea.Cmd {
 	if w.result.Path != "" {
 		note = " · saved to " + tildePath(w.result.Path)
 	}
+	if len(m.opts.Config.Routing().Roles) == 0 && connectedCount(m.opts.Config) > 1 {
+		note += "\n" + m.st.dim.Render("tip: /routing runs subagents on a cheaper model while this one plans")
+	}
 	return tea.Sequence(
 		m.println(m.st.ok.Render("✓ Connected "+w.result.Provider)+m.st.dim.Render(note)),
 		m.switchModel(w.result.Spec(), m.agent.Effort()),
@@ -293,4 +297,18 @@ func containsModel(ms []providers.Model, id string) bool {
 		}
 	}
 	return false
+}
+
+// connectedCount counts providers set up or with a key, leaving out local
+// servers that are merely looked for.
+func connectedCount(cfg *config.Config) int {
+	n := 0
+	for _, name := range providers.Usable(cfg) {
+		_, configured := cfg.Providers[name]
+		if c, ok := providers.ChoiceFor(name); ok && c.Local && !configured {
+			continue
+		}
+		n++
+	}
+	return n
 }

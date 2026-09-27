@@ -115,6 +115,7 @@ type model struct {
 	mpick      *modelPicker              // the /model dropdown, when open
 	modelLists map[string]providerModels // last model lists, by provider
 	wizard     *wizard                   // the connect wizard, when open
+	routing    *routingWizard            // the /routing wizard, when open
 	modePick   *picker                   // the /mode dropdown, when open
 	provs      *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
@@ -321,6 +322,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modelsLoadedMsg:
 		m.modelLists = msg.lists
+		if m.routing != nil {
+			m.routing.setLists(msg.lists)
+		}
 		if m.mpick != nil {
 			m.mpick.loading = false
 			m.buildModelList()
@@ -356,6 +360,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case m.wizard != nil:
 			return m, m.handleWizard(msg)
+		case m.routing != nil:
+			return m, m.handleRouting(msg)
 		case m.mpick != nil:
 			return m, m.handleModelPickerKey(msg)
 		case m.modePick != nil:
@@ -376,6 +382,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.wizard != nil { // e.g. cursor blinks for its text fields
 		return m, m.handleWizard(msg)
+	}
+	if w := m.routing; w != nil && w.step == rtBudget {
+		var cmd tea.Cmd
+		w.fields[w.focus], cmd = w.fields[w.focus].Update(msg)
+		return m, cmd
 	}
 
 	var cmd tea.Cmd

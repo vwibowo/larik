@@ -37,6 +37,8 @@ func (m *model) View() tea.View {
 		parts = append(parts, m.settingsView())
 	case m.wizard != nil:
 		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.height)))
+	case m.routing != nil:
+		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.routing.view(m.st, max(m.width-6, 20), m.height)))
 	default:
 		switch {
 		case m.mpick != nil:

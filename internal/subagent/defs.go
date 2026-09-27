@@ -22,7 +22,7 @@ type Definition struct {
 	Description string
 	Prompt      string   // system prompt body
 	Tools       []string // allowed tool names; nil means all (except task)
-	Model       string   // "", "inherit", an alias (opus, sonnet, haiku) or provider/model
+	Model       string   // "", "inherit", a role (worker, explore, smart, opus, …) or provider/model
 	Isolation   string   // "worktree" to always run in a git worktree
 	Source      string   // "builtin" or the file path
 }
@@ -33,6 +33,7 @@ var builtins = []Definition{
 		Description: "General agent for multi-step research or implementation tasks that would otherwise fill your context: investigating a question across many files, or making a self-contained change.",
 		Prompt: "You are a subagent handling a task delegated by the main agent. Work autonomously with your tools until the task is done. " +
 			"Stay within the task's scope, match the surrounding code style, and verify changes when tests or builds exist.",
+		Model:  "worker",
 		Source: "builtin",
 	},
 	{
@@ -41,6 +42,7 @@ var builtins = []Definition{
 		Prompt: "You are a read-only search subagent. Find what the task asks about using read, grep and glob (and lsp for definitions and references, when available). Never modify anything. " +
 			"Search broadly first, then read only the relevant parts. Report findings concisely with path:line references.",
 		Tools:  []string{"read", "grep", "glob", "lsp"},
+		Model:  "explore",
 		Source: "builtin",
 	},
 }

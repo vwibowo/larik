@@ -37,6 +37,26 @@ func Resolve(cfg *config.Config, spec string) (Resolved, error) {
 			return Resolved{}, err
 		}
 	}
+	role := ""
+	if rs, ok := RoleSpec(cfg, spec); ok {
+		role = spec
+		if rs == "" && cfg.Model != spec {
+			return Resolve(cfg, "") // an unset role inherits the main model
+		}
+		if rs == "" || IsRole(cfg, rs) {
+			return Resolved{}, fmt.Errorf("role %q must name a provider/model, not another role", spec)
+		}
+		spec = rs
+	}
+	r, err := resolveSpec(cfg, spec)
+	if err != nil {
+		return Resolved{}, err
+	}
+	return withFallbacks(cfg, r, role, spec), nil
+}
+
+// resolveSpec builds the provider for a plain provider/model spec.
+func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	name, model := split(cfg, spec)
 	if model == "" {
 		return Resolved{}, fmt.Errorf("model spec %q has no model id", spec)

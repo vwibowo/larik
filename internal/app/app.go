@@ -94,6 +94,7 @@ func Setup(cwd, version string) (*App, error) {
 			r, err := a.Resolve(cfg, spec)
 			return r.Provider, r.Model, err
 		},
+		Roles:        a.roles,
 		Repo:         gitRoot,
 		WorktreeRoot: filepath.Join(cfg.DataDir, "worktrees"),
 		SandboxFor: func(dir, gitDir string) tools.Sandbox {
@@ -288,6 +289,11 @@ func (a *App) Open(o Options) (*Session, error) {
 
 		NoAutoCompact: !a.Cfg.AutoCompactOn(),
 		Language:      a.Cfg.Language,
+		CompactWith:   a.compactModel,
+		Budget: func() (float64, float64) {
+			b := a.Cfg.Routing().Budget
+			return b.SessionUSD, b.WarnFraction()
+		},
 	})
 	s := &Session{ID: sess.ID, Path: sess.Path, Agent: ag, Hooks: hookRunner, sess: sess}
 	if state != nil {
@@ -307,4 +313,40 @@ func ParseEffort(s string) (llm.Effort, error) {
 		return llm.Effort(s), nil
 	}
 	return "", errors.New("unknown effort " + s + " (low, medium, high, xhigh, max, default)")
+}
+
+// roles describes the model roles for the task tool, from the current
+// config, so /routing changes apply to the next request.
+func (a *App) roles() []subagent.Role {
+	var out []subagent.Role
+	opts := a.Cfg.Routing().Options
+	for _, name := range providers.RoleNames(a.Cfg) {
+		if name == providers.RoleCompact {
+			continue // not something a subagent runs on
+		}
+		spec, _ := providers.RoleSpec(a.Cfg, name)
+		o := opts[name]
+		out = append(out, subagent.Role{Name: name, Spec: spec, Hint: providers.RoleHints[name], Price: providers.PriceNote(spec), Isolation: o.Isolation, MaxTurns: o.MaxTurns})
+	}
+	for _, name := range []string{"opus", "sonnet", "haiku"} {
+		if providers.IsLegacyAlias(a.Cfg, name) {
+			o := opts[name]
+			out = append(out, subagent.Role{Name: name, Legacy: true, Isolation: o.Isolation, MaxTurns: o.MaxTurns})
+		}
+	}
+	return out
+}
+
+// compactModel is the model for summarizing the conversation: the
+// compact role when it is set, else nil for the agent's own model.
+func (a *App) compactModel() (llm.Provider, string) {
+	spec, _ := providers.RoleSpec(a.Cfg, providers.RoleCompact)
+	if spec == "" {
+		return nil, ""
+	}
+	r, err := a.Resolve(a.Cfg, providers.RoleCompact)
+	if err != nil {
+		return nil, ""
+	}
+	return r.Provider, r.Model
 }

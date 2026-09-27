@@ -20,10 +20,11 @@ The `task` tool ([task.go](../internal/subagent/task.go)) lets the model delegat
 - A fresh context (it can't see the conversation, so the prompt must be self-contained).
 - A system prompt: the definition's body + a footer asking for a complete final report + the shared env/instructions/skills context.
 - The parent's tools filtered by the definition's `tools` list, minus `task`, `task_wait` and `task_stop` (no nesting).
-- The parent's model, or the definition's `model` (`opus`/`sonnet`/`haiku` aliases resolve only on Anthropic; otherwise it falls back with a notice).
-- At most 100 model turns.
+- A model chosen by the task's `model` input, else the definition's `model`, else the parent's ([`Tool.model`](../internal/subagent/task.go)). Either can name a role (`worker`, `explore`, …) or a `provider/model`. The built-ins default to the `worker` and `explore` roles, and an unset role inherits. The task tool reads roles through `Tool.Roles` on every request, so `/routing` changes apply without a restart, and offers the `model` input only once some role has a model. Unmapped `opus`/`sonnet`/`haiku` aliases resolve only on Anthropic; elsewhere the child falls back to the parent's model with a notice.
+- At most 100 model turns, or the role's `max_turns`. When the cap is hit, or the loop guard ([loop.go](../internal/agent/loop.go)) sees the same calls with the same results 4 times in 8 turns, the parent gets an error result telling it to check the child's changes, followed by the child's last message.
+- Its own worktree when its role has `isolation: "worktree"` and neither the task nor the definition sets isolation. Only inside a git repository; elsewhere it works in place, with a notice.
 
-**What it shares with the parent:** the permission checker (same mode and rules), hooks (with `SubagentStop` instead of `Stop`), the checkpoint store, language servers and the sandbox. Its usage is added to the parent's totals and a transcript is saved under `<session>-agents/`.
+**What it shares with the parent:** the permission checker (same mode and rules), hooks (with `SubagentStop` instead of `Stop`), the checkpoint store, language servers and the sandbox. Its usage is added to the parent's totals, priced for the model that served each request (`UsageInfo.Model`). A transcript is saved under `<session>-agents/`. The parent's session budget covers it too: `checkBudget` ([budget.go](../internal/agent/budget.go)) walks up to the root agent, whose cost already includes every subagent's spend.
 
 **What comes back:** only the child's final text message, truncated to the tool output cap. Tool calls and permission prompts are forwarded as events labelled `Agent: "explore: find auth"`, so the UI can nest them, but they never enter the parent's context.
 

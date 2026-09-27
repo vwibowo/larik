@@ -103,3 +103,21 @@ func TestFork(t *testing.T) {
 		t.Errorf("list: %+v", infos)
 	}
 }
+
+func TestUsageByModel(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Model: "big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AppendMessage(llm.Message{Role: llm.RoleAssistant, Model: "big", Blocks: []llm.Block{llm.TextBlock("a")}}, &llm.Usage{Input: 10})
+	s.AppendUsage("small", llm.Usage{Input: 5})
+	s.AppendUsage("small", llm.Usage{Output: 2})
+	s.Close()
+	st, err := Load(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ByModel["big"].Input != 10 || st.ByModel["small"].Input != 5 || st.ByModel["small"].Output != 2 || st.Usage.Input != 15 {
+		t.Errorf("by model = %+v, total %+v", st.ByModel, st.Usage)
+	}
+}

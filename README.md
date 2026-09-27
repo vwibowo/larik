@@ -55,6 +55,50 @@ A larger window uses more memory for the model's KV cache. To change it, set `co
 
 Larik reads back the window Ollama actually loaded, uses it for the context percentage and compaction, and warns when a request fills it. It also warns if the chosen model can't call tools. Small models such as `qwen3:4b` handle simple read/edit/test loops but can be unreliable with delegation.
 
+### Mixing cheap and strong models
+
+An agent spends most of its tokens reading: searching files, re-reading context, running routine edits. Those don't need your best model. Larik lets the main agent plan and review on a strong model while subagents do the volume work on cheap ones, across providers.
+
+Run `/routing` to set it up. The wizard lists the models of every provider you've connected, with prices, and offers presets:
+
+- **Balanced:** your current model stays in charge; the cheapest models it finds become `worker` and `explore`.
+- **Cheapest:** the lowest-priced capable model for every subagent.
+- **Local and plan first:** Ollama, LM Studio or your ChatGPT plan before paid APIs.
+
+Then you can adjust each role, add fallbacks and set a budget. The result is saved as plain settings, for example for a student with a small Anthropic budget, a free Gemini key and Ollama:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-5",
+  "roles": {
+    "worker": "ollama/qwen3-coder",
+    "explore": "gemini/gemini-3.8-flash"
+  },
+  "fallbacks": {
+    "worker": ["gemini/gemini-3.8-flash"],
+    "explore": ["anthropic/claude-haiku-4-5"]
+  },
+  "role_options": {
+    "worker": { "isolation": "worktree", "max_turns": 40 },
+    "explore": { "max_turns": 30 }
+  },
+  "budget": { "session_usd": 2.00, "warn_at": 0.8 }
+}
+```
+
+- **Roles:** `worker` runs the built-in `general-purpose` subagent, `explore` the read-only `explore` subagent. `smart` is a strong model the main agent can hand hard subproblems to, and `compact` summarizes the conversation when the context fills. An unset role uses the main model, so nothing changes until you set one. You can add roles of your own and use them in agent definitions (`model: reviewer`), in `--model` and in `/model`.
+- **Per task:** once a role has a model, the `task` tool gets a `model` input listing the roles with their prices. The main agent is told to send well-specified, mechanical work to cheap roles and keep design decisions, ambiguous debugging and final review for itself. Subagent rows show the model they ran on.
+- **Fallbacks:** when a model fails before answering with a rate limit, an exhausted quota, an auth problem or an outage, Larik switches to the next model in its list and says so. It never switches once output has started. A model that failed is left alone for a minute (rate limits, server errors) or ten (a missing model, a bad key, no credit, a stopped server), so later requests don't pay for the same failure. Useful with free tiers that run out mid-session. Fallbacks can be keyed by role or by `provider/model`.
+- **Keeping cheap models on a leash:** small and mid-size models sometimes lose the thread. They create stray files, "clean up" by deleting things, or repeat one command forever. Three safeguards cover this, and the presets turn them on:
+  - `role_options.<role>.isolation: "worktree"` runs that role's subagents in their own git worktree (see [Subagents](#subagents)). Their edits come back as a branch for the main agent to review and merge, so a bad run never touches your checkout. It applies unless the task or agent definition chooses otherwise; outside a git repository the subagent works in place, with a notice.
+  - `role_options.<role>.max_turns` caps the role's subagents (default 100).
+  - Every subagent is stopped when it repeats the same tool call with the same result 4 times within 8 turns. The main agent is told the subagent got stuck and to check its changes. The main agent itself isn't stopped this way, since you can see it and interrupt it.
+
+  In the wizard, `w` toggles the worktree and `+`/`-` change the turn cap. From the command line: `/routing worker.isolation=worktree worker.max_turns=30`.
+- **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free.
+- **Compaction:** the `compact` role is usually best left unset. With prompt caching, the main model re-reads the conversation at the cache price (for Opus, $0.50 per million tokens), which can cost less than a cheap model reading it all uncached.
+- **Quick edits:** `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap).
+
 ## Keys and commands
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
@@ -64,6 +108,7 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 | `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
+| `/routing [role=provider/model]` | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
 | `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config verbose=true` sets one without the screen |
 | `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
@@ -72,7 +117,7 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 | `/undo` | Revert the file changes from the last turn |
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
-| `/cost` | Usage and cost |
+| `/cost` | Usage and cost, split by model when more than one was used |
 | `/sessions` | List sessions for this directory (`*` current, `⑂` branch) |
 | `/resume <id>` | Switch to another session (a unique id prefix is enough) |
 | `/new` | Start a new session |
@@ -261,6 +306,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
 - `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
+- `roles`, `fallbacks`, `budget` ("Model routing" and "Session budget" in `/config`): see [Mixing cheap and strong models](#mixing-cheap-and-strong-models).
 - `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from `~/.config/larik/config.json` or `.larik/settings.local.json`.
 
 `models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
@@ -314,8 +360,10 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
 The model can delegate work to subagents with the `task` tool. Each subagent gets a fresh context window, its own system prompt and a restricted tool set. Only its final message comes back, so broad searches and self-contained changes don't fill the main context. Several `task` calls in one turn run in parallel.
 
 Built-in agents:
-- **`general-purpose`:** all tools.
-- **`explore`:** read-only search with `read`, `grep` and `glob`.
+- **`general-purpose`:** all tools. Runs on the `worker` role.
+- **`explore`:** read-only search with `read`, `grep` and `glob`. Runs on the `explore` role.
+
+Both use the main model until those roles are set (see [Mixing cheap and strong models](#mixing-cheap-and-strong-models)).
 
 To add your own, write `<name>.md` in `.larik/agents/` or `.claude/agents/`, or in `~/.config/larik/agents/` or `~/.claude/agents/`. The format is the same as Claude Code's, and a definition overrides a built-in with the same name:
 
@@ -324,7 +372,7 @@ To add your own, write `<name>.md` in `.larik/agents/` or `.claude/agents/`, or 
 name: reviewer
 description: Reviews a diff for bugs and missing tests. Use after making changes.
 tools: Read, Grep, Glob, Bash      # optional; omit for all tools. mcp__<server> allows a whole server
-model: sonnet                      # optional: inherit (default), opus/sonnet/haiku, or provider/model
+model: worker                      # optional: inherit (default), a role (worker, explore, smart, opus/sonnet/haiku, your own), or provider/model
 isolation: worktree                # optional: always run in its own git worktree
 ---
 You are a meticulous code reviewer. ...
