@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -74,6 +75,8 @@ func (m *model) liveView() string {
 
 	var label string
 	switch {
+	case m.perm != nil:
+		label = "Waiting for your answer…"
 	case m.busyLabel != "":
 		label = m.busyLabel
 	case m.calling != "":
@@ -96,7 +99,9 @@ func (m *model) liveView() string {
 		if thinkingNow && !m.showThinking {
 			meta = append(meta, "ctrl+o to show thinking")
 		}
-		meta = append(meta, "esc to interrupt")
+		if m.perm == nil { // with a prompt open, esc denies instead
+			meta = append(meta, "esc to interrupt")
+		}
 	}
 	line := m.st.accent.Render("✻ ") + label
 	if len(meta) > 0 {
@@ -109,6 +114,14 @@ func (m *model) liveView() string {
 	return strings.Join(b, "\n")
 }
 
+// plural formats a count with its noun: "1 line", "3 lines".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
 // elapsed formats a duration as "14s" or "2m 05s".
 func elapsed(d time.Duration) string {
 	d = d.Round(time.Second)
@@ -118,54 +131,120 @@ func elapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
+// permissionView asks whether a tool call may run: a question naming the
+// action, where the request came from, what exactly will happen, and the
+// three answers with their keys.
 func (m *model) permissionView() string {
 	e := m.perm
-	var body strings.Builder
-	title := "Allow this " + e.ToolName + " call?"
+	w := max(m.width-6, 20)
+	meta := []string{permToolName(e)}
 	if e.Agent != "" {
-		title += m.st.dim.Render("  requested by subagent " + e.Agent)
+		meta = append(meta, "from subagent "+e.Agent)
 	}
 	if n := len(m.permQueue); n > 0 {
-		title += m.st.dim.Render(fmt.Sprintf("  (+%d waiting)", n))
+		meta = append(meta, fmt.Sprintf("%d more waiting", n))
 	}
-	body.WriteString(m.st.accent.Render(title) + "\n\n")
-	body.WriteString(m.permDetail(e) + "\n\n")
-	opts := []string{"Yes", "Yes, and always allow " + e.SuggestedRule, "No, tell the model to do something else"}
+	lines := []string{
+		spread(m.st.accent.Render(m.permQuestion(e)), m.st.dim.Render(strings.Join(meta, " · ")), w),
+		"",
+		prefixLines(m.permDetail(e), "  "),
+		"",
+	}
+	opts := []struct{ text, rule, key, note string }{
+		{text: "Yes", key: "y"},
+		{text: "Yes, and don't ask again for ", rule: e.SuggestedRule, key: "a", note: "saved to .larik/settings.local.json"},
+		{text: "No, tell larik what to do instead", key: "n"},
+	}
 	for i, o := range opts {
+		line := fmt.Sprintf("%d. %s", i+1, o.text)
 		cursor := "  "
-		line := fmt.Sprintf("%d. %s", i+1, o)
 		if i == m.permIdx {
 			cursor = m.st.accent.Render("› ")
-			line = m.st.accent.Render(line)
+			line = m.st.accent.Render(line + o.rule)
+		} else if o.rule != "" {
+			line += m.st.accent.Render(o.rule)
 		}
-		body.WriteString(cursor + line + "\n")
+		lines = append(lines, spread(cursor+line, m.st.dim.Render(o.key), w))
+		if o.note != "" && i == m.permIdx {
+			lines = append(lines, m.st.dim.Render("     "+o.note))
+		}
 	}
-	body.WriteString(m.st.dim.Render("\n↑/↓ select · enter confirm · y/a/n · esc deny"))
-	return m.st.modal.Width(max(m.width-2, 10)).Render(body.String())
+	lines = append(lines, "", m.st.dim.Render("↑/↓ select · enter confirm · esc deny · ctrl+c deny and stop"))
+	return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(lines, "\n"))
+}
+
+// permQuestion names what the call will do.
+func (m *model) permQuestion(e *agent.Event) string {
+	var in map[string]any
+	_ = json.Unmarshal(e.Input, &in)
+	switch e.ToolName {
+	case "bash":
+		return "Run this command?"
+	case "write":
+		path := str(in["path"])
+		if !filepath.IsAbs(path) && m.opts.Config != nil {
+			path = filepath.Join(m.opts.Config.Cwd, path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			return "Overwrite this file?"
+		}
+		return "Create this file?"
+	case "edit":
+		return "Make this edit?"
+	case "web_fetch":
+		return "Fetch this page?"
+	case "web_search":
+		return "Search the web?"
+	}
+	if server := mcp.ServerOf(e.ToolName); server != "" {
+		return "Use " + permToolName(e) + "?"
+	}
+	return "Allow " + e.ToolName + "?"
+}
+
+// permToolName is the tool as people know it: "bash (unsandboxed)",
+// "github › create_issue".
+func permToolName(e *agent.Event) string {
+	if server := mcp.ServerOf(e.ToolName); server != "" {
+		return server + " › " + strings.TrimPrefix(e.ToolName, mcp.Prefix+server+"__")
+	}
+	if e.ToolName == "bash" {
+		var in map[string]any
+		_ = json.Unmarshal(e.Input, &in)
+		if sb, ok := in["sandbox"].(bool); ok && !sb {
+			return "bash (unsandboxed)"
+		}
+	}
+	return e.ToolName
 }
 
 func (m *model) permDetail(e *agent.Event) string {
 	var in map[string]any
 	_ = json.Unmarshal(e.Input, &in)
+	bold := lipgloss.NewStyle().Bold(true)
 	switch e.ToolName {
 	case "bash":
-		cmd := lipgloss.NewStyle().Bold(true).Render("$ " + str(in["command"]))
+		cmd := bold.Render("$ " + str(in["command"]))
 		if sb, ok := in["sandbox"].(bool); ok && !sb && m.agent.Perms().Sandboxed() {
-			cmd += "\n" + m.st.warn.Render("runs OUTSIDE the sandbox: full file system and network access")
+			cmd += "\n" + m.st.warn.Render("! runs outside the sandbox: full file system and network access")
 		}
 		return cmd
 	case "write":
 		content := strings.TrimSuffix(str(in["content"]), "\n")
-		return str(in["path"]) + m.st.dim.Render(fmt.Sprintf("  (%d lines)", strings.Count(content, "\n")+1)) + "\n" +
+		return bold.Render(str(in["path"])) + m.st.dim.Render("  "+plural(strings.Count(content, "\n")+1, "line")) + "\n" +
 			m.st.diffAdd.Render(truncateLines(prefixLines(content, "+ "), 12))
 	case "web_fetch":
-		return lipgloss.NewStyle().Bold(true).Render(str(in["url"])) + "\n" + m.st.dim.Render("fetches over the network from Larik (outside the sandbox)")
+		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
-		return lipgloss.NewStyle().Bold(true).Render(str(in["query"])) + "\n" + m.st.dim.Render("the query is sent to the configured search provider")
+		return bold.Render(str(in["query"])) + "\n" + m.st.dim.Render("the query goes to the configured search provider")
 	case "edit":
-		return str(in["path"]) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
+		return bold.Render(str(in["path"])) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
 	}
-	return string(e.Input)
+	if len(in) == 0 {
+		return m.st.dim.Render("no arguments")
+	}
+	pretty, _ := json.MarshalIndent(in, "", "  ")
+	return m.st.dim.Render(truncateLines(string(pretty), 12))
 }
 
 // statusLine is the footer: the permission mode on the left; model,

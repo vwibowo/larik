@@ -557,7 +557,7 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input)))
 	}
 	if reply.Always {
-		return m.println(m.st.dim.Render("  ⎿ always allowing " + ev.SuggestedRule + " (saved to .larik/settings.local.json)"))
+		return m.println(m.st.dim.Render("  ⎿ won't ask again for " + ev.SuggestedRule + " · saved to .larik/settings.local.json"))
 	}
 	return nil
 }
