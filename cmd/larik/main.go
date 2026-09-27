@@ -9,29 +9,16 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	"golang.org/x/term"
 
-	"larik/internal/agent"
-	"larik/internal/checkpoint"
+	"larik/internal/app"
 	"larik/internal/config"
 	"larik/internal/headless"
-	"larik/internal/hooks"
-	"larik/internal/llm"
-	"larik/internal/lsp"
-	"larik/internal/mcp"
-	"larik/internal/permission"
-	"larik/internal/providers"
-	"larik/internal/sandbox"
 	"larik/internal/session"
-	"larik/internal/skills"
-	"larik/internal/subagent"
-	"larik/internal/tools"
 	"larik/internal/tui"
-	"larik/internal/web"
 )
 
 var version = "0.1.0-dev"
@@ -47,6 +34,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		return runServe(os.Args[2:])
+	}
 	var (
 		print   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")
@@ -59,7 +49,7 @@ func run() error {
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -101,181 +91,47 @@ func run() error {
 		return errors.New("-p needs a prompt argument or piped stdin")
 	}
 
-	// Session: resume or create.
-	var (
-		sess  *session.Session
-		state *session.State
-	)
-	resumeID := *resume
-	if *cont {
-		infos, err := session.List(sessDir)
-		if err != nil {
-			return err
-		}
-		if len(infos) == 0 {
-			return errors.New("no previous session in this directory")
-		}
-		resumeID = infos[0].ID
-	}
-	modelSpec := *model
-	if resumeID != "" {
-		path, err := session.Find(sessDir, resumeID)
-		if err != nil {
-			return err
-		}
-		if sess, state, err = session.Open(path); err != nil {
-			return err
-		}
-		if modelSpec == "" && state.Meta.Model != "" {
-			modelSpec = state.Meta.Provider + "/" + state.Meta.Model
-		}
-	}
-
-	resolved, err := providers.Resolve(cfg, modelSpec)
+	a, err := app.Setup(cwd, version)
 	if err != nil {
 		return err
 	}
-	if sess == nil {
-		if sess, err = session.Create(sessDir, session.Meta{Cwd: cwd, Provider: resolved.Provider.Name(), Model: resolved.Model}); err != nil {
-			return err
-		}
-	}
-	defer sess.Close()
-
-	permMode := cfg.Mode
-	if *mode != "" {
-		permMode = permission.Mode(*mode)
-	}
-	if permMode, err = permission.ParseMode(string(permMode)); err != nil {
+	defer a.Close()
+	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont})
+	if err != nil {
 		return err
-	}
-	eff := cfg.Effort
-	if *effort != "" {
-		eff = llm.Effort(*effort)
-	}
-
-	// MCP servers connect in the background; the agent waits for them before
-	// its first request.
-	home, _ := os.UserHomeDir()
-	skillSet := skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
-	baseTools := tools.Builtin()
-	projectRoot := agent.GitRoot(cwd)
-	if projectRoot == "" {
-		projectRoot = cwd
-	}
-	sb, sandboxWarning := sandbox.New(cfg.Sandbox, projectRoot, home)
-	var sbTool tools.Sandbox // stays a nil interface when there's no sandbox
-	system := agent.BuildSystemPrompt(cwd, cfg.ConfigDir)
-	if sb != nil {
-		sbTool = sb
-		system += "\n\n<sandbox>\n" + sb.Summary() + "\n</sandbox>"
-	}
-	childContext := agent.ContextSections(cwd, cfg.ConfigDir)
-	if idx := skillSet.Index(); idx != "" {
-		baseTools = append(baseTools, skills.Tool{Set: skillSet})
-		system += "\n\n" + idx
-		childContext += "\n\n" + idx
-	}
-	if !cfg.Web.FetchDisabled {
-		baseTools = append(baseTools, web.FetchTool{F: web.NewFetcher()})
-	}
-	searcher, searchErr := web.NewSearcher(cfg.Web.Search)
-	if searcher != nil {
-		baseTools = append(baseTools, web.SearchTool{S: searcher})
-	}
-
-	lspMgr := lsp.NewManager(cfg.LSP, cwd, agent.GitRoot(cwd), filepath.Join(cfg.DataDir, "logs"))
-	defer lspMgr.Close()
-	if lspMgr.Enabled() {
-		baseTools = append(baseTools, lsp.Tool{M: lspMgr})
-	}
-
-	agentDefs := subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
-	baseTools = append(baseTools, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
-		Set:     agentDefs,
-		Context: childContext,
-		Resolve: func(spec string) (llm.Provider, string, error) {
-			r, err := providers.Resolve(cfg, spec)
-			return r.Provider, r.Model, err
-		},
-	})
-
-	mcpMgr := mcp.NewManager(cfg, version)
-	mcpMgr.Base = baseTools
-	mcpMgr.Start()
-	defer mcpMgr.Close()
-
-	hookRunner := hooks.NewRunner(cfg.ActiveHooks(), cwd, sess.ID, sess.Path)
-
-	perms := permission.NewChecker(permMode, cfg.Permissions, cwd)
-	perms.SetSandboxed(sb != nil)
-
-	a := agent.New(agent.Options{
-		Provider:    resolved.Provider,
-		Model:       resolved.Model,
-		Effort:      eff,
-		System:      system,
-		Cwd:         cwd,
-		MaxTurns:    cfg.MaxTurns,
-		Tools:       tools.NewRegistry(baseTools...),
-		Perms:       perms,
-		Session:     sess,
-		Checkpoints: checkpoint.New(filepath.Join(cfg.DataDir, "checkpoints", sess.ID)),
-		OnAllowRule: func(rule string) { _ = config.PersistAllowRule(cwd, rule) },
-		LoadTools:   mcpMgr.Registry,
-		Hooks:       hookRunner,
-		Skills:      skillSet,
-		LSP:         lspMgr,
-		Sandbox:     sbTool,
-	})
-	if state != nil {
-		a.Restore(state)
 	}
 
 	if *print {
-		defer a.End("other")
-		defer a.StopAllBackground() // runs first: stop children before SessionEnd
-		if searchErr != nil {
-			fmt.Fprintln(os.Stderr, "! web_search disabled: "+searchErr.Error())
+		defer s.Close("other")
+		if a.SearchNote != "" {
+			fmt.Fprintln(os.Stderr, "! web_search disabled: "+a.SearchNote)
 		}
-		if sandboxWarning != "" {
-			fmt.Fprintln(os.Stderr, "! "+sandboxWarning)
+		if a.SandboxNote != "" {
+			fmt.Fprintln(os.Stderr, "! "+a.SandboxNote)
 		}
 		if !cfg.ProjectHooksApproved() {
 			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return headless.Run(ctx, a, prompt, headless.Format(*output), os.Stdout, os.Stderr)
+		return headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
 	}
 
-	var history []llm.Message
-	if state != nil {
-		history = state.All
-	}
-	defer a.End("prompt_input_exit")
-	defer a.StopAllBackground()
+	defer s.Close("prompt_input_exit")
 	return tui.Run(tui.Options{
-		Agent:         a,
-		Config:        cfg,
+		Agent:         s.Agent,
+		Config:        a.Cfg,
 		InitialPrompt: prompt,
-		History:       history,
-		SessionDir:    sessDir,
-		MCP:           mcpMgr,
-		Hooks:         hookRunner,
-		Skills:        skillSet,
-		Agents:        agentDefs,
-		LSP:           lspMgr,
-		Sandbox:       sb,
-		SandboxNote:   sandboxWarning,
-		SearchNote:    errText(searchErr),
+		History:       s.History,
+		SessionDir:    a.SessionDir,
+		MCP:           a.MCP,
+		Hooks:         s.Hooks,
+		Skills:        a.Skills,
+		Agents:        a.AgentDefs,
+		LSP:           a.LSP,
+		Sandbox:       a.Sandbox,
+		SandboxNote:   a.SandboxNote,
+		SearchNote:    a.SearchNote,
 		Version:       version,
 	})
-}
-
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

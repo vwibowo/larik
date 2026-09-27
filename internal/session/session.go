@@ -96,12 +96,31 @@ type State struct {
 
 // Open loads a session and reopens it for appending.
 func Open(path string) (*Session, *State, error) {
-	f, err := os.Open(path)
+	s := &Session{ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Path: path}
+	st, err := s.read()
 	if err != nil {
 		return nil, nil, err
 	}
+	s.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, st, nil
+}
+
+// Load reads a session without opening it for writing, e.g. to show the
+// history of a session another process (or Session) is appending to.
+func Load(path string) (*State, error) {
+	return (&Session{Path: path}).read()
+}
+
+func (s *Session) read() (*State, error) {
+	f, err := os.Open(s.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 	st := &State{}
-	s := &Session{ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Path: path}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 256*1024*1024)
 	for sc.Scan() {
@@ -135,15 +154,10 @@ func Open(path string) (*Session, *State, error) {
 			st.Messages = []llm.Message{CompactionMessage(e.Summary)}
 		}
 	}
-	f.Close()
 	if err := sc.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	s.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, nil, err
-	}
-	return s, st, nil
+	return st, nil
 }
 
 // CompactionMessage is how a summary re-enters the context.

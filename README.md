@@ -29,6 +29,7 @@ With no `--model`, Larik picks the default model of the first provider whose key
 ./larik -p --output json --mode yolo "run tests"  # one JSON event per line
 ./larik -c                                        # continue the last session here
 ./larik --resume 20260926-2358                    # resume by id prefix
+./larik serve                                     # HTTP + SSE API (see Server mode)
 ```
 
 ### Local models with Ollama
@@ -133,6 +134,62 @@ You can also set it explicitly:
 ```
 
 Loosening the sandbox (enabling network, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and `.larik/settings.local.json`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
+
+## Server mode
+
+`larik serve` exposes the current directory's agent over a local HTTP API. Each session streams its events over Server-Sent Events (SSE), so editors, web UIs and scripts can drive Larik. One server can run several sessions at once. They share MCP connections, language servers and the sandbox.
+
+```bash
+./larik serve                          # 127.0.0.1:4096
+./larik serve --addr 127.0.0.1:0       # pick a free port
+./larik serve --model ollama/qwen3-coder --mode accept-edits   # defaults for new sessions
+```
+
+On startup the server prints one JSON line to stdout, `{"url": "...", "token": "..."}`, for programs that launch it.
+
+**Auth and safety:**
+- Every request except `GET /v1/health` needs `Authorization: Bearer <token>`.
+- The token comes from `--token`, then `$LARIK_SERVER_TOKEN`, and otherwise is generated at random.
+- `GET …/events` also accepts `?token=`, because browser `EventSource` can't set headers.
+- The server only listens on loopback. Requests whose `Host` isn't a loopback name are rejected, which blocks DNS rebinding.
+- `--allow-remote` lifts both restrictions. Anyone who can reach the port and has the token can then run commands.
+
+```bash
+T=<token>; U=http://127.0.0.1:4096
+ID=$(curl -s -XPOST $U/v1/sessions -H "Authorization: Bearer $T" -d '{}' | jq -r .id)
+curl -N "$U/v1/sessions/$ID/events?token=$T" &                 # live events
+curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
+  -d '{"text":"summarize this repo","wait":true}'              # blocks, returns the answer
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/health` | Liveness check (no auth) |
+| `GET /v1/info` | Version, cwd, providers, sandbox |
+| `GET /v1/sessions` | Sessions in this directory, with `loaded`/`busy` flags |
+| `POST /v1/sessions` | New session `{model, effort, mode}`, or load one with `{resume: id}` / `{continue: true}` |
+| `GET /v1/sessions/{id}` | Model, mode, busy, usage, pending permissions, running tasks |
+| `PATCH /v1/sessions/{id}` | Change `model`, `effort` or `mode` |
+| `DELETE /v1/sessions/{id}` | Stop and unload (the transcript stays on disk) |
+| `GET /v1/sessions/{id}/messages` | Full transcript (works for unloaded sessions too) |
+| `GET /v1/sessions/{id}/events` | SSE event stream |
+| `POST /v1/sessions/{id}/prompt` | `{text}` starts a run and returns 202 (409 if busy); `{text, wait: true}` returns the final answer |
+| `POST /v1/sessions/{id}/cancel` | Interrupt the current run |
+| `GET /v1/sessions/{id}/permissions` | Pending permission requests |
+| `POST /v1/sessions/{id}/permissions/{request_id}` | Answer: `{allow, always, reason}` |
+| `POST /v1/sessions/{id}/compact` · `/undo` · `/clear` | Same as the TUI commands |
+| `GET /v1/sessions/{id}/tasks` · `DELETE …/tasks/{task_id}` | List or stop background tasks |
+
+**The event stream:**
+- Each SSE message has `id: <seq>` and `event: <type>`. Its `data` is JSON: the agent event (the same schema as `-p --output json`) plus `seq`, `session`, and `request_id` on permission requests.
+- The server adds four event types:
+  - `status` (`busy` true/false)
+  - `user_message`
+  - `permission_resolved` (`allowed`, `denied`, or `expired` when the run was cancelled)
+  - `session_closed`
+- Reconnect with `Last-Event-ID` (or `?after=<seq>`) to replay missed events from a 4096-event buffer. Without it, a stream starts with new events only.
+- A run's permission requests wait until some client answers them or the run is cancelled.
+- When background tasks finish while a session is idle, the server starts a turn by itself to hand their results to the model.
 
 ## Configuration
 
@@ -313,7 +370,8 @@ Instructions are loaded from these files:
 ## Architecture
 
 ```
-cmd/larik           flags, session setup, wiring
+cmd/larik           flags, `serve` subcommand
+internal/app        shared setup: config, tools, MCP, LSP, sandbox; opens sessions
 internal/llm        provider-neutral types, catalog, retry
   anthropic/        Messages API: adaptive thinking, effort, prompt caching, eager tool streaming
   openai/           Responses API: stateless, encrypted reasoning replay
@@ -333,10 +391,11 @@ internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
 internal/headless   -p mode
+internal/server     HTTP + SSE API (larik serve)
 internal/tui        Bubble Tea UI
 ```
 
-`agent.Run` returns a channel of events, and both the TUI and headless mode consume it. A future RPC or server front end can plug in without changing the loop.
+`agent.Run` returns a channel of events. The TUI, headless mode and the HTTP server all consume it, so none of them needs changes to the loop.
 
 Transcripts are append-only. Thinking and reasoning blocks are replayed only to the model that produced them. Compaction replaces the whole history with a single summary. Together these keep provider prompt caches warm and satisfy Anthropic's thinking-block binding rules.
 
