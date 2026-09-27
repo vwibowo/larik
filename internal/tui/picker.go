@@ -15,6 +15,7 @@ type pickItem struct {
 	detail   string // dim text after the label
 	note     string // right-hand text, e.g. "✓ current"
 	noteOK   bool   // render note in the ok color
+	warn     bool   // render the label in the warning color
 	disabled bool   // shown but can't be chosen
 	keep     bool   // stays visible whatever the filter
 	value    any
@@ -156,6 +157,8 @@ func (p *picker) view(st styles, width int) string {
 		case it.disabled:
 			label, detail = st.dim.Render(label), st.dim.Render(detail)
 			note = st.dim.Render(note)
+		case it.warn:
+			label, detail = st.warn.Render(label), st.warn.Render(detail)
 		case i == p.cursor:
 			label = st.accent.Render(label)
 			detail = st.dim.Render(detail)

@@ -47,14 +47,14 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 
 ## Keys and commands
 
-`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
 |---|---|
 | `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/effort [low…max\|default]` | Reasoning effort |
-| `/mode [default\|accept-edits\|plan\|yolo]` | Permission mode |
+| `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
 | `/undo` | Revert the file changes from the last turn |
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context |

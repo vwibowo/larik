@@ -15,39 +15,6 @@ import (
 	"larik/internal/providers"
 )
 
-const helpText = `Commands
-  /model [provider/model]   pick a model from a list, or switch directly (e.g. /model openai/gpt-5.5)
-  /connect [provider]       set up a provider: pick it, connect, choose a model, save
-  /effort [level]           show or set reasoning effort: low medium high xhigh max default
-  /mode [mode]              show or set permission mode: default accept-edits plan yolo
-  /undo                     revert file changes from the last turn that made any
-  /compact                  summarize the conversation to free context
-  /clear                    start a fresh context (history stays in the session file)
-  /cost                     token usage and cost for this session
-  /sessions                 list sessions for this directory
-  /resume <id>              switch to another session
-  /new                      start a new session
-  /fork                     branch the conversation into a new session and continue there
-  /rewind [n]               list prompts, or branch off just before prompt n to redo it
-  /mcp                      MCP servers, status and tools
-  /mcp approve <name>       allow a project-defined MCP server to start
-  /hooks                    configured lifecycle hooks
-  /hooks approve            allow the hooks in .larik/settings.json to run
-  /skills                   list available skills
-  /agents                   list subagents the model can delegate to
-  /lsp                      language servers and their status
-  /sandbox                  bash sandbox status
-  /tasks                    background tasks
-  /tasks stop <id>          cancel a background task
-  /worktrees                git worktrees kept by isolated subagents
-  /worktrees remove <b|all> delete a kept worktree and its branch
-  /<skill-name> [args]      run a skill
-  /quit                     exit
-
-Keys
-  enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  shift+tab cycle permission mode · alt+p switch model · ctrl+c clear input / interrupt / quit`
-
 var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModePlan}
 
 func (m *model) cycleMode() tea.Cmd {
@@ -119,7 +86,7 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/mode":
 		if arg == "" {
-			return info("mode: " + string(m.agent.Perms().Mode()))
+			return m.openModePicker()
 		}
 		md, err := permission.ParseMode(arg)
 		if err != nil {

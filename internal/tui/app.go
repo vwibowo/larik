@@ -103,6 +103,11 @@ type model struct {
 	mpick      *modelPicker              // the /model dropdown, when open
 	modelLists map[string]providerModels // last model lists, by provider
 	wizard     *wizard                   // the connect wizard, when open
+	modePick   *picker                   // the /mode dropdown, when open
+	// The command palette shows while a bare "/name" is being typed.
+	palette       *picker
+	paletteQ      string // input the palette was built for
+	paletteHidden string // input the palette was dismissed at with esc
 }
 
 // Messages.
@@ -268,8 +273,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleWizard(msg)
 		case m.mpick != nil:
 			return m, m.handleModelPickerKey(msg)
+		case m.modePick != nil:
+			return m, m.handleModePickerKey(msg)
+		case m.palette != nil:
+			if cmd, ok := m.handlePaletteKey(msg); ok {
+				return m, cmd
+			}
 		}
-		return m.handleKey(msg)
+		md, cmd := m.handleKey(msg)
+		m.syncPalette()
+		return md, cmd
 	}
 
 	if m.wizard != nil { // e.g. cursor blinks for its text fields
@@ -278,6 +291,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.syncPalette() // e.g. after a paste
 	return m, cmd
 }
 

@@ -12,7 +12,6 @@ import (
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/mcp"
-	"larik/internal/permission"
 )
 
 func (m *model) View() tea.View {
@@ -30,8 +29,13 @@ func (m *model) View() tea.View {
 	case m.wizard != nil:
 		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.height)))
 	default:
-		if m.mpick != nil {
+		switch {
+		case m.mpick != nil:
 			parts = append(parts, m.modelPickerView())
+		case m.modePick != nil:
+			parts = append(parts, m.modePickerView())
+		case m.palette != nil:
+			parts = append(parts, m.paletteView())
 		}
 		parts = append(parts, m.st.box.Width(max(m.width-2, 10)).Render(m.input.View()))
 	}
@@ -129,13 +133,7 @@ func (m *model) permDetail(e *agent.Event) string {
 
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
-	modeLabel := map[permission.Mode]string{
-		permission.ModeDefault:     "default",
-		permission.ModeAcceptEdits: "⏵⏵ accept edits",
-		permission.ModePlan:        "⏸ plan mode",
-		permission.ModeYolo:        "⚠ yolo",
-	}[mode]
-	left := m.st.statusMode.Render(modeLabel) + m.st.dim.Render(" (shift+tab)")
+	left := m.st.statusMode.Render(modeLabels[mode]) + m.st.dim.Render(" (shift+tab)")
 
 	var right []string
 	right = append(right, m.agent.ProviderName()+"/"+m.agent.Model())
