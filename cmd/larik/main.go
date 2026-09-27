@@ -45,6 +45,7 @@ func run() error {
 		mode    = flag.String("mode", "", "permission mode: default, accept-edits, plan, yolo")
 		resume  = flag.String("resume", "", "resume a session by id (or unique prefix)")
 		cont    = flag.Bool("c", false, "continue the most recent session in this directory")
+		fork    = flag.Bool("fork", false, "with -c or --resume: branch into a new session, leaving the original untouched")
 		list    = flag.Bool("sessions", false, "list sessions for this directory and exit")
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
@@ -96,7 +97,7 @@ func run() error {
 		return err
 	}
 	defer a.Close()
-	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont})
+	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont, Fork: *fork})
 	if err != nil {
 		return err
 	}
@@ -117,15 +118,15 @@ func run() error {
 		return headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
 	}
 
-	defer s.Close("prompt_input_exit")
+	// The TUI owns the session from here: it can switch to others and
+	// closes whichever is current when it exits.
 	return tui.Run(tui.Options{
-		Agent:         s.Agent,
+		App:           a,
+		Session:       s,
 		Config:        a.Cfg,
 		InitialPrompt: prompt,
-		History:       s.History,
 		SessionDir:    a.SessionDir,
 		MCP:           a.MCP,
-		Hooks:         s.Hooks,
 		Skills:        a.Skills,
 		Agents:        a.AgentDefs,
 		LSP:           a.LSP,

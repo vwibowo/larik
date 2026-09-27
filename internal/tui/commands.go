@@ -13,7 +13,6 @@ import (
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
-	"larik/internal/session"
 )
 
 const helpText = `Commands
@@ -25,6 +24,10 @@ const helpText = `Commands
   /clear                    start a fresh context (history stays in the session file)
   /cost                     token usage and cost for this session
   /sessions                 list sessions for this directory
+  /resume <id>              switch to another session
+  /new                      start a new session
+  /fork                     branch the conversation into a new session and continue there
+  /rewind [n]               list prompts, or branch off just before prompt n to redo it
   /mcp                      MCP servers, status and tools
   /mcp approve <name>       allow a project-defined MCP server to start
   /hooks                    configured lifecycle hooks
@@ -67,7 +70,7 @@ func (m *model) command(line string) tea.Cmd {
 	// Commands that would race with a running turn.
 	if m.running {
 		switch name {
-		case "/model", "/undo", "/compact", "/clear":
+		case "/model", "/undo", "/compact", "/clear", "/resume", "/new", "/fork", "/rewind":
 			return fail(name + " is unavailable while a turn is running (esc to interrupt)")
 		}
 	}
@@ -178,23 +181,8 @@ func (m *model) command(line string) tea.Cmd {
 	case "/tasks":
 		return m.tasksCommand(args, info, fail)
 
-	case "/sessions":
-		infos, err := session.List(m.opts.SessionDir)
-		if err != nil {
-			return fail(err.Error())
-		}
-		if len(infos) == 0 {
-			return info("no sessions yet")
-		}
-		var b strings.Builder
-		for i, in := range infos {
-			if i == 15 {
-				break
-			}
-			fmt.Fprintf(&b, "%s  %s  %s\n", in.ID, in.Modified.Format("01-02 15:04"), in.Title)
-		}
-		b.WriteString("resume with: larik --resume <id>")
-		return info(b.String())
+	case "/sessions", "/resume", "/new", "/fork", "/rewind":
+		return m.sessionCommand(name, args, info, fail)
 	}
 	if sk, ok := m.opts.Skills.Get(strings.TrimPrefix(name, "/")); ok && sk.UserInvocable {
 		if m.running {

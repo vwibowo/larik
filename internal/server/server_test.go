@@ -453,3 +453,63 @@ func TestBackgroundResultsDeliveredWhenIdle(t *testing.T) {
 		t.Errorf("messages: %+v", msgs.Messages)
 	}
 }
+
+func TestFork(t *testing.T) {
+	h := newHarness(t)
+	st := h.create(map[string]any{"mode": "accept-edits"})
+	h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "hello", "wait": true}, nil)
+	h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "hello again", "wait": true}, nil)
+
+	// Branch off before the second prompt (message index 2).
+	var br struct {
+		sessionState
+		Prompt string
+	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{"at": 2}, &br); code != http.StatusCreated {
+		t.Fatalf("fork: %d", code)
+	}
+	if br.ID == st.ID || br.ForkOf != st.ID || br.Prompt != "hello again" || br.Mode != "accept-edits" {
+		t.Errorf("branch: %+v", br)
+	}
+	var msgs struct{ Messages []llm.Message }
+	h.do("GET", "/v1/sessions/"+br.ID+"/messages", nil, &msgs)
+	if len(msgs.Messages) != 2 {
+		t.Errorf("branch messages: %d", len(msgs.Messages))
+	}
+	// The branch is live and independent of its source.
+	var res struct{ Text string }
+	h.do("POST", "/v1/sessions/"+br.ID+"/prompt", map[string]any{"text": "a different question", "wait": true}, &res)
+	h.do("GET", "/v1/sessions/"+st.ID+"/messages", nil, &msgs)
+	if res.Text != "hi there" || len(msgs.Messages) != 4 {
+		t.Errorf("source after branch prompt: %d", len(msgs.Messages))
+	}
+
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{"at": 1}, nil); code != http.StatusBadRequest {
+		t.Errorf("fork mid-turn: %d", code)
+	}
+	var list struct{ Sessions []sessionInfo }
+	h.do("GET", "/v1/sessions", nil, &list)
+	var listed bool
+	for _, s := range list.Sessions {
+		listed = listed || (s.ID == br.ID && s.ForkOf == st.ID)
+	}
+	if !listed {
+		t.Errorf("list: %+v", list)
+	}
+
+	// No branching while the source is running.
+	s := h.stream(st.ID, "")
+	h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "slow"}, nil)
+	s.until(t, func(e Event) bool { return e.Kind == EvUserMessage })
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{}, nil); code != http.StatusConflict {
+		t.Errorf("fork while busy: %d", code)
+	}
+	h.do("POST", "/v1/sessions/"+st.ID+"/cancel", nil, nil)
+	s.until(t, idle)
+
+	// Unloaded sessions can be branched too.
+	h.do("DELETE", "/v1/sessions/"+st.ID, nil, nil)
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{}, &br); code != http.StatusCreated || br.ForkOf != st.ID {
+		t.Errorf("fork unloaded: %d %+v", code, br)
+	}
+}

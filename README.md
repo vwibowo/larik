@@ -29,6 +29,7 @@ With no `--model`, Larik picks the default model of the first provider whose key
 ./larik -p --output json --mode yolo "run tests"  # one JSON event per line
 ./larik -c                                        # continue the last session here
 ./larik --resume 20260926-2358                    # resume by id prefix
+./larik -c --fork                                 # branch the last session instead of appending
 ./larik serve                                     # HTTP + SSE API (see Server mode)
 ```
 
@@ -55,7 +56,11 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context |
 | `/cost` | Usage and cost |
-| `/sessions` | List sessions for this directory |
+| `/sessions` | List sessions for this directory (`*` current, `⑂` branch) |
+| `/resume <id>` | Switch to another session (a unique id prefix is enough) |
+| `/new` | Start a new session |
+| `/fork` | Branch the conversation into a new session and continue there |
+| `/rewind [n]` | List prompts, or branch off just before prompt `n` with it back in the input to edit |
 | `/mcp` | MCP server status and tools |
 | `/mcp approve <name>` | Allow a project-defined MCP server to start |
 | `/hooks` | List configured hooks |
@@ -66,6 +71,12 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 | `/tasks` / `/tasks stop <id>` | Background subagent tasks |
 | `/sandbox` | Sandbox status |
 | `/<skill-name> [args]` | Run a skill |
+
+### Branches
+
+A branch is a new session file that starts with a copy of another session's messages and records which session it came from (`fork_of`). The original is never modified, so you can go back to it with `/resume`. Branches can only start before a prompt or at the end, never in the middle of a tool call. Each branch reports only its own token spend. `/rewind` changes only the conversation; use `/undo` to revert files.
+
+From the command line, `larik -c --fork` or `larik --resume <id> --fork` continues in a new branch instead of appending to the old session.
 
 ## Permissions
 
@@ -172,6 +183,7 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
 | `PATCH /v1/sessions/{id}` | Change `model`, `effort` or `mode` |
 | `DELETE /v1/sessions/{id}` | Stop and unload (the transcript stays on disk) |
 | `GET /v1/sessions/{id}/messages` | Full transcript (works for unloaded sessions too) |
+| `POST /v1/sessions/{id}/fork` | Branch into a new loaded session. `{at: i}` keeps the messages before index `i` (which must be a prompt) and returns that prompt's text; with no `at`, everything is kept |
 | `GET /v1/sessions/{id}/events` | SSE event stream |
 | `POST /v1/sessions/{id}/prompt` | `{text}` starts a run and returns 202 (409 if busy); `{text, wait: true}` returns the final answer |
 | `POST /v1/sessions/{id}/cancel` | Interrupt the current run |
@@ -409,4 +421,4 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions, and in-TUI session switching (use `--resume`).
+**Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions.

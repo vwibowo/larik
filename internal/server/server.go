@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("PATCH /v1/sessions/{id}", s.withLive(s.patchSession))
 	api.HandleFunc("DELETE /v1/sessions/{id}", s.closeSession)
 	api.HandleFunc("GET /v1/sessions/{id}/messages", s.messages)
+	api.HandleFunc("POST /v1/sessions/{id}/fork", s.fork)
 	api.HandleFunc("GET /v1/sessions/{id}/events", s.withLive(s.events))
 	api.HandleFunc("POST /v1/sessions/{id}/prompt", s.withLive(s.prompt))
 	api.HandleFunc("POST /v1/sessions/{id}/cancel", s.withLive(s.cancel))
@@ -168,6 +169,7 @@ type sessionInfo struct {
 	ID       string    `json:"id"`
 	Title    string    `json:"title,omitempty"`
 	Modified time.Time `json:"modified"`
+	ForkOf   string    `json:"fork_of,omitempty"`
 	Loaded   bool      `json:"loaded"`
 	Busy     bool      `json:"busy"`
 }
@@ -180,7 +182,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sessionInfo, 0, len(infos))
 	for _, in := range infos {
-		si := sessionInfo{ID: in.ID, Title: in.Title, Modified: in.Modified}
+		si := sessionInfo{ID: in.ID, Title: in.Title, Modified: in.Modified, ForkOf: in.ForkOf}
 		if l := s.lookup(in.ID); l != nil {
 			si.Loaded, si.Busy = true, l.isBusy()
 		}
@@ -242,21 +244,93 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	delete(s.opening, id)
+	s.mu.Unlock()
 	if err != nil {
-		s.mu.Unlock()
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if l, ok := s.register(w, sess); ok {
+		writeJSON(w, http.StatusCreated, s.describe(l))
+	}
+}
+
+// register makes an opened session live, unless the server is shutting down.
+func (s *Server) register(w http.ResponseWriter, sess *app.Session) (*live, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.shutdown {
-		s.mu.Unlock()
 		sess.Close("other")
 		writeErr(w, http.StatusServiceUnavailable, "server is shutting down")
-		return
+		return nil, false
 	}
 	l := newLive(sess)
 	s.sessions[l.id] = l
-	s.mu.Unlock()
-	writeJSON(w, http.StatusCreated, s.describe(l))
+	return l, true
+}
+
+// fork branches a session (loaded or not) into a new, loaded one. With
+// "at" it keeps the messages before that index, which must be a prompt
+// (see GET …/messages); the response then carries that prompt's text so
+// a client can offer it for editing. Settings default to the source's
+// current ones when it is loaded.
+func (s *Server) fork(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		At     *int   `json:"at"`
+		Model  string `json:"model"`
+		Effort string `json:"effort"`
+		Mode   string `json:"mode"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	path, err := session.Find(s.app.SessionDir, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	o := app.Options{ResumeID: id, Fork: true, ForkAt: req.At, Model: req.Model, Effort: req.Effort, Mode: req.Mode}
+	src := s.lookup(id)
+	if src != nil {
+		eff := string(src.a.Effort())
+		if eff == "" {
+			eff = "default"
+		}
+		o.Model = or(o.Model, src.a.ProviderName()+"/"+src.a.Model())
+		o.Effort = or(o.Effort, eff)
+		o.Mode = or(o.Mode, string(src.a.Perms().Mode()))
+	}
+	var sess *app.Session
+	open := func(context.Context) error {
+		var err error
+		sess, err = s.app.Open(o)
+		return err
+	}
+	if src != nil {
+		// A running turn may be mid tool call: branch only from a settled
+		// state, and keep the source idle while it is copied.
+		err = src.idleDo(r.Context(), open)
+	} else {
+		err = open(r.Context())
+	}
+	if err != nil {
+		writeErr(w, statusFor(err), err.Error())
+		return
+	}
+	var prompt string
+	if req.At != nil {
+		if st, err := session.Load(path); err == nil && *req.At < len(st.All) {
+			prompt = st.All[*req.At].Text()
+		}
+	}
+	l, ok := s.register(w, sess)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusCreated, struct {
+		sessionState
+		Prompt string `json:"prompt,omitempty"`
+	}{s.describe(l), prompt})
 }
 
 func (s *Server) resolve(id string, latest bool) (string, error) {
@@ -275,6 +349,7 @@ func (s *Server) resolve(id string, latest bool) (string, error) {
 
 type sessionState struct {
 	ID          string          `json:"id"`
+	ForkOf      string          `json:"fork_of,omitempty"`
 	Provider    string          `json:"provider"`
 	Model       string          `json:"model"`
 	Effort      string          `json:"effort,omitempty"`
@@ -289,6 +364,7 @@ type sessionState struct {
 func (s *Server) describe(l *live) sessionState {
 	return sessionState{
 		ID:          l.id,
+		ForkOf:      l.s.ForkOf,
 		Provider:    l.a.ProviderName(),
 		Model:       l.a.Model(),
 		Effort:      string(l.a.Effort()),

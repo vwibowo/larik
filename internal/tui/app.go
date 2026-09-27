@@ -17,6 +17,7 @@ import (
 	"charm.land/glamour/v2"
 
 	"larik/internal/agent"
+	"larik/internal/app"
 	"larik/internal/config"
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -28,6 +29,11 @@ import (
 )
 
 type Options struct {
+	// App and Session enable switching sessions from the TUI; the TUI
+	// then owns the session and closes whichever is current on exit.
+	App     *app.App
+	Session *app.Session
+
 	Agent         *agent.Agent
 	Config        *config.Config
 	InitialPrompt string
@@ -45,8 +51,14 @@ type Options struct {
 }
 
 func Run(opts Options) error {
+	if opts.Session != nil {
+		opts.Agent, opts.Hooks, opts.History = opts.Session.Agent, opts.Session.Hooks, opts.Session.History
+	}
 	m := newModel(opts)
 	_, err := tea.NewProgram(m).Run()
+	if m.sess != nil {
+		m.sess.Close("prompt_input_exit")
+	}
 	return err
 }
 
@@ -59,6 +71,8 @@ type toolRun struct {
 type model struct {
 	opts   Options
 	agent  *agent.Agent
+	sess   *app.Session  // nil when the caller manages the session
+	bgStop chan struct{} // closed when switching away from agent
 	st     styles
 	md     *glamour.TermRenderer
 	isDark bool
@@ -90,9 +104,12 @@ type model struct {
 // Messages.
 type (
 	agentEventMsg agent.Event
-	bgEventMsg    agent.Event
-	runEndedMsg   struct{}
-	compactedMsg  struct {
+	bgEventMsg    struct {
+		agent.Event
+		from *agent.Agent
+	}
+	runEndedMsg  struct{}
+	compactedMsg struct {
 		summary string
 		err     error
 	}
@@ -113,12 +130,14 @@ func newModel(opts Options) *model {
 	ta.Focus()
 
 	m := &model{
-		opts:  opts,
-		agent: opts.Agent,
-		input: ta,
-		spin:  spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		width: 80,
-		stats: opts.Agent.Stats(),
+		opts:   opts,
+		agent:  opts.Agent,
+		sess:   opts.Session,
+		bgStop: make(chan struct{}),
+		input:  ta,
+		spin:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		width:  80,
+		stats:  opts.Agent.Stats(),
 	}
 	m.applyTheme(isDark)
 	return m
@@ -144,7 +163,7 @@ func (m *model) setWidth(w int) {
 func (m *model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.printBanner()}
 	if len(m.opts.History) > 0 {
-		cmds = append(cmds, m.printHistory())
+		cmds = append(cmds, m.printHistory("resumed"))
 	}
 	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
 		cmds = append(cmds, m.submit(p))
@@ -191,7 +210,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.deliverBackground()
 
 	case bgEventMsg:
-		e := agent.Event(msg)
+		if msg.from != m.agent {
+			return m, nil // from a session we switched away from
+		}
+		e := msg.Event
 		var cmds []tea.Cmd
 		switch e.Kind {
 		case agent.EvTaskDone:
@@ -424,8 +446,16 @@ func (m *model) println(s string) tea.Cmd {
 
 // waitBackground reads the agent's background-task stream for its lifetime.
 func (m *model) waitBackground() tea.Cmd {
-	ch := m.agent.Background()
-	return func() tea.Msg { return bgEventMsg(<-ch) }
+	a, stop := m.agent, m.bgStop
+	ch := a.Background()
+	return func() tea.Msg {
+		select {
+		case e := <-ch:
+			return bgEventMsg{e, a}
+		case <-stop:
+			return nil
+		}
+	}
 }
 
 // deliverBackground starts a turn that hands finished background results

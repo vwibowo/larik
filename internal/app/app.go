@@ -126,10 +126,17 @@ type Options struct {
 	Mode     string
 	ResumeID string // session id or unique prefix
 	Continue bool   // resume the most recent session
+	// Fork branches the resumed session into a new one instead of
+	// appending to it, keeping the first *ForkAt messages (all if nil).
+	Fork   bool
+	ForkAt *int
 }
 
 // Session is an opened agent plus what it owns.
 type Session struct {
+	ID      string
+	Path    string
+	ForkOf  string // parent session id, for branches
 	Agent   *agent.Agent
 	Hooks   *hooks.Runner
 	History []llm.Message // prior messages for display when resumed
@@ -152,6 +159,9 @@ func (a *App) Open(o Options) (*Session, error) {
 		err   error
 	)
 	resumeID := o.ResumeID
+	if o.Fork && o.ResumeID == "" && !o.Continue {
+		return nil, errors.New("fork needs a session to branch from")
+	}
 	if o.Continue {
 		infos, err := session.List(a.SessionDir)
 		if err != nil {
@@ -168,7 +178,16 @@ func (a *App) Open(o Options) (*Session, error) {
 		if err != nil {
 			return nil, err
 		}
-		if sess, state, err = session.Open(path); err != nil {
+		if o.Fork {
+			keep := -1
+			if o.ForkAt != nil {
+				keep = *o.ForkAt
+			}
+			sess, state, err = session.Fork(a.SessionDir, path, keep)
+		} else {
+			sess, state, err = session.Open(path)
+		}
+		if err != nil {
 			return nil, err
 		}
 		if modelSpec == "" && state.Meta.Model != "" {
@@ -231,10 +250,11 @@ func (a *App) Open(o Options) (*Session, error) {
 		LSP:         a.LSP,
 		Sandbox:     sbTool,
 	})
-	s := &Session{Agent: ag, Hooks: hookRunner, sess: sess}
+	s := &Session{ID: sess.ID, Path: sess.Path, Agent: ag, Hooks: hookRunner, sess: sess}
 	if state != nil {
 		ag.Restore(state)
 		s.History = state.All
+		s.ForkOf = state.Meta.ForkOf
 	}
 	return s, nil
 }

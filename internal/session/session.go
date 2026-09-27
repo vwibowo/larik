@@ -1,7 +1,7 @@
 // Package session persists conversations as append-only JSONL files.
 //
-// Every entry has an id and a parent id so the format can later support
-// branching; v0.1 always appends to the tip.
+// Every entry has an id and a parent id. Branches are separate files: Fork
+// copies a prefix of a session into a new one that records its origin.
 package session
 
 import (
@@ -46,6 +46,10 @@ type Meta struct {
 	Cwd      string `json:"cwd"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	// ForkOf is the session this one branched from, and ForkAt how many of
+	// its messages were kept.
+	ForkOf string `json:"fork_of,omitempty"`
+	ForkAt int    `json:"fork_at,omitempty"`
 }
 
 type Session struct {
@@ -215,6 +219,7 @@ type Info struct {
 	Path     string
 	Modified time.Time
 	Title    string // first user prompt
+	ForkOf   string // parent session id for branches
 }
 
 // List returns sessions in dir, newest first.
@@ -236,7 +241,8 @@ func List(dir string) ([]Info, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		out = append(out, Info{ID: strings.TrimSuffix(e.Name(), ".jsonl"), Path: path, Modified: fi.ModTime(), Title: firstPrompt(path)})
+		title, forkOf := scan(path)
+		out = append(out, Info{ID: strings.TrimSuffix(e.Name(), ".jsonl"), Path: path, Modified: fi.ModTime(), Title: title, ForkOf: forkOf})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
 	return out, nil
@@ -266,25 +272,130 @@ func Find(dir, id string) (string, error) {
 	return "", fmt.Errorf("session id %q is ambiguous", id)
 }
 
-func firstPrompt(path string) string {
+// scan reads a session's title (first prompt) and fork origin.
+func scan(path string) (title, forkOf string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	for i := 0; sc.Scan() && i < 50; i++ {
 		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Type == EntryMessage && e.Message != nil && e.Message.Role == llm.RoleUser {
-			if t := strings.TrimSpace(e.Message.Text()); t != "" {
-				t = strings.ReplaceAll(t, "\n", " ")
-				if len(t) > 80 {
-					t = t[:77] + "..."
-				}
-				return t
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			continue
+		}
+		if e.Type == EntryMeta && e.Meta != nil {
+			forkOf = e.Meta.ForkOf
+		}
+		if e.Type == EntryMessage && e.Message != nil && IsPrompt(*e.Message) {
+			t := strings.ReplaceAll(strings.TrimSpace(e.Message.Text()), "\n", " ")
+			if len(t) > 80 {
+				t = t[:77] + "..."
 			}
+			return t, forkOf
 		}
 	}
-	return ""
+	return "", forkOf
+}
+
+// IsPrompt reports whether m starts a turn: a user message with text and
+// no tool results. Cutting a transcript just before one never leaves a
+// tool call without its result.
+func IsPrompt(m llm.Message) bool {
+	if m.Role != llm.RoleUser || strings.TrimSpace(m.Text()) == "" {
+		return false
+	}
+	for _, b := range m.Blocks {
+		if b.Type == llm.BlockToolResult {
+			return false
+		}
+	}
+	return true
+}
+
+// Prompts returns the indexes of the prompts in msgs.
+func Prompts(msgs []llm.Message) []int {
+	var out []int
+	for i, m := range msgs {
+		if IsPrompt(m) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// Fork creates a new session in dir holding the first keep messages of
+// the session at src (all of them if keep < 0). keep must fall on a turn
+// boundary: the end, or the index of a prompt. Usage is not copied, so
+// each branch reports only its own spend.
+func Fork(dir, src string, keep int) (*Session, *State, error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	var (
+		meta    Meta
+		entries []Entry
+		msgs    []llm.Message
+	)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 256*1024*1024)
+	for sc.Scan() {
+		var e Entry
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			continue
+		}
+		switch e.Type {
+		case EntryMeta:
+			if e.Meta != nil {
+				meta = *e.Meta
+			}
+		case EntryMessage:
+			if e.Message != nil {
+				msgs = append(msgs, *e.Message)
+				entries = append(entries, e)
+			}
+		case EntryCompaction:
+			entries = append(entries, e)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, nil, err
+	}
+	if keep < 0 {
+		keep = len(msgs)
+	}
+	if keep > len(msgs) || (keep < len(msgs) && !IsPrompt(msgs[keep])) {
+		return nil, nil, fmt.Errorf("can only branch before a prompt or at the end (message %d of %d)", keep, len(msgs))
+	}
+
+	meta.ForkOf = strings.TrimSuffix(filepath.Base(src), ".jsonl")
+	meta.ForkAt = keep
+	s, err := Create(dir, meta)
+	if err != nil {
+		return nil, nil, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Type == EntryMessage {
+			if n == keep {
+				break
+			}
+			n++
+			err = s.append(Entry{Type: EntryMessage, Message: e.Message})
+		} else {
+			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary})
+		}
+		if err != nil {
+			s.Close()
+			os.Remove(s.Path)
+			return nil, nil, err
+		}
+	}
+	path := s.Path
+	s.Close()
+	return Open(path)
 }

@@ -362,7 +362,7 @@ func (m *model) printBanner() tea.Cmd {
 	return m.println(m.st.box.Render(strings.Join(lines, "\n")))
 }
 
-func (m *model) printHistory() tea.Cmd {
+func (m *model) printHistory(label string) tea.Cmd {
 	var b []string
 	for _, msg := range m.opts.History {
 		switch msg.Role {
@@ -379,7 +379,7 @@ func (m *model) printHistory() tea.Cmd {
 			}
 		}
 	}
-	b = append(b, m.st.dim.Render("── resumed ──"))
+	b = append(b, m.st.dim.Render("── "+label+" ──"))
 	return m.println(strings.Join(b, "\n"))
 }
 
