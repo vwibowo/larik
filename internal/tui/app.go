@@ -113,6 +113,10 @@ type model struct {
 	modelLists map[string]providerModels // last model lists, by provider
 	wizard     *wizard                   // the connect wizard, when open
 	modePick   *picker                   // the /mode dropdown, when open
+	provs      *providerManager          // the /providers screen, when open
+	// wizardReturn reopens /providers when a wizard started there closes.
+	wizardReturn bool
+	showKeys     bool // the ? shortcuts overlay
 	// The command palette shows while a bare "/name" is being typed.
 	palette       *picker
 	paletteQ      string // input the palette was built for
@@ -266,6 +270,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mpick.loading = false
 			m.buildModelList()
 		}
+		if m.provs != nil {
+			m.buildProviders()
+		}
+		return m, nil
+
+	case providerTestedMsg:
+		if m.modelLists == nil {
+			m.modelLists = map[string]providerModels{}
+		}
+		m.modelLists[msg.name] = msg.res
+		if m.provs != nil {
+			delete(m.provs.testing, msg.name)
+			m.buildProviders()
+		}
 		return m, nil
 
 	case wizDetectedMsg, wizTestedMsg:
@@ -278,12 +296,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
+		case m.showKeys:
+			m.showKeys = false // any key closes it
+			return m, nil
 		case m.wizard != nil:
 			return m, m.handleWizard(msg)
 		case m.mpick != nil:
 			return m, m.handleModelPickerKey(msg)
 		case m.modePick != nil:
 			return m, m.handleModePickerKey(msg)
+		case m.provs != nil:
+			return m, m.handleProvidersKey(msg)
 		case m.palette != nil:
 			if cmd, ok := m.handlePaletteKey(msg); ok {
 				return m, cmd
@@ -336,6 +359,11 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.cycleMode()
 	case "ctrl+o":
 		return m, m.toggleThinking()
+	case "?":
+		if m.input.Value() == "" {
+			m.showKeys = true
+			return m, nil
+		}
 	case "alt+p":
 		if m.running {
 			return m, m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))

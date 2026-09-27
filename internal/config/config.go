@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -311,6 +312,70 @@ func (c *Config) SaveProvider(path, name string, pc ProviderConfig, model string
 		c.Model = model
 	}
 	return nil
+}
+
+// RemoveProvider deletes a provider from the personal settings files (the
+// user config and .larik/settings.local.json), along with a default model
+// in the same file that uses it. It returns the files it changed. Shared
+// project settings are left alone; see ProviderInShared.
+func (c *Config) RemoveProvider(name string) ([]string, error) {
+	var changed []string
+	for _, path := range []string{c.UserConfigPath(), LocalSettingsPath(c.Cwd)} {
+		raw := map[string]any{}
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return changed, err
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return changed, fmt.Errorf("%s: %w", path, err)
+		}
+		ps, _ := raw["providers"].(map[string]any)
+		model, _ := raw["model"].(string)
+		_, has := ps[name]
+		usesIt := strings.HasPrefix(model, name+"/")
+		if !has && !usesIt {
+			continue
+		}
+		err = updateJSON(path, 0o644, func(raw map[string]any) {
+			if ps, _ := raw["providers"].(map[string]any); ps != nil {
+				delete(ps, name)
+				if len(ps) == 0 {
+					delete(raw, "providers")
+				}
+			}
+			if usesIt {
+				delete(raw, "model")
+			}
+		})
+		if err != nil {
+			return changed, err
+		}
+		changed = append(changed, path)
+	}
+	delete(c.Providers, name)
+	if strings.HasPrefix(c.Model, name+"/") {
+		c.Model = ""
+	}
+	return changed, nil
+}
+
+// ProviderInShared reports whether the shared project settings
+// (.larik/settings.json) define a provider, which only editing that file
+// can remove.
+func (c *Config) ProviderInShared(name string) bool {
+	data, err := os.ReadFile(filepath.Join(c.Cwd, ".larik", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var raw struct {
+		Providers map[string]json.RawMessage `json:"providers"`
+	}
+	_ = json.Unmarshal(data, &raw)
+	_, ok := raw.Providers[name]
+	return ok
 }
 
 // ProjectHooksApproved reports whether shared project hooks may run.

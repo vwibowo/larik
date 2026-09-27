@@ -105,6 +105,16 @@ func (w *wizard) startAt(name string) tea.Cmd {
 	return w.enterConnect(c, false)
 }
 
+// editCustom opens the connect step for a configured custom provider,
+// with its settings filled in.
+func (w *wizard) editCustom(name string, pc config.ProviderConfig) tea.Cmd {
+	cmd := w.enterConnect(providers.Choice{Title: "OpenAI-compatible server", Desc: "your own endpoint"}, true)
+	w.fields[0].SetValue(name)
+	w.fields[1].SetValue(pc.BaseURL)
+	w.fields[2].SetValue(pc.APIKey)
+	return cmd
+}
+
 func (w *wizard) buildProviders() {
 	var detected, cloud, local []pickItem
 	for _, c := range providers.Choices() {

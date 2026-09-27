@@ -259,23 +259,28 @@ func (m *model) openWizard(provider string) tea.Cmd {
 func (m *model) handleWizard(msg tea.Msg) tea.Cmd {
 	w := m.wizard
 	cmd := w.update(msg)
-	switch {
-	case w.canceled:
-		m.wizard = nil
-		return nil
-	case w.done:
-		m.wizard = nil
-		m.modelLists = nil // new provider: list again next time
-		note := ""
-		if w.result.Path != "" {
-			note = " · saved to " + tildePath(w.result.Path)
-		}
-		return tea.Sequence(
-			m.println(m.st.ok.Render("✓ Connected "+w.result.Provider)+m.st.dim.Render(note)),
-			m.switchModel(w.result.Spec(), m.agent.Effort()),
-		)
+	if !w.canceled && !w.done {
+		return cmd
 	}
-	return cmd
+	m.wizard = nil
+	var back tea.Cmd
+	if m.wizardReturn {
+		m.wizardReturn = false
+		back = m.openProviders()
+	}
+	if w.canceled {
+		return back
+	}
+	m.modelLists = nil // new provider: list again next time
+	note := ""
+	if w.result.Path != "" {
+		note = " · saved to " + tildePath(w.result.Path)
+	}
+	return tea.Sequence(
+		m.println(m.st.ok.Render("✓ Connected "+w.result.Provider)+m.st.dim.Render(note)),
+		m.switchModel(w.result.Spec(), m.agent.Effort()),
+		back,
+	)
 }
 
 func containsModel(ms []providers.Model, id string) bool {

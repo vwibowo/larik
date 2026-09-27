@@ -28,6 +28,10 @@ func (m *model) View() tea.View {
 	switch {
 	case m.perm != nil:
 		parts = append(parts, m.permissionView())
+	case m.showKeys:
+		parts = append(parts, m.shortcutsView())
+	case m.provs != nil:
+		parts = append(parts, m.providersView())
 	case m.wizard != nil:
 		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.height)))
 	default:
@@ -437,7 +441,7 @@ func (m *model) printBanner() tea.Cmd {
 	}
 	lines := []string{
 		head,
-		m.st.dim.Render("  / commands · alt+p model · shift+tab mode · ctrl+o thinking"),
+		m.st.dim.Render("  / commands · ? shortcuts · alt+p model · shift+tab mode"),
 	}
 	warn := func(s string) { lines = append(lines, m.st.warn.Render("  ! "+s)) }
 	if m.opts.Sandbox == nil && m.opts.SandboxNote != "" {

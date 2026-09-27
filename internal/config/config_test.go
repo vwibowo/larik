@@ -144,3 +144,28 @@ func TestSaveProvider(t *testing.T) {
 		t.Fatalf("unexpected result: model %q providers %v", cfg.Model, cfg.Providers)
 	}
 }
+
+func TestRemoveProvider(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, _ := Load(cwd)
+	write(t, cfg.UserConfigPath(), `{"model":"vllm/qwen","effort":"high","providers":{"vllm":{"type":"openai-compatible","base_url":"http://x/v1"},"groq":{"api_key_env":"G"}}}`)
+	write(t, LocalSettingsPath(cwd), `{"providers":{"vllm":{"api_key":"k"}},"permissions":{"allow":["bash(ls)"]}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"providers":{"shared":{"base_url":"http://s/v1"}}}`)
+	cfg, _ = Load(cwd)
+
+	changed, err := cfg.RemoveProvider("vllm")
+	if err != nil || len(changed) != 2 {
+		t.Fatalf("changed %v err %v", changed, err)
+	}
+	if _, ok := cfg.Providers["vllm"]; ok || cfg.Model != "" {
+		t.Fatal("in-memory config still has the provider or its default model")
+	}
+	cfg, _ = Load(cwd)
+	if _, ok := cfg.Providers["vllm"]; ok || cfg.Model != "" || cfg.Effort != "high" || cfg.Providers["groq"].APIKeyEnv != "G" || len(cfg.Permissions.Allow) != 1 {
+		t.Fatalf("removal lost other settings or left vllm: %+v", cfg)
+	}
+	if !cfg.ProviderInShared("shared") || cfg.ProviderInShared("groq") {
+		t.Fatal("ProviderInShared should only report the shared file's providers")
+	}
+}

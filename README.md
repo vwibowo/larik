@@ -47,12 +47,14 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 
 ## Keys and commands
 
-`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
 |---|---|
 | `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
+| `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
+| `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
 | `/undo` | Revert the file changes from the last turn |

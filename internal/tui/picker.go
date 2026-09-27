@@ -15,6 +15,7 @@ type pickItem struct {
 	detail   string // dim text after the label
 	note     string // right-hand text, e.g. "✓ current"
 	noteOK   bool   // render note in the ok color
+	noteWarn bool   // render note in the warning color
 	warn     bool   // render the label in the warning color
 	disabled bool   // shown but can't be chosen
 	keep     bool   // stays visible whatever the filter
@@ -133,13 +134,16 @@ func (p *picker) view(st styles, width int) string {
 	if len(vis) == 0 {
 		return st.dim.Render("  no matches")
 	}
-	labelW, detailW := 0, 0
+	labelW, detailW, noteW := 0, 0, 0
 	for _, it := range vis {
 		labelW = max(labelW, lipgloss.Width(it.label))
 		detailW = max(detailW, lipgloss.Width(it.detail))
+		noteW = max(noteW, lipgloss.Width(it.note))
 	}
 	labelW = min(labelW, max(width/2-4, 12))
-	detailW = min(detailW, max(width-labelW-16, 0))
+	// The note (status, "✓ current") matters more than the detail, so the
+	// detail gets what is left after it.
+	detailW = min(detailW, max(width-labelW-noteW-6, 0))
 
 	var lines []string
 	cursorLine, section := 0, ""
@@ -166,9 +170,12 @@ func (p *picker) view(st styles, width int) string {
 			detail = st.dim.Render(detail)
 		}
 		if !it.disabled {
-			if it.noteOK {
+			switch {
+			case it.noteOK:
 				note = st.ok.Render(note)
-			} else {
+			case it.noteWarn:
+				note = st.warn.Render(note)
+			default:
 				note = st.dim.Render(note)
 			}
 		}

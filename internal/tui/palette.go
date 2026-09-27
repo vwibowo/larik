@@ -23,6 +23,7 @@ var commands = []command{
 	{"/mode", "[mode]", "pick the permission mode: default, accept-edits, plan, yolo", "model and mode", "shift+tab"},
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},
+	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
 	{"/clear", "", "start a fresh context (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
@@ -40,6 +41,7 @@ var commands = []command{
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
+	{"/keys", "", "keyboard shortcuts", "other", "?"},
 	{"/help", "", "commands and keys", "other", ""},
 	{"/quit", "", "exit", "other", "ctrl+d"},
 }
@@ -54,7 +56,7 @@ var helpText = func() string {
 	b.WriteString(`
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  / command palette · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
+  / command palette · ? shortcuts · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
   ctrl+c clear input / interrupt / quit`)
 	return b.String()
 }()

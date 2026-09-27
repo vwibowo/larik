@@ -40,7 +40,7 @@ func (m *model) command(line string) tea.Cmd {
 	// Commands that would race with a running turn.
 	if m.running {
 		switch name {
-		case "/model", "/connect", "/undo", "/compact", "/clear", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/undo", "/compact", "/clear", "/resume", "/new", "/fork", "/rewind":
 			return fail(name + " is unavailable while a turn is running (esc to interrupt)")
 		}
 	}
@@ -57,6 +57,13 @@ func (m *model) command(line string) tea.Cmd {
 			return m.openModelPicker()
 		}
 		return m.switchModel(arg, m.agent.Effort())
+
+	case "/providers":
+		return m.openProviders()
+
+	case "/keys":
+		m.showKeys = true
+		return nil
 
 	case "/connect":
 		if arg != "" {
