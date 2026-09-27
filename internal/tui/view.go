@@ -33,6 +33,8 @@ func (m *model) View() tea.View {
 		parts = append(parts, m.shortcutsView())
 	case m.provs != nil:
 		parts = append(parts, m.providersView())
+	case m.settings != nil:
+		parts = append(parts, m.settingsView())
 	case m.wizard != nil:
 		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.height)))
 	default:
@@ -50,6 +52,7 @@ func (m *model) View() tea.View {
 
 	v := tea.NewView(strings.Join(parts, "\n"))
 	v.WindowTitle = "larik"
+	v.ReportFocus = m.notify != "off"
 	return v
 }
 
@@ -108,11 +111,25 @@ func (m *model) liveView() string {
 		line += m.st.dim.Render("  " + strings.Join(meta, " · "))
 	}
 	b = append(b, line)
+	if m.tips && m.tip != "" && m.running && m.height >= 15 {
+		b = append(b, m.st.dim.Render("  Tip: "+m.tip))
+	}
 	if len(m.queue) > 0 {
 		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued, sent when this turn ends", len(m.queue))))
 	}
 	return strings.Join(b, "\n")
 }
+
+// lines is how many lines of tool output a card shows: n, or up to
+// verboseLines with verbose output on.
+func (m *model) lines(n int) int {
+	if m.verbose {
+		return verboseLines
+	}
+	return n
+}
+
+const verboseLines = 40
 
 // plural formats a count with its noun: "1 line", "3 lines".
 func plural(n int, noun string) string {
@@ -380,21 +397,24 @@ func (m *model) renderToolCard(e agent.Event) string {
 	case e.Agent != "" && !e.IsError:
 		// keep nested subagent activity to one line
 	case e.Display != "":
-		body = m.diff(e.Display, 20)
+		body = m.diff(e.Display, m.lines(20))
 	case e.IsError:
-		body = m.st.err.Render(truncateLines(strings.TrimSpace(e.Output), 6))
+		body = m.st.err.Render(truncateLines(strings.TrimSpace(e.Output), m.lines(6)))
 	default:
 		out := strings.TrimSpace(e.Output)
 		n := strings.Count(out, "\n") + 1
 		switch e.ToolName {
 		case "read":
 			body = m.st.dim.Render("read " + plural(n, "line"))
+			if m.verbose {
+				body += "\n" + m.st.dim.Render(truncateLines(out, m.lines(0)))
+			}
 		case "skill":
 			body = m.st.dim.Render("loaded skill (" + plural(n, "line") + ")")
 		case "web_fetch":
 			body = m.st.dim.Render(e.Display)
 			if strings.Contains(out, "redirected (HTTP") {
-				body = m.st.dim.Render(truncateLines(out, 2))
+				body = m.st.dim.Render(truncateLines(out, m.lines(2)))
 			}
 		case "web_search":
 			var titles []string
@@ -403,11 +423,11 @@ func (m *model) renderToolCard(e agent.Event) string {
 					titles = append(titles, l)
 				}
 			}
-			body = m.st.dim.Render(truncateLines(strings.Join(titles, "\n"), 4))
+			body = m.st.dim.Render(truncateLines(strings.Join(titles, "\n"), m.lines(4)))
 		case "grep", "glob":
-			body = m.st.dim.Render(truncateLines(out, 4))
+			body = m.st.dim.Render(truncateLines(out, m.lines(4)))
 		default:
-			body = m.st.dim.Render(truncateLines(out, 6))
+			body = m.st.dim.Render(truncateLines(out, m.lines(6)))
 		}
 	}
 	if diag := diagnosticLines(e.Output); diag != "" && e.ToolName != "lsp" {

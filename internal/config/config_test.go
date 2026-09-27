@@ -169,3 +169,62 @@ func TestRemoveProvider(t *testing.T) {
 		t.Fatal("ProviderInShared should only report the shared file's providers")
 	}
 }
+
+func TestThemeSettingRoundTrip(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, cfg.UserConfigPath(), `{"model":"ollama/qwen3"}`)
+	if err := cfg.SetUserSetting("theme", "light"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme != "light" || cfg.Model != "ollama/qwen3" {
+		t.Fatalf("theme should be saved without touching other keys: %q %q", cfg.Theme, cfg.Model)
+	}
+	if err := cfg.SetUserSetting("theme", ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ = Load(cwd); cfg.Theme != "" {
+		t.Fatalf("an empty value should remove the key, got %q", cfg.Theme)
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"theme":"neon"}`)
+	if _, err := Load(cwd); err == nil {
+		t.Fatal("an unknown theme should be an error")
+	}
+}
+
+func TestUISettings(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, _ := Load(cwd)
+	if !cfg.AutoCompactOn() || cfg.VerboseOn() || !cfg.TipsOn() {
+		t.Fatal("defaults: auto-compact on, verbose off, tips on")
+	}
+	if err := cfg.SetUserSetting("auto_compact", false); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"verbose":true,"language":"Indonesian"}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoCompactOn() || !cfg.VerboseOn() || cfg.Language != "Indonesian" {
+		t.Fatalf("saved false and later files should both hold: %+v", cfg)
+	}
+	write(t, LocalSettingsPath(cwd), `{"auto_compact":true,"notifications":"desktop"}`)
+	if cfg, _ = Load(cwd); !cfg.AutoCompactOn() || cfg.Notifications != "desktop" {
+		t.Fatal("a later file should override")
+	}
+	write(t, LocalSettingsPath(cwd), `{"notifications":"loud"}`)
+	if _, err := Load(cwd); err == nil {
+		t.Fatal("an unknown notifications value should be an error")
+	}
+}

@@ -65,6 +65,8 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
+| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, notifications, response language, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config verbose=true` sets one without the screen |
+| `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
 | `/undo` | Revert the file changes from the last turn |
@@ -232,6 +234,12 @@ Settings are merged in this order, with later files winning:
   "model": "anthropic/claude-opus-5",
   "effort": "high",
   "mode": "default",
+  "theme": "auto",
+  "verbose": false,
+  "spinner_tips": true,
+  "auto_compact": true,
+  "notifications": "off",
+  "language": "",
   "permissions": {
     "allow": ["bash(go test*)", "bash(git diff*)", "edit(docs/**)"],
     "deny": ["bash(rm -rf*)", "read(.env)"]
@@ -244,6 +252,15 @@ Settings are merged in this order, with later files winning:
   }
 }
 ```
+
+Personal settings, all editable from `/config` (which changes only the key you edit):
+
+- `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`.
+- `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
+- `spinner_tips`: a one-line tip under the spinner during a turn.
+- `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
+- `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
+- `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
 
 `models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
 

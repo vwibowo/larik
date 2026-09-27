@@ -77,8 +77,11 @@ type model struct {
 	st     styles
 	md     *glamour.TermRenderer
 	isDark bool
-	width  int
-	height int
+	// termDark is what the terminal reported; the theme setting may
+	// override it.
+	termDark bool
+	width    int
+	height   int
 
 	input textarea.Model
 	spin  spinner.Model
@@ -116,7 +119,15 @@ type model struct {
 	provs      *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
 	wizardReturn bool
-	showKeys     bool // the ? shortcuts overlay
+	showKeys     bool           // the ? shortcuts overlay
+	settings     *settingsPanel // the /config screen, when open
+
+	// Settings from /config.
+	verbose bool   // tool output in full
+	tips    bool   // a tip under the spinner
+	tip     string // the tip for the running turn
+	notify  string // off, bell or desktop
+	focused bool   // terminal has focus; notifications only go out without it
 	// The command palette shows while a bare "/name" is being typed.
 	palette       *picker
 	paletteQ      string // input the palette was built for
@@ -140,7 +151,7 @@ type (
 func newModel(opts Options) *model {
 	// Assume dark until the terminal answers RequestBackgroundColor; querying
 	// synchronously before startup would block and swallow typed input.
-	isDark := true
+	const termDark = true
 	ta := textarea.New()
 	ta.Placeholder = "Ask larik to do something…  (/ for commands)"
 	ta.ShowLineNumbers = false
@@ -160,9 +171,40 @@ func newModel(opts Options) *model {
 		spin:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		width:  80,
 		stats:  opts.Agent.Stats(),
+
+		termDark: termDark,
+		focused:  true,
+		tips:     true,
+		notify:   "off",
 	}
-	m.applyTheme(isDark)
+	if c := opts.Config; c != nil {
+		m.verbose, m.tips, m.notify = c.VerboseOn(), c.TipsOn(), c.Notifications
+		if m.notify == "" {
+			m.notify = "off"
+		}
+	}
+	m.showThinking = m.verbose
+	m.applyTheme(m.wantDark())
 	return m
+}
+
+// theme is the theme setting: auto, dark or light.
+func (m *model) theme() string {
+	if m.opts.Config == nil || m.opts.Config.Theme == "" {
+		return "auto"
+	}
+	return m.opts.Config.Theme
+}
+
+// wantDark resolves the theme setting against the terminal's background.
+func (m *model) wantDark() bool {
+	switch m.theme() {
+	case "dark":
+		return true
+	case "light":
+		return false
+	}
+	return m.termDark
 }
 
 func (m *model) applyTheme(isDark bool) {
@@ -198,9 +240,18 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
-		if msg.IsDark() != m.isDark {
-			m.applyTheme(msg.IsDark())
+		m.termDark = msg.IsDark()
+		if d := m.wantDark(); d != m.isDark {
+			m.applyTheme(d)
 		}
+		return m, nil
+
+	case tea.FocusMsg:
+		m.focused = true
+		return m, nil
+
+	case tea.BlurMsg:
+		m.focused = false
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -220,6 +271,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.handleEvent(agent.Event(msg)), m.waitEvent())
 
 	case runEndedMsg:
+		var alert tea.Cmd
+		if time.Since(m.turnStart) >= longTurn {
+			alert = m.alert("finished")
+		}
 		m.running, m.cancel, m.events = false, nil, nil
 		m.dropForegroundPerms()
 		m.resetStream()
@@ -229,7 +284,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queue = m.queue[1:]
 			return m, m.submit(next)
 		}
-		return m, m.deliverBackground()
+		return m, tea.Batch(alert, m.deliverBackground())
 
 	case bgEventMsg:
 		if msg.from != m.agent {
@@ -305,6 +360,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleModelPickerKey(msg)
 		case m.modePick != nil:
 			return m, m.handleModePickerKey(msg)
+		case m.settings != nil:
+			return m, m.handleSettingsKey(msg)
 		case m.provs != nil:
 			return m, m.handleProvidersKey(msg)
 		case m.palette != nil:
@@ -401,6 +458,7 @@ func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel = true, cancel
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.tip = nextTip()
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
 		m.println("\n"+m.st.user.Render("› "+indentAfterFirst(text, "  "))),
@@ -499,6 +557,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		ev := e
 		m.perm, m.permIdx = &ev, 0
+		return m.alert("needs your permission to use " + e.ToolName)
 	case agent.EvUsage:
 		m.stats = *e.Usage
 	case agent.EvCompacted:

@@ -65,6 +65,18 @@ func (m *model) command(line string) tea.Cmd {
 		m.showKeys = true
 		return nil
 
+	case "/config", "/settings":
+		if arg != "" {
+			return m.configCommand(arg)
+		}
+		return m.openSettings("")
+
+	case "/theme":
+		if arg == "" {
+			return m.openSettings("theme")
+		}
+		return m.setTheme(arg)
+
 	case "/connect":
 		if arg != "" {
 			if _, ok := providers.ChoiceFor(arg); !ok {

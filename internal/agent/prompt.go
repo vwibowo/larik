@@ -33,6 +33,15 @@ func BuildSystemPrompt(cwd, configDir string) string {
 	return basePrompt + "\n\n" + ContextSections(cwd, configDir)
 }
 
+// WithLanguage adds an instruction to reply in lang, when set.
+func WithLanguage(system, lang string) string {
+	lang = strings.TrimSpace(lang)
+	if lang == "" {
+		return system
+	}
+	return system + "\n\nRespond in " + lang + " unless the user writes in another language."
+}
+
 // ContextSections is the environment block plus project instruction files,
 // shared by the main agent and subagents.
 func ContextSections(cwd, configDir string) string {

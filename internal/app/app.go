@@ -257,6 +257,9 @@ func (a *App) Open(o Options) (*Session, error) {
 		Skills:      a.Skills,
 		LSP:         a.LSP,
 		Sandbox:     sbTool,
+
+		NoAutoCompact: !a.Cfg.AutoCompactOn(),
+		Language:      a.Cfg.Language,
 	})
 	s := &Session{ID: sess.ID, Path: sess.Path, Agent: ag, Hooks: hookRunner, sess: sess}
 	if state != nil {

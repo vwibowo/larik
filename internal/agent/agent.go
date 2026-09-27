@@ -58,6 +58,14 @@ type Options struct {
 	// Subagent is the agent type when this agent runs as a subagent; it
 	// switches off session-level hooks and uses SubagentStop.
 	Subagent string
+
+	// NoAutoCompact turns off summarizing the conversation when the
+	// context is nearly full; /compact still works.
+	NoAutoCompact bool
+
+	// Language, if set, is what the model replies in. It becomes part of
+	// the system prompt.
+	Language string
 }
 
 type Agent struct {
@@ -79,6 +87,12 @@ type Agent struct {
 
 	bg *background // lazily created; see background.go
 
+	// baseSystem is opts.System without the language line. A language
+	// change waits in nextLang for the next fresh context, so the prompt
+	// prefix, and provider caches, stay stable meanwhile.
+	baseSystem string
+	nextLang   *string
+
 	// Runtime facts from providers that can report them (see probe.go).
 	windows map[string]int  // model -> context window actually in use
 	probed  map[string]bool // model -> tool support already checked
@@ -89,7 +103,8 @@ func New(opts Options) *Agent {
 	if opts.MaxTurns == 0 {
 		opts.MaxTurns = 200
 	}
-	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup"}
+	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup", baseSystem: opts.System}
+	a.opts.System = WithLanguage(opts.System, opts.Language)
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = func(path string) { _ = opts.Checkpoints.Capture(path) }
 	}
@@ -143,6 +158,21 @@ func (a *Agent) SetEffort(e llm.Effort) {
 	a.mu.Unlock()
 }
 
+// SetAutoCompact turns auto-compaction on or off.
+func (a *Agent) SetAutoCompact(on bool) {
+	a.mu.Lock()
+	a.opts.NoAutoCompact = !on
+	a.mu.Unlock()
+}
+
+// SetLanguage sets the reply language from the next fresh context on
+// (after Clear, or in a new agent).
+func (a *Agent) SetLanguage(lang string) {
+	a.mu.Lock()
+	a.nextLang = &lang
+	a.mu.Unlock()
+}
+
 func (a *Agent) Effort() llm.Effort {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -161,6 +191,10 @@ func (a *Agent) Clear() {
 	a.mu.Lock()
 	a.messages, a.lastContext, a.toolsLoaded = nil, 0, false
 	a.sessionStarted, a.startSource = false, "clear"
+	if a.nextLang != nil {
+		a.opts.Language, a.nextLang = *a.nextLang, nil
+		a.opts.System = WithLanguage(a.baseSystem, a.opts.Language)
+	}
 	a.mu.Unlock()
 }
 
@@ -450,7 +484,7 @@ func (a *Agent) needsCompaction() bool {
 	// With only a prompt and an answer there is nothing worth summarizing;
 	// compacting would just throw the conversation away (tiny local windows
 	// can be exceeded by the system prompt alone).
-	if len(a.messages) < 4 {
+	if len(a.messages) < 4 || a.opts.NoAutoCompact {
 		return false
 	}
 	return a.lastContext > 0 && float64(a.lastContext) > compactThreshold*float64(a.windowLocked())

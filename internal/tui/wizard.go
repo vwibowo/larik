@@ -1063,6 +1063,7 @@ type setupModel struct {
 	w      *wizard
 	init   tea.Cmd
 	st     styles
+	theme  string // the theme setting; auto follows the terminal
 	width  int
 	height int
 }
@@ -1072,7 +1073,7 @@ type setupModel struct {
 // user quit. The choice is saved to a settings file when the user asked.
 func RunSetup(cfg *config.Config) (string, error) {
 	w, cmd := newWizard(cfg, true)
-	s := &setupModel{w: w, init: cmd, st: newStyles(true), width: 80, height: 24}
+	s := &setupModel{w: w, init: cmd, st: newStyles(cfg.Theme != "light"), theme: cfg.Theme, width: 80, height: 24}
 	if _, err := tea.NewProgram(s).Run(); err != nil {
 		return "", err
 	}
@@ -1087,7 +1088,9 @@ func (s *setupModel) Init() tea.Cmd { return tea.Batch(tea.RequestBackgroundColo
 func (s *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
-		s.st = newStyles(msg.IsDark())
+		if s.theme == "" || s.theme == "auto" {
+			s.st = newStyles(msg.IsDark())
+		}
 		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height

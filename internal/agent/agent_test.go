@@ -262,3 +262,31 @@ func TestThinkingTimeIsSaved(t *testing.T) {
 		t.Fatalf("resumed thinking block should carry how long it took: %+v", think)
 	}
 }
+
+func TestAutoCompactCanBeTurnedOff(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeYolo)
+	a.messages = []llm.Message{llm.UserText("a"), assistant(llm.TextBlock("b")), llm.UserText("c"), assistant(llm.TextBlock("d"))}
+	a.lastContext = 1 << 30
+	if !a.needsCompaction() {
+		t.Fatal("a full context should compact by default")
+	}
+	a.SetAutoCompact(false)
+	if a.needsCompaction() {
+		t.Fatal("auto-compact off should never compact on its own")
+	}
+}
+
+func TestLanguageAppliesOnFreshContext(t *testing.T) {
+	a := New(Options{System: "base", Language: "Indonesian"})
+	if !strings.Contains(a.opts.System, "Respond in Indonesian") {
+		t.Fatalf("language should be in the system prompt: %q", a.opts.System)
+	}
+	a.SetLanguage("")
+	if !strings.Contains(a.opts.System, "Indonesian") {
+		t.Fatal("the prompt should stay stable until the context is cleared")
+	}
+	a.Clear()
+	if a.opts.System != "base" {
+		t.Fatalf("clearing should apply the new language: %q", a.opts.System)
+	}
+}

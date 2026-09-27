@@ -41,6 +41,8 @@ var commands = []command{
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
+	{"/config", "[key=value]", "settings: theme, verbose, tips, auto-compact, notifications, language, defaults", "other", ""},
+	{"/theme", "[auto|dark|light]", "pick the color theme, or follow the terminal (auto)", "other", ""},
 	{"/keys", "", "keyboard shortcuts", "other", "?"},
 	{"/help", "", "commands and keys", "other", ""},
 	{"/quit", "", "exit", "other", "ctrl+d"},

@@ -37,10 +37,25 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	Model       string                    `json:"model,omitempty"` // "provider/model" or bare model id
-	Effort      llm.Effort                `json:"effort,omitempty"`
-	Mode        permission.Mode           `json:"mode,omitempty"`
-	MaxTurns    int                       `json:"max_turns,omitempty"`
+	Model    string          `json:"model,omitempty"` // "provider/model" or bare model id
+	Effort   llm.Effort      `json:"effort,omitempty"`
+	Mode     permission.Mode `json:"mode,omitempty"`
+	MaxTurns int             `json:"max_turns,omitempty"`
+	// Theme picks the TUI colors: "auto" (follow the terminal's
+	// background, the default), "dark" or "light".
+	Theme string `json:"theme,omitempty"`
+	// AutoCompact summarizes the conversation when the context is nearly
+	// full. Nil means on.
+	AutoCompact *bool `json:"auto_compact,omitempty"`
+	// Verbose shows tool output and thinking in full in the TUI.
+	Verbose *bool `json:"verbose,omitempty"`
+	// Notifications alerts an unfocused terminal when larik needs you:
+	// "off" (the default), "bell" or "desktop".
+	Notifications string `json:"notifications,omitempty"`
+	// Language is what the model replies in; empty leaves it to the model.
+	Language string `json:"language,omitempty"`
+	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
+	SpinnerTips *bool                     `json:"spinner_tips,omitempty"`
 	Providers   map[string]ProviderConfig `json:"providers,omitempty"`
 	Models      map[string]llm.ModelInfo  `json:"models,omitempty"` // catalog additions/overrides
 	Permissions permission.Rules          `json:"permissions,omitempty"`
@@ -214,6 +229,26 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.MaxTurns != 0 {
 		c.MaxTurns = o.MaxTurns
 	}
+	if o.Theme != "" {
+		if _, err := ParseTheme(o.Theme); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		c.Theme = o.Theme
+	}
+	if o.Notifications != "" {
+		if _, err := ParseNotifications(o.Notifications); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		c.Notifications = o.Notifications
+	}
+	if o.Language != "" {
+		c.Language = o.Language
+	}
+	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.SpinnerTips, &o.SpinnerTips}} {
+		if *b.src != nil {
+			*b.dst = *b.src
+		}
+	}
 	for k, v := range o.Providers {
 		c.Providers[k] = v
 	}
@@ -274,6 +309,67 @@ func updateJSON(path string, perm os.FileMode, edit func(raw map[string]any)) er
 		return err
 	}
 	return os.Chmod(path, perm) // WriteFile keeps an existing file's mode
+}
+
+// Themes are the accepted values of the "theme" setting.
+var Themes = []string{"auto", "dark", "light"}
+
+// ParseTheme checks a theme name; "" means auto.
+func ParseTheme(s string) (string, error) {
+	if s == "" {
+		return "auto", nil
+	}
+	for _, t := range Themes {
+		if s == t {
+			return s, nil
+		}
+	}
+	return "", fmt.Errorf("unknown theme %q (want %s)", s, strings.Join(Themes, ", "))
+}
+
+// NotificationKinds are the accepted values of the "notifications" setting.
+var NotificationKinds = []string{"off", "bell", "desktop"}
+
+// ParseNotifications checks a notifications value; "" means off.
+func ParseNotifications(s string) (string, error) {
+	if s == "" {
+		return "off", nil
+	}
+	for _, k := range NotificationKinds {
+		if s == k {
+			return s, nil
+		}
+	}
+	return "", fmt.Errorf("unknown notifications %q (want %s)", s, strings.Join(NotificationKinds, ", "))
+}
+
+func on(b *bool, def bool) bool {
+	if b == nil {
+		return def
+	}
+	return *b
+}
+
+// AutoCompactOn reports whether auto-compaction is enabled (default on).
+func (c *Config) AutoCompactOn() bool { return on(c.AutoCompact, true) }
+
+// VerboseOn reports whether verbose output is enabled (default off).
+func (c *Config) VerboseOn() bool { return on(c.Verbose, false) }
+
+// TipsOn reports whether spinner tips are shown (default on).
+func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
+
+// SetUserSetting writes a top-level setting to the user config, or removes
+// it when value is nil or "", so the built-in default applies again. It
+// does not update c; callers set the field they changed.
+func (c *Config) SetUserSetting(key string, value any) error {
+	return updateJSON(c.UserConfigPath(), 0o644, func(raw map[string]any) {
+		if value == nil || value == "" {
+			delete(raw, key)
+			return
+		}
+		raw[key] = value
+	})
 }
 
 // UserConfigPath is the personal config file shared by all projects.
