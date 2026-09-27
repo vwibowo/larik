@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/llm/ollama"
 	"larik/internal/providers"
 )
 
@@ -273,6 +274,13 @@ func (m *model) providerDetail(name string) []string {
 		m.st.accent.Render(name) + m.st.dim.Render(" · "+kind),
 		row("base URL", ep.BaseURL),
 		row("API key", key),
+	}
+	if ep.Kind == ollama.Name {
+		window := m.st.dim.Render(fmt.Sprintf("%d tokens, or the model's maximum if smaller", ollama.DefaultContextLength))
+		if pc.ContextLength > 0 {
+			window = fmt.Sprintf("%d tokens", pc.ContextLength)
+		}
+		lines = append(lines, row("context", window+m.st.dim.Render(` · "context_length" in settings`)))
 	}
 	res, loaded := m.modelLists[name]
 	switch {

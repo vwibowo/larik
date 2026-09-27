@@ -70,7 +70,7 @@ func (a *Agent) probeWindow(ctx context.Context, p llm.Provider, model string, u
 	msg := fmt.Sprintf("%s is running %s with a %d-token context window and this request used %d tokens; "+
 		"the server likely truncated the prompt, dropping instructions or tool definitions.", p.Name(), model, w, used)
 	if p.Name() == "ollama" {
-		msg += " Restart Ollama with a larger window, e.g. OLLAMA_CONTEXT_LENGTH=32768 ollama serve."
+		msg += ` Raise it with "context_length" under providers.ollama in ~/.config/larik/config.json, e.g. 65536.`
 	}
 	emit(Event{Kind: EvNotice, Text: msg})
 }

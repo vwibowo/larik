@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"larik/internal/config"
+	"larik/internal/llm/ollama"
 )
 
 func TestOllamaModels(t *testing.T) {
@@ -87,5 +88,16 @@ func TestEndpointDefaults(t *testing.T) {
 	cfg.Providers["groq"] = config.ProviderConfig{APIKeyEnv: "MY_KEY", BaseURL: "http://proxy/v1"}
 	if e := EndpointFor(cfg, "groq"); e.Key != "mk" || e.BaseURL != "http://proxy/v1" {
 		t.Fatalf("configured endpoint: %+v", e)
+	}
+}
+
+func TestOllamaUsesTheNativeAdapter(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.ProviderConfig{}}
+	r, err := Resolve(cfg, "ollama/qwen3:4b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Provider.(*ollama.Provider); !ok || r.Model != "qwen3:4b" {
+		t.Fatalf("ollama should use the native adapter, got %T %q", r.Provider, r.Model)
 	}
 }

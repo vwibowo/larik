@@ -37,13 +37,15 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 
 ### Local models with Ollama
 
-Ollama runs models with a small context window by default (4096 tokens), and Larik's system prompt and tool definitions alone can use most of that. Ollama then silently truncates the prompt, and the model stops calling tools. Start Ollama with a larger window:
+Ollama loads models with a small context window by default (4096 tokens), and Larik's system prompt and tool definitions alone use most of that. Larik talks to Ollama through its native chat API and asks for a 32768-token window (`num_ctx`), or the model's own maximum if that is smaller, so no server setting is needed.
 
-```bash
-OLLAMA_CONTEXT_LENGTH=32768 ollama serve
+A larger window uses more memory for the model's KV cache. To change it, set `context_length` for the provider in `~/.config/larik/config.json`:
+
+```json
+{ "providers": { "ollama": { "context_length": 65536 } } }
 ```
 
-Larik asks Ollama which window it's actually using, uses that for the context percentage and compaction, and warns when a request fills it. It also warns if the chosen model can't call tools. Small models such as `qwen3:4b` handle simple read/edit/test loops but can be unreliable with delegation.
+Larik reads back the window Ollama actually loaded, uses it for the context percentage and compaction, and warns when a request fills it. It also warns if the chosen model can't call tools. Small models such as `qwen3:4b` handle simple read/edit/test loops but can be unreliable with delegation.
 
 ## Keys and commands
 

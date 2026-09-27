@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"larik/internal/config"
+	"larik/internal/llm/ollama"
 	"larik/internal/providers"
 )
 
@@ -611,9 +612,9 @@ func (w *wizard) view(st styles, width, height int) string {
 			st.accent.Render("Choose a model")+st.dim.Render(" · from "+w.choice.Title+" at "+hostOf(w.endpoint.BaseURL)),
 			w.models.filterLine(st, "type to filter, or type a model id…"),
 			w.models.view(st, width))
-		if w.endpoint.IsOllama() {
-			body = append(body, "", st.dim.Render("Ollama gives models a small context window by default, which can stop tool calls."),
-				st.dim.Render("If the model ignores tools, start Ollama with ")+"OLLAMA_CONTEXT_LENGTH=32768 ollama serve")
+		if w.endpoint.IsOllama() && !w.custom {
+			body = append(body, "", st.dim.Render(fmt.Sprintf("larik loads Ollama models with a %s-token context window, or less if the model's maximum is smaller.", humanTokens(ollama.DefaultContextLength))),
+				st.dim.Render("Change it later with ")+`"context_length"`+st.dim.Render(" under providers.ollama in your settings."))
 		}
 		hint = "↑/↓ move · type to filter · enter select · esc back"
 	case wizSave:

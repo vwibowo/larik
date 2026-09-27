@@ -31,6 +31,9 @@ type ProviderConfig struct {
 	BaseURL   string `json:"base_url,omitempty"`
 	APIKey    string `json:"api_key,omitempty"`
 	APIKeyEnv string `json:"api_key_env,omitempty"`
+	// ContextLength is the context window Ollama loads models with
+	// (num_ctx). Zero uses 32768, capped at the model's maximum.
+	ContextLength int `json:"context_length,omitempty"`
 }
 
 type Config struct {

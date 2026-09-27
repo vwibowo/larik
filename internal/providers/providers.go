@@ -11,6 +11,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/llm/anthropic"
 	"larik/internal/llm/gemini"
+	"larik/internal/llm/ollama"
 	"larik/internal/llm/openai"
 	"larik/internal/llm/openaicompat"
 )
@@ -134,6 +135,13 @@ func build(cfg *config.Config, name string) (llm.Provider, error) {
 			return nil, fmt.Errorf("gemini: set GEMINI_API_KEY")
 		}
 		return llm.WithRetry(gemini.New(key, pc.BaseURL), 4), nil
+	}
+	if kind == ollama.Name {
+		baseURL := pc.BaseURL
+		if baseURL == "" {
+			baseURL = openaicompat.Presets[ollama.Name].BaseURL
+		}
+		return ollama.New(name, baseURL, pc.ContextLength), nil
 	}
 	preset, isPreset := openaicompat.Presets[kind]
 	if kind != "openai-compatible" && !isPreset {
