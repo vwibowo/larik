@@ -31,6 +31,7 @@ import (
 	"larik/internal/subagent"
 	"larik/internal/tools"
 	"larik/internal/tui"
+	"larik/internal/web"
 )
 
 var version = "0.1.0-dev"
@@ -175,6 +176,14 @@ func run() error {
 		system += "\n\n" + idx
 		childContext += "\n\n" + idx
 	}
+	if !cfg.Web.FetchDisabled {
+		baseTools = append(baseTools, web.FetchTool{F: web.NewFetcher()})
+	}
+	searcher, searchErr := web.NewSearcher(cfg.Web.Search)
+	if searcher != nil {
+		baseTools = append(baseTools, web.SearchTool{S: searcher})
+	}
+
 	lspMgr := lsp.NewManager(cfg.LSP, cwd, agent.GitRoot(cwd), filepath.Join(cfg.DataDir, "logs"))
 	defer lspMgr.Close()
 	if lspMgr.Enabled() {
@@ -226,6 +235,9 @@ func run() error {
 	if *print {
 		defer a.End("other")
 		defer a.StopAllBackground() // runs first: stop children before SessionEnd
+		if searchErr != nil {
+			fmt.Fprintln(os.Stderr, "! web_search disabled: "+searchErr.Error())
+		}
 		if sandboxWarning != "" {
 			fmt.Fprintln(os.Stderr, "! "+sandboxWarning)
 		}
@@ -256,6 +268,14 @@ func run() error {
 		LSP:           lspMgr,
 		Sandbox:       sb,
 		SandboxNote:   sandboxWarning,
+		SearchNote:    errText(searchErr),
 		Version:       version,
 	})
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

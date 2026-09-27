@@ -11,6 +11,7 @@ package permission
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -120,13 +121,29 @@ func Subject(tool string, input json.RawMessage) string {
 	var in struct {
 		Command string `json:"command"`
 		Path    string `json:"path"`
+		URL     string `json:"url"`
 	}
 	_ = json.Unmarshal(input, &in)
-	if tool == "bash" {
+	switch tool {
+	case "bash":
 		return in.Command
+	case "web_fetch":
+		return urlHost(in.URL)
 	}
 	return in.Path
 }
+
+func urlHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// networkTools reach the internet but change nothing locally: plan mode
+// asks for them instead of denying, since research is what planning needs.
+var networkTools = map[string]bool{"web_fetch": true, "web_search": true}
 
 // Decide returns the decision and, for Deny, a reason to show the model.
 func (c *Checker) Decide(call Call) (Decision, string) {
@@ -145,7 +162,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	if call.ReadOnly {
 		return Allow, ""
 	}
-	if c.mode == ModePlan {
+	if c.mode == ModePlan && !networkTools[call.Tool] {
 		return Deny, "plan mode is active: only read-only tools may run. Present your plan instead of making changes."
 	}
 	for _, r := range c.rules.Allow {
@@ -172,6 +189,11 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 // SuggestRule proposes an "always allow" rule for a call: the command's
 // first word(s) for bash, the tool name for everything else.
 func SuggestRule(tool string, input json.RawMessage) string {
+	if tool == "web_fetch" {
+		if host := Subject(tool, input); host != "" {
+			return "web_fetch(domain:" + host + ")"
+		}
+	}
 	if tool != "bash" {
 		return tool
 	}
@@ -206,6 +228,12 @@ func (c *Checker) matches(rule, tool, subject string) bool {
 	}
 	if tool == "bash" {
 		return wildcard(pattern, strings.TrimSpace(subject))
+	}
+	if tool == "web_fetch" {
+		// web_fetch(domain:go.dev) also covers subdomains like pkg.go.dev.
+		d, ok := strings.CutPrefix(pattern, "domain:")
+		d = strings.TrimPrefix(strings.ToLower(d), "*.")
+		return ok && d != "" && (subject == d || strings.HasSuffix(subject, "."+d))
 	}
 	rel := subject
 	if abs := c.abs(subject); c.insideCwd(subject) {

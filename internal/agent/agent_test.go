@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"larik/internal/checkpoint"
 	"larik/internal/llm"
@@ -197,4 +198,31 @@ func toStrings(ks []EventKind) []string {
 		out[i] = string(k)
 	}
 	return out
+}
+
+// slowTool is not read-only but is concurrency-safe.
+type slowTool struct{}
+
+func (slowTool) ReadOnly() bool        { return false }
+func (slowTool) ConcurrencySafe() bool { return true }
+func (slowTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: "slow", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (slowTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) tools.Result {
+	time.Sleep(300 * time.Millisecond)
+	return tools.Result{Content: "ok"}
+}
+
+func TestConcurrencySafeToolsRunInParallel(t *testing.T) {
+	fp := &fakeProvider{script: []llm.Message{
+		assistant(toolUse("a", "slow", `{}`), toolUse("b", "slow", `{}`), toolUse("c", "slow", `{}`)),
+		assistant(llm.TextBlock("done")),
+	}}
+	a := New(Options{Provider: fp, Model: "m", Cwd: t.TempDir(), Tools: tools.NewRegistry(slowTool{}),
+		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, t.TempDir())})
+	start := time.Now()
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if d := time.Since(start); d > 700*time.Millisecond {
+		t.Errorf("3 concurrency-safe calls took %s; want parallel", d)
+	}
 }

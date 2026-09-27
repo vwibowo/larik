@@ -111,6 +111,10 @@ func (m *model) permDetail(e *agent.Event) string {
 		content := strings.TrimSuffix(str(in["content"]), "\n")
 		return str(in["path"]) + m.st.dim.Render(fmt.Sprintf("  (%d lines)", strings.Count(content, "\n")+1)) + "\n" +
 			m.st.diffAdd.Render(truncateLines(prefixLines(content, "+ "), 12))
+	case "web_fetch":
+		return lipgloss.NewStyle().Bold(true).Render(str(in["url"])) + "\n" + m.st.dim.Render("fetches over the network from Larik (outside the sandbox)")
+	case "web_search":
+		return lipgloss.NewStyle().Bold(true).Render(str(in["query"])) + "\n" + m.st.dim.Render("the query is sent to the configured search provider")
 	case "edit":
 		return str(in["path"]) + "\n" + m.diff(prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
 	}
@@ -205,6 +209,19 @@ func (m *model) renderToolCard(e agent.Event) string {
 			body = m.st.dim.Render(fmt.Sprintf("read %d lines", n))
 		case "skill":
 			body = m.st.dim.Render(fmt.Sprintf("loaded skill (%d lines)", n))
+		case "web_fetch":
+			body = m.st.dim.Render(e.Display)
+			if strings.Contains(out, "redirected (HTTP") {
+				body = m.st.dim.Render(truncateLines(out, 2))
+			}
+		case "web_search":
+			var titles []string
+			for _, l := range strings.Split(out, "\n") {
+				if len(l) > 2 && l[0] >= '1' && l[0] <= '9' && strings.Contains(l[:4], ". ") {
+					titles = append(titles, l)
+				}
+			}
+			body = m.st.dim.Render(truncateLines(strings.Join(titles, "\n"), 4))
 		case "grep", "glob":
 			body = m.st.dim.Render(truncateLines(out, 4))
 		default:
@@ -295,6 +312,13 @@ func toolTitle(name string, input []byte) string {
 		}
 	case "task_stop":
 		arg = str(in["id"])
+	case "web_fetch":
+		arg = str(in["url"])
+	case "web_search":
+		arg = str(in["query"])
+		if s := str(in["site"]); s != "" {
+			arg += " site:" + s
+		}
 	default:
 		if server := mcp.ServerOf(name); server != "" {
 			name = server + " › " + strings.TrimPrefix(name, mcp.Prefix+server+"__")
@@ -325,6 +349,9 @@ func (m *model) printBanner() tea.Cmd {
 		lines = append(lines, m.st.dim.Render("sandbox: "+m.opts.Sandbox.Kind()+" · bash runs confined to the project, no network · /sandbox"))
 	case m.opts.SandboxNote != "":
 		lines = append(lines, m.st.warn.Render("no sandbox: "+m.opts.SandboxNote))
+	}
+	if m.opts.SearchNote != "" {
+		lines = append(lines, m.st.warn.Render("web_search disabled: "+m.opts.SearchNote))
 	}
 	if !m.opts.Config.ProjectHooksApproved() {
 		lines = append(lines, m.st.warn.Render("project hooks in .larik/settings.json are not approved yet · review with /hooks"))

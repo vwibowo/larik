@@ -20,6 +20,7 @@ import (
 	"larik/internal/lsp"
 	"larik/internal/permission"
 	"larik/internal/sandbox"
+	"larik/internal/web"
 )
 
 type ProviderConfig struct {
@@ -47,6 +48,10 @@ type Config struct {
 	// ApprovedHooks is the hash of the approved project hook set (from
 	// .larik/settings.json). Only honored from settings.local.json.
 	ApprovedHooks string `json:"approved_project_hooks,omitempty"`
+
+	// Web configures web_fetch and web_search. The search backend (which
+	// receives every query) is honored only from personal files.
+	Web WebConfig `json:"web,omitempty"`
 
 	// Sandbox configures the OS sandbox for bash. Shared project files may
 	// only tighten it (enable it); loosening needs a personal file.
@@ -138,6 +143,22 @@ func (c *Config) merge(path string, trusted bool) error {
 		for name, srv := range servers {
 			srv.Name, srv.Source, srv.Trusted = name, path, trusted
 			c.MCPServers[name] = srv
+		}
+	}
+	if trusted {
+		if o.Web.Search != (web.SearchConfig{}) {
+			c.Web.Search = o.Web.Search
+		}
+		if o.Web.FetchDisabled {
+			c.Web.FetchDisabled = true
+		}
+	} else {
+		// Shared files may only turn web tools off.
+		if o.Web.FetchDisabled {
+			c.Web.FetchDisabled = true
+		}
+		if o.Web.Search.Disabled {
+			c.Web.Search.Disabled = true
 		}
 	}
 	if trusted {
@@ -257,4 +278,10 @@ func (c *Config) ApproveProjectHooks() error {
 	}
 	c.ApprovedHooks = hash
 	return nil
+}
+
+// WebConfig is the "web" settings section.
+type WebConfig struct {
+	FetchDisabled bool             `json:"fetch_disabled,omitempty"`
+	Search        web.SearchConfig `json:"search,omitempty"`
 }

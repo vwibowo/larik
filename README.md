@@ -79,6 +79,37 @@ Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command,
 
 Answering "always allow" writes the rule to `.larik/settings.local.json`.
 
+## Web
+
+**`web_fetch`** downloads a page and returns its main content as Markdown:
+- Scripts, navigation, headers and footers, and decorative images are stripped, and links are resolved against the page URL.
+- Text and JSON responses are returned as-is.
+- Long pages come back in chunks (`start` / `max_length`).
+- It asks per domain. "Always allow" saves a rule such as `web_fetch(domain:go.dev)`, which also covers subdomains.
+- A redirect to a different host is reported rather than followed, so it can't sidestep a domain rule.
+- Link-local and cloud-metadata addresses (`169.254.169.254` and similar) are blocked.
+- Responses are capped at 5 MB and 30 s, and cached for 15 minutes.
+
+**`web_search`** appears when a search backend is configured. Larik detects one from the environment:
+
+| Backend | Setting |
+|---|---|
+| [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` |
+| [Tavily](https://tavily.com) | `TAVILY_API_KEY` |
+| [SearXNG](https://docs.searxng.org) (self-hosted; enable the JSON format) | `SEARXNG_URL` |
+
+You can also set it explicitly:
+
+```json
+{ "web": { "search": { "provider": "brave", "api_key_env": "MY_BRAVE_KEY" } } }
+```
+
+**Trust and permissions:**
+- Search settings are honored only from personal files, since a shared `.larik/settings.json` could otherwise send your queries to its own server. Shared files can only disable web tools (`"web": {"fetch_disabled": true}` or `{"search": {"disabled": true}}`).
+- Both tools ask before running (`web_search` can be always-allowed).
+- Plan mode asks for them rather than blocking them, because research is part of planning.
+- Web content is marked as untrusted data for the model.
+
 ## Sandbox
 
 `bash` commands run in the operating system's sandbox: Seatbelt (`sandbox-exec`) on macOS, and [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux when installed.
@@ -297,6 +328,7 @@ internal/skills     Agent Skills discovery, index, skill tool, /name expansion
 internal/subagent   subagent definitions and the task tool
 internal/lsp        language server client, edit diagnostics, lsp tool
 internal/sandbox    Seatbelt / bubblewrap confinement for bash
+internal/web        web_fetch (HTML to Markdown) and web_search backends
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo

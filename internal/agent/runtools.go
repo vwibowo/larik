@@ -51,8 +51,8 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 
 	for start := 0; start < len(queue); {
 		end := start + 1
-		if queue[start].tool.ReadOnly() {
-			for end < len(queue) && queue[end].tool.ReadOnly() {
+		if tools.Parallel(queue[start].tool) {
+			for end < len(queue) && tools.Parallel(queue[end].tool) {
 				end++
 			}
 		}

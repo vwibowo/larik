@@ -163,3 +163,18 @@ func (e *Env) afterWrite(ctx context.Context, path string, res Result) Result {
 type Sandbox interface {
 	Command(script, dir string) *exec.Cmd
 }
+
+// ConcurrencySafe marks tools that aren't read-only (they still need
+// permission) but can safely run in parallel with other such calls.
+type ConcurrencySafe interface {
+	ConcurrencySafe() bool
+}
+
+// Parallel reports whether a tool may run alongside other parallel calls.
+func Parallel(t Tool) bool {
+	if t.ReadOnly() {
+		return true
+	}
+	c, ok := t.(ConcurrencySafe)
+	return ok && c.ConcurrencySafe()
+}

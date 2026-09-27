@@ -127,3 +127,28 @@ func TestSandboxedBash(t *testing.T) {
 		t.Error("without a sandbox, commands ask as before")
 	}
 }
+
+func TestWebRules(t *testing.T) {
+	c := NewChecker(ModeDefault, Rules{Allow: []string{"web_fetch(domain:go.dev)", "web_search"}, Deny: []string{"web_fetch(domain:evil.example)"}}, "/w")
+	cases := map[string]Decision{
+		`{"url":"https://go.dev/doc"}`:           Allow,
+		`{"url":"https://pkg.go.dev/net/http"}`:  Allow, // subdomain
+		`{"url":"https://notgo.dev/"}`:           Ask,
+		`{"url":"https://x.evil.example/steal"}`: Deny,
+	}
+	for in, want := range cases {
+		if got, _ := c.Decide(call("web_fetch", false, in)); got != want {
+			t.Errorf("%s: got %v want %v", in, got, want)
+		}
+	}
+	if got, _ := c.Decide(call("web_search", false, `{"query":"x"}`)); got != Allow {
+		t.Error("web_search allow rule")
+	}
+	if r := SuggestRule("web_fetch", json.RawMessage(`{"url":"https://Docs.Python.org/3/"}`)); r != "web_fetch(domain:docs.python.org)" {
+		t.Errorf("suggest = %s", r)
+	}
+	plan := NewChecker(ModePlan, Rules{}, "/w")
+	if got, _ := plan.Decide(call("web_fetch", false, `{"url":"https://a.b"}`)); got != Ask {
+		t.Error("plan mode should ask (not deny) for web tools")
+	}
+}

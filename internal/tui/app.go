@@ -41,6 +41,7 @@ type Options struct {
 	LSP           *lsp.Manager
 	Sandbox       *sandbox.Sandbox // nil when unavailable or disabled
 	SandboxNote   string           // why there is no sandbox, if any
+	SearchNote    string           // why web_search is unavailable, if configured but broken
 }
 
 func Run(opts Options) error {
