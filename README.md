@@ -424,6 +424,8 @@ Instructions are loaded from these files:
 
 ## Architecture
 
+For a deep dive with diagrams (the agent loop, permissions, providers, persistence, security, and how Larik compares with other harnesses), see [docs/](docs/README.md).
+
 ```
 cmd/larik           flags, `serve` subcommand
 internal/app        shared setup: config, tools, MCP, LSP, sandbox; opens sessions
