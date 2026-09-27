@@ -1,0 +1,90 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"larik/internal/agent"
+	"larik/internal/llm"
+	"larik/internal/permission"
+)
+
+func plain(s string) string { return ansi.Strip(s) }
+
+func TestFooterDropsHintsWhenNarrow(t *testing.T) {
+	m := testModel(t)
+	m.stats = agent.UsageInfo{ContextWindow: 1000, ContextTokens: 310}
+	m.agent.SetEffort(llm.EffortHigh)
+
+	m.width = 120
+	wide := plain(m.statusLine())
+	for _, want := range []string{"default", "shift+tab", "◆ m ollama", "effort high", "▰▰▰▱", "31%"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("wide footer lacks %q: %q", want, wide)
+		}
+	}
+
+	m.width = 50
+	narrow := plain(m.statusLine())
+	if strings.Contains(narrow, "shift+tab") || strings.Contains(narrow, "▰") || strings.Contains(narrow, "\n") {
+		t.Errorf("narrow footer should drop hints and the bar and stay on one line: %q", narrow)
+	}
+	if !strings.Contains(narrow, "31%") || lipgloss.Width(narrow) > 50 {
+		t.Errorf("narrow footer should keep the percentage and fit: %q", narrow)
+	}
+
+	m.agent.Perms().SetMode(permission.ModeYolo)
+	if !strings.Contains(plain(m.statusLine()), "⚠ yolo") {
+		t.Error("yolo should show in the mode chip")
+	}
+}
+
+func TestThinkingCollapsesToOneLine(t *testing.T) {
+	m := testModel(t)
+	msg := llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{
+		{Type: llm.BlockThinking, Text: "first I will look\nthen I will answer"},
+		{Type: llm.BlockText, Text: "done"},
+	}}
+	out := plain(m.renderAssistant(msg, 14*time.Second))
+	if !strings.Contains(out, "Thought for 14s") || strings.Contains(out, "first I will look") {
+		t.Fatalf("collapsed: %q", out)
+	}
+	m.toggleThinking()
+	out = plain(m.renderAssistant(msg, 14*time.Second))
+	if !strings.Contains(out, "first I will look") {
+		t.Fatalf("ctrl+o should show thinking in full: %q", out)
+	}
+}
+
+func TestLiveViewStatusLine(t *testing.T) {
+	m := testModel(t)
+	m.running, m.turnStart = true, time.Now().Add(-75*time.Second)
+	m.handleEvent(agent.Event{Kind: agent.EvThinkingDelta, Text: strings.Repeat("x", 800)})
+	line := plain(m.liveView())
+	for _, want := range []string{"Thinking…", "1m 15s", "~200 tokens", "ctrl+o to show thinking", "esc to interrupt"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("status lacks %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "xxxx") {
+		t.Error("collapsed thinking should not stream its text")
+	}
+	m.handleEvent(agent.Event{Kind: agent.EvTextDelta, Text: "Hello"})
+	if m.thinkDur == 0 || !strings.Contains(plain(m.liveView()), "Responding…") {
+		t.Errorf("text should end thinking: dur %v view %q", m.thinkDur, plain(m.liveView()))
+	}
+}
+
+func TestShortPath(t *testing.T) {
+	if got := shortPath("/a/b"); got != "/a/b" {
+		t.Errorf("short path changed: %q", got)
+	}
+	long := "/private/tmp/claude-501/some-very-long-directory-name-here/another/project"
+	if got := shortPath(long); got != "…/another/project" {
+		t.Errorf("long path: %q", got)
+	}
+}

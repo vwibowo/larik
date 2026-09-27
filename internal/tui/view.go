@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -12,6 +13,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/mcp"
+	"larik/internal/permission"
 )
 
 func (m *model) View() tea.View {
@@ -46,11 +48,13 @@ func (m *model) View() tea.View {
 	return v
 }
 
-// liveView shows the in-flight response, clipped to the screen.
+// liveView shows the in-flight response, clipped to the screen, and a
+// status line with what the model is doing and for how long.
 func (m *model) liveView() string {
 	var b []string
-	if t := strings.TrimSpace(m.thinking.String()); t != "" && m.stream.Len() == 0 {
-		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(t, m.width-4), 3)))
+	thinkingNow := m.thinking.Len() > 0 && m.stream.Len() == 0 && m.calling == ""
+	if thinkingNow && m.showThinking {
+		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), m.width-4), 8)))
 	}
 	if s := m.stream.String(); s != "" {
 		limit := max(m.height-12, 5)
@@ -63,22 +67,51 @@ func (m *model) liveView() string {
 		}
 		b = append(b, line)
 	}
-	label := ""
+
+	var label string
 	switch {
 	case m.busyLabel != "":
 		label = m.busyLabel
 	case m.calling != "":
-		label = "writing " + m.calling + " call…"
-	case len(m.tools) == 0 && m.stream.Len() == 0:
-		label = "thinking…"
+		label = "Writing " + m.calling + " call…"
+	case thinkingNow:
+		label = "Thinking…"
+	case len(m.tools) > 0:
+		label = "Working…"
+	case m.stream.Len() > 0:
+		label = "Responding…"
+	default:
+		label = "Waiting for the model…"
 	}
-	if label != "" {
-		b = append(b, m.st.accent.Render(m.spin.View())+" "+m.st.dim.Render(label))
+	var meta []string
+	if m.running {
+		meta = append(meta, elapsed(time.Since(m.turnStart)))
+		if m.turnChars > 0 {
+			meta = append(meta, fmt.Sprintf("↓ ~%d tokens", m.turnChars/4)) // a rough count while streaming
+		}
+		if thinkingNow && !m.showThinking {
+			meta = append(meta, "ctrl+o to show thinking")
+		}
+		meta = append(meta, "esc to interrupt")
 	}
+	line := m.st.accent.Render("✻ ") + label
+	if len(meta) > 0 {
+		line += m.st.dim.Render("  " + strings.Join(meta, " · "))
+	}
+	b = append(b, line)
 	if len(m.queue) > 0 {
-		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued", len(m.queue))))
+		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued, sent when this turn ends", len(m.queue))))
 	}
 	return strings.Join(b, "\n")
+}
+
+// elapsed formats a duration as "14s" or "2m 05s".
+func elapsed(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 func (m *model) permissionView() string {
@@ -131,45 +164,103 @@ func (m *model) permDetail(e *agent.Event) string {
 	return string(e.Input)
 }
 
+// statusLine is the footer: the permission mode on the left; model,
+// effort, context use and cost on the right. Hints drop out first when
+// the terminal is narrow.
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
-	left := m.st.statusMode.Render(modeLabels[mode]) + m.st.dim.Render(" (shift+tab)")
+	chip := m.st.chip
+	switch mode {
+	case permission.ModeDefault:
+		chip = m.st.chipPlain
+	case permission.ModeYolo:
+		chip = m.st.chipWarn
+	}
+	modeChip := chip.Render(modeLabels[mode])
 
-	var right []string
-	right = append(right, m.agent.ProviderName()+"/"+m.agent.Model())
+	model := m.st.accent.Render("◆ ") + m.st.user.Render(m.agent.Model())
+	provider := m.st.dim.Render(" " + m.agent.ProviderName())
+	var extra []string
 	if e := m.agent.Effort(); e != "" {
-		right = append(right, "effort "+string(e))
+		extra = append(extra, m.st.dim.Render("effort ")+string(e))
 	}
+	ctxPct, ctxBar := "", "" // "31%", "▰▰▰▱▱▱▱▱▱▱ "
 	if m.stats.ContextWindow > 0 && m.stats.ContextTokens > 0 {
-		right = append(right, fmt.Sprintf("ctx %d%%", m.stats.ContextTokens*100/m.stats.ContextWindow))
+		pct := min(m.stats.ContextTokens*100/m.stats.ContextWindow, 100)
+		style := m.st.accent
+		switch {
+		case pct >= 90:
+			style = m.st.err
+		case pct >= 70:
+			style = m.st.warn
+		}
+		const cells = 10
+		full := (pct*cells + 50) / 100
+		ctxBar = style.Render(strings.Repeat("▰", full)) + m.st.dim.Render(strings.Repeat("▱", cells-full)) + " "
+		ctxPct = fmt.Sprintf("%d%%", pct)
 	}
+	var tail []string
 	if m.stats.CostUSD > 0 {
-		right = append(right, fmt.Sprintf("$%.2f", m.stats.CostUSD))
+		tail = append(tail, fmt.Sprintf("$%.2f", m.stats.CostUSD))
 	}
 	if n := m.agent.RunningBackground(); n > 0 {
-		right = append(right, fmt.Sprintf("⧗ %d background", n))
+		tail = append(tail, fmt.Sprintf("⧗ %d background", n))
 	}
-	if m.running {
-		right = append(right, "esc to interrupt")
-	} else if m.quitArmed {
-		right = append(right, "ctrl+c again to quit")
+	if m.quitArmed {
+		tail = append(tail, m.st.warn.Render("ctrl+c again to quit"))
 	}
-	r := m.st.dim.Render(strings.Join(right, " · "))
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(r)
-	if gap < 1 {
-		return left + "\n" + r
+
+	sep := m.st.dim.Render(" · ")
+	build := func(hint, withProvider, withBar bool) string {
+		left := modeChip
+		if hint {
+			left += m.st.dim.Render(" shift+tab")
+		}
+		parts := []string{model}
+		if withProvider {
+			parts[0] += provider
+		}
+		parts = append(parts, extra...)
+		if ctxPct != "" {
+			ctx := m.st.dim.Render("ctx ") + ctxPct
+			if withBar {
+				ctx = m.st.dim.Render("ctx ") + ctxBar + ctxPct
+			}
+			parts = append(parts, ctx)
+		}
+		parts = append(parts, tail...)
+		right := strings.Join(parts, sep)
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		if gap < 2 {
+			return ""
+		}
+		return left + strings.Repeat(" ", gap) + right
 	}
-	return left + strings.Repeat(" ", gap) + r
+	for _, v := range [][3]bool{{true, true, true}, {false, true, true}, {false, true, false}, {false, false, false}} {
+		if line := build(v[0], v[1], v[2]); line != "" {
+			return line
+		}
+	}
+	return modeChip + "\n" + model + provider
 }
 
 // renderAssistant formats a finished assistant message for scrollback.
-func (m *model) renderAssistant(msg llm.Message) string {
+// thought is how long the model thought, if known. Thinking is collapsed
+// to one line unless ctrl+o turned it on.
+func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 	var out []string
 	for _, b := range msg.Blocks {
 		switch b.Type {
 		case llm.BlockThinking:
-			if t := strings.TrimSpace(b.Text); t != "" {
-				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, m.width-4), 6)))
+			t := strings.TrimSpace(b.Text)
+			switch {
+			case t == "":
+			case m.showThinking:
+				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, m.width-4), 20)))
+			case thought >= time.Second:
+				out = append(out, m.st.thinking.Render("✻ Thought for "+elapsed(thought))+m.st.dim.Render(" · ctrl+o to show"))
+			default:
+				out = append(out, m.st.thinking.Render("✻ Thought")+m.st.dim.Render(" · ctrl+o to show"))
 			}
 		case llm.BlockText:
 			if t := strings.TrimSpace(b.Text); t != "" {
@@ -338,32 +429,41 @@ func toolTitle(name string, input []byte) string {
 	return fmt.Sprintf("%s(%s)", name, arg)
 }
 
+// printBanner prints two short lines, plus warnings only when they apply.
 func (m *model) printBanner() tea.Cmd {
-	cwd := m.opts.Config.Cwd
-	if home := homeDir(); home != "" && strings.HasPrefix(cwd, home) {
-		cwd = "~" + strings.TrimPrefix(cwd, home)
+	head := m.st.accent.Render("✻ larik") + m.st.dim.Render(" v"+m.opts.Version+" · "+shortPath(m.opts.Config.Cwd))
+	if m.opts.Sandbox != nil {
+		head += m.st.dim.Render(" · " + m.opts.Sandbox.Kind() + " sandbox")
 	}
 	lines := []string{
-		m.st.accent.Render("larik") + m.st.dim.Render(" v"+m.opts.Version),
-		m.st.dim.Render(m.agent.ProviderName() + "/" + m.agent.Model() + " · " + cwd),
-		m.st.dim.Render("enter send · shift+enter newline · esc interrupt · /model switch model · /help"),
+		head,
+		m.st.dim.Render("  / commands · alt+p model · shift+tab mode · ctrl+o thinking"),
 	}
-	switch {
-	case m.opts.Sandbox != nil:
-		lines = append(lines, m.st.dim.Render("sandbox: "+m.opts.Sandbox.Kind()+" · bash runs confined to the project, no network · /sandbox"))
-	case m.opts.SandboxNote != "":
-		lines = append(lines, m.st.warn.Render("no sandbox: "+m.opts.SandboxNote))
+	warn := func(s string) { lines = append(lines, m.st.warn.Render("  ! "+s)) }
+	if m.opts.Sandbox == nil && m.opts.SandboxNote != "" {
+		warn("no sandbox: " + m.opts.SandboxNote)
 	}
 	if m.opts.SearchNote != "" {
-		lines = append(lines, m.st.warn.Render("web_search disabled: "+m.opts.SearchNote))
+		warn("web_search disabled: " + m.opts.SearchNote)
 	}
 	if !m.opts.Config.ProjectHooksApproved() {
-		lines = append(lines, m.st.warn.Render("project hooks in .larik/settings.json are not approved yet · review with /hooks"))
+		warn("project hooks in .larik/settings.json are not approved yet · review with /hooks")
 	}
-	if id := m.agent.SessionID(); id != "" {
-		lines = append(lines, m.st.dim.Render("session "+id+" · resume with larik --resume "+id))
+	return m.println(strings.Join(lines, "\n"))
+}
+
+// shortPath abbreviates the home directory to ~ and keeps long paths to
+// their last two directories.
+func shortPath(p string) string {
+	p = tildePath(p)
+	if len(p) <= 50 {
+		return p
 	}
-	return m.println(m.st.box.Render(strings.Join(lines, "\n")))
+	parts := strings.Split(p, "/")
+	if len(parts) <= 3 {
+		return p
+	}
+	return "…/" + strings.Join(parts[len(parts)-2:], "/")
 }
 
 func (m *model) printHistory(label string) tea.Cmd {
@@ -375,7 +475,7 @@ func (m *model) printHistory(label string) tea.Cmd {
 				b = append(b, "\n"+m.st.user.Render("› "+indentAfterFirst(t, "  ")))
 			}
 		case llm.RoleAssistant:
-			if out := m.renderAssistant(msg); out != "" {
+			if out := m.renderAssistant(msg, 0); out != "" {
 				b = append(b, out)
 			}
 			for _, u := range msg.ToolUses() {

@@ -47,7 +47,7 @@ Larik asks Ollama which window it's actually using, uses that for the context pe
 
 ## Keys and commands
 
-`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
 |---|---|

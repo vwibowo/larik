@@ -8,6 +8,8 @@ import (
 
 type styles struct {
 	accent, dim, user, err, warn, ok, diffAdd, diffDel, thinking, box, modal, statusMode lipgloss.Style
+	// Footer chips.
+	chip, chipWarn, chipPlain lipgloss.Style
 }
 
 func newStyles(isDark bool) styles {
@@ -27,5 +29,8 @@ func newStyles(isDark bool) styles {
 		box:        lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(pick("#C9C9D1", "#44444F")).Padding(0, 1),
 		modal:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1),
 		statusMode: lipgloss.NewStyle().Foreground(accent),
+		chip:       lipgloss.NewStyle().Foreground(accent).Background(pick("#ECE9FB", "#2A2640")).Bold(true).Padding(0, 1),
+		chipWarn:   lipgloss.NewStyle().Foreground(pick("#9A6700", "#E3B341")).Background(pick("#FBF1DC", "#3A3120")).Bold(true).Padding(0, 1),
+		chipPlain:  lipgloss.NewStyle().Foreground(pick("#1F1F24", "#E8E8EE")).Background(pick("#EBEBF0", "#24242D")).Padding(0, 1),
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -97,8 +98,16 @@ type model struct {
 	permIdx   int
 	queue     []string
 	stats     agent.UsageInfo
-	busyLabel string // non-agent background work, e.g. compaction
-	quitArmed bool
+	turnStart time.Time // when the running turn began
+	turnChars int       // text and thinking streamed this turn, for a token estimate
+	// thinkStart is when the in-flight message began thinking, and
+	// thinkDur how long it thought once it moved on.
+	thinkStart   time.Time
+	thinkDur     time.Duration
+	showThinking bool   // ctrl+o: show thinking in full instead of one line
+	lastThinking string // thinking of the last finished message, for ctrl+o
+	busyLabel    string // non-agent background work, e.g. compaction
+	quitArmed    bool
 
 	mpick      *modelPicker              // the /model dropdown, when open
 	modelLists map[string]providerModels // last model lists, by provider
@@ -129,7 +138,7 @@ func newModel(opts Options) *model {
 	// synchronously before startup would block and swallow typed input.
 	isDark := true
 	ta := textarea.New()
-	ta.Placeholder = "Ask Larik to do something…  (/help for commands)"
+	ta.Placeholder = "Ask larik to do something…  (/ for commands)"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
 	ta.DynamicHeight = true
@@ -325,6 +334,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "shift+tab":
 		return m, m.cycleMode()
+	case "ctrl+o":
+		return m, m.toggleThinking()
 	case "alt+p":
 		if m.running {
 			return m, m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))
@@ -361,6 +372,7 @@ func (m *model) interrupt() {
 func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel = true, cancel
+	m.turnStart, m.turnChars = time.Now(), 0
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
 		m.println("\n"+m.st.user.Render("› "+indentAfterFirst(text, "  "))),
@@ -387,21 +399,57 @@ func (m *model) resetStream() {
 	m.thinking.Reset()
 	m.calling = ""
 	m.tools = nil
+	m.thinkStart, m.thinkDur = time.Time{}, 0
+}
+
+// doneThinking records how long the in-flight message thought, once it
+// starts answering or calling a tool.
+func (m *model) doneThinking() {
+	if !m.thinkStart.IsZero() && m.thinkDur == 0 {
+		m.thinkDur = time.Since(m.thinkStart)
+	}
+}
+
+// toggleThinking switches between one-line and full thinking. Turning it
+// on while idle also prints the last message's thinking.
+func (m *model) toggleThinking() tea.Cmd {
+	m.showThinking = !m.showThinking
+	if !m.showThinking {
+		return m.println(m.st.dim.Render("thinking collapsed (ctrl+o to show)"))
+	}
+	if !m.running && m.lastThinking != "" {
+		return m.println(m.st.thinking.Render("✻ " + truncateLines(wrap(m.lastThinking, m.width-4), 40)))
+	}
+	return m.println(m.st.dim.Render("thinking shown (ctrl+o to collapse)"))
 }
 
 func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	switch e.Kind {
 	case agent.EvTextDelta:
+		m.doneThinking()
 		m.stream.WriteString(e.Text)
+		m.turnChars += len(e.Text)
 	case agent.EvThinkingDelta:
+		if m.thinkStart.IsZero() {
+			m.thinkStart = time.Now()
+		}
 		m.thinking.WriteString(e.Text)
+		m.turnChars += len(e.Text)
 	case agent.EvToolCallDelta:
+		m.doneThinking()
 		m.calling = e.ToolName
 	case agent.EvAssistant:
-		out := m.renderAssistant(*e.Message)
+		m.doneThinking()
+		out := m.renderAssistant(*e.Message, m.thinkDur)
+		for _, b := range e.Message.Blocks {
+			if b.Type == llm.BlockThinking && strings.TrimSpace(b.Text) != "" {
+				m.lastThinking = strings.TrimSpace(b.Text)
+			}
+		}
 		m.stream.Reset()
 		m.thinking.Reset()
 		m.calling = ""
+		m.thinkStart, m.thinkDur = time.Time{}, 0
 		if out == "" {
 			return nil
 		}
@@ -517,6 +565,7 @@ func (m *model) deliverBackground() tea.Cmd {
 		return nil
 	}
 	m.running, m.cancel, m.events = true, cancel, events
+	m.turnStart, m.turnChars = time.Now(), 0
 	return tea.Sequence(
 		m.println("\n"+m.st.dim.Render("⚙ delivering background task results to the model")),
 		tea.Batch(m.waitEvent(), m.spin.Tick),

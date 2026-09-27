@@ -54,7 +54,7 @@ var helpText = func() string {
 	b.WriteString(`
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  / command palette · shift+tab cycle permission mode · alt+p switch model
+  / command palette · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
   ctrl+c clear input / interrupt / quit`)
 	return b.String()
 }()
