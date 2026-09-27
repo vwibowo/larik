@@ -71,9 +71,11 @@ The Ollama adapter uses the native API to request a usable context window (Ollam
 
 Choices that cost something:
 
-- **No text-based edit formats.** Larik requires native tool calling. Models without it (some small local ones) can't work, where Aider's diff formats would.
-- **Append-only history grows.** Session files keep everything, including pre-compaction history. Cheap on disk, but not pruned.
-- **Checkpoints cover `write`/`edit`, not bash.** A `sed -i` or a generator run from bash isn't captured by `/undo`; git remains the safety net there.
+- **No text-based edit formats.** Larik requires native tool calling. Models without it (some small local ones) can't work, where Aider's diff formats would. Larik only warns when a model can't call tools.
+- **Nothing is pruned.** Session files keep everything, including history from before compaction. Checkpoint snapshots are full copies of every file edited, possibly including secrets, and only `/undo` removes them. Worktrees kept by subagents stay until `/worktrees remove`. All of it accumulates under `~/.local/share/larik`.
+- **`/undo` has a narrow reach.** It only restores what `write` and `edit` changed. A `sed -i` or a generator run from bash, or a file written by an MCP tool, isn't captured. It also only reaches turns since the process started: after `larik -c` or `--resume`, earlier turns can't be undone. Git remains the safety net.
 - **Fixed tool set per context.** An MCP server approved mid-session needs `/clear` to appear, in exchange for cache stability.
-- **Sandbox availability varies.** Without Seatbelt or `bwrap` (Windows, minimal Linux), every command asks.
+- **Prompt changes need a restart.** The system prompt, including `AGENTS.md`/`CLAUDE.md` and the skills index, is built once at startup. `/clear` doesn't rebuild it, so edits to instruction files or new skills take effect in a new `larik` process.
+- **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. Details the summary leaves out are gone from the model's view, though still in the session file.
+- **Unix only.** Larik builds for macOS and Linux, not Windows. On Linux without `bwrap` the sandbox is off and every command asks.
 - **Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions.
