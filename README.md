@@ -4,6 +4,20 @@ A terminal coding agent written in Go with a [Bubble Tea](https://github.com/cha
 
 ## Quick start
 
+To build and install `larik` into `/usr/local/bin`:
+
+```bash
+./install.sh
+```
+
+The installer uses `sudo` when needed. Set `PREFIX` or `BINDIR` to install elsewhere, for example:
+
+```bash
+PREFIX="$HOME/.local" ./install.sh
+```
+
+To build without installing:
+
 ```bash
 go build -o larik ./cmd/larik
 ```
@@ -12,6 +26,8 @@ go build -o larik ./cmd/larik
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
 ./larik
 ```
+
+After installation, run `larik` from any directory.
 
 The first time you run `larik` in a terminal with nothing configured, a setup wizard walks through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models (with Ollama, it can also download a recommended model, or any model you name, with a progress bar), and saves your choice to `~/.config/larik/config.json` or private project settings under `~/.config/larik/projects/`. Run `/connect` at any time to add another provider.
 
