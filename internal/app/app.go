@@ -296,6 +296,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Sandbox:     sbTool,
 
 		NoAutoCompact: !a.Cfg.AutoCompactOn(),
+		TokenSaver:    a.Cfg.TokenSaverOn(),
 		Language:      a.Cfg.Language,
 		CompactWith:   a.compactModel,
 		Budget: func() (float64, float64) {

@@ -21,8 +21,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"larik/internal/procgroup"
 )
 
 type Event string
@@ -246,7 +247,7 @@ func (r *Runner) exec(ctx context.Context, ev Event, c Command, payload []byte) 
 	cmd.Dir = r.cwd
 	cmd.Env = append(os.Environ(), "LARIK_PROJECT_DIR="+r.cwd, "CLAUDE_PROJECT_DIR="+r.cwd)
 	cmd.Stdin = bytes.NewReader(payload)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procgroup.Configure(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Start(); err != nil {
@@ -258,7 +259,7 @@ func (r *Runner) exec(ctx context.Context, ev Event, c Command, payload []byte) 
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = procgroup.Kill(cmd)
 		<-done
 		return Result{Messages: []string{fmt.Sprintf("%s hook timed out after %s: %s", ev, timeout, short(c.Command))}}
 	}

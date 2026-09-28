@@ -12,14 +12,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"larik/internal/filelock"
 	"larik/internal/llm"
 )
 
@@ -72,6 +73,20 @@ func Dir(dataDir, cwd string) string {
 	}
 	hash := sha256.Sum256([]byte(canonical))
 	return filepath.Join(dataDir, "sessions", fmt.Sprintf("%s-%x", filepath.Base(canonical), hash[:8]))
+}
+
+// RawDir holds exact shell output outside the model transcript.
+func RawDir(sessionPath string) string { return strings.TrimSuffix(sessionPath, ".jsonl") + ".raw" }
+
+// RawPath maps an opaque tool-call ID to a path without allowing traversal.
+func RawPath(sessionPath, toolID string) string {
+	return filepath.Join(RawDir(sessionPath), RawName(toolID))
+}
+
+// RawName is a safe filename derived from an opaque tool-call ID.
+func RawName(toolID string) string {
+	h := sha256.Sum256([]byte(toolID))
+	return hex.EncodeToString(h[:]) + ".out"
 }
 
 func newID() string {
@@ -142,8 +157,8 @@ func Open(path string) (*Session, *State, error) {
 }
 
 func lockFile(f *os.File) error {
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+	if err := filelock.Lock(f, true); err != nil {
+		if filelock.Busy(err) {
 			return fmt.Errorf("session %s is already open for writing in another process", f.Name())
 		}
 		return fmt.Errorf("locking session %s: %w", f.Name(), err)
@@ -440,6 +455,41 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 		}
 	}
 	path := s.Path
+	// Carry only raw outputs whose tool results survived the branch cut.
+	copied := map[string]bool{}
+	for _, m := range msgs[:keep] {
+		for _, b := range m.Blocks {
+			if b.Type != llm.BlockToolResult || b.ID == "" || copied[b.ID] {
+				continue
+			}
+			copied[b.ID] = true
+			from, to := RawPath(src, b.ID), RawPath(s.Path, b.ID)
+			if _, statErr := os.Stat(from); statErr != nil {
+				continue
+			}
+			if err = os.MkdirAll(RawDir(s.Path), 0o700); err == nil {
+				var source, target *os.File
+				source, err = os.Open(from)
+				if err == nil {
+					target, err = os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+					if err == nil {
+						_, err = io.Copy(target, source)
+						closeErr := target.Close()
+						if err == nil {
+							err = closeErr
+						}
+					}
+					source.Close()
+				}
+			}
+			if err != nil {
+				s.Close()
+				os.Remove(s.Path)
+				os.RemoveAll(RawDir(s.Path))
+				return nil, nil, err
+			}
+		}
+	}
 	s.Close()
 	return Open(path)
 }

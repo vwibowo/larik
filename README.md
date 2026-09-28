@@ -113,7 +113,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 | `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
 | `/routing [role=provider/model]` | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
-| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config verbose=true` sets one without the screen |
+| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, token saver, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config token_saver=true` enables filtering |
 | `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
@@ -193,6 +193,8 @@ You can also set it explicitly:
 ## Sandbox
 
 `bash` commands run in the operating system's sandbox: Seatbelt (`sandbox-exec`) on macOS, and [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux when installed.
+
+On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik has no Windows sandbox, so shell commands ask for approval.
 
 **Inside the sandbox, a command:**
 - **Can** read everything.
@@ -311,6 +313,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
+- `token_saver`: opt-in command-output filtering (`/config token_saver=true`). Recognized Git, search/listing, Go, Cargo, Node package-manager, and pytest output is shortened before entering model context. Unrecognized output and failures pass through. A `bash` call can set `raw_output: true`; `raw_output` retrieves the exact captured stdout/stderr by tool-call ID without rerunning the command. Raw output stays in private session files. The displayed byte savings are estimates for command output; use `/cost` to inspect actual session token usage and cost.
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
 - `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
 - `roles`, `fallbacks`, `budget` ("Model routing" and "Session budget" in `/config`): see [Mixing cheap and strong models](#mixing-cheap-and-strong-models).
@@ -527,5 +530,7 @@ go test ./...
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
 The website in `website/` is generated from this README and `docs/`. `cd website && go run . -serve :8080` builds and serves it, rebuilding on every page load; `go run .` writes the static site to `website/dist/`. The build fails on any broken link.
+
+To prepare the next GitHub release locally, see the [release steps](docs/contributing-guide.md#prepare-a-github-release). The packaging script checks tests and website links, builds cross-platform archives, and writes SHA-256 checksums; tagging, pushing, and publishing remain manual.
 
 **Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions.

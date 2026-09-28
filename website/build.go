@@ -34,6 +34,16 @@ type Site struct {
 	Downloads   []Download `json:"downloads"`
 }
 
+// DownloadsAvailable reports whether at least one platform has a live URL.
+func (s Site) DownloadsAvailable() bool {
+	for _, d := range s.Downloads {
+		if d.URL != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type Page struct {
 	Kind    string // landing, doc, download, changelog, notfound
 	Section string // Guide or Internals, for docs

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"larik/internal/llm"
@@ -50,6 +51,9 @@ type Env struct {
 
 	// Sandbox, if set, confines bash commands (unless a call opts out).
 	Sandbox Sandbox
+	// RawOutputDir is a private directory beside the session transcript.
+	RawOutputDir string
+	TokenSaver   *atomic.Bool
 
 	mu    sync.Mutex
 	reads map[string]time.Time // path -> mtime when last read
@@ -189,7 +193,7 @@ func (r *Registry) With(ts ...Tool) *Registry {
 }
 
 // Builtin returns the built-in tools.
-func Builtin() []Tool { return []Tool{Read{}, Write{}, Edit{}, Bash{}, Grep{}, Glob{}} }
+func Builtin() []Tool { return []Tool{Read{}, Write{}, Edit{}, Bash{}, RawOutput{}, Grep{}, Glob{}} }
 
 // Default returns a registry of the built-in tools.
 func Default() *Registry { return NewRegistry(Builtin()...) }

@@ -128,6 +128,12 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.AutoCompact = &on
 			m.agent.SetAutoCompact(on)
 		}),
+	toggle("token_saver", "Token saver", "behavior",
+		(*config.Config).TokenSaverOn,
+		func(m *model, on bool) {
+			m.opts.Config.TokenSaver = &on
+			m.agent.SetTokenSaver(on)
+		}),
 	{
 		key: "notifications", title: "Notifications", section: "behavior", kind: kindChoice,
 		choices: []settingChoice{

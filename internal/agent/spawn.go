@@ -80,6 +80,9 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	}
 	child := New(opts)
 	child.parent = a
+	child.tokenSaver = a.tokenSaver
+	child.env.TokenSaver = a.tokenSaver
+	child.env.RawOutputDir = a.env.RawOutputDir
 	return child
 }
 

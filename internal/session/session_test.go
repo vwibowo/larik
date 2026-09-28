@@ -177,6 +177,37 @@ func TestFork(t *testing.T) {
 	}
 }
 
+func TestForkCarriesOnlyKeptRawOutput(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"first", "second"} {
+		s.AppendMessage(text(llm.RoleUser, "prompt "+id), nil)
+		s.AppendMessage(llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: id, Name: "bash"}}}, nil)
+		s.AppendMessage(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: id, Name: "bash", Content: "short"}}}, nil)
+		if err := os.MkdirAll(RawDir(s.Path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(RawPath(s.Path, id), []byte("exact "+id), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fork, _, err := Fork(dir, s.Path, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fork.Close()
+	if data, err := os.ReadFile(RawPath(fork.Path, "first")); err != nil || string(data) != "exact first" {
+		t.Fatalf("kept raw: %q %v", data, err)
+	}
+	if _, err := os.Stat(RawPath(fork.Path, "second")); !os.IsNotExist(err) {
+		t.Fatalf("discarded raw copied: %v", err)
+	}
+}
+
 func TestUsageByModel(t *testing.T) {
 	s, err := Create(t.TempDir(), Meta{Model: "big"})
 	if err != nil {

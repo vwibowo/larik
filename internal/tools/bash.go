@@ -6,15 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"larik/internal/llm"
 	"larik/internal/pathpolicy"
+	"larik/internal/procgroup"
+	"larik/internal/session"
 )
 
 const (
@@ -37,21 +41,41 @@ func (Bash) Spec() llm.ToolSpec {
 			"command":{"type":"string"},
 			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"},
 			"checkpoint_paths":{"type":"array","items":{"type":"string"},"description":"Project files to snapshot before running the command for /undo"},
-			"sandbox":{"type":"boolean","description":"Set false to run outside the sandbox; requires user approval"}},
+			"sandbox":{"type":"boolean","description":"Set false to run outside the sandbox; requires user approval"},
+			"raw_output":{"type":"boolean","description":"Bypass token-saver filtering for this call"}},
 			"required":["command"]}`),
 	}
 }
 
-// lockedBuffer lets stdout and stderr share one buffer safely.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+// lockedWriter lets stdout and stderr share one output stream safely.
+type lockedWriter struct {
+	mu       sync.Mutex
+	w        io.Writer
+	fallback io.Writer
+	err      error
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) {
+func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.b.Write(p)
+	if l.err != nil {
+		if l.fallback != nil {
+			_, _ = l.fallback.Write(p)
+		}
+		return len(p), nil
+	}
+	n, err := l.w.Write(p)
+	if err != nil || n != len(p) {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		l.err = err
+		if l.fallback != nil {
+			_, _ = l.fallback.Write(p[n:])
+		}
+		return len(p), nil
+	}
+	return n, nil
 }
 
 func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
@@ -60,6 +84,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		Timeout         int      `json:"timeout"`
 		Sandbox         *bool    `json:"sandbox"`
 		CheckpointPaths []string `json:"checkpoint_paths"`
+		RawOutput       bool     `json:"raw_output"`
 	}](input)
 	if err != nil {
 		return errorf("%v", err)
@@ -96,10 +121,31 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		cmd.Dir = env.Cwd
 	}
 	// Own process group so cancellation kills children too.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var out lockedBuffer
+	procgroup.Configure(cmd)
+	var buffer bytes.Buffer
+	var rawFile *os.File
+	var captureErr error
+	callID, _ := ctx.Value(callIDKey{}).(string)
+	if env.TokenSaver != nil && env.TokenSaver.Load() && env.RawOutputDir != "" && callID != "" {
+		if err := os.MkdirAll(env.RawOutputDir, 0o700); err != nil {
+			captureErr = err
+		} else if err := os.Chmod(env.RawOutputDir, 0o700); err != nil {
+			captureErr = err
+		} else {
+			rawFile, captureErr = os.OpenFile(filepath.Join(env.RawOutputDir, session.RawName(callID)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+	}
+	var outputWriter io.Writer = &buffer
+	if rawFile != nil {
+		outputWriter = rawFile
+	}
+	out := lockedWriter{w: outputWriter, fallback: &buffer}
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
+		if rawFile != nil {
+			rawFile.Close()
+			os.Remove(rawFile.Name())
+		}
 		return errorf("%v", err)
 	}
 	done := make(chan error, 1)
@@ -109,12 +155,47 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	select {
 	case runErr = <-done:
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = procgroup.Kill(cmd)
 		<-done
 		runErr = ctx.Err()
 	}
+	if out.err != nil && captureErr == nil {
+		captureErr = out.err
+	}
 
-	output := Truncate(out.b.String(), MaxOutputBytes)
+	if rawFile != nil {
+		if err := rawFile.Close(); err != nil {
+			captureErr = err
+		}
+	}
+	raw := buffer.String()
+	largeRaw := false
+	if rawFile != nil {
+		var err error
+		raw, largeRaw, err = rawPreview(rawFile.Name(), callID)
+		if err != nil && captureErr == nil {
+			captureErr = err
+		}
+		if err != nil {
+			raw = ""
+		}
+		raw += buffer.String()
+	}
+	output := Truncate(raw, MaxOutputBytes)
+	if largeRaw && captureErr == nil {
+		output = raw
+	}
+	if captureErr != nil {
+		output += "\n[token saver unavailable; command output was not filtered and raw capture may be incomplete]"
+	}
+	if rawFile != nil && captureErr == nil && !largeRaw && !in.RawOutput && runErr == nil && len(raw) > 0 {
+		if filtered, ok := filterCommandOutput(in.Command, raw); ok {
+			marker := fmt.Sprintf("\n[token saver: %d -> %d bytes of command output (estimate); exact output: raw_output tool_call_id=%s]", len(raw), len(filtered), callID)
+			if len(filtered)+len(marker) < len(output) {
+				output = filtered + marker
+			}
+		}
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case errors.Is(runErr, context.DeadlineExceeded):
@@ -135,6 +216,46 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		output = "(no output)"
 	}
 	return Result{Content: output}
+}
+
+func rawPreview(path, callID string) (string, bool, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", false, err
+	}
+	if fi.Size() <= 4*1024*1024 {
+		data, err := os.ReadFile(path)
+		return string(data), false, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	prefix := make([]byte, 19_000)
+	n, err := io.ReadFull(f, prefix)
+	if err != nil {
+		return "", false, err
+	}
+	suffix := make([]byte, 9_000)
+	if _, err := f.Seek(-int64(len(suffix)), io.SeekEnd); err != nil {
+		return "", false, err
+	}
+	m, err := io.ReadFull(f, suffix)
+	if err != nil {
+		return "", false, err
+	}
+	if bytes.IndexByte(prefix[:n], 0) >= 0 || bytes.IndexByte(suffix[:m], 0) >= 0 {
+		return fmt.Sprintf("[binary command output: %d bytes; use raw_output tool_call_id=%s for exact bytes]", fi.Size(), callID), true, nil
+	}
+	head, tail := string(prefix[:n]), string(suffix[:m])
+	for !utf8.ValidString(head) && len(head) > 0 {
+		head = head[:len(head)-1]
+	}
+	for !utf8.ValidString(tail) && len(tail) > 0 {
+		tail = tail[1:]
+	}
+	return fmt.Sprintf("%s\n\n... [%d bytes truncated] ...\n\n%s", head, fi.Size()-int64(n+m), tail), true, nil
 }
 
 // sandboxMarkers are error texts typical of a denied write or network call.

@@ -55,6 +55,7 @@ classDiagram
 | `read` | tools | yes | Line-numbered; records the file's mtime; warms up the language server |
 | `write`, `edit` | tools | no | Confined to the project, with protected paths and symlinks rejected; refuse stale overwrites; require an undo snapshot; append LSP diagnostics |
 | `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel; optional `checkpoint_paths` snapshots named project files for `/undo` |
+| `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics |
@@ -63,6 +64,8 @@ classDiagram
 | `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
 
 Tool output sent to the model is capped (`tools.MaxOutputBytes`, about 30 KB); `Truncate` keeps the head and the tail, since errors usually appear at the end.
+
+`token_saver` is off by default and can be enabled in personal settings or `/config`. It filters recognized successful bash output only after execution. Unknown formats, shell pipelines, full patches, failures, and timeouts keep their original output. Exact stdout/stderr is stored in a private per-session sidecar (mode `0700` directory, `0600` files), including across resume and forks. Use `raw_output` with `tool_call_id`, `offset` (zero-based bytes), and `limit` (up to 20,000 bytes) to inspect it. A bash call's `raw_output: true` bypasses filtering. Byte counts in filtered output are estimates of the reduction in command output sent to the model; provider usage remains the source for session token and cost totals.
 
 ## Env: the shared state tools run in
 

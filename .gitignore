@@ -2,3 +2,4 @@
 .larik/settings.local.json
 /graphify-out/
 /website/dist/
+/dist/

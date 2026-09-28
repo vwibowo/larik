@@ -463,8 +463,18 @@ func TestUISettings(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, _ := Load(cwd)
-	if !cfg.AutoCompactOn() || cfg.VerboseOn() || !cfg.TipsOn() {
+	if !cfg.AutoCompactOn() || cfg.VerboseOn() || !cfg.TipsOn() || cfg.TokenSaverOn() {
 		t.Fatal("defaults: auto-compact on, verbose off, tips on")
+	}
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"token_saver":true}`)
+	if shared, err := Load(cwd); err != nil || shared.TokenSaverOn() {
+		t.Fatalf("shared config enabled opt-in filter: %v %v", shared, err)
+	}
+	if err := cfg.SetUserSetting("token_saver", true); err != nil {
+		t.Fatal(err)
+	}
+	if personal, err := Load(cwd); err != nil || !personal.TokenSaverOn() {
+		t.Fatalf("personal opt-in lost: %v %v", personal, err)
 	}
 	if err := cfg.SetUserSetting("auto_compact", false); err != nil {
 		t.Fatal(err)

@@ -19,9 +19,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"larik/internal/filelock"
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/lsp"
@@ -57,6 +57,8 @@ type Config struct {
 	// AutoCompact summarizes the conversation when the context is nearly
 	// full. Nil means on.
 	AutoCompact *bool `json:"auto_compact,omitempty"`
+	// TokenSaver filters recognized bash output before it enters model context.
+	TokenSaver *bool `json:"token_saver,omitempty"`
 	// Verbose shows tool output and thinking in full in the TUI.
 	Verbose *bool `json:"verbose,omitempty"`
 	// Notifications alerts an unfocused terminal when larik needs you:
@@ -315,6 +317,9 @@ func (c *Config) merge(path string, trusted bool) error {
 			*b.dst = *b.src
 		}
 	}
+	if trusted && o.TokenSaver != nil {
+		c.TokenSaver = o.TokenSaver
+	}
 	for k, v := range o.Roles {
 		if !trusted {
 			continue
@@ -438,10 +443,10 @@ func updateJSONIf(path string, perm os.FileMode, create bool, edit func(raw map[
 	if err := lock.Chmod(0o600); err != nil {
 		return false, fmt.Errorf("secure settings lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := filelock.Lock(lock, false); err != nil {
 		return false, fmt.Errorf("lock settings: %w", err)
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer filelock.Unlock(lock)
 	raw := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &raw); err != nil {
@@ -549,6 +554,9 @@ func (c *Config) CheckpointRetention() time.Duration {
 
 // AutoCompactOn reports whether auto-compaction is enabled (default on).
 func (c *Config) AutoCompactOn() bool { return on(c.AutoCompact, true) }
+
+// TokenSaverOn reports whether command output filtering is enabled (default off).
+func (c *Config) TokenSaverOn() bool { return on(c.TokenSaver, false) }
 
 // VerboseOn reports whether verbose output is enabled (default off).
 func (c *Config) VerboseOn() bool { return on(c.Verbose, false) }

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"larik/internal/checkpoint"
@@ -63,6 +64,7 @@ type Options struct {
 	// NoAutoCompact turns off summarizing the conversation when the
 	// context is nearly full; /compact still works.
 	NoAutoCompact bool
+	TokenSaver    bool
 
 	// Language, if set, is what the model replies in. It becomes part of
 	// the system prompt.
@@ -84,8 +86,9 @@ type Options struct {
 }
 
 type Agent struct {
-	opts Options
-	env  *tools.Env
+	opts       Options
+	env        *tools.Env
+	tokenSaver *atomic.Bool
 
 	mu          sync.Mutex
 	messages    []llm.Message
@@ -123,6 +126,12 @@ func New(opts Options) *Agent {
 		opts.MaxTurns = 200
 	}
 	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup", baseSystem: opts.System}
+	a.tokenSaver = &atomic.Bool{}
+	a.tokenSaver.Store(opts.TokenSaver)
+	a.env.TokenSaver = a.tokenSaver
+	if opts.Session != nil {
+		a.env.RawOutputDir = session.RawDir(opts.Session.Path)
+	}
 	a.opts.System = WithLanguage(opts.System, opts.Language)
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = opts.Checkpoints.Capture
@@ -163,6 +172,11 @@ func (a *Agent) SessionID() string {
 	}
 	return a.opts.Session.ID
 }
+
+// SetTokenSaver applies a settings change to subsequent tool calls, including children.
+func (a *Agent) SetTokenSaver(on bool) { a.tokenSaver.Store(on) }
+
+func (a *Agent) TokenSaverOn() bool { return a.tokenSaver.Load() }
 
 // SetModel switches provider/model for subsequent turns. Provider-bound
 // blocks (thinking, reasoning items) are filtered out automatically.

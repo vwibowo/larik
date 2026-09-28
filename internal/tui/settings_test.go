@@ -127,6 +127,14 @@ func TestConfigPanelToggleAndText(t *testing.T) {
 
 func TestConfigKeyValue(t *testing.T) {
 	m := testModel(t)
+	m.command("/config token_saver=true")
+	if !m.opts.Config.TokenSaverOn() || !m.agent.TokenSaverOn() || !strings.Contains(savedConfig(t, m), `"token_saver": true`) {
+		t.Fatal("token saver should apply immediately and save")
+	}
+	m.command("/config token_saver=false")
+	if m.agent.TokenSaverOn() {
+		t.Fatal("token saver should turn off immediately")
+	}
 	m.command("/config auto_compact=false")
 	if c := m.opts.Config; c.AutoCompactOn() || !strings.Contains(savedConfig(t, m), `"auto_compact": false`) {
 		t.Fatalf("auto_compact=false should apply and save: %s", savedConfig(t, m))

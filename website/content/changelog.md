@@ -9,10 +9,12 @@
 - **Cheap and strong model routing.** The main agent plans and reviews on a strong model while `worker` and `explore` subagents run on cheaper or local ones, across providers. `/routing` offers Balanced, Cheapest and Local-first presets, per-task tiers, fallbacks on rate limits and outages, and a session budget. See [Model routing](/docs/model-routing/).
 - **`larik bench`** runs small self-checking coding tasks against several models and reports pass/fail, cost and time, so you can check a cheap model before trusting it with a role.
 - Routing shows what it saved, and cheap subagents can use a minimal prompt (`role_options.<role>.context: "minimal"`).
+- **Token saver** filters recognized successful shell output before it enters model context. `/config token_saver=true` enables it; `raw_output` retrieves the exact private session copy without rerunning a command. See [Tools and permissions](/docs/internals/tools-and-permissions/).
 
 ### Fixed
 
 - Sandboxed `bash` can no longer write to the machine-wide `/tmp`. Each sandbox gets its own private scratch directory, exposed as `$TMPDIR`, so `mktemp` and build tools still work. See [Sandbox](/docs/sandbox/).
+- Cross-platform process and file locking now allow the Windows binary to build. Windows shell commands require Bash and approval because Larik has no Windows sandbox.
 
 ## v0.1.0
 
