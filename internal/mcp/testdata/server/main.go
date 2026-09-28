@@ -1,5 +1,6 @@
 // Command server is a tiny MCP server used by the mcp package tests.
-// It serves over stdio by default, or streamable HTTP with -http addr.
+// It serves over stdio by default, streamable HTTP with -http addr, or the
+// older SSE transport with -sse addr.
 package main
 
 import (
@@ -16,9 +17,13 @@ import (
 
 func main() {
 	httpAddr := flag.String("http", "", "serve streamable HTTP on this address")
+	sseAddr := flag.String("sse", "", "serve the SSE transport on this address")
 	flag.Parse()
 	fmt.Fprintln(os.Stderr, "test server starting; greeting="+os.Getenv("GREETING")+" args="+strings.Join(flag.Args(), ","))
 	s := NewServer()
+	if *sseAddr != "" {
+		log.Fatal(http.ListenAndServe(*sseAddr, mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return s }, nil)))
+	}
 	if *httpAddr != "" {
 		log.Fatal(http.ListenAndServe(*httpAddr, mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, nil)))
 	}

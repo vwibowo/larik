@@ -3,7 +3,21 @@
 // package imports a vendor SDK.
 package llm
 
-import "encoding/json"
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+)
+
+// NewCallID makes an id for a tool call whose provider sent none. It must
+// be unique across the whole session, not just one response: raw output
+// files are named by it, and a provider switched to later (Anthropic)
+// rejects repeated tool_use ids.
+func NewCallID(prefix string) string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return prefix + hex.EncodeToString(b)
+}
 
 type Role string
 

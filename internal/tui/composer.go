@@ -461,10 +461,8 @@ func (m *model) shellDone(msg shellDoneMsg) tea.Cmd {
 	if !strings.HasPrefix(out, "denied by rule") { // a denied command isn't queued
 		cmds = append(cmds, m.println(m.st.dim.Render("  output will be sent with your next prompt")))
 	}
-	if len(m.queue) > 0 && !m.running {
-		next := m.queue[0]
-		m.queue = m.queue[1:]
-		cmds = append(cmds, m.submit(next))
+	if next := m.nextQueued(); next != nil {
+		cmds = append(cmds, next)
 	}
 	return tea.Sequence(cmds...)
 }
@@ -483,14 +481,13 @@ func (m *model) openEditor() tea.Cmd {
 		os.Remove(name)
 		return m.println(m.st.err.Render("couldn't open an editor: " + err.Error()))
 	}
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
+	args := strings.Fields(os.Getenv("VISUAL")) // e.g. "code --wait"
+	if len(args) == 0 {
+		args = strings.Fields(os.Getenv("EDITOR"))
 	}
-	if editor == "" {
-		editor = "vi"
+	if len(args) == 0 {
+		args = []string{"vi"}
 	}
-	args := strings.Fields(editor) // e.g. "code --wait"
 	cmd := exec.Command(args[0], append(args[1:], name)...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		data, rerr := os.ReadFile(name)

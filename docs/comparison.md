@@ -41,7 +41,7 @@ Most harnesses benefit from caching; Larik treats cache invalidation as a bug. S
 
 ### 3. The sandbox removes prompts instead of adding them
 
-In many harnesses, safety means asking before every command. Larik runs bash in the OS sandbox by default and **auto-allows sandboxed commands**; only a command that explicitly opts out (`"sandbox": false`) asks. The sandbox also protects `.git/hooks`, `.git/config`, `.larik/`, `.claude/` and `.mcp.json` inside the writable project, closing the "plant a hook, escape later" path. Codex CLI is the closest in spirit (sandbox-first); Larik combines that with Claude Code–style rules, modes and hooks. See [security](security.md#the-os-sandbox).
+In many harnesses, safety means asking before every command. Larik runs bash in the OS sandbox by default and **auto-allows sandboxed commands**; only a command that explicitly opts out (`"sandbox": false`) asks. The sandbox also protects `.git/hooks`, `.git/config` (and the git files that could point at another config), `.larik/`, `.claude/` and `.mcp.json` inside the writable project, closing the "plant a hook, escape later" path. Codex CLI is the closest in spirit (sandbox-first); Larik combines that with Claude Code–style rules, modes and hooks. See [security](security.md#the-os-sandbox).
 
 ### 4. One event stream, many front ends
 

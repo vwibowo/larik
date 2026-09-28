@@ -97,6 +97,11 @@ func TestTool(t *testing.T) {
 	if r := tool.Run(context.Background(), nil, json.RawMessage(`{"name":"missing"}`)); !r.IsError {
 		t.Error("missing skill should error")
 	}
+	mk(t, root, "deploy", "---\nname: deploy\ndescription: d\ndisable-model-invocation: true\n---\nShip it.\n")
+	tool = Tool{Set: Discover([]Root{{root, "user"}})}
+	if r := tool.Run(context.Background(), nil, json.RawMessage(`{"name":"deploy"}`)); !r.IsError || strings.Contains(r.Content, "Ship it") {
+		t.Errorf("a disable-model-invocation skill must not load through the tool: %+v", r)
+	}
 }
 
 func TestReload(t *testing.T) {

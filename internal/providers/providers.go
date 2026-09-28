@@ -145,9 +145,9 @@ func build(cfg *config.Config, name string) (llm.Provider, error) {
 	}
 	switch kind {
 	case anthropic.Name:
-		return anthropic.New(key, pc.BaseURL), nil
+		return anthropic.New(name, key, pc.BaseURL), nil
 	case openai.Name:
-		return openai.New(key, pc.BaseURL), nil
+		return openai.New(name, key, pc.BaseURL), nil
 	case gemini.Name:
 		if key == "" {
 			key = geminiKey()
@@ -173,7 +173,9 @@ func build(cfg *config.Config, name string) (llm.Provider, error) {
 		if baseURL == "" {
 			baseURL = openaicompat.Presets[ollama.Name].BaseURL
 		}
-		return ollama.New(name, baseURL, pc.ContextLength), nil
+		// Rate limits and 5xx from a busy server are retried, as for the
+		// other providers.
+		return llm.WithRetry(ollama.New(name, baseURL, pc.ContextLength), 3), nil
 	}
 	preset, isPreset := openaicompat.Presets[kind]
 	if kind != "openai-compatible" && !isPreset {

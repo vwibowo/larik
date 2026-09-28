@@ -24,6 +24,10 @@ import (
 const (
 	defaultBashTimeout = 2 * time.Minute
 	maxBashTimeout     = 10 * time.Minute
+	// PipeWaitDelay is how long a finished (or killed) command's output
+	// pipes may stay open, held by a process it left running, before
+	// Larik stops reading them.
+	PipeWaitDelay = 2 * time.Second
 )
 
 // Bash runs a shell command in the working directory.
@@ -141,6 +145,9 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	}
 	out := lockedWriter{w: outputWriter, fallback: &buffer}
 	cmd.Stdout, cmd.Stderr = &out, &out
+	// A process left running in the background ("server &", a daemon)
+	// keeps the output pipe open; don't wait for it past the command.
+	cmd.WaitDelay = PipeWaitDelay
 	if err := cmd.Start(); err != nil {
 		if rawFile != nil {
 			rawFile.Close()
@@ -158,6 +165,10 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		_ = procgroup.Kill(cmd)
 		<-done
 		runErr = ctx.Err()
+	}
+	leftRunning := errors.Is(runErr, exec.ErrWaitDelay)
+	if leftRunning {
+		runErr = nil // the command itself succeeded
 	}
 	if out.err != nil && captureErr == nil {
 		captureErr = out.err
@@ -195,6 +206,9 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 				output = filtered + marker
 			}
 		}
+	}
+	if leftRunning {
+		output += "\n[a process the command started is still running in the background; its later output isn't captured]"
 	}
 	var exitErr *exec.ExitError
 	switch {

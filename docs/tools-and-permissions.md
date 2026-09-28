@@ -159,6 +159,10 @@ Rules are `tool` or `tool(pattern)`. The pattern matches a *subject* taken from 
 | `web_fetch` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
 | `mcp__server__tool` | none | whole-tool or whole-server | `mcp__github` |
 
+Bash patterns are prefixes, so Larik checks every command in a command line. An allow rule covers a chained or piped command (`;`, `&&`, `||`, `|`, `&`, subshells) only when each command in it matches an allow rule. A command substitution (`$(…)`, backticks) or a redirection to a file always asks; `2>&1` and redirections to `/dev/null` don't count. A deny rule applies to each command too, so `bash(rm*)` also stops `true; rm -rf x` and `echo $(rm x)`. Quoting isn't parsed: an operator inside quotes splits the line as well, which only makes Larik ask. The bare rule `bash` still allows everything. Deny rules match the command as written, so `/bin/rm` or `command rm` isn't `rm*`; rely on the sandbox, not deny patterns, to contain commands.
+
+`read(...)` deny rules apply to the `read` tool and to `@` mentions. They don't reach `grep` or `glob` searches over a directory that contains the file, or sandboxed `bash` (the sandbox can read everything, and `cat`, `head` and `tail` are auto-allowed outside it). Treat them as a guard against the model reading a file by accident, not as a boundary; keep secrets out of the project.
+
 "Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
 
 `Checker.WithCwd` gives a worktree subagent a checker that shares the parent's mode and rules (one `state` pointer) but resolves paths against the worktree. Switching mode with shift+tab applies to running subagents too.

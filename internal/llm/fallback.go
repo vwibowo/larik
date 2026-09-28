@@ -107,13 +107,18 @@ func (f *fallback) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 			if failure == nil {
 				return
 			}
-			if started || i+1 == len(f.chain) || !ShouldFallBack(failure) || ctx.Err() != nil {
+			next := -1 // the candidate that will actually be tried next
+			for j := i + 1; j < len(f.chain) && next < 0; j++ {
+				if !f.resting(j) {
+					next = j
+				}
+			}
+			if started || next < 0 || !ShouldFallBack(failure) || ctx.Err() != nil {
 				yield(StreamEvent{}, failure)
 				return
 			}
 			f.rest(i, failure)
-			next := f.chain[i+1]
-			if !yield(StreamEvent{Type: EventNotice, Text: fmt.Sprintf("%s failed (%s); switched to %s", c, briefError(failure), next)}, nil) {
+			if !yield(StreamEvent{Type: EventNotice, Text: fmt.Sprintf("%s failed (%s); switched to %s", c, briefError(failure), f.chain[next])}, nil) {
 				return
 			}
 		}

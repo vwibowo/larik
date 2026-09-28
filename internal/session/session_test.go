@@ -225,3 +225,44 @@ func TestUsageByModel(t *testing.T) {
 		t.Errorf("by model = %+v, total %+v", st.ByModel, st.Usage)
 	}
 }
+
+func TestTornLastLineDoesNotEatNextEntry(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Cwd: "/w", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AppendMessage(llm.UserText("first"), nil)
+	s.Close()
+	f, _ := os.OpenFile(s.Path, os.O_WRONLY|os.O_APPEND, 0o600)
+	f.WriteString(`{"type":"message","mess`) // a crash mid-write
+	f.Close()
+
+	s2, st, err := Open(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Messages) != 1 {
+		t.Fatalf("messages before the torn line: %d", len(st.Messages))
+	}
+	s2.AppendMessage(llm.UserText("second"), nil)
+	s2.Close()
+	st, err = Load(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(st.Messages); n != 1 || !strings.Contains(st.Messages[0].Text(), "second") {
+		t.Fatalf("the entry after a torn line must survive: %+v", st.Messages)
+	}
+}
+
+func TestGeneratedMessagesAreNotPrompts(t *testing.T) {
+	msgs := []llm.Message{
+		text(llm.RoleUser, "fix the bug"),
+		text(llm.RoleUser, "<task-notification id=\"bg1\" agent=\"a\" status=\"done\">\nok\n</task-notification>"),
+		text(llm.RoleUser, "<hook-feedback source=\"Stop\">\nrun the tests\n</hook-feedback>"),
+		text(llm.RoleUser, "<system-note>\nfiles changed\n</system-note>\n\nnext step"),
+	}
+	if got := Prompts(msgs); !slices.Equal(got, []int{0, 3}) {
+		t.Fatalf("prompts = %v, want [0 3]", got)
+	}
+}

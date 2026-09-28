@@ -8,7 +8,7 @@ A coding agent runs commands chosen by a model that reads untrusted text (reposi
 |---|---|---|
 | Model runs a destructive or exfiltrating command | OS sandbox: writes confined, network off | Permission prompt for anything unsandboxed; deny rules |
 | Prompt injection in files or web pages | System prompt marks tool output as data; web content marked untrusted | Every side effect still goes through permissions and the sandbox |
-| A cloned repo ships malicious config | Shared config can only tighten; hooks and MCP servers need approval pinned to a hash | Sandbox keeps `.larik/`, `.claude/`, `.mcp.json`, `.git/hooks`, `.git/config` read-only |
+| A cloned repo ships malicious config | Shared config can only tighten; hooks and MCP servers need approval pinned to a hash | Sandbox keeps `.larik/`, `.claude/`, `.mcp.json`, `.git/hooks`, `.git/config` (and `commondir`, `modules/`, `worktrees/`, …) read-only; `.git` can't be moved |
 | Sandboxed command plants code that runs later outside the sandbox | Protected paths inside the project stay read-only | — |
 | Model overwrites a file it never saw, or one you changed | Read-before-write freshness check | `/undo` checkpoints |
 | `web_fetch` used for SSRF (cloud metadata, redirects) | Resolved-IP blocklist; cross-host redirects reported, not followed | Per-domain permission |
@@ -64,11 +64,15 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 | | Allowed | Denied |
 |---|---|---|
 | Read | everything | — |
-| Write | project root (git root), the sandbox's own private temp directory, build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root), personal `writable` paths | everything else -- notably the literal `/tmp`, and `.git/hooks`, `.git/config`, `.larik`, `.claude`, `.mcp.json` inside the project |
+| Write | project root (git root), the sandbox's own private temp directory, build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root), personal `writable` paths | everything else -- notably the literal `/tmp`, and inside the project `.larik`, `.claude`, `.mcp.json` and the git dir entries `hooks`, `config`, `config.worktree`, `commondir`, `info`, `modules`, `worktrees` (`.git` itself can't be moved or replaced) |
 | Network | localhost (bind and connect) | everything else, unless personal config sets `network: true` |
 | macOS services | a short list of system lookups CLI tools need | LaunchServices and Apple Events, so `open` and `osascript` can't launch something outside |
 
 The protected paths matter because the project itself is writable. Without them, a sandboxed command could add a git hook, a hook in `.larik/settings.json`, or an MCP server in `.mcp.json`, and that code would later run **outside** the sandbox. In Seatbelt the deny rules are emitted after the allow rules, because later rules win.
+
+The git entries are there because git trusts its directory completely: `commondir`, a per-worktree `config.worktree`, or a `.git` file saying `gitdir: <elsewhere>` would each point git at a config or hooks the command wrote somewhere writable, and `core.fsmonitor` or `core.hooksPath` there runs on the next `git status` outside the sandbox. Objects, refs and the index stay writable, so sandboxed commits work. `.git` itself is pinned in place: Seatbelt denies writes to that exact path, and bubblewrap binds it onto itself, since a mount point can't be renamed or removed. On Linux, bubblewrap can only re-bind paths that exist, so a protected path that doesn't exist yet (for example `.git` in a project that isn't a repository) isn't enforced there.
+
+**Known gap: build caches.** The writable build caches (`~/go/pkg/mod`, `GOCACHE`, `~/.cargo/registry`, `~/.npm`, `~/.cache`) are shared with builds you run outside the sandbox. A sandboxed command can change a cached dependency's source (a Cargo `build.rs`, a Go module) or a tool environment kept under `~/.cache` (such as pre-commit's), and that code runs the next time an unsandboxed build uses it. They are writable because builds inside the sandbox need them. After letting the agent work on code you don't trust, clear those caches before building outside the sandbox.
 
 The `write` and `edit` tools enforce the project boundary separately with `os.Root`. They reject protected paths and symlink components, and a failed checkpoint stops the write.
 

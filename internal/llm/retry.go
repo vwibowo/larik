@@ -51,6 +51,25 @@ func (r *retrying) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 	}
 }
 
+// Unwrap returns the provider being retried.
+func (r *retrying) Unwrap() Provider { return r.Provider }
+
+// ContextWindow and SupportsTools pass through to the wrapped provider when
+// it is a ModelProber, so wrapping one in retries keeps its probes.
+func (r *retrying) ContextWindow(ctx context.Context, model string) int {
+	if p, ok := r.Provider.(ModelProber); ok {
+		return p.ContextWindow(ctx, model)
+	}
+	return 0
+}
+
+func (r *retrying) SupportsTools(ctx context.Context, model string) (supported, known bool) {
+	if p, ok := r.Provider.(ModelProber); ok {
+		return p.SupportsTools(ctx, model)
+	}
+	return false, false
+}
+
 func Retryable(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {

@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"larik/internal/pathpolicy"
 )
 
 // Config comes from settings files under "sandbox".
@@ -31,8 +33,12 @@ type Sandbox struct {
 	root      string
 	writable  []string
 	protected []string
-	network   bool
-	profile   string // Seatbelt profile
+	// pinned directories stay writable inside but can't be renamed,
+	// removed or replaced: the project's .git, which git trusts to be
+	// where the repository is.
+	pinned  []string
+	network bool
+	profile string // Seatbelt profile
 	// tmpDir is this sandbox's own private scratch directory: the only
 	// place outside root, gitDir and the persistent build caches that a
 	// sandboxed command may write to. It stands in for the system temp
@@ -47,7 +53,11 @@ type Sandbox struct {
 // the project is writable: changing them would let a sandboxed command
 // run code outside the sandbox later (git hooks, hooksPath, Larik hooks
 // and MCP servers).
-var protectedNames = []string{".git/hooks", ".git/config", ".larik", ".claude", ".mcp.json"}
+var protectedNames = []string{".larik", ".claude", ".mcp.json"}
+
+// gitProtected are the git dir entries sandboxed commands can't change;
+// see pathpolicy.GitProtected.
+var gitProtected = pathpolicy.GitProtected
 
 // New returns the sandbox for this machine, or nil when disabled or
 // unavailable; warning explains an unavailable sandbox.
@@ -81,6 +91,17 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	for _, name := range protectedNames {
 		s.protected = append(s.protected, filepath.Join(s.root, name))
 	}
+	gitDir := filepath.Join(s.root, ".git")
+	for _, name := range gitProtected {
+		s.protected = append(s.protected, filepath.Join(gitDir, name))
+	}
+	if fi, err := os.Lstat(gitDir); err == nil && fi.IsDir() {
+		s.pinned = []string{gitDir}
+	} else {
+		// A .git file (a worktree or submodule checkout) or none at all:
+		// keep it from being created or pointed elsewhere.
+		s.protected = append(s.protected, gitDir)
+	}
 	if s.kind == "seatbelt" {
 		s.profile = s.seatbeltProfile()
 	}
@@ -113,16 +134,44 @@ func (s *Sandbox) ForWorktree(dir, gitDir string) *Sandbox {
 		}
 	}
 	w.writable = uniq(w.writable)
-	w.protected = []string{filepath.Join(gitDir, "hooks"), filepath.Join(gitDir, "config")}
+	w.protected = nil
+	for _, name := range gitProtected {
+		if name != "worktrees" { // commits in the worktree write there
+			w.protected = append(w.protected, filepath.Join(gitDir, name))
+		}
+	}
+	// The worktree's own directory under gitDir/worktrees says where the
+	// common git dir is and may hold config; keep those.
+	if own := worktreeGitDir(w.root); own != "" {
+		w.protected = append(w.protected, filepath.Join(own, "commondir"), filepath.Join(own, "config.worktree"), filepath.Join(own, "gitdir"))
+	}
 	for _, name := range protectedNames {
 		w.protected = append(w.protected, filepath.Join(w.root, name))
 	}
 	// In a worktree .git is a file pointing at the repository; keep it.
 	w.protected = append(w.protected, filepath.Join(w.root, ".git"))
+	w.pinned = []string{gitDir}
 	if w.kind == "seatbelt" {
 		w.profile = w.seatbeltProfile()
 	}
 	return &w
+}
+
+// worktreeGitDir reads the "gitdir: …" line of a worktree's .git file.
+func worktreeGitDir(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return ""
+	}
+	p, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return ""
+	}
+	p = strings.TrimSpace(p)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	return real(p)
 }
 
 // defaultWritable is the persistent, per-user directories a sandboxed
@@ -290,6 +339,9 @@ func (s *Sandbox) seatbeltProfile() string {
 	for _, p := range s.protected {
 		b.WriteString("\n  (subpath " + sbQuote(p) + ")")
 	}
+	for _, p := range s.pinned {
+		b.WriteString("\n  (literal " + sbQuote(p) + ")")
+	}
 	b.WriteString(")\n")
 	b.WriteString(`(allow network-bind network-inbound (local ip "localhost:*"))
 (allow network-outbound (remote ip "localhost:*"))
@@ -306,6 +358,13 @@ func (s *Sandbox) seatbeltProfile() string {
 func (s *Sandbox) bwrapArgs(script, dir string) []string {
 	args := []string{"--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
 	for _, p := range s.writable {
+		if _, err := os.Stat(p); err == nil {
+			args = append(args, "--bind", p, p)
+		}
+	}
+	// A mount point can't be renamed or removed, so binding a pinned
+	// directory onto itself keeps it in place with its contents writable.
+	for _, p := range s.pinned {
 		if _, err := os.Stat(p); err == nil {
 			args = append(args, "--bind", p, p)
 		}

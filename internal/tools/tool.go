@@ -176,13 +176,20 @@ func schema(s string) json.RawMessage { return json.RawMessage(s) }
 type Registry struct {
 	list   []Tool
 	byName map[string]Tool
+	// specs are taken once, when the registry is built for a fresh
+	// context: tool descriptions are part of the cached prompt prefix, so
+	// a tool whose description depends on config (the task tool's model
+	// roles) must not change it mid-context.
+	specs []llm.ToolSpec
 }
 
 func NewRegistry(ts ...Tool) *Registry {
 	r := &Registry{byName: map[string]Tool{}}
 	for _, t := range ts {
+		spec := t.Spec()
 		r.list = append(r.list, t)
-		r.byName[t.Spec().Name] = t
+		r.specs = append(r.specs, spec)
+		r.byName[spec.Name] = t
 	}
 	return r
 }
@@ -200,12 +207,9 @@ func Default() *Registry { return NewRegistry(Builtin()...) }
 
 func (r *Registry) Get(name string) (Tool, bool) { t, ok := r.byName[name]; return t, ok }
 
+// Specs returns the tool specs as they were when the registry was built.
 func (r *Registry) Specs() []llm.ToolSpec {
-	out := make([]llm.ToolSpec, len(r.list))
-	for i, t := range r.list {
-		out[i] = t.Spec()
-	}
-	return out
+	return append([]llm.ToolSpec(nil), r.specs...)
 }
 
 // afterWrite appends diagnostics for a modified file to a tool result.

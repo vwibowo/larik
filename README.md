@@ -188,7 +188,7 @@ Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command,
 
 Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
 
-`write` and `edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git/hooks`, `.git/config`, `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
+`write` and `edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
 
 ## Web
 
@@ -233,7 +233,7 @@ On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik h
 
 - **Can** read everything.
 - **Can** write only to the project (the git root), its own private temp directory, and common build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root). The literal `/tmp`, shared by every program on the machine, is never writable.
-- **Can't** write to `.git/hooks`, `.git/config`, `.larik/`, `.claude/` or `.mcp.json`, even inside the project, because changing them would let a later command or hook escape the sandbox.
+- **Can't** write to `.git/hooks`, `.git/config`, the other git files that point git at a config or hooks elsewhere (`commondir`, `config.worktree`, `info/`, `modules/`, `worktrees/`), `.larik/`, `.claude/` or `.mcp.json`, even inside the project, and can't move or replace `.git` itself, because any of these would let a later command or hook escape the sandbox. Commits still work.
 - **Has no network access** except localhost, so tests that start local servers still work.
 - **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.
 
@@ -460,7 +460,7 @@ You are a meticulous code reviewer. ...
 **Worktree isolation:** inside a git repository, `task` accepts `isolation: "worktree"`, or an agent definition can set it. The subagent then works in its own git worktree on a new branch `larik/task-xxxxxx`, so parallel agents never overwrite each other's edits or yours.
 
 - **Where it runs:** the worktree is created under `~/.local/share/larik/worktrees/` from the current `HEAD` commit. Uncommitted changes in your checkout are not included. The subagent's working directory, path permissions and relative paths all point into the worktree.
-- **Confinement:** file writes outside the worktree ask for permission, as for any path outside the working directory. When the sandbox is on, `bash` may write only to the worktree and to the repository's `.git`, so commits work. `.git/hooks` and `.git/config` stay read-only.
+- **Confinement:** file writes outside the worktree ask for permission, as for any path outside the working directory. When the sandbox is on, `bash` may write only to the worktree and to the repository's `.git`, so commits work. `.git/hooks`, `.git/config` and the other git files that choose which code git runs stay read-only.
 - **Finishing:** when the subagent ends, leftover changes are committed on its branch.
   - If nothing changed, the worktree and branch are deleted.
   - Otherwise both are kept, and the result tells the main agent the branch name, the changed files, and how to review (`git diff base...branch`), merge and clean up. Nothing reaches your working tree until someone merges.

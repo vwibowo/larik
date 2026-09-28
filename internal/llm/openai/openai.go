@@ -30,7 +30,14 @@ type Provider struct {
 	noMaxTokens bool
 }
 
-func New(apiKey, baseURL string) *Provider {
+// New builds a Responses API provider. name is the configured provider
+// name ("openai" or a custom provider of this type); reasoning items are
+// replayed only to the same name, since another organization can't
+// decrypt them.
+func New(name, apiKey, baseURL string) *Provider {
+	if name == "" {
+		name = Name
+	}
 	var opts []option.RequestOption
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
@@ -38,7 +45,7 @@ func New(apiKey, baseURL string) *Provider {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &Provider{client: sdk.NewClient(opts...), name: Name}
+	return &Provider{client: sdk.NewClient(opts...), name: name}
 }
 
 // TokenFunc returns a bearer token and ChatGPT account id per request.

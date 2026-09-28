@@ -156,10 +156,23 @@ func (a *Agent) Restore(st *session.State) {
 	a.startSource = "resume"
 }
 
-func (a *Agent) Model() string              { return a.opts.Model }
-func (a *Agent) Provider() llm.Provider     { return a.opts.Provider }
+// Model and Provider can change (SetModel) while other goroutines read
+// them, e.g. the server answering a status request mid-turn.
+func (a *Agent) Model() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.opts.Model
+}
+
+func (a *Agent) Provider() llm.Provider {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.opts.Provider
+}
+
+func (a *Agent) ProviderName() string { return a.Provider().Name() }
+
 func (a *Agent) Cwd() string                { return a.opts.Cwd }
-func (a *Agent) ProviderName() string       { return a.opts.Provider.Name() }
 func (a *Agent) Perms() *permission.Checker { return a.opts.Perms }
 func (a *Agent) SessionPath() string {
 	if a.opts.Session == nil {
@@ -349,6 +362,7 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 		a.pending = nil
 	}
 	a.mu.Unlock()
+	a.answerDangling()
 	a.appendMessage(user, nil)
 
 	compactedThisTurn := false
@@ -382,16 +396,22 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 			}
 			msg, stop, err = a.stream(ctx, emit)
 		}
-		if ctx.Err() != nil {
-			return "interrupted"
-		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return "interrupted"
+			}
 			emit(Event{Kind: EvError, Text: err.Error()})
 			return "error"
 		}
 
+		// The reply is saved by now. If it called tools, answer every call
+		// even when interrupted (runTools reports each as interrupted), so
+		// the transcript never ends in an unanswered tool_use.
 		uses := msg.ToolUses()
 		if len(uses) == 0 {
+			if ctx.Err() != nil {
+				return "interrupted"
+			}
 			switch stop {
 			case llm.StopMaxTokens:
 				emit(Event{Kind: EvNotice, Text: "response hit the output token limit"})
@@ -515,13 +535,30 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 	return llm.Message{}, "", errors.New("stream ended without a final message")
 }
 
+// answerDangling adds "interrupted" results for tool calls the context
+// left unanswered (a session saved mid-turn, or by an older version), so
+// the next request is valid. It appends; the transcript isn't rewritten.
+func (a *Agent) answerDangling() {
+	var missing []llm.Block
+	a.mu.Lock()
+	if n := len(a.messages); n > 0 && a.messages[n-1].Role == llm.RoleAssistant {
+		for _, u := range a.messages[n-1].ToolUses() {
+			missing = append(missing, llm.Block{Type: llm.BlockToolResult, ID: u.ID, Name: u.Name, Content: "interrupted by user", IsError: true})
+		}
+	}
+	a.mu.Unlock()
+	if len(missing) > 0 {
+		a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: missing}, nil)
+	}
+}
+
 // keepPartial records text the user already saw before an interrupt so the
 // transcript matches what was displayed.
 func (a *Agent) keepPartial(text string) {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	a.appendMessage(llm.Message{Role: llm.RoleAssistant, Model: a.opts.Model, Blocks: []llm.Block{llm.TextBlock(text + "\n\n[interrupted by user]")}}, nil)
+	a.appendMessage(llm.Message{Role: llm.RoleAssistant, Model: a.Model(), Blocks: []llm.Block{llm.TextBlock(text + "\n\n[interrupted by user]")}}, nil)
 }
 
 // recordUsage adds a request's usage, priced for the model that served it.
@@ -560,11 +597,16 @@ func (a *Agent) needsCompaction() bool {
 
 // Compact summarizes the conversation into a single message ("simple
 // compaction": nothing from the old transcript is replayed afterwards).
-func (a *Agent) Compact(ctx context.Context) (string, error) {
+// emit, if set, gets the events along the way (usage, notices, hook
+// output) except EvCompacted, whose summary is returned.
+func (a *Agent) Compact(ctx context.Context, emit func(Event)) (string, error) {
 	var summary string
 	err := a.compactWith(ctx, func(e Event) {
-		if e.Kind == EvCompacted {
+		switch {
+		case e.Kind == EvCompacted:
 			summary = e.Summary
+		case emit != nil:
+			emit(e)
 		}
 	}, false, "manual")
 	return summary, err

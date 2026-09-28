@@ -22,11 +22,17 @@ const DefaultModel = "claude-opus-5"
 
 type Provider struct {
 	client sdk.Client
+	name   string
 }
 
-// New builds a provider. An empty apiKey lets the SDK resolve credentials
-// itself (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, `ant auth login` profiles).
-func New(apiKey, baseURL string) *Provider {
+// New builds a provider. name is the configured provider name ("anthropic"
+// or a custom provider of this type); thinking blocks are replayed only to
+// the same name. An empty apiKey lets the SDK resolve credentials itself
+// (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, `ant auth login` profiles).
+func New(name, apiKey, baseURL string) *Provider {
+	if name == "" {
+		name = Name
+	}
 	var opts []option.RequestOption
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
@@ -34,10 +40,10 @@ func New(apiKey, baseURL string) *Provider {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &Provider{client: sdk.NewClient(opts...)}
+	return &Provider{client: sdk.NewClient(opts...), name: name}
 }
 
-func (p *Provider) Name() string { return Name }
+func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
@@ -46,7 +52,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		// (system, tools, earlier messages). If that changed — e.g. a resumed
 		// session with different MCP tools — the API rejects them; the
 		// documented recovery is to strip thinking and retry once.
-		if err != nil && !started && thinkingMismatch(err) && hasThinking(req) {
+		if err != nil && !started && thinkingMismatch(err) && hasThinking(req, p.name) {
 			started, err = p.attempt(ctx, req, true, yield)
 		}
 		if err != nil && err != errStopped {
@@ -61,7 +67,7 @@ var errStopped = errors.New("stopped")
 // attempt streams one request, yielding events but returning (not yielding)
 // errors. started reports whether any event reached the consumer.
 func (p *Provider) attempt(ctx context.Context, req llm.Request, stripThinking bool, yield func(llm.StreamEvent, error) bool) (started bool, _ error) {
-	params, err := buildParams(req, stripThinking)
+	params, err := buildParams(req, p.name, stripThinking)
 	if err != nil {
 		return false, err
 	}
@@ -72,9 +78,11 @@ func (p *Provider) attempt(ctx context.Context, req llm.Request, stripThinking b
 	// Eager input streaming skips server-side validation, so a truncated
 	// tool input can arrive; remember which blocks failed to parse.
 	invalidInput := map[int64]bool{}
+	stopped := map[int64]bool{}
 	for stream.Next() {
 		ev := stream.Current()
 		if ev.Type == "content_block_stop" && int(ev.Index) < len(msg.Content) {
+			stopped[ev.Index] = true
 			cb := msg.Content[ev.Index]
 			if cb.Type == "tool_use" && len(cb.Input) > 0 && !json.Valid(cb.Input) {
 				invalidInput[ev.Index] = true
@@ -113,9 +121,16 @@ func (p *Provider) attempt(ctx context.Context, req llm.Request, stripThinking b
 	if msg.StopReason == "model_context_window_exceeded" {
 		return started, llm.ErrContextOverflow
 	}
+	// A tool call cut off before its block ended (the output limit) has
+	// incomplete input, even when what arrived happens to parse.
+	for i, cb := range msg.Content {
+		if cb.Type == "tool_use" && !stopped[int64(i)] {
+			invalidInput[int64(i)] = true
+		}
+	}
 	yield(llm.StreamEvent{
 		Type:       llm.EventDone,
-		Message:    convertMessage(msg, req.Model, invalidInput),
+		Message:    convertMessage(msg, req.Model, p.name, invalidInput),
 		StopReason: convertStop(msg.StopReason),
 		Usage: llm.Usage{
 			Input:      int(msg.Usage.InputTokens),
@@ -136,10 +151,10 @@ func thinkingMismatch(err error) bool {
 	return strings.Contains(msg, "thinking") || strings.Contains(msg, "prefix_binding")
 }
 
-func hasThinking(req llm.Request) bool {
+func hasThinking(req llm.Request, name string) bool {
 	for _, m := range req.Messages {
 		for _, b := range m.Blocks {
-			if b.Type == llm.BlockThinking && b.Provider == Name {
+			if b.Type == llm.BlockThinking && b.Provider == name {
 				return true
 			}
 		}
@@ -147,7 +162,7 @@ func hasThinking(req llm.Request) bool {
 	return false
 }
 
-func buildParams(req llm.Request, stripThinking bool) (sdk.MessageNewParams, error) {
+func buildParams(req llm.Request, name string, stripThinking bool) (sdk.MessageNewParams, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 64_000
@@ -196,7 +211,7 @@ func buildParams(req llm.Request, stripThinking bool) (sdk.MessageNewParams, err
 
 	for _, m := range req.Messages {
 		var blocks []sdk.ContentBlockParamUnion
-		for _, b := range llm.ReplayableBlocks(m, Name, req.Model) {
+		for _, b := range llm.ReplayableBlocks(m, name, req.Model) {
 			if stripThinking && b.Type == llm.BlockThinking {
 				continue
 			}
@@ -278,16 +293,16 @@ func toolSchema(raw json.RawMessage) (sdk.ToolInputSchemaParam, error) {
 	return s, nil
 }
 
-func convertMessage(msg sdk.Message, model string, invalidInput map[int64]bool) llm.Message {
+func convertMessage(msg sdk.Message, model, name string, invalidInput map[int64]bool) llm.Message {
 	out := llm.Message{Role: llm.RoleAssistant, Model: model}
 	for i, cb := range msg.Content {
 		switch cb.Type {
 		case "text":
 			out.Blocks = append(out.Blocks, llm.TextBlock(cb.Text))
 		case "thinking":
-			out.Blocks = append(out.Blocks, llm.Block{Type: llm.BlockThinking, Text: cb.Thinking, Signature: cb.Signature, Provider: Name})
+			out.Blocks = append(out.Blocks, llm.Block{Type: llm.BlockThinking, Text: cb.Thinking, Signature: cb.Signature, Provider: name})
 		case "redacted_thinking":
-			out.Blocks = append(out.Blocks, llm.Block{Type: llm.BlockThinking, Redacted: true, Signature: cb.Data, Provider: Name})
+			out.Blocks = append(out.Blocks, llm.Block{Type: llm.BlockThinking, Redacted: true, Signature: cb.Data, Provider: name})
 		case "tool_use":
 			b := llm.Block{Type: llm.BlockToolUse, ID: cb.ID, Name: cb.Name, Input: cb.Input}
 			if invalidInput[int64(i)] {

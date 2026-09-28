@@ -67,7 +67,7 @@ With `isolation: "worktree"` (or `isolation: worktree` in the definition), the c
 
 - Created under `~/.local/share/larik/worktrees/` from the current `HEAD`, on branch `larik/task-xxxxxx`. Uncommitted changes in your checkout are not included.
 - The child's cwd, relative paths and path rules point into the worktree. Writes elsewhere ask for permission like any path outside cwd.
-- The sandbox is re-derived with `ForWorktree`: writable are the worktree and the repo's shared `.git` (so commits work), while `.git/hooks` and `.git/config` stay read-only.
+- The sandbox is re-derived with `ForWorktree`: writable are the worktree and the repo's shared `.git` (so commits work), while `.git/hooks`, `.git/config` and the other git files that choose which code git runs stay read-only.
 - On finish, leftover changes are committed (with `--no-verify`, falling back to a Larik identity). No commits → worktree and branch are deleted. Otherwise both are kept and the result tells the parent how to review (`git diff base...branch`) and merge.
 - Git operations on the shared repo are serialized with a per-repo lock, so parallel tasks can start and finish safely.
 

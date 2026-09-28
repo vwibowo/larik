@@ -153,7 +153,33 @@ func Open(path string) (*Session, *State, error) {
 		f.Close()
 		return nil, nil, err
 	}
+	// After a crash the last line may be torn. End it, so the next entry
+	// starts a line of its own instead of joining it and being lost too.
+	if torn, err := endsTorn(path); err == nil && torn {
+		if _, err := f.Write([]byte("\n")); err != nil {
+			f.Close()
+			return nil, nil, err
+		}
+	}
 	return s, st, nil
+}
+
+// endsTorn reports whether a non-empty file doesn't end in a newline.
+func endsTorn(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.Size() == 0 {
+		return false, err
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 func lockFile(f *os.File) error {
@@ -361,9 +387,15 @@ func scan(path string) (title, forkOf string) {
 
 // IsPrompt reports whether m starts a turn: a user message with text and
 // no tool results. Cutting a transcript just before one never leaves a
-// tool call without its result.
+// tool call without its result. Messages Larik writes as the user
+// (background task results, Stop-hook feedback) aren't prompts: they can
+// arrive mid-turn, and there's nothing for the user to redo.
 func IsPrompt(m llm.Message) bool {
-	if m.Role != llm.RoleUser || strings.TrimSpace(m.Text()) == "" {
+	text := strings.TrimSpace(m.Text())
+	if m.Role != llm.RoleUser || text == "" {
+		return false
+	}
+	if strings.HasPrefix(text, "<task-notification ") || strings.HasPrefix(text, "<hook-feedback ") {
 		return false
 	}
 	for _, b := range m.Blocks {

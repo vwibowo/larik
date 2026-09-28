@@ -170,7 +170,7 @@ func (m *model) paletteView() string {
 	p.height = max(min(12, m.availablePanelRows()-3), 1)
 	hint := "↑/↓ move · tab complete · enter run · esc close"
 	if len(p.visible()) == 0 {
-		return m.st.box.Width(max(m.width-2, 10)).Render(m.st.dim.Render("no matching command · enter sends it as typed · esc close"))
+		return m.st.box.Width(max(m.width-2, 10)).Render(m.st.dim.Render("no matching command · esc close"))
 	}
 	return m.st.modal.Width(max(m.width-2, 10)).Render(p.view(m.st, w) + "\n" + m.st.dim.Render(hint))
 }

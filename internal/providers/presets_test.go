@@ -86,3 +86,23 @@ func TestNVIDIAPresetStreamsTextAndToolCalls(t *testing.T) {
 		})
 	}
 }
+
+// TestCustomProviderKeepsItsName checks that a custom provider built on
+// the OpenAI or Anthropic adapter reports its own name, so reasoning from
+// one organization isn't replayed to another and fallback chains keep
+// both providers.
+func TestCustomProviderKeepsItsName(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.ProviderConfig{
+		"work":      {Type: "openai", APIKey: "k"},
+		"work-anth": {Type: "anthropic", APIKey: "k"},
+	}}
+	for _, name := range []string{"work", "work-anth"} {
+		r, err := Resolve(cfg, name+"/m")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.Provider.Name(); got != name {
+			t.Errorf("%s: provider name %q", name, got)
+		}
+	}
+}

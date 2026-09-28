@@ -125,7 +125,7 @@ func TestCompactUsesCompactRole(t *testing.T) {
 
 	summarizer := &fakeProvider{script: []llm.Message{{Role: llm.RoleAssistant, Model: "small", Blocks: []llm.Block{llm.TextBlock("<summary>short</summary>")}}}}
 	a.opts.CompactWith = func() (llm.Provider, string) { return summarizer, "small" }
-	summary, err := a.Compact(context.Background())
+	summary, err := a.Compact(context.Background(), nil)
 	if err != nil || summary != "short" {
 		t.Fatalf("summary %q err %v", summary, err)
 	}

@@ -59,7 +59,7 @@ var ErrBlockedAddress = errors.New("address not allowed")
 func NewFetcher() *Fetcher {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: checkedProxy(http.ProxyFromEnvironment),
 		// Check the resolved address, so DNS tricks can't reach blocked IPs.
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
@@ -100,9 +100,42 @@ func NewFetcher() *Fetcher {
 // blockedIP rejects link-local (incl. 169.254.169.254 metadata), multicast
 // and unspecified addresses. Loopback and private ranges stay reachable
 // because local dev servers are a legitimate target; fetches ask first.
+// checkedProxy wraps a proxy function with the address check that
+// DialContext can't make when a proxy is used: it then dials the proxy,
+// not the target. The proxy resolves the name itself, so this is best
+// effort: a name that doesn't resolve here is left to the proxy.
+func checkedProxy(next func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
+	return func(req *http.Request) (*url.URL, error) {
+		proxy, err := next(req)
+		if proxy == nil || err != nil {
+			return proxy, err
+		}
+		return proxy, checkTarget(req)
+	}
+}
+
+func checkTarget(req *http.Request) error {
+	host := req.URL.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if blockedIP(ip) {
+			return fmt.Errorf("%w: %s", ErrBlockedAddress, host)
+		}
+		return nil
+	}
+	if ips, err := net.DefaultResolver.LookupIPAddr(req.Context(), host); err == nil {
+		for _, ip := range ips {
+			if blockedIP(ip.IP) {
+				return fmt.Errorf("%w: %s resolves to %s", ErrBlockedAddress, host, ip.IP)
+			}
+		}
+	}
+	return nil
+}
+
 func blockedIP(ip net.IP) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() ||
-		ip.Equal(net.ParseIP("100.100.100.200")) // Alibaba Cloud metadata
+		ip.Equal(net.ParseIP("100.100.100.200")) || // Alibaba Cloud metadata
+		ip.Equal(net.ParseIP("fd00:ec2::254")) // AWS metadata over IPv6
 }
 
 // Fetch downloads rawURL and converts it to text.

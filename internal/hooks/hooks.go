@@ -171,6 +171,10 @@ func NewRunner(cfg Config, cwd, sessionID, transcriptPath string) *Runner {
 }
 
 // SetConfig replaces the active hooks (e.g. after approving project hooks).
+// pipeWaitDelay is how long a finished hook's output may stay open, held by
+// a process it left running, before Larik stops reading it.
+const pipeWaitDelay = 2 * time.Second
+
 func (r *Runner) SetConfig(cfg Config) {
 	r.mu.Lock()
 	r.cfg = cfg
@@ -250,6 +254,8 @@ func (r *Runner) exec(ctx context.Context, ev Event, c Command, payload []byte) 
 	procgroup.Configure(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// A process the hook leaves running mustn't hold the agent up.
+	cmd.WaitDelay = pipeWaitDelay
 	if err := cmd.Start(); err != nil {
 		return Result{Messages: []string{fmt.Sprintf("%s hook failed to start: %v", ev, err)}}
 	}
@@ -264,6 +270,9 @@ func (r *Runner) exec(ctx context.Context, ev Event, c Command, payload []byte) 
 		return Result{Messages: []string{fmt.Sprintf("%s hook timed out after %s: %s", ev, timeout, short(c.Command))}}
 	}
 
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // the hook exited; something it started kept its output open
+	}
 	code := 0
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {

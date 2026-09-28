@@ -214,7 +214,7 @@ func TestCompaction(t *testing.T) {
 		assistant(llm.TextBlock("second answer")),
 	)
 	drain(a.Run(context.Background(), "hello"), PermissionReply{})
-	if _, err := a.Compact(context.Background()); err != nil {
+	if _, err := a.Compact(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	drain(a.Run(context.Background(), "next"), PermissionReply{})
@@ -338,5 +338,81 @@ func TestClearRebuildsSystemPrompt(t *testing.T) {
 	a.Clear()
 	if a.opts.System != WithLanguage("base v2", "Indonesian") {
 		t.Fatalf("clearing should rebuild the prompt and keep the language: %q", a.opts.System)
+	}
+}
+
+// cancelOnDone cancels the turn as the model's reply completes, the
+// moment between saving a reply and running its tools.
+type cancelOnDone struct {
+	*fakeProvider
+	cancel context.CancelFunc
+}
+
+func (c cancelOnDone) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		for ev, err := range c.fakeProvider.Stream(ctx, req) {
+			if ev.Type == llm.EventDone {
+				c.cancel()
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+// unanswered returns tool_use ids in msgs without a following tool_result.
+func unanswered(msgs []llm.Message) []string {
+	var missing []string
+	for i, m := range msgs {
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		answered := map[string]bool{}
+		if i+1 < len(msgs) {
+			for _, b := range msgs[i+1].Blocks {
+				if b.Type == llm.BlockToolResult {
+					answered[b.ID] = true
+				}
+			}
+		}
+		for _, u := range m.ToolUses() {
+			if !answered[u.ID] {
+				missing = append(missing, u.ID)
+			}
+		}
+	}
+	return missing
+}
+
+func TestInterruptAfterReplyAnswersToolCalls(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo, assistant(toolUse("t1", "read", `{"path":"x"}`)))
+	ctx, cancel := context.WithCancel(context.Background())
+	a.opts.Provider = cancelOnDone{fp, cancel}
+	evs := drain(a.Run(ctx, "go"), PermissionReply{Allow: true})
+	if last := evs[len(evs)-1]; last.StopReason != "interrupted" {
+		t.Fatalf("stop = %q, want interrupted", last.StopReason)
+	}
+	if m := unanswered(a.messages); len(m) > 0 {
+		t.Fatalf("unanswered tool calls in context: %v", m)
+	}
+	st, err := session.Load(a.SessionPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := unanswered(st.Messages); len(m) > 0 {
+		t.Fatalf("unanswered tool calls in the session file: %v", m)
+	}
+}
+
+func TestDanglingToolUseAnsweredOnNextPrompt(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo, assistant(llm.TextBlock("ok")))
+	a.Restore(&session.State{Messages: []llm.Message{
+		llm.UserText("first"),
+		assistant(toolUse("t1", "read", `{"path":"x"}`)),
+	}})
+	drain(a.Run(context.Background(), "again"), PermissionReply{Allow: true})
+	if m := unanswered(fp.requests[0].Messages); len(m) > 0 {
+		t.Fatalf("request sent with unanswered tool calls: %v", m)
 	}
 }

@@ -51,24 +51,26 @@ type SpawnOptions struct {
 // hooks and checkpoints, but has its own context, prompt and tools.
 func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
-	effort := a.opts.Effort
+	effort, noAutoCompact, compactWith := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith
 	a.mu.Unlock()
 	opts := Options{
-		Provider:    o.Provider,
-		Model:       o.Model,
-		Effort:      effort,
-		System:      o.System,
-		Cwd:         a.opts.Cwd,
-		MaxTurns:    o.MaxTurns,
-		Tools:       o.Tools,
-		Perms:       a.opts.Perms,
-		Session:     o.Session,
-		Checkpoints: a.opts.Checkpoints,
-		OnAllowRule: a.opts.OnAllowRule,
-		Hooks:       a.opts.Hooks,
-		LSP:         a.opts.LSP,
-		Sandbox:     a.opts.Sandbox,
-		Subagent:    o.Type,
+		Provider:      o.Provider,
+		Model:         o.Model,
+		Effort:        effort,
+		NoAutoCompact: noAutoCompact,
+		CompactWith:   compactWith,
+		System:        o.System,
+		Cwd:           a.opts.Cwd,
+		MaxTurns:      o.MaxTurns,
+		Tools:         o.Tools,
+		Perms:         a.opts.Perms,
+		Session:       o.Session,
+		Checkpoints:   a.opts.Checkpoints,
+		OnAllowRule:   a.opts.OnAllowRule,
+		Hooks:         a.opts.Hooks,
+		LSP:           a.opts.LSP,
+		Sandbox:       a.opts.Sandbox,
+		Subagent:      o.Type,
 	}
 	if o.Cwd != "" && o.Cwd != a.opts.Cwd {
 		opts.Cwd = o.Cwd

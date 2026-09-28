@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"larik/internal/agent"
@@ -63,6 +64,7 @@ func (l *live) drainBackground() {
 		case e := <-l.a.Background():
 			l.publish(e, true)
 			if e.Kind == agent.EvTaskDone {
+				l.expireTask(e.Agent)
 				l.deliverNotifications()
 			}
 		case <-l.stopDrain:
@@ -237,6 +239,33 @@ func (l *live) expire(all bool) {
 		}
 	}
 	l.pmu.Unlock()
+	sort.Strings(gone)
+	for _, id := range gone {
+		l.bus.publish(Event{Session: l.id, RequestID: id, Event: agent.Event{Kind: EvPermResolved, Text: "expired"}})
+	}
+}
+
+// expireTask drops the requests of a background task that has ended.
+// Each gets a denial too, which is harmless if nothing is listening and
+// unblocks a task that happens to share the label.
+func (l *live) expireTask(label string) {
+	l.pmu.Lock()
+	var gone []string
+	var replies []chan<- agent.PermissionReply
+	for id, p := range l.pending {
+		if p.bg && (p.ev.Agent == label || strings.HasPrefix(p.ev.Agent, label+" · ")) {
+			gone = append(gone, id)
+			replies = append(replies, p.reply)
+			delete(l.pending, id)
+		}
+	}
+	l.pmu.Unlock()
+	for _, r := range replies {
+		select {
+		case r <- agent.PermissionReply{Allow: false, Reason: "the task ended"}:
+		default:
+		}
+	}
 	sort.Strings(gone)
 	for _, id := range gone {
 		l.bus.publish(Event{Session: l.id, RequestID: id, Event: agent.Event{Kind: EvPermResolved, Text: "expired"}})

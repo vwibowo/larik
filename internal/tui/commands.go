@@ -40,11 +40,19 @@ func (m *model) command(line string) tea.Cmd {
 	info := func(s string) tea.Cmd { return m.println(m.st.dim.Render(s)) }
 	fail := func(s string) tea.Cmd { return m.println(m.st.err.Render(s)) }
 
-	// Commands that would race with a running turn.
-	if m.running {
+	// Commands that would race with a running turn, "!" command or
+	// compaction.
+	if !m.idle() {
 		switch name {
 		case "/model", "/connect", "/providers", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
-			return fail(name + " is unavailable while a turn is running (esc to interrupt)")
+			what := "a turn is running"
+			switch {
+			case m.compactCancel != nil:
+				what = "the conversation is being compacted"
+			case m.shellCancel != nil:
+				what = "a ! command is running"
+			}
+			return fail(name + " is unavailable while " + what + " (esc to interrupt)")
 		}
 	}
 
@@ -134,10 +142,15 @@ func (m *model) command(line string) tea.Cmd {
 		return info("↶ restored " + strings.Join(paths, ", "))
 
 	case "/compact":
-		m.busyLabel = "compacting conversation…"
+		ctx, cancel := context.WithCancel(context.Background())
+		m.compactCancel = cancel
+		m.busyLabel = "Compacting conversation… (esc to cancel)"
 		a := m.agent
 		return tea.Batch(m.spin.Tick, func() tea.Msg {
-			summary, err := a.Compact(context.Background())
+			summary, err := a.Compact(ctx, nil)
+			if err != nil && ctx.Err() != nil {
+				err = context.Canceled // however the provider reported it
+			}
 			return compactedMsg{summary: summary, err: err}
 		})
 
@@ -208,7 +221,7 @@ func (m *model) command(line string) tea.Cmd {
 		return m.sessionCommand(name, args, info, fail)
 	}
 	if sk, ok := m.opts.Skills.Get(strings.TrimPrefix(name, "/")); ok && sk.UserInvocable {
-		if m.running {
+		if !m.idle() {
 			m.queue = append(m.queue, line)
 			return nil
 		}
@@ -320,10 +333,7 @@ func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 		if !sk.UserInvocable {
 			flags = append(flags, "model only")
 		}
-		desc := sk.Description
-		if len(desc) > 90 {
-			desc = desc[:87] + "..."
-		}
+		desc := oneLine(sk.Description, 90)
 		fmt.Fprintf(&b, "/%-24s %s  [%s]\n", sk.Name, desc, strings.Join(flags, ", "))
 	}
 	for _, sk := range set.Shadowed {
@@ -349,10 +359,7 @@ func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
 		if d.Model != "" && d.Model != "inherit" {
 			model = d.Model
 		}
-		desc := d.Description
-		if len(desc) > 90 {
-			desc = desc[:87] + "..."
-		}
+		desc := oneLine(d.Description, 90)
 		fmt.Fprintf(&b, "%-18s %s\n  %s · %s · %s\n", d.Name, desc, tools, model, d.Source)
 	}
 	for _, w := range set.Warnings {

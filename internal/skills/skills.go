@@ -151,8 +151,8 @@ func parse(path, dirName, scope string) (Skill, error) {
 		return Skill{}, fmt.Errorf("%s: invalid skill name %q (lowercase letters, digits and hyphens, max 64)", path, name)
 	}
 	desc := strings.Join(strings.Fields(meta.Description), " ")
-	if len(desc) > maxDescription {
-		desc = desc[:maxDescription]
+	if r := []rune(desc); len(r) > maxDescription {
+		desc = string(r[:maxDescription])
 	}
 	sk := Skill{
 		Name:           name,

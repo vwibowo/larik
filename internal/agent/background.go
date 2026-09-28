@@ -135,9 +135,17 @@ func (a *Agent) StopBackground(id string) error {
 	t.delivered = true // nothing useful to report back unprompted
 	h.mu.Unlock()
 	t.cancel()
-	<-t.done
+	select {
+	case <-t.done:
+	case <-time.After(stopWait):
+		// It is marked stopped and its context is canceled; don't hold the
+		// caller while a stuck tool winds down.
+	}
 	return nil
 }
+
+// stopWait bounds how long StopBackground waits for a task to exit.
+const stopWait = 10 * time.Second
 
 // StopAllBackground cancels every task and waits briefly for them to exit.
 func (a *Agent) StopAllBackground() {

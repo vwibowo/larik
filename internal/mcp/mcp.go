@@ -52,7 +52,8 @@ type server struct {
 	tools   []tools.Tool
 	logPath string
 	logFile *os.File
-	done    chan struct{} // closed when the connection attempt finishes
+	done    chan struct{}      // closed when the connection attempt finishes
+	stop    context.CancelFunc // ends the connection's context
 }
 
 // Manager owns server connections for one Larik process.
@@ -71,6 +72,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers map[string]*server
+	closed  bool
 }
 
 func NewManager(cfg *config.Config, version string) *Manager {
@@ -120,7 +122,9 @@ func (m *Manager) Approve(name string) error {
 	if err := config.ApproveMCP(m.cfg.Cwd, cfg); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.cfg.ApprovedMCP[name] = cfg.Hash()
+	m.mu.Unlock()
 	m.Start()
 	return nil
 }
@@ -149,7 +153,13 @@ func (m *Manager) Tools(ctx context.Context) []tools.Tool {
 			out = append(out, s.tools...)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Spec().Name < out[j].Spec().Name })
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].(*tool), out[j].(*tool)
+		if a.spec.Name != b.spec.Name {
+			return a.spec.Name < b.spec.Name
+		}
+		return a.server < b.server
+	})
 	return out
 }
 
@@ -177,32 +187,54 @@ func (m *Manager) Statuses() []Status {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.closed = true
 	for _, s := range m.servers {
-		if s.session != nil {
-			_ = s.session.Close()
-		}
-		if s.logFile != nil {
-			_ = s.logFile.Close()
-		}
+		s.release()
+	}
+}
+
+// release closes a server's session, context and log. Call with m.mu held.
+func (s *server) release() {
+	if s.session != nil {
+		_ = s.session.Close()
+		s.session = nil
+	}
+	if s.stop != nil {
+		s.stop()
+		s.stop = nil
+	}
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+		s.logFile = nil
 	}
 }
 
 func (m *Manager) connect(s *server) {
 	defer close(s.done)
-	ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
-	defer cancel()
+	// The connection lives on this context: the SSE transport ties its
+	// event stream to the context it connects with, so a timeout context
+	// would close the stream as soon as connect returned. Only the
+	// handshake and tool listing are bounded by ConnectTimeout.
+	ctx, stop := context.WithCancel(context.Background())
+	timer := time.AfterFunc(ConnectTimeout, stop)
 
 	session, ts, err := m.open(ctx, s)
+	if !timer.Stop() && err == nil {
+		err = fmt.Errorf("timed out after %s", ConnectTimeout)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err != nil {
+	s.session, s.stop = session, stop
+	switch {
+	case err != nil:
+		s.release()
 		s.state, s.err = StateFailed, err
-		if session != nil {
-			_ = session.Close()
-		}
-		return
+	case m.closed: // Close ran while connecting
+		s.release()
+		s.state, s.err = StateFailed, errors.New("closed")
+	default:
+		s.tools, s.state = ts, StateConnected
 	}
-	s.session, s.tools, s.state = session, ts, StateConnected
 }
 
 func (m *Manager) open(ctx context.Context, s *server) (*sdk.ClientSession, []tools.Tool, error) {
@@ -320,7 +352,24 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 			notify(fmt.Sprintf("MCP server %q from %s is not approved yet; review it and run /mcp approve %s", st.Name, filepath.Base(st.Source), st.Name))
 		}
 	}
-	return tools.NewRegistry(append(append([]tools.Tool(nil), m.Base...), mcpTools...)...)
+	// Server names are sanitized into tool names, so "a.b" and "a_b" can
+	// produce the same one; providers reject a request that repeats a
+	// tool name, so keep the first (by server name) and say so.
+	all := append([]tools.Tool(nil), m.Base...)
+	seen := map[string]bool{}
+	for _, t := range all {
+		seen[t.Spec().Name] = true
+	}
+	for _, t := range mcpTools {
+		name := t.Spec().Name
+		if seen[name] {
+			notify(fmt.Sprintf("MCP tool %s from server %q skipped: another tool already has that name", name, t.(*tool).server))
+			continue
+		}
+		seen[name] = true
+		all = append(all, t)
+	}
+	return tools.NewRegistry(all...)
 }
 
 func (m *Manager) pending() int {

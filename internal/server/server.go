@@ -283,6 +283,10 @@ func (s *Server) fork(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if req.At != nil && *req.At < 0 {
+		writeErr(w, http.StatusBadRequest, "at must be a message index (0 or more)")
+		return
+	}
 	path, err := session.Find(s.app.SessionDir, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
@@ -592,7 +596,7 @@ func (s *Server) compact(w http.ResponseWriter, r *http.Request, l *live) {
 	var summary string
 	err := l.idleDo(r.Context(), func(ctx context.Context) error {
 		var err error
-		summary, err = l.a.Compact(ctx)
+		summary, err = l.a.Compact(ctx, func(e agent.Event) { l.publish(e, false) })
 		return err
 	})
 	if err != nil {

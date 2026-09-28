@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"larik/internal/checkpoint"
+	"larik/internal/llm"
 )
 
 func run(t *testing.T, tool Tool, env *Env, input string) Result {
@@ -229,5 +230,55 @@ func TestBashSandboxRouting(t *testing.T) {
 	run(t, Bash{}, env, `{"command":"echo hi","sandbox":false}`)
 	if len(fs.calls) != 2 {
 		t.Errorf("sandbox:false must bypass the sandbox, calls=%v", fs.calls)
+	}
+}
+
+// changingTool describes itself differently each time, like the task tool
+// after a routing change.
+type changingTool struct{ n *int }
+
+func (c changingTool) Spec() llm.ToolSpec {
+	*c.n++
+	return llm.ToolSpec{Name: "changing", Description: fmt.Sprint("version ", *c.n)}
+}
+func (changingTool) ReadOnly() bool                                    { return true }
+func (changingTool) Run(context.Context, *Env, json.RawMessage) Result { return Result{} }
+
+func TestRegistrySpecsFixedPerContext(t *testing.T) {
+	n := 0
+	r := NewRegistry(changingTool{&n})
+	first := r.Specs()[0].Description
+	if again := r.Specs()[0].Description; again != first {
+		t.Fatalf("spec changed within one registry: %q then %q", first, again)
+	}
+}
+
+func TestBashDoesNotWaitForBackgroundProcess(t *testing.T) {
+	env := NewEnv(t.TempDir())
+	start := time.Now()
+	r := run(t, Bash{}, env, `{"command":"sleep 20 & echo started"}`)
+	if took := time.Since(start); took > PipeWaitDelay+3*time.Second {
+		t.Fatalf("waited %s for a background process holding the output", took)
+	}
+	if r.IsError || !strings.Contains(r.Content, "started") || !strings.Contains(r.Content, "still running in the background") {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestGlobIntoNamedHiddenDir(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte("x"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "dist"), 0o755)
+	os.WriteFile(filepath.Join(dir, "dist", "app.js"), []byte("x"), 0o644)
+	env := NewEnv(dir)
+	if r := run(t, Glob{}, env, `{"pattern":".github/workflows/*.yml"}`); !strings.Contains(r.Content, "ci.yml") {
+		t.Errorf("named hidden dir: %q", r.Content)
+	}
+	if r := run(t, Glob{}, env, `{"pattern":"dist/**"}`); !strings.Contains(r.Content, "app.js") {
+		t.Errorf("named build dir: %q", r.Content)
+	}
+	if r := run(t, Glob{}, env, `{"pattern":"**/*.yml"}`); strings.Contains(r.Content, "ci.yml") {
+		t.Errorf("an unnamed hidden dir should still be skipped: %q", r.Content)
 	}
 }

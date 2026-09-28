@@ -243,10 +243,10 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if text.Len() > 0 {
 			msg.Blocks = append(msg.Blocks, llm.TextBlock(text.String()))
 		}
-		for i, tc := range calls {
+		for _, tc := range calls {
 			id := tc.ID
 			if id == "" {
-				id = fmt.Sprintf("call_%d", i)
+				id = llm.NewCallID("call_")
 			}
 			input := tc.Function.Arguments
 			if len(input) == 0 || string(input) == "null" {

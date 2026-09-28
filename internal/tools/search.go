@@ -166,6 +166,12 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("invalid glob pattern %q", in.Pattern)
 	}
 	root := env.Abs(in.Path)
+	// Start at the pattern's literal directory, so a pattern that names a
+	// directory the walk would skip (.github/workflows/*.yml, dist/**)
+	// still searches it.
+	if base, rest := doublestar.SplitPattern(filepath.ToSlash(in.Pattern)); base != "." && !filepath.IsAbs(base) {
+		root, in.Pattern = filepath.Join(root, filepath.FromSlash(base)), rest
+	}
 	type hit struct {
 		path string
 		mod  int64

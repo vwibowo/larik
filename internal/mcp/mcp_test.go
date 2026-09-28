@@ -92,19 +92,21 @@ func TestStdioServer(t *testing.T) {
 	}
 }
 
-func TestHTTPServerWithHeaders(t *testing.T) {
-	bin := buildServer(t)
+// serveTest starts the test server with flag ("-http" or "-sse") on a
+// free port and returns its address once it listens.
+func serveTest(t *testing.T, bin, flag string) string {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
 	l.Close()
-	srv := exec.Command(bin, "-http", addr)
+	srv := exec.Command(bin, flag, addr)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Process.Kill()
+	t.Cleanup(func() { srv.Process.Kill() })
 	for i := 0; i < 50; i++ { // wait for listen
 		if c, err := net.Dial("tcp", addr); err == nil {
 			c.Close()
@@ -112,6 +114,31 @@ func TestHTTPServerWithHeaders(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	return addr
+}
+
+// TestSSEServerStaysConnected checks that the SSE transport's stream
+// outlives the connect timeout's context: tool calls made after
+// connecting must still reach the server.
+func TestSSEServerStaysConnected(t *testing.T) {
+	addr := serveTest(t, buildServer(t), "-sse")
+	cfg := newCfg(t, map[string]config.MCPServer{
+		"old": {Type: "sse", URL: "http://" + addr + "/", Trusted: true},
+	})
+	m := NewManager(cfg, "test")
+	m.Start()
+	defer m.Close()
+	m.Registry(context.Background(), func(s string) { t.Log("notice:", s) })
+	for i := range 2 {
+		if out, isErr := call(t, m, "mcp__old__echo", `{"text":"over sse"}`); isErr || out != "over sse" {
+			t.Fatalf("call %d: echo = %q (error %v)", i, out, isErr)
+		}
+	}
+}
+
+func TestHTTPServerWithHeaders(t *testing.T) {
+	bin := buildServer(t)
+	addr := serveTest(t, bin, "-http")
 
 	// Put an auth proxy in front that requires the expanded header.
 	t.Setenv("LARIK_TEST_TOKEN", "s3cret")
@@ -216,5 +243,28 @@ func TestToolNames(t *testing.T) {
 	}
 	if ServerOf("mcp__gh__create_issue") != "gh" || ServerOf("bash") != "" {
 		t.Error("ServerOf")
+	}
+}
+
+func TestCollidingServerNamesKeepToolNamesUnique(t *testing.T) {
+	bin := buildServer(t)
+	cfg := newCfg(t, map[string]config.MCPServer{
+		"a.b": {Command: bin, Trusted: true},
+		"a_b": {Command: bin, Trusted: true},
+	})
+	m := NewManager(cfg, "test")
+	m.Start()
+	defer m.Close()
+	var notices []string
+	reg := m.Registry(context.Background(), func(s string) { notices = append(notices, s) })
+	seen := map[string]bool{}
+	for _, s := range reg.Specs() {
+		if seen[s.Name] {
+			t.Fatalf("tool name %s appears twice", s.Name)
+		}
+		seen[s.Name] = true
+	}
+	if !strings.Contains(strings.Join(notices, "\n"), "skipped") {
+		t.Errorf("expected a notice about the skipped tools, got %v", notices)
 	}
 }

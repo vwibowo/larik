@@ -109,3 +109,38 @@ func TestSourceRefreshesAndSaves(t *testing.T) {
 		t.Fatal("a fresh token must not refresh again")
 	}
 }
+
+// TestSourcesShareRefresh checks that two sources for one sign-in (a
+// subagent's and the main agent's, or two larik processes) refresh it
+// once: the second must pick up the rotated token rather than spend the
+// first refresh token again.
+func TestSourcesShareRefresh(t *testing.T) {
+	_, refreshes := fakeIssuer(t)
+	path := filepath.Join(t.TempDir(), "chatgpt-auth.json")
+	expiring := Tokens{AccessToken: "old", RefreshToken: "rt_1", AccountID: "acct_1", Expires: time.Now().Add(time.Minute)}
+	Save(path, expiring)
+	a, b := NewSource(path), NewSource(path)
+	b.t = &expiring // b loaded the sign-in before a refreshed it
+	ta, _, err := a.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb, _, err := b.Token(context.Background())
+	if err != nil || tb != ta || refreshes.Load() != 1 {
+		t.Fatalf("second source: same token %v, err %v, refreshes %d", tb == ta, err, refreshes.Load())
+	}
+}
+
+func TestRefreshWithoutIDTokenKeepsAccount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"access_token": jwt(map[string]any{"exp": time.Now().Add(time.Hour).Unix()})})
+	}))
+	defer srv.Close()
+	old := Issuer
+	Issuer = srv.URL
+	defer func() { Issuer = old }()
+	n, err := Refresh(context.Background(), Tokens{IDToken: "id", RefreshToken: "rt_1", AccountID: "acct_1"})
+	if err != nil || n.AccountID != "acct_1" || n.RefreshToken != "rt_1" {
+		t.Fatalf("refresh without an id_token: %+v %v", n, err)
+	}
+}

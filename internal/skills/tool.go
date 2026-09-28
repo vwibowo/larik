@@ -36,5 +36,8 @@ func (t Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tool
 	if err != nil {
 		return tools.Result{Content: err.Error(), IsError: true}
 	}
+	if !sk.ModelInvocable { // disable-model-invocation: only the user may run it
+		return tools.Result{Content: "skill " + sk.Name + " can only be run by the user (/" + sk.Name + ")", IsError: true}
+	}
 	return tools.Result{Content: tools.Truncate(Render(sk, body, in.Arguments), tools.MaxOutputBytes*2)}
 }

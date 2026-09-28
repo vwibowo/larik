@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"larik/internal/filelock"
 )
 
 // The public OAuth client Codex uses; its redirect is registered for this
@@ -154,13 +156,17 @@ func Login(ctx context.Context, open func(url string)) (Tokens, error) {
 	if res.err != nil {
 		return Tokens{}, res.err
 	}
-	return exchange(ctx, url.Values{
+	t, err := exchange(ctx, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {res.code},
 		"redirect_uri":  {redirect},
 		"client_id":     {ClientID},
 		"code_verifier": {verifier},
 	})
+	if err == nil && t.AccountID == "" {
+		return Tokens{}, errors.New("ChatGPT sign-in: the account has no ChatGPT workspace (is it on a ChatGPT plan?)")
+	}
+	return t, err
 }
 
 // exchange posts to the token endpoint and reads the account from the
@@ -202,9 +208,6 @@ func exchange(ctx context.Context, form url.Values) (Tokens, error) {
 	if t.Expires.IsZero() && body.ExpiresIn > 0 {
 		t.Expires = time.Now().Add(time.Duration(body.ExpiresIn) * time.Second)
 	}
-	if t.AccountID == "" {
-		return Tokens{}, errors.New("ChatGPT sign-in: the account has no ChatGPT workspace (is it on a ChatGPT plan?)")
-	}
 	return t, nil
 }
 
@@ -222,7 +225,7 @@ func Refresh(ctx context.Context, t Tokens) (Tokens, error) {
 	if n.RefreshToken == "" { // not every refresh rotates it
 		n.RefreshToken = t.RefreshToken
 	}
-	if n.IDToken == "" {
+	if n.IDToken == "" || n.AccountID == "" { // not every refresh sends one
 		n.IDToken, n.AccountID, n.Email = t.IDToken, t.AccountID, t.Email
 	}
 	return n, nil
@@ -252,17 +255,52 @@ func (s *Source) Token(ctx context.Context) (access, account string, err error) 
 		}
 		s.t = &t
 	}
-	if time.Until(s.t.Expires) < 5*time.Minute {
-		n, err := Refresh(ctx, *s.t)
+	if time.Until(s.t.Expires) < refreshMargin {
+		n, err := s.refresh(ctx)
 		if err != nil {
-			return "", "", err
-		}
-		if err := Save(s.path, n); err != nil {
 			return "", "", err
 		}
 		s.t = &n
 	}
 	return s.t.AccessToken, s.t.AccountID, nil
+}
+
+// refreshMargin is how long before expiry a token is renewed.
+const refreshMargin = 5 * time.Minute
+
+// refresh renews the sign-in. Several sources share the file (subagents,
+// fallback chains, other larik processes) and the issuer rotates the
+// refresh token, so this holds a lock on the file and re-reads it first:
+// when another source has already refreshed, its tokens are used rather
+// than spending a refresh token that is no longer valid.
+func (s *Source) refresh(ctx context.Context) (Tokens, error) {
+	lock, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return Tokens{}, err
+	}
+	defer lock.Close()
+	if err := filelock.Lock(lock, false); err != nil {
+		return Tokens{}, err
+	}
+	defer filelock.Unlock(lock)
+	cur, err := Load(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Tokens{}, errors.New("not signed in to ChatGPT; run /connect codex")
+	}
+	if err != nil {
+		return Tokens{}, err
+	}
+	if time.Until(cur.Expires) >= refreshMargin {
+		return cur, nil // refreshed elsewhere
+	}
+	n, err := Refresh(ctx, cur)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if err := Save(s.path, n); err != nil {
+		return Tokens{}, err
+	}
+	return n, nil
 }
 
 // claims decodes a JWT's payload without verifying it; the tokens come

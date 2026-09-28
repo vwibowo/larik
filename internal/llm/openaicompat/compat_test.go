@@ -99,3 +99,28 @@ func TestOllamaProbe(t *testing.T) {
 		t.Error("non-Ollama endpoints must not be probed")
 	}
 }
+
+// TestWholeCallsAtOneIndex covers servers that send each tool call whole,
+// all at index 0: each new id is a call of its own.
+func TestWholeCallsAtOneIndex(t *testing.T) {
+	body := llmtest.SSE(
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"read","arguments":"{\"path\":\"a\"}"}}]}}]}`,
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"b","type":"function","function":{"name":"read","arguments":"{\"path\":\"b\"}"}}]}}]}`,
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	)
+	srv := llmtest.NewServer(t, 200, body)
+	var done llm.StreamEvent
+	for ev, err := range New("ollama", "", srv.URL).Stream(context.Background(), llm.Request{Model: "m", Messages: []llm.Message{llm.UserText("hi")}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Type == llm.EventDone {
+			done = ev
+		}
+	}
+	uses := done.Message.ToolUses()
+	if len(uses) != 2 || uses[0].ID != "a" || string(uses[0].Input) != `{"path":"a"}` || uses[1].ID != "b" || string(uses[1].Input) != `{"path":"b"}` {
+		t.Fatalf("tool uses = %+v", uses)
+	}
+}

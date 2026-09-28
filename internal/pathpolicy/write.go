@@ -49,7 +49,22 @@ func protected(parts []string) bool {
 	case ".larik", ".claude", ".mcp.json":
 		return true
 	case ".git":
-		return len(parts) > 1 && (strings.EqualFold(parts[1], "hooks") || strings.EqualFold(parts[1], "config"))
+		// .git itself (a gitdir file could point git elsewhere), and the
+		// parts of the git dir that decide which code git runs.
+		if len(parts) == 1 {
+			return true
+		}
+		for _, name := range GitProtected {
+			if strings.EqualFold(parts[1], name) {
+				return true
+			}
+		}
 	}
 	return false
 }
+
+// GitProtected are the entries of a git directory that decide which code
+// git runs: its config and hooks, and the files that point git at another
+// directory's config and hooks (commondir, per-worktree config, submodule
+// and worktree git dirs). Objects, refs and the index are left writable.
+var GitProtected = []string{"hooks", "config", "config.worktree", "commondir", "info", "modules", "worktrees"}

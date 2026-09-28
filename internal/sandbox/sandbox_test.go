@@ -248,3 +248,44 @@ func TestClosePerSandboxTempDir(t *testing.T) {
 		t.Error("closing one sandbox must not remove another's directory")
 	}
 }
+
+func TestGitDirCannotBeRedirected(t *testing.T) {
+	sb, root, _ := newTest(t, Config{})
+	for _, script := range []string{
+		"echo /tmp/x > .git/commondir",
+		"echo x > .git/config.worktree",
+		"mkdir -p .git/modules/m && echo x > .git/modules/m/config",
+		"mv .git .git-moved",
+		"rm -rf .git",
+	} {
+		if out, err := run(t, sb, root, script); err == nil {
+			t.Errorf("%q must fail: %s", script, out)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(root, ".git")); err != nil || !fi.IsDir() {
+		t.Fatalf(".git was moved or removed: %v", err)
+	}
+	// Ordinary repository writes still work.
+	if out, err := run(t, sb, root, "mkdir -p .git/objects/ab && echo x > .git/objects/ab/cd && echo ref > .git/HEAD.test"); err != nil {
+		t.Errorf("writing objects must work: %v %s", err, out)
+	}
+}
+
+func TestSandboxedCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git needed")
+	}
+	root := real(t.TempDir())
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	sb, warn := New(Config{}, root, real(t.TempDir()))
+	if sb == nil {
+		t.Skipf("no sandbox on this machine: %s", warn)
+	}
+	t.Cleanup(func() { sb.Close() })
+	script := "echo hi > a.txt && git add a.txt && git -c user.name=t -c user.email=t@t commit -qm first && git log --oneline | wc -l"
+	if out, err := run(t, sb, root, script); err != nil || strings.TrimSpace(out) != "1" {
+		t.Fatalf("commit inside the sandbox: %v %s", err, out)
+	}
+}

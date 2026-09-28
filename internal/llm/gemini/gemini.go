@@ -115,7 +115,7 @@ func appendPart(msg *llm.Message, part *genai.Part, nCalls *int) (llm.StreamEven
 		fc := part.FunctionCall
 		id := fc.ID
 		if id == "" {
-			id = fmt.Sprintf("gemini_call_%d", *nCalls)
+			id = llm.NewCallID("gemini_call_")
 		}
 		*nCalls++
 		args, _ := json.Marshal(fc.Args)

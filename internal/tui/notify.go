@@ -14,8 +14,9 @@ const longTurn = 10 * time.Second
 
 // alert tells the user larik needs them, per the notifications setting.
 // It stays quiet while the terminal has focus: they are already looking.
+// A terminal that never reports focus gets every alert.
 func (m *model) alert(msg string) tea.Cmd {
-	if m.focused || m.notify == "off" || m.notify == "" {
+	if (m.focusKnown && m.focused) || m.notify == "off" || m.notify == "" {
 		return nil
 	}
 	if m.notify == "desktop" && supportsOSC9() {

@@ -789,9 +789,7 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 	if shorten != nil {
 		arg = shorten(arg)
 	}
-	if len(arg) > 80 {
-		arg = arg[:77] + "…"
-	}
+	arg = oneLine(arg, 80)
 	return fmt.Sprintf("%s(%s)", name, arg)
 }
 

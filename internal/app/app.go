@@ -241,6 +241,10 @@ func (a *App) Open(o Options) (*Session, error) {
 	fail := func(err error) (*Session, error) {
 		if sess != nil {
 			sess.Close()
+			if o.Fork { // a branch nobody will ever use
+				_ = os.Remove(sess.Path)
+				_ = os.RemoveAll(session.RawDir(sess.Path))
+			}
 		}
 		return nil, err
 	}

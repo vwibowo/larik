@@ -546,6 +546,9 @@ func TestFork(t *testing.T) {
 	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{"at": 1}, nil); code != http.StatusBadRequest {
 		t.Errorf("fork mid-turn: %d", code)
 	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{"at": -1}, nil); code != http.StatusBadRequest {
+		t.Errorf("fork at a negative index: %d", code)
+	}
 	var list struct{ Sessions []sessionInfo }
 	h.do("GET", "/v1/sessions", nil, &list)
 	var listed bool
@@ -570,5 +573,23 @@ func TestFork(t *testing.T) {
 	h.do("DELETE", "/v1/sessions/"+st.ID, nil, nil)
 	if code := h.do("POST", "/v1/sessions/"+st.ID+"/fork", map[string]any{}, &br); code != http.StatusCreated || br.ForkOf != st.ID {
 		t.Errorf("fork unloaded: %d %+v", code, br)
+	}
+}
+
+func TestEndedTaskExpiresItsPermissionRequests(t *testing.T) {
+	reply := make(chan agent.PermissionReply, 1)
+	l := &live{bus: newBus(), pending: map[string]*pendingPerm{
+		"perm-1": {ev: Event{Event: agent.Event{Agent: "worker: build"}}, reply: reply, bg: true},
+		"perm-2": {ev: Event{Event: agent.Event{Agent: "explore: docs"}}, reply: make(chan agent.PermissionReply, 1), bg: true},
+	}}
+	l.expireTask("worker: build")
+	if _, ok := l.pending["perm-1"]; ok {
+		t.Fatal("the ended task's request should expire")
+	}
+	if _, ok := l.pending["perm-2"]; !ok {
+		t.Fatal("another task's request must stay")
+	}
+	if r := <-reply; r.Allow {
+		t.Fatal("an expired request is answered with a denial")
 	}
 }

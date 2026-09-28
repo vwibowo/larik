@@ -49,7 +49,7 @@ func TestStream(t *testing.T) {
 		t.Errorf("text = %q", done.Message.Text())
 	}
 	uses := done.Message.ToolUses()
-	if len(uses) != 1 || uses[0].Name != "read" || uses[0].ID != "gemini_call_0" || uses[0].Signature != sig {
+	if len(uses) != 1 || uses[0].Name != "read" || !strings.HasPrefix(uses[0].ID, "gemini_call_") || geminiID(uses[0].ID) != "" || uses[0].Signature != sig {
 		t.Fatalf("uses = %+v", uses)
 	}
 	if done.StopReason != llm.StopToolUse || done.Usage.Input != 50 || done.Usage.CacheRead != 30 || done.Usage.Output != 20 {

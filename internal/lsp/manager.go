@@ -179,9 +179,13 @@ func (m *Manager) clientFor(ctx context.Context, path string) (*client, string, 
 		c, err := startClient(ctx, name, root, cfg, logPath)
 		m.mu.Lock()
 		delete(m.starting, key)
-		if err != nil {
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// Canceled (esc) or out of time: the server may be fine, so
+			// the next edit tries again.
+		case err != nil:
 			m.failed[key] = err // don't retry a broken server every edit
-		} else {
+		default:
 			m.clients[key] = c
 		}
 		close(done)

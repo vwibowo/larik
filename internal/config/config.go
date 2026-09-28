@@ -263,7 +263,7 @@ func (c *Config) merge(path string, trusted bool) error {
 		if !trusted {
 			// A shared file can't make Larik run a new command.
 			prev := c.LSP[name]
-			prev.Disabled = srv.Disabled
+			prev.Disabled = prev.Disabled || srv.Disabled
 			c.LSP[name] = prev
 			continue
 		}
@@ -297,17 +297,22 @@ func (c *Config) merge(path string, trusted bool) error {
 	if trusted && o.CheckpointRetentionDays != 0 {
 		c.CheckpointRetentionDays = o.CheckpointRetentionDays
 	}
+	// A bad value in your own file is an error to fix; one in a file that
+	// came with the repository is ignored, so a clone can't stop Larik
+	// from starting.
 	if o.Theme != "" {
-		if _, err := ParseTheme(o.Theme); err != nil {
+		if _, err := ParseTheme(o.Theme); err == nil {
+			c.Theme = o.Theme
+		} else if trusted {
 			return fmt.Errorf("%s: %w", path, err)
 		}
-		c.Theme = o.Theme
 	}
 	if o.Notifications != "" {
-		if _, err := ParseNotifications(o.Notifications); err != nil {
+		if _, err := ParseNotifications(o.Notifications); err == nil {
+			c.Notifications = o.Notifications
+		} else if trusted {
 			return fmt.Errorf("%s: %w", path, err)
 		}
-		c.Notifications = o.Notifications
 	}
 	if o.Language != "" {
 		c.Language = o.Language

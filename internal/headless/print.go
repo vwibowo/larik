@@ -64,7 +64,9 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 			}
 			continue
 		}
-		if a.RunningBackground() == 0 {
+		// A task that finished just after RunNotifications looked has a
+		// result waiting; go round again to deliver it.
+		if a.RunningBackground() == 0 && a.PendingNotifications() == 0 {
 			break
 		}
 		select {

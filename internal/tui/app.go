@@ -6,6 +6,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -153,6 +154,9 @@ type model struct {
 	tip     string // the tip for the running turn
 	notify  string // off, bell or desktop
 	focused bool   // terminal has focus; notifications only go out without it
+	// focusKnown is set once the terminal reports focus at all; until
+	// then (or never, in terminals without focus events) alerts go out.
+	focusKnown bool
 	// The command palette shows while a bare "/name" is being typed.
 	palette       *picker
 	paletteQ      string // input the palette was built for
@@ -172,6 +176,9 @@ type model struct {
 	histDraft   string
 	histPick    *picker            // ctrl+r search
 	shellCancel context.CancelFunc // a "!" command is running
+	// compactCancel is set while /compact runs. Compaction replaces the
+	// context when it finishes, so nothing else may use the agent then.
+	compactCancel context.CancelFunc
 }
 
 // Messages.
@@ -331,6 +338,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pasteMention(p)
 				return m, m.syncComposer()
 			}
+		} else if cmd, ok := m.pasteToPanel(msg); ok {
+			return m, cmd
 		}
 
 	case tea.MouseWheelMsg:
@@ -349,11 +358,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.FocusMsg:
-		m.focused = true
+		m.focused, m.focusKnown = true, true
 		return m, nil
 
 	case tea.BlurMsg:
-		m.focused = false
+		m.focused, m.focusKnown = false, true
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -381,10 +390,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dropForegroundPerms()
 		m.resetStream()
 		m.stats = m.agent.Stats()
-		if len(m.queue) > 0 { // pending background results ride along with it
-			next := m.queue[0]
-			m.queue = m.queue[1:]
-			return m, m.submit(next)
+		if next := m.nextQueued(); next != nil { // pending background results ride along with it
+			return m, next
 		}
 		return m, tea.Batch(alert, m.deliverBackground())
 
@@ -397,6 +404,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch e.Kind {
 		case agent.EvTaskDone:
 			m.clearTaskCalls(e.Agent)
+			m.dropTaskPerms(e.Agent)
 			cmds = append(cmds, m.println(m.renderTaskDone(e)))
 			if !m.running {
 				cmds = append(cmds, m.deliverBackground())
@@ -415,12 +423,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
 
 	case compactedMsg:
-		m.busyLabel = ""
-		m.stats = m.agent.Stats()
-		if msg.err != nil {
-			return m, m.println(m.st.err.Render("compaction failed: " + msg.err.Error()))
+		if m.compactCancel != nil {
+			m.compactCancel()
 		}
-		return m, m.println(m.st.dim.Render("✓ Conversation compacted. Summary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
+		m.compactCancel, m.busyLabel = nil, ""
+		m.stats = m.agent.Stats()
+		var out tea.Cmd
+		switch {
+		case errors.Is(msg.err, context.Canceled):
+			out = m.println(m.st.warn.Render("⏹ Compaction canceled; the conversation is unchanged"))
+		case msg.err != nil:
+			out = m.println(m.st.err.Render("compaction failed: " + msg.err.Error()))
+		default:
+			out = m.println(m.st.dim.Render("✓ Conversation compacted. Summary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
+		}
+		next := m.nextQueued()
+		if next == nil {
+			next = m.deliverBackground()
+		}
+		return m, tea.Sequence(out, next)
 
 	case modelsLoadedMsg:
 		previous := m.agent.Effort()
@@ -542,6 +563,40 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.syncComposer()) // e.g. after a paste
 }
 
+// pasteToPanel gives a paste to the open panel that has the keyboard,
+// following handleKey's order. ok is false for the text fields handled
+// with other messages (the wizard, routing budget and denial feedback).
+// A panel with nowhere to type drops the paste rather than letting it
+// land in the hidden composer.
+func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
+	filter := func(p *picker) {
+		p.filter += strings.Join(strings.Fields(msg.Content), " ")
+		p.home()
+	}
+	switch {
+	case m.perm != nil:
+		return nil, m.permFeedback == nil
+	case m.showKeys:
+		return nil, true
+	case m.wizard != nil, m.routing != nil:
+		return nil, false
+	case m.mpick != nil:
+		levels := m.mpick.selectedEfforts(m)
+		previous := levels[min(m.mpick.effort, len(levels)-1)]
+		filter(&m.mpick.list)
+		m.mpick.syncEffort(m, previous)
+	case m.sessionPick != nil:
+		filter(m.sessionPick)
+	case m.histPick != nil:
+		filter(m.histPick)
+	case m.settings != nil && m.settings.input != nil:
+		ti, cmd := m.settings.input.Update(msg)
+		m.settings.input = &ti
+		return cmd, true
+	}
+	return nil, true
+}
+
 // composerFocused reports whether typing and pasting go to the composer.
 func (m *model) composerFocused() bool {
 	return m.perm == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
@@ -559,6 +614,12 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.running:
 			m.interrupt()
+			return m, nil
+		case m.shellCancel != nil:
+			m.shellCancel()
+			return m, nil
+		case m.compactCancel != nil:
+			m.compactCancel()
 			return m, nil
 		case m.input.Value() != "":
 			m.input.Reset()
@@ -579,6 +640,10 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.shellCancel != nil {
 			m.shellCancel()
+			return m, nil
+		}
+		if m.compactCancel != nil {
+			m.compactCancel()
 			return m, nil
 		}
 	case "up":
@@ -619,12 +684,12 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.command(text)
 		}
 		if strings.HasPrefix(text, "!") {
-			if m.running || m.shellCancel != nil {
+			if !m.idle() {
 				return m, m.println(m.st.err.Render("wait for the current turn or command to finish (esc to interrupt)"))
 			}
 			return m, m.runShell(text[1:])
 		}
-		if m.running || m.shellCancel != nil {
+		if !m.idle() {
 			m.queue = append(m.queue, text)
 			return m, nil
 		}
@@ -637,6 +702,22 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.histIdx, m.histDraft = -1, ""
 	}
 	return m, cmd
+}
+
+// idle reports whether the agent is free: no turn, "!" command or
+// compaction is running.
+func (m *model) idle() bool {
+	return !m.running && m.shellCancel == nil && m.compactCancel == nil
+}
+
+// nextQueued submits the oldest queued prompt when the agent is idle.
+func (m *model) nextQueued() tea.Cmd {
+	if len(m.queue) == 0 || !m.idle() {
+		return nil
+	}
+	next := m.queue[0]
+	m.queue = m.queue[1:]
+	return m.submit(next)
 }
 
 func (m *model) interrupt() {
@@ -882,7 +963,7 @@ func (m *model) waitBackground() tea.Cmd {
 // deliverBackground starts a turn that hands finished background results
 // to the model, if any are waiting and nothing else is running.
 func (m *model) deliverBackground() tea.Cmd {
-	if m.running || m.agent.PendingNotifications() == 0 {
+	if !m.idle() || m.agent.PendingNotifications() == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -912,6 +993,31 @@ func (m *model) dropForegroundPerms() {
 	if !keep(m.perm) {
 		m.perm = nil
 		m.permFeedback = nil
+		if len(queue) > 0 {
+			m.perm, queue = &queue[0], queue[1:]
+			m.permIdx = 0
+		}
+	}
+	m.permQueue = queue
+}
+
+// dropTaskPerms closes the prompts of a background task that has ended;
+// nothing is waiting for their answers any more.
+func (m *model) dropTaskPerms(label string) {
+	ended := func(e *agent.Event) bool {
+		return e != nil && m.bgReplies[e.Reply] && taskMatches(label, e.Agent)
+	}
+	var queue []agent.Event
+	for i := range m.permQueue {
+		if ended(&m.permQueue[i]) {
+			delete(m.bgReplies, m.permQueue[i].Reply)
+		} else {
+			queue = append(queue, m.permQueue[i])
+		}
+	}
+	if ended(m.perm) {
+		delete(m.bgReplies, m.perm.Reply)
+		m.perm, m.permFeedback = nil, nil
 		if len(queue) > 0 {
 			m.perm, queue = &queue[0], queue[1:]
 			m.permIdx = 0

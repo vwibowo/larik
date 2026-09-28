@@ -177,3 +177,26 @@ func TestFallbackAlwaysTriesTheLast(t *testing.T) {
 		t.Errorf("the last candidate should be tried every time: err %v, calls %v", err, b.models)
 	}
 }
+
+// TestNoticeNamesTheCandidateTried: when the next candidate is cooling
+// down, the notice names the one actually used.
+func TestNoticeNamesTheCandidateTried(t *testing.T) {
+	fresh(t)
+	down := &APIError{Status: 503, Err: errors.New("overloaded"), Retryable: true}
+	a, b, c := &stub{name: "a", err: down}, &stub{name: "b", err: down}, &stub{name: "c"}
+	// b fails once on its own and starts cooling down.
+	collect(WithFallback(Candidate{b, "y"}, Candidate{c, "z"}), "y")
+	events, err := collect(WithFallback(Candidate{a, "x"}, Candidate{b, "y"}, Candidate{c, "z"}), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notice string
+	for _, ev := range events {
+		if ev.Type == EventNotice {
+			notice = ev.Text
+		}
+	}
+	if !strings.Contains(notice, "switched to c/z") {
+		t.Fatalf("notice %q should name c/z, the candidate tried", notice)
+	}
+}

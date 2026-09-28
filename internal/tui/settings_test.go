@@ -196,6 +196,11 @@ func TestNotifyOnlyWhenUnfocused(t *testing.T) {
 	m := testModel(t)
 	m.notify = "bell"
 	perm := agent.Event{Kind: agent.EvPermission, ToolName: "bash"}
+	if cmd := m.handleEvent(perm); cmd == nil {
+		t.Fatal("a terminal that hasn't reported focus should still be notified")
+	}
+	m.perm = nil
+	m.Update(tea.FocusMsg{})
 	if cmd := m.handleEvent(perm); cmd != nil {
 		t.Fatal("no notification while the terminal has focus")
 	}

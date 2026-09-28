@@ -170,7 +170,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	}
 
 	for _, r := range c.rules.Deny {
-		if c.matches(r, call.Tool, subject) {
+		if c.denies(r, call.Tool, subject) {
 			return Deny, fmt.Sprintf("denied by rule %q", r)
 		}
 	}
@@ -183,10 +183,8 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	if c.mode == ModePlan && !networkTools[call.Tool] {
 		return Deny, "plan mode is active: only read-only tools may run. Present your plan instead of making changes."
 	}
-	for _, r := range c.rules.Allow {
-		if c.matches(r, call.Tool, subject) {
-			return Allow, ""
-		}
+	if c.allows(call.Tool, subject) {
+		return Allow, ""
 	}
 	switch call.Tool {
 	case "bash":
@@ -271,6 +269,91 @@ func (c *Checker) abs(p string) string {
 func (c *Checker) insideCwd(p string) bool {
 	rel, err := filepath.Rel(c.cwd, c.abs(p))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// denies reports whether a deny rule stops the call. A bash rule also
+// applies to each command in a chain, pipe or substitution, so
+// "true; rm -rf x" doesn't slip past bash(rm*).
+func (c *Checker) denies(rule, tool, subject string) bool {
+	if c.matches(rule, tool, subject) {
+		return true
+	}
+	if tool != "bash" {
+		return false
+	}
+	for _, part := range shellParts(subject) {
+		if c.matches(rule, tool, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// allows reports whether the allow rules cover the call. Rules are
+// prefixes, so for bash a rule like bash(git status*) must not vouch for
+// "git status; curl … | sh": a chained or piped command is allowed only
+// when every command in it is, and one with a substitution or a
+// redirection to a file isn't allowed by a pattern at all.
+func (c *Checker) allows(tool, subject string) bool {
+	if tool != "bash" {
+		for _, r := range c.rules.Allow {
+			if c.matches(r, tool, subject) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range c.rules.Allow {
+		if m := ruleRe.FindStringSubmatch(strings.TrimSpace(r)); m != nil && m[1] == "bash" && (m[2] == "" || m[2] == "*") {
+			return true // every command, chained or not
+		}
+	}
+	parts, ok := simpleCommands(subject)
+	if !ok {
+		return false
+	}
+	for _, part := range parts {
+		allowed := false
+		for _, r := range c.rules.Allow {
+			if c.matches(r, tool, part) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return false
+		}
+	}
+	return true
+}
+
+// harmlessRedirect matches redirections that write no file: fd
+// duplication and /dev/null.
+var harmlessRedirect = regexp.MustCompile(`\d?>&\d|[&\d]?>>?\s*/dev/null`)
+
+// simpleCommands splits a command line at ;, &, |, newlines and
+// parentheses. ok is false when it substitutes commands or redirects to
+// a file, which no prefix rule can vouch for. Quoting isn't parsed, so an
+// operator inside quotes splits too; that only makes Larik ask.
+func simpleCommands(cmd string) (parts []string, ok bool) {
+	cmd = harmlessRedirect.ReplaceAllString(cmd, " ")
+	if strings.ContainsAny(cmd, "`<>") || strings.Contains(cmd, "$(") {
+		return nil, false
+	}
+	parts = shellParts(cmd)
+	return parts, len(parts) > 0
+}
+
+// shellParts cuts a command line into the commands it runs, including
+// those in $(…), `…` and subshells.
+func shellParts(cmd string) []string {
+	var parts []string
+	for _, p := range strings.FieldsFunc(cmd, func(r rune) bool { return strings.ContainsRune(";&|\n()`", r) }) {
+		if p = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(p), "$")); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return parts
 }
 
 // wildcard matches s against a pattern where * matches any run of characters.

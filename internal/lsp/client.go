@@ -19,6 +19,12 @@ type client struct {
 	conn *conn
 	log  *os.File
 
+	// syncMu orders document syncs: reading a file and sending it must
+	// happen together, or a didChange could overtake the didOpen it
+	// follows, or older text overwrite newer. It guards only that, so
+	// holding it across the write is fine.
+	syncMu sync.Mutex
+
 	mu      sync.Mutex
 	docs    map[string]int // uri -> version
 	diags   map[string][]Diagnostic
@@ -143,6 +149,8 @@ func (c *client) handleRequest(method string, params json.RawMessage) (any, erro
 // sync opens or updates a document with its current contents from disk.
 // It returns the publish counter observed before the change, for waitFor.
 func (c *client) sync(path, languageID string) (int64, bool, error) {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, false, err

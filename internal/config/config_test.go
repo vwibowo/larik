@@ -290,6 +290,21 @@ func TestProjectCannotAddLSPCommands(t *testing.T) {
 	}
 }
 
+func TestProjectCannotReenableLSP(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"lsp":{"gopls":{"disabled":true}}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"lsp":{"gopls":{"disabled":false}}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LSP["gopls"].Disabled {
+		t.Error("shared project settings must not turn on a server the user disabled")
+	}
+}
+
 func TestProjectCanOnlyTightenSandbox(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()
@@ -453,9 +468,9 @@ func TestThemeSettingRoundTrip(t *testing.T) {
 		t.Fatalf("an empty value should remove the key, got %q", cfg.Theme)
 	}
 
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"theme":"neon"}`)
+	write(t, cfg.UserConfigPath(), `{"theme":"neon"}`)
 	if _, err := Load(cwd); err == nil {
-		t.Fatal("an unknown theme should be an error")
+		t.Fatal("an unknown theme in your own config should be an error")
 	}
 }
 
@@ -522,5 +537,18 @@ func TestCheckpointRetention(t *testing.T) {
 	cfg, _ = Load(cwd)
 	if cfg.CheckpointRetention() != 0 {
 		t.Fatalf("negative should keep forever, got %v", cfg.CheckpointRetention())
+	}
+}
+
+func TestBadSharedThemeDoesNotStopLoad(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"theme":"neon","notifications":"loud"}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("a bad value in a shared file must not stop Larik: %v", err)
+	}
+	if cfg.Theme != "" || cfg.Notifications != "" {
+		t.Errorf("bad shared values must be ignored: %q %q", cfg.Theme, cfg.Notifications)
 	}
 }

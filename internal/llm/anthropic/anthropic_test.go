@@ -52,7 +52,7 @@ func TestStreamToolUse(t *testing.T) {
 		"event: message_stop\ndata: "+`{"type":"message_stop"}`,
 	)
 	srv := llmtest.NewServer(t, 200, body)
-	p := New("test-key", srv.URL)
+	p := New("", "test-key", srv.URL)
 
 	history := []llm.Message{
 		llm.UserText("hi"),
@@ -95,7 +95,7 @@ func TestLegacyModelUsesBudget(t *testing.T) {
 		"event: message_delta\ndata: "+`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
 		"event: message_stop\ndata: "+`{"type":"message_stop"}`,
 	))
-	_, _, err := collect(t, New("k", srv.URL), llm.Request{Model: "claude-haiku-4-5", Messages: []llm.Message{llm.UserText("x")}, Effort: llm.EffortMedium})
+	_, _, err := collect(t, New("", "k", srv.URL), llm.Request{Model: "claude-haiku-4-5", Messages: []llm.Message{llm.UserText("x")}, Effort: llm.EffortMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestLegacyModelUsesBudget(t *testing.T) {
 
 func TestErrors(t *testing.T) {
 	srv := llmtest.NewServer(t, 400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1200000 tokens > 1000000 maximum"}}`)
-	_, _, err := collect(t, New("k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: []llm.Message{llm.UserText("x")}})
+	_, _, err := collect(t, New("", "k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: []llm.Message{llm.UserText("x")}})
 	if !errors.Is(err, llm.ErrContextOverflow) {
 		t.Fatalf("want context overflow, got %v", err)
 	}
@@ -139,11 +139,32 @@ func TestThinkingMismatchRetry(t *testing.T) {
 		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: []llm.Block{{Type: llm.BlockThinking, Text: "t", Signature: "SIGX", Provider: Name}, llm.TextBlock("b")}},
 		llm.UserText("c"),
 	}
-	_, _, err := collect(t, New("k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: history})
+	_, _, err := collect(t, New("", "k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: history})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 || !strings.Contains(bodies[0], "SIGX") || strings.Contains(bodies[1], "SIGX") {
 		t.Fatalf("calls=%d; retry should drop thinking", calls)
+	}
+}
+
+// TestCutOffToolCallIsInvalid: a tool call whose block never ended (the
+// output limit hit mid-call) must not run with whatever input arrived.
+func TestCutOffToolCallIsInvalid(t *testing.T) {
+	body := llmtest.SSE(
+		"event: message_start\ndata: "+`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":1}}}`,
+		"event: content_block_start\ndata: "+`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"write","input":{}}}`,
+		"event: content_block_delta\ndata: "+`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a.go\",\"content\":\"pack"}}`,
+		"event: message_delta\ndata: "+`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":30}}`,
+		"event: message_stop\ndata: "+`{"type":"message_stop"}`,
+	)
+	srv := llmtest.NewServer(t, 200, body)
+	_, done, err := collect(t, New("", "k", srv.URL), llm.Request{Model: "claude-opus-5", Messages: []llm.Message{llm.UserText("x")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uses := done.Message.ToolUses()
+	if len(uses) != 1 || uses[0].Input != nil {
+		t.Fatalf("a cut-off call must be marked invalid (nil input), got %+v", uses)
 	}
 }

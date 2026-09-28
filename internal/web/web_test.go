@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -210,5 +211,21 @@ func TestSearcherSelection(t *testing.T) {
 	}
 	if _, err := NewSearcher(SearchConfig{Provider: "brave"}); err == nil {
 		t.Error("brave without key should error")
+	}
+}
+
+func TestProxiedFetchStillBlocksMetadata(t *testing.T) {
+	proxy, _ := url.Parse("http://127.0.0.1:9")
+	viaProxy := checkedProxy(func(*http.Request) (*url.URL, error) { return proxy, nil })
+	for target, blocked := range map[string]bool{
+		"http://169.254.169.254/latest/meta-data/": true,
+		"http://[fd00:ec2::254]/":                  true,
+		"http://93.184.215.14/":                    false,
+	} {
+		req, _ := http.NewRequest("GET", target, nil)
+		_, err := viaProxy(req)
+		if got := errors.Is(err, ErrBlockedAddress); got != blocked {
+			t.Errorf("%s through a proxy: blocked=%v (%v), want %v", target, got, err, blocked)
+		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"io"
 	"iter"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -152,9 +151,12 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 
 		var (
 			text, reasoning strings.Builder
-			calls           = map[int64]*pendingCall{}
-			finish          string
-			usage           llm.Usage
+			// calls in the order they started; byIndex is the one each
+			// stream index currently feeds.
+			calls   []*pendingCall
+			byIndex = map[int64]*pendingCall{}
+			finish  string
+			usage   llm.Usage
 		)
 		for stream.Next() {
 			chunk := stream.Current()
@@ -180,10 +182,13 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 					}
 				}
 				for _, tc := range d.ToolCalls {
-					c, ok := calls[tc.Index]
-					if !ok {
+					c, ok := byIndex[tc.Index]
+					// Some servers send every call whole at index 0 (or with
+					// no index); a new id there starts a new call.
+					if !ok || (tc.ID != "" && c.id != "" && tc.ID != c.id) {
 						c = &pendingCall{}
-						calls[tc.Index] = c
+						byIndex[tc.Index] = c
+						calls = append(calls, c)
 					}
 					if tc.ID != "" {
 						c.id = tc.ID
@@ -210,15 +215,9 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if text.Len() > 0 {
 			msg.Blocks = append(msg.Blocks, llm.TextBlock(text.String()))
 		}
-		idx := make([]int64, 0, len(calls))
-		for i := range calls {
-			idx = append(idx, i)
-		}
-		sort.Slice(idx, func(a, b int) bool { return idx[a] < idx[b] })
-		for n, i := range idx {
-			c := calls[i]
+		for _, c := range calls {
 			if c.id == "" {
-				c.id = fmt.Sprintf("call_%d", n)
+				c.id = llm.NewCallID("call_")
 			}
 			input := json.RawMessage(c.args.String())
 			if len(input) == 0 {

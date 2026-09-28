@@ -24,7 +24,7 @@ func TestResponsesStream(t *testing.T) {
 		`{"type":"response.completed","sequence_number":4,"response":{"id":"resp_1","object":"response","status":"completed","model":"gpt-5.5","output":[`+reasoning+`,`+msg+`,`+call+`],"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":40},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":5},"total_tokens":120}}}`,
 	)
 	srv := llmtest.NewServer(t, 200, body)
-	p := New("k", srv.URL)
+	p := New("", "k", srv.URL)
 
 	prior := llm.Message{Role: llm.RoleAssistant, Model: "gpt-5.5", Blocks: []llm.Block{
 		{Type: llm.BlockOpaque, Provider: Name, Raw: json.RawMessage(`{"type":"reasoning","id":"rs_0","encrypted_content":"PRIOR"}`)},

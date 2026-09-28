@@ -23,6 +23,7 @@ const Prefix = "mcp__"
 
 type tool struct {
 	spec     llm.ToolSpec
+	server   string
 	remote   string // tool name on the server
 	session  *sdk.ClientSession
 	readOnly bool
@@ -49,6 +50,7 @@ func newTool(server string, session *sdk.ClientSession, t *sdk.Tool, used map[st
 	}
 	return &tool{
 		spec:     llm.ToolSpec{Name: name, Description: desc, Schema: schemaJSON(t.InputSchema)},
+		server:   server,
 		remote:   t.Name,
 		session:  session,
 		readOnly: ro,

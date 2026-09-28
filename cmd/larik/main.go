@@ -63,6 +63,9 @@ func run() error {
 		fmt.Println("larik", version)
 		return nil
 	}
+	if *output != "text" && *output != "json" {
+		return fmt.Errorf("--output must be text or json, not %q", *output)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
