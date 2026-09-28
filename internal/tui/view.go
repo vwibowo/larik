@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/agent"
 	"larik/internal/llm"
@@ -20,7 +21,7 @@ import (
 func (m *model) View() tea.View {
 	var parts []string
 
-	if m.running || m.busyLabel != "" {
+	if m.running || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
 		if live := m.liveView(); live != "" {
 			parts = append(parts, live)
 		}
@@ -48,7 +49,7 @@ func (m *model) View() tea.View {
 		case m.palette != nil:
 			parts = append(parts, m.paletteView())
 		}
-		parts = append(parts, m.st.box.Width(max(m.width-2, 10)).Render(m.input.View()))
+		parts = append(parts, m.st.box.Width(max(m.width, 7)).Render(m.input.View()))
 	}
 	parts = append(parts, m.statusLine())
 
@@ -70,7 +71,12 @@ func (m *model) liveView() string {
 		limit := max(m.height-12, 5)
 		b = append(b, lastLines(wrap(s, m.width-2), limit))
 	}
+	tasks := m.taskRows()
+	b = append(b, tasks...)
 	for _, t := range m.tools {
+		if len(tasks) > 0 && (t.name == "task" || t.agent != "") {
+			continue // task activity is grouped by subagent above
+		}
 		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input, m.shortPaths)
 		if t.agent != "" {
 			line = "  ↳ " + line + m.st.dim.Render("  ("+t.agent+")")
@@ -84,6 +90,8 @@ func (m *model) liveView() string {
 		label = "Waiting for your answer…"
 	case m.busyLabel != "":
 		label = m.busyLabel
+	case !m.running && len(tasks) > 0:
+		label = "Background tasks running…"
 	case m.calling != "":
 		label = "Writing " + m.calling + " call…"
 	case thinkingNow:
@@ -120,6 +128,106 @@ func (m *model) liveView() string {
 		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued, sent when this turn ends", len(m.queue))))
 	}
 	return strings.Join(b, "\n")
+}
+
+// taskLabel matches the label used when the task tool forwards child events.
+func taskLabel(input []byte) string {
+	var in struct {
+		Type        string `json:"subagent_type"`
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal(input, &in)
+	if in.Description != "" {
+		return in.Type + ": " + strings.TrimSpace(in.Description)
+	}
+	return in.Type
+}
+
+func taskIsBackground(input []byte) bool {
+	var in struct {
+		Background bool `json:"run_in_background"`
+	}
+	_ = json.Unmarshal(input, &in)
+	return in.Background
+}
+
+func taskMatches(label, child string) bool {
+	return child == label || strings.HasPrefix(child, label+" · ")
+}
+
+func (m *model) clearTaskCalls(label string) {
+	for name := range m.taskCalls {
+		if taskMatches(label, name) {
+			delete(m.taskCalls, name)
+		}
+	}
+}
+
+// taskRows gives each parallel subagent its own live row. A tool-call count
+// reflects observed work; it is not a percentage of an unknown total.
+func (m *model) taskRows() []string {
+	type task struct {
+		label, id string
+		started   time.Time
+	}
+	var running []task
+	background := m.agent.BackgroundTasks()
+	for _, t := range m.tools {
+		if t.name != "task" {
+			continue
+		}
+		label := taskLabel(t.input)
+		if taskIsBackground(t.input) {
+			found := false
+			for _, bg := range background {
+				found = found || bg.Label == label && bg.Status == agent.BgRunning
+			}
+			if found {
+				continue
+			}
+		}
+		running = append(running, task{label: label, started: t.started})
+	}
+	for _, bg := range background {
+		if bg.Status == agent.BgRunning {
+			running = append(running, task{label: bg.Label, id: bg.ID, started: bg.Started})
+		}
+	}
+	if len(running) == 0 {
+		return nil
+	}
+	limit := min(len(running), max(m.height/3, 3))
+	rows := []string{m.st.dim.Render(fmt.Sprintf("Subagents (%d running)", len(running)))}
+	for _, task := range running[:limit] {
+		calls, activity := 0, "thinking…"
+		for name, n := range m.taskCalls {
+			if taskMatches(task.label, name) {
+				calls += n
+			}
+		}
+		for _, t := range m.tools {
+			if t.agent != "" && taskMatches(task.label, t.agent) {
+				activity = toolTitle(t.name, t.input, m.shortPaths)
+			}
+		}
+		if m.perm != nil && taskMatches(task.label, m.perm.Agent) {
+			activity = "waiting for permission"
+		}
+		name := task.label
+		if task.id != "" {
+			name = task.id + " " + name
+		}
+		age := "0s"
+		if !task.started.IsZero() {
+			age = elapsed(time.Since(task.started))
+		}
+		line := fmt.Sprintf("  ↳ %s · %s · %s · %s", name, age, plural(calls, "tool"), activity)
+		rows = append(rows, m.st.dim.Render(ansi.Truncate(line, max(m.width-2, 10), "…")))
+	}
+	if len(running) > limit {
+		rows = append(rows, m.st.dim.Render(fmt.Sprintf("  … +%d subagents", len(running)-limit)))
+	}
+	return rows
 }
 
 // lines is how many lines of tool output a card shows: n, or up to
@@ -402,19 +510,25 @@ func (m *model) renderToolCard(e agent.Event) string {
 	switch {
 	case e.Agent != "" && !e.IsError:
 		// keep nested subagent activity to one line
-	case e.Display != "":
-		body = m.diff(e.Display, m.lines(20))
 	case e.IsError:
 		body = m.st.err.Render(truncateLines(strings.TrimSpace(e.Output), m.lines(6)))
+	case e.ToolName == "read":
+		out := strings.TrimSpace(e.Output)
+		n := strings.Count(out, "\n") + 1
+		body = m.st.dim.Render("read " + plural(n, "line"))
+		if m.verbose {
+			preview := strings.Split(out, "\n")
+			for i := range preview {
+				preview[i] = ansi.Truncate(preview[i], max(min(m.width-12, 120), 12), "…")
+			}
+			body += "\n" + m.st.dim.Render(truncateLines(strings.Join(preview, "\n"), 3))
+		}
+	case e.Display != "":
+		body = m.diff(e.Display, m.lines(20))
 	default:
 		out := strings.TrimSpace(e.Output)
 		n := strings.Count(out, "\n") + 1
 		switch e.ToolName {
-		case "read":
-			body = m.st.dim.Render("read " + plural(n, "line"))
-			if m.verbose {
-				body += "\n" + m.st.dim.Render(truncateLines(out, m.lines(0)))
-			}
 		case "skill":
 			body = m.st.dim.Render("loaded skill (" + plural(n, "line") + ")")
 		case "web_fetch":

@@ -568,12 +568,20 @@ func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
 // it when value is nil or "", so the built-in default applies again. It
 // does not update c; callers set the field they changed.
 func (c *Config) SetUserSetting(key string, value any) error {
+	return c.SetUserSettings(map[string]any{key: value})
+}
+
+// SetUserSettings saves related defaults atomically, preserving unrelated
+// settings and concurrent updates to the config file.
+func (c *Config) SetUserSettings(values map[string]any) error {
 	return updateJSON(c.UserConfigPath(), 0o644, func(raw map[string]any) {
-		if value == nil || value == "" {
-			delete(raw, key)
-			return
+		for key, value := range values {
+			if value == nil || value == "" {
+				delete(raw, key)
+			} else {
+				raw[key] = value
+			}
 		}
-		raw[key] = value
 	})
 }
 

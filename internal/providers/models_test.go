@@ -11,6 +11,7 @@ import (
 
 	"larik/internal/chatgpt"
 	"larik/internal/config"
+	"larik/internal/llm"
 	"larik/internal/llm/ollama"
 )
 
@@ -145,6 +146,18 @@ func TestPull(t *testing.T) {
 
 	if err := EndpointOf("groq", config.ProviderConfig{}).Pull(context.Background(), "m", func(PullProgress) {}); err == nil {
 		t.Fatal("only Ollama can download models")
+	}
+}
+
+func TestCodexAdvertisesReasoningLevels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models":[{"slug":"gpt-test","visibility":"list","context_window":1000,"supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}`))
+	}))
+	defer srv.Close()
+	e := Endpoint{Kind: Codex, BaseURL: srv.URL, Token: func(context.Context) (string, string, error) { return "t", "a", nil }}
+	ms, err := e.ListModels(context.Background())
+	if err != nil || len(ms) != 1 || !slices.Equal(ms[0].Efforts, []llm.Effort{llm.EffortLow, llm.EffortHigh}) {
+		t.Fatalf("reasoning levels: %+v, %v", ms, err)
 	}
 }
 

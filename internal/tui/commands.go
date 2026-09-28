@@ -27,7 +27,9 @@ func (m *model) cycleMode() tea.Cmd {
 			next = modeCycle[(i+1)%len(modeCycle)]
 		}
 	}
-	perms.SetMode(next)
+	if err := m.persistMode(next); err != nil {
+		return m.println(m.st.err.Render("couldn't save mode: " + err.Error()))
+	}
 	return nil
 }
 
@@ -100,15 +102,19 @@ func (m *model) command(line string) tea.Cmd {
 			}
 			return info("effort: " + e)
 		}
-		switch arg {
-		case "default":
-			m.agent.SetEffort(llm.EffortDefault)
-		case "low", "medium", "high", "xhigh", "max":
-			m.agent.SetEffort(llm.Effort(arg))
-		default:
+		if arg != "default" && arg != "low" && arg != "medium" && arg != "high" && arg != "xhigh" && arg != "max" {
 			return fail("unknown effort " + arg)
 		}
-		return info("effort set to " + arg)
+		effort := llm.Effort(arg)
+		if arg == "default" {
+			effort = llm.EffortDefault
+		}
+		if err := m.opts.Config.SetUserSetting("effort", string(effort)); err != nil {
+			return fail("couldn't save effort: " + err.Error())
+		}
+		m.opts.Config.Effort = effort
+		m.agent.SetEffort(effort)
+		return info("effort set to " + arg + " · saved as default")
 
 	case "/mode":
 		if arg == "" {
@@ -118,8 +124,7 @@ func (m *model) command(line string) tea.Cmd {
 		if err != nil {
 			return fail(err.Error())
 		}
-		m.agent.Perms().SetMode(md)
-		return info("mode set to " + string(md))
+		return m.setMode(md)
 
 	case "/undo":
 		paths, err := m.agent.Undo()

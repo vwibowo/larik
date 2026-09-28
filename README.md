@@ -106,19 +106,19 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 
 ## Keys and commands
 
-`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+`enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
 |---|---|
-| `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
+| `/model [provider/model]` | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches |
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
 | `/providers` | Connected or detected providers with status, plus a NVIDIA NIM connect shortcut; `enter` edit/connect, `t` test, `d` remove, `a` add |
 | `/routing [role=provider/model]` | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
 | `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, token saver, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config token_saver=true` enables filtering |
 | `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
-| `/effort [low…max\|default]` | Reasoning effort |
-| `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
+| `/effort [low…max\|default]` | Set and save the default reasoning effort |
+| `/mode [default\|accept-edits\|plan\|yolo]` | Pick and save the default permission mode from a list (`1`–`4`), or set it directly |
 | `/undo` | Revert checkpointed file changes from the last turn; `bash` changes need explicit `checkpoint_paths`, and MCP side effects are not covered |
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
@@ -139,6 +139,8 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents |
 | `/sandbox` | Sandbox status |
 | `/<skill-name> [args]` | Run a skill |
+
+CLI flags such as `--model`, `--effort`, and `--mode` override saved defaults for that launch without changing the config file.
 
 ### Branches
 

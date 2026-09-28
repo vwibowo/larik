@@ -14,13 +14,84 @@ import (
 	"larik/internal/providers"
 )
 
-var efforts = []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax}
+// availableEfforts lists distinct levels the selected model's adapter can send.
+// Unknown capabilities stay on provider default rather than guessing support.
+func (m *model) availableEfforts(v pickModel) []llm.Effort {
+	defaultOnly := []llm.Effort{llm.EffortDefault}
+	basic := []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh}
+	kind := providers.EndpointFor(m.opts.Config, v.provider)
+	for _, candidate := range m.modelLists[v.provider].models {
+		if candidate.ID == v.model && len(candidate.Efforts) > 0 {
+			levels := append([]llm.Effort(nil), defaultOnly...)
+			for _, e := range []llm.Effort{llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax} {
+				if slices.Contains(candidate.Efforts, e) {
+					levels = append(levels, e)
+				}
+			}
+			return levels
+		}
+	}
+	switch {
+	case kind.IsOllama():
+		for _, candidate := range m.modelLists[v.provider].models {
+			if candidate.ID == v.model && candidate.CapsKnown && candidate.Thinking {
+				return basic
+			}
+		}
+	case kind.Kind == "gemini":
+		if strings.HasPrefix(v.model, "gemini-3") {
+			return basic // xhigh and max both map to high in the adapter
+		}
+	case kind.Kind == "anthropic":
+		if strings.HasPrefix(v.model, "claude-") {
+			if strings.Contains(v.model, "claude-3") || strings.Contains(v.model, "-4-0") ||
+				strings.Contains(v.model, "-4-1") || strings.Contains(v.model, "-4-5") ||
+				strings.Contains(v.model, "sonnet-4-2") || strings.Contains(v.model, "opus-4-2") {
+				return basic // legacy thinking budgets
+			}
+			if strings.Contains(v.model, "-5") || strings.Contains(v.model, "-4-") {
+				return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortMax}
+			}
+		}
+	case kind.Kind == "openai", kind.Kind == providers.Codex:
+		if strings.Contains(v.model, "chat-latest") {
+			break
+		}
+		if strings.HasPrefix(v.model, "gpt-5") || strings.HasPrefix(v.model, "gpt-6") || strings.Contains(v.model, "codex") {
+			return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh}
+		}
+		if strings.HasPrefix(v.model, "o1") || strings.HasPrefix(v.model, "o3") || strings.HasPrefix(v.model, "o4") {
+			return basic
+		}
+	}
+	return defaultOnly
+}
+
+func (mp *modelPicker) selectedEfforts(m *model) []llm.Effort {
+	if it, ok := mp.list.selected(); ok {
+		if v, ok := it.value.(pickModel); ok {
+			return m.availableEfforts(v)
+		}
+	}
+	return []llm.Effort{llm.EffortDefault}
+}
+
+// Keep the chosen level across rows when possible; otherwise use default.
+func (mp *modelPicker) syncEffort(m *model, previous llm.Effort) {
+	mp.effort = 0
+	for i, e := range mp.selectedEfforts(m) {
+		if e == previous {
+			mp.effort = i
+			break
+		}
+	}
+}
 
 // modelPicker is the /model dropdown: models grouped by provider, an
 // effort row, and ways into the connect wizard.
 type modelPicker struct {
 	list    picker
-	effort  int // index into efforts
+	effort  int // index into selectedEfforts for the highlighted model
 	loading bool
 }
 
@@ -41,11 +112,6 @@ type (
 
 func (m *model) openModelPicker() tea.Cmd {
 	mp := &modelPicker{list: picker{filterable: true}, loading: m.modelLists == nil}
-	for i, e := range efforts {
-		if e == m.agent.Effort() {
-			mp.effort = i
-		}
-	}
 	mp.list.extra = func(f string) []pickItem {
 		f = strings.TrimSpace(f)
 		if !strings.Contains(f, "/") {
@@ -56,6 +122,7 @@ func (m *model) openModelPicker() tea.Cmd {
 	}
 	m.mpick = mp
 	m.buildModelList()
+	mp.syncEffort(m, m.agent.Effort())
 	return m.loadModels()
 }
 
@@ -179,17 +246,20 @@ func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 		mp.effort = max(mp.effort-1, 0)
 		return nil
 	case "right":
-		mp.effort = min(mp.effort+1, len(efforts)-1)
+		mp.effort = min(mp.effort+1, len(mp.selectedEfforts(m))-1)
 		return nil
 	}
+	levels := mp.selectedEfforts(m)
+	previous := levels[min(mp.effort, len(levels)-1)]
 	if !mp.list.handleKey(msg) {
+		mp.syncEffort(m, previous)
 		return nil
 	}
 	it, _ := mp.list.selected()
 	m.mpick = nil
 	switch v := it.value.(type) {
 	case pickModel:
-		return m.switchModel(v.provider+"/"+v.model, efforts[mp.effort])
+		return m.switchModel(v.provider+"/"+v.model, levels[min(mp.effort, len(levels)-1)])
 	case pickConnect:
 		return m.openWizard(v.provider)
 	case pickAdd:
@@ -204,6 +274,13 @@ func (m *model) switchModel(spec string, effort llm.Effort) tea.Cmd {
 	if err != nil {
 		return m.println(m.st.err.Render(err.Error()))
 	}
+	if !slices.Contains(m.availableEfforts(pickModel{r.Provider.Name(), r.Model}), effort) {
+		effort = llm.EffortDefault
+	}
+	if err := m.opts.Config.SetUserSettings(map[string]any{"model": r.String(), "effort": string(effort)}); err != nil {
+		return m.println(m.st.err.Render("couldn't save model: " + err.Error()))
+	}
+	m.opts.Config.Model, m.opts.Config.Effort = r.String(), effort
 	changed := r.Provider.Name() != m.agent.ProviderName() || r.Model != m.agent.Model()
 	if changed {
 		m.agent.SetModel(r.Provider, r.Model)
@@ -217,7 +294,7 @@ func (m *model) switchModel(spec string, effort llm.Effort) tea.Cmd {
 	if effort != llm.EffortDefault {
 		msg += " · effort " + string(effort)
 	}
-	return m.println(m.st.dim.Render(msg))
+	return m.println(m.st.dim.Render(msg + " · saved as default"))
 }
 
 func (m *model) modelPickerView() string {
@@ -227,7 +304,7 @@ func (m *model) modelPickerView() string {
 	head := spread(m.st.accent.Render("Switch model"), m.st.dim.Render("current: "+m.agent.ProviderName()+"/"+m.agent.Model()), w)
 
 	var eff []string
-	for i, e := range efforts {
+	for i, e := range mp.selectedEfforts(m) {
 		name := string(e)
 		if e == llm.EffortDefault {
 			name = "default"

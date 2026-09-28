@@ -67,6 +67,7 @@ type toolRun struct {
 	id, name string
 	input    []byte
 	agent    string // subagent label, if any
+	started  time.Time
 }
 
 type model struct {
@@ -93,6 +94,7 @@ type model struct {
 	thinking     strings.Builder
 	calling      string // tool the model is currently writing a call for
 	tools        []toolRun
+	taskCalls    map[string]int  // completed calls by active subagent label
 	perm         *agent.Event    // permission prompt being shown
 	permQueue    []agent.Event   // further prompts (parallel subagents)
 	permFeedback *textarea.Model // denial feedback, when the third option is selected
@@ -221,7 +223,7 @@ func (m *model) applyTheme(isDark bool) {
 
 func (m *model) setWidth(w int) {
 	m.width = w
-	m.input.SetWidth(max(w-4, 10))
+	m.input.SetWidth(max(w-4, 4)) // the composer border and padding use four cells
 	if m.permFeedback != nil {
 		m.permFeedback.SetWidth(max(w-10, 10))
 	}
@@ -268,7 +270,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if !m.running && m.busyLabel == "" {
+		if !m.running && m.busyLabel == "" && m.agent.RunningBackground() == 0 {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -302,6 +304,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		switch e.Kind {
 		case agent.EvTaskDone:
+			m.clearTaskCalls(e.Agent)
 			cmds = append(cmds, m.println(m.renderTaskDone(e)))
 			if !m.running {
 				cmds = append(cmds, m.deliverBackground())
@@ -328,6 +331,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.println(m.st.dim.Render("✓ Conversation compacted. Summary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
 
 	case modelsLoadedMsg:
+		previous := m.agent.Effort()
+		if m.mpick != nil {
+			levels := m.mpick.selectedEfforts(m)
+			previous = levels[min(m.mpick.effort, len(levels)-1)]
+		}
 		m.modelLists = msg.lists
 		if m.routing != nil {
 			m.routing.setLists(msg.lists)
@@ -335,6 +343,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mpick != nil {
 			m.mpick.loading = false
 			m.buildModelList()
+			m.mpick.syncEffort(m, previous)
 		}
 		if m.provs != nil {
 			m.buildProviders()
@@ -564,8 +573,16 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		return m.println(out)
 	case agent.EvToolStart:
-		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent})
+		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:
+		if e.Agent != "" {
+			if m.taskCalls == nil {
+				m.taskCalls = make(map[string]int)
+			}
+			m.taskCalls[e.Agent]++
+		} else if e.ToolName == "task" && !taskIsBackground(e.Input) {
+			m.clearTaskCalls(taskLabel(e.Input))
+		}
 		for i, t := range m.tools {
 			if t.id == e.ToolID && t.agent == e.Agent { // child ids can repeat the parent's
 				m.tools = append(m.tools[:i], m.tools[i+1:]...)

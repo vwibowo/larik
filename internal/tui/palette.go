@@ -227,10 +227,26 @@ func (m *model) handleModePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *model) setMode(md permission.Mode) tea.Cmd {
-	m.modePick = nil
+// persistMode updates the saved default before applying it to this session.
+func (m *model) persistMode(md permission.Mode) error {
+	value := string(md)
+	if md == permission.ModeDefault {
+		value = ""
+	}
+	if err := m.opts.Config.SetUserSetting("mode", value); err != nil {
+		return err
+	}
+	m.opts.Config.Mode = permission.Mode(value)
 	m.agent.Perms().SetMode(md)
-	return m.println(m.st.dim.Render("mode set to " + modeLabels[md]))
+	return nil
+}
+
+func (m *model) setMode(md permission.Mode) tea.Cmd {
+	if err := m.persistMode(md); err != nil {
+		return m.println(m.st.err.Render("couldn't save mode: " + err.Error()))
+	}
+	m.modePick = nil
+	return m.println(m.st.dim.Render("mode set to " + modeLabels[md] + " · saved as default"))
 }
 
 func (m *model) modePickerView() string {

@@ -141,6 +141,8 @@ type Model struct {
 	Tools    bool
 	Thinking bool
 	Chat     bool
+	// Efforts are the reasoning levels explicitly advertised by the provider.
+	Efforts []llm.Effort
 	// CapsKnown reports whether the server said what the model can do.
 	// Otherwise Chat is a guess from the id and Tools/Thinking are unknown.
 	CapsKnown bool
@@ -285,9 +287,12 @@ func (e Endpoint) codexModels(ctx context.Context) ([]Model, error) {
 	}
 	var list struct {
 		Models []struct {
-			Slug          string `json:"slug"`
-			Visibility    string `json:"visibility"`
-			ContextWindow int    `json:"context_window"`
+			Slug            string `json:"slug"`
+			Visibility      string `json:"visibility"`
+			ContextWindow   int    `json:"context_window"`
+			ReasoningLevels []struct {
+				Effort llm.Effort `json:"effort"`
+			} `json:"supported_reasoning_levels"`
 		} `json:"models"`
 	}
 	h := map[string]string{"Authorization": "Bearer " + tok, "chatgpt-account-id": account, "originator": "larik"}
@@ -295,7 +300,11 @@ func (e Endpoint) codexModels(ctx context.Context) ([]Model, error) {
 	if getJSON(ctx, strings.TrimRight(e.BaseURL, "/")+"/models?client_version=1.0.0", h, &list) == nil {
 		for _, m := range list.Models {
 			if m.Visibility == "list" {
-				out = append(out, Model{ID: m.Slug, Context: m.ContextWindow, Chat: true, Tools: true, CapsKnown: true})
+				item := Model{ID: m.Slug, Context: m.ContextWindow, Chat: true, Tools: true, CapsKnown: true}
+				for _, level := range m.ReasoningLevels {
+					item.Efforts = append(item.Efforts, level.Effort)
+				}
+				out = append(out, item)
 			}
 		}
 	}

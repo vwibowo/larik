@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,89 @@ func TestLiveViewStatusLine(t *testing.T) {
 	m.handleEvent(agent.Event{Kind: agent.EvTextDelta, Text: "Hello"})
 	if m.thinkDur == 0 || !strings.Contains(plain(m.liveView()), "Responding…") {
 		t.Errorf("text should end thinking: dur %v view %q", m.thinkDur, plain(m.liveView()))
+	}
+}
+
+func TestComposerFillsTerminalWidth(t *testing.T) {
+	m := testModel(t)
+	for _, width := range []int{8, 30, 80, 120} {
+		m.setWidth(width)
+		box := m.st.box.Width(max(m.width, 7)).Render(m.input.View())
+		for _, line := range strings.Split(box, "\n") {
+			if got := lipgloss.Width(line); got != width {
+				t.Errorf("terminal %d: composer line width %d: %q", width, got, plain(line))
+			}
+		}
+	}
+}
+
+func TestReadCardBoundsPreview(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(55)
+	out := strings.Repeat("A", 200) + "\nsecond\nthird\nfourth\nfifth\n"
+	e := agent.Event{ToolName: "read", Input: []byte(`{"path":"test.go"}`), Output: out}
+	card := plain(m.renderToolCard(e))
+	if !strings.Contains(card, "read 5 lines") || strings.Contains(card, "AAAA") {
+		t.Fatalf("default read should be collapsed: %q", card)
+	}
+	m.verbose = true
+	card = plain(m.renderToolCard(e))
+	if !strings.Contains(card, "second") || !strings.Contains(card, "… +2 lines") || strings.Contains(card, "fourth") {
+		t.Fatalf("verbose read should show only a short preview: %q", card)
+	}
+	for _, line := range strings.Split(card, "\n") {
+		if lipgloss.Width(line) > 55 {
+			t.Fatalf("preview overflows terminal: %q", line)
+		}
+	}
+}
+
+func TestParallelSubagentRowsTrackActivity(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(90)
+	m.height, m.running = 24, true
+	first := []byte(`{"subagent_type":"explore","description":"find UI"}`)
+	second := []byte(`{"subagent_type":"general-purpose","description":"write tests"}`)
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "one", ToolName: "task", Input: first})
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "two", ToolName: "task", Input: second})
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "child", ToolName: "read", Agent: "explore: find UI", Input: []byte(`{"path":"view.go"}`)})
+	view := plain(m.liveView())
+	for _, want := range []string{"Subagents (2 running)", "explore: find UI", "general-purpose: write tests", "read(view.go)", "0 tools"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in %q", want, view)
+		}
+	}
+	m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: "child", ToolName: "read", Agent: "explore: find UI"})
+	if !strings.Contains(plain(m.liveView()), "1 tool") {
+		t.Fatalf("completed call not counted: %q", plain(m.liveView()))
+	}
+	m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: "one", ToolName: "task", Input: first})
+	if strings.Contains(plain(m.liveView()), "explore: find UI") || !strings.Contains(plain(m.liveView()), "Subagents (1 running)") {
+		t.Fatalf("finished task not removed: %q", plain(m.liveView()))
+	}
+}
+
+func TestBackgroundSubagentVisibleBetweenTurns(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 24
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	id, err := m.agent.StartBackground("explore: inspect code", func(ctx context.Context, emit func(agent.Event)) (string, bool) {
+		select {
+		case <-stop:
+		case <-ctx.Done():
+		}
+		return "done", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := plain(m.View().Content)
+	for _, want := range []string{id, "explore: inspect code", "Background tasks running…"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in %q", want, view)
+		}
 	}
 }
 

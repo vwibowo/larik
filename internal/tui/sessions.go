@@ -105,6 +105,7 @@ func (m *model) open(o app.Options, label, prefill string) tea.Cmd {
 	m.sess, m.agent = s, s.Agent
 	m.opts.Agent, m.opts.Hooks, m.opts.History = s.Agent, s.Hooks, s.History
 	m.perm, m.permQueue, m.bgReplies, m.queue = nil, nil, nil, nil
+	m.taskCalls = nil
 	m.stats = s.Agent.Stats()
 	if prefill != "" {
 		m.input.SetValue(prefill)
