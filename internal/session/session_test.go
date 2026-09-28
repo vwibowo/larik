@@ -2,6 +2,10 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +15,75 @@ import (
 
 func text(role llm.Role, s string) llm.Message {
 	return llm.Message{Role: role, Blocks: []llm.Block{{Type: llm.BlockText, Text: s}}}
+}
+
+func TestProjectDirectoriesDoNotCollide(t *testing.T) {
+	base, data := t.TempDir(), t.TempDir()
+	a, b := filepath.Join(base, "a", "b-c"), filepath.Join(base, "a-b", "c")
+	for _, dir := range []string{a, b} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if Dir(data, a) == Dir(data, b) {
+		t.Fatal("project directory identity is not collision resistant")
+	}
+	for _, cwd := range []string{a, b} {
+		s, err := Create(Dir(data, cwd), Meta{Cwd: cwd, Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+	if got, err := List(Dir(data, a)); err != nil || len(got) != 1 {
+		t.Fatalf("project a sessions: %v %v", got, err)
+	}
+	if got, err := List(Dir(data, b)); err != nil || len(got) != 1 {
+		t.Fatalf("project b sessions: %v %v", got, err)
+	}
+}
+
+func TestSessionWriterLockAcrossProcesses(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Cwd: t.TempDir(), Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := func() string {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestSessionLockHelper$")
+		cmd.Env = append(os.Environ(), "LARIK_LOCK_TEST_PATH="+s.Path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("lock helper: %v: %s", err, out)
+		}
+		return string(out)
+	}
+	if got := probe(); !strings.Contains(got, "already open for writing") {
+		t.Fatalf("second process did not see a locked session: %s", got)
+	}
+	if _, err := Load(s.Path); err != nil {
+		t.Fatalf("read-only load should work while locked: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := probe(); !strings.Contains(got, "opened") {
+		t.Fatalf("lock was not released on close: %s", got)
+	}
+}
+
+func TestSessionLockHelper(t *testing.T) {
+	path := os.Getenv("LARIK_LOCK_TEST_PATH")
+	if path == "" {
+		return
+	}
+	s, _, err := Open(path)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	s.Close()
+	fmt.Println("opened")
 }
 
 // transcript: two turns, the first with a tool call.

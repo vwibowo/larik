@@ -70,7 +70,9 @@
     const pick = (arch) => cards.find((c) => c.dataset.os === os && (!arch || c.dataset.arch === arch));
     const mark = (arch) => { cards.forEach((c) => c.classList.remove("match")); pick(arch)?.classList.add("match"); };
     if (os && !/Android|iPhone|iPad/.test(ua)) {
-      mark(os === "macos" ? "arm64" : /aarch64|arm64/i.test(ua) ? "arm64" : "amd64");
+      if (os !== "macos") mark(/aarch64|arm64/i.test(ua) ? "arm64" : "amd64");
+      else if (/aarch64|arm64/i.test(ua)) mark("arm64");
+      else if (/Intel Mac/i.test(ua)) mark("amd64");
       navigator.userAgentData?.getHighEntropyValues?.(["architecture"]).then(({ architecture }) => {
         if (architecture) mark(architecture === "arm" ? "arm64" : "amd64");
       }).catch(() => {});

@@ -287,7 +287,7 @@ func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea
 			}
 		}
 	}
-	list("personal (~/.config/larik/config.json, .larik/settings.local.json):", cfg.TrustedHooks)
+	list("personal (~/.config/larik/config.json, private project settings):", cfg.TrustedHooks)
 	if !cfg.ProjectHooks.Empty() {
 		state := "approved"
 		if !cfg.ProjectHooksApproved() {

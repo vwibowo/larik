@@ -108,7 +108,7 @@ func newParent(t *testing.T, fp *funcProvider, mode permission.Mode) (*agent.Age
 		Tools:       tools.NewRegistry(append(tools.Builtin(), task)...),
 		Perms:       permission.NewChecker(mode, permission.Rules{}, dir),
 		Session:     sess,
-		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt")),
+		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt"), dir),
 	})
 	return a, dir, sess
 }

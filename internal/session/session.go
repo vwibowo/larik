@@ -7,6 +7,7 @@ package session
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"larik/internal/llm"
@@ -62,10 +64,14 @@ type Session struct {
 	seq int
 }
 
-// Dir returns the sessions directory for a working directory.
+// Dir returns a collision-resistant sessions directory for a working directory.
 func Dir(dataDir, cwd string) string {
-	slug := strings.NewReplacer("/", "-", "\\", "-", ":", "").Replace(strings.Trim(cwd, "/"))
-	return filepath.Join(dataDir, "sessions", slug)
+	canonical := filepath.Clean(cwd)
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	}
+	hash := sha256.Sum256([]byte(canonical))
+	return filepath.Join(dataDir, "sessions", fmt.Sprintf("%s-%x", filepath.Base(canonical), hash[:8]))
 }
 
 func newID() string {
@@ -83,6 +89,11 @@ func Create(dir string, meta Meta) (*Session, error) {
 	path := filepath.Join(dir, id+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_EXCL, 0o600)
 	if err != nil {
+		return nil, err
+	}
+	if err := lockFile(f); err != nil {
+		f.Close()
+		os.Remove(path)
 		return nil, err
 	}
 	s := &Session{ID: id, Path: path, f: f}
@@ -113,15 +124,31 @@ func (st *State) addUsage(model string, u llm.Usage) {
 // Open loads a session and reopens it for appending.
 func Open(path string) (*Session, *State, error) {
 	s := &Session{ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Path: path}
-	st, err := s.read()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, err
 	}
-	s.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err := lockFile(f); err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	s.f = f
+	st, err := s.read()
 	if err != nil {
+		f.Close()
 		return nil, nil, err
 	}
 	return s, st, nil
+}
+
+func lockFile(f *os.File) error {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("session %s is already open for writing in another process", f.Name())
+		}
+		return fmt.Errorf("locking session %s: %w", f.Name(), err)
+	}
+	return nil
 }
 
 // Load reads a session without opening it for writing, e.g. to show the

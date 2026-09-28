@@ -86,15 +86,16 @@ type model struct {
 	input textarea.Model
 	spin  spinner.Model
 
-	running   bool
-	cancel    context.CancelFunc
-	events    <-chan agent.Event
-	stream    strings.Builder // assistant text of the in-flight response
-	thinking  strings.Builder
-	calling   string // tool the model is currently writing a call for
-	tools     []toolRun
-	perm      *agent.Event  // permission prompt being shown
-	permQueue []agent.Event // further prompts (parallel subagents)
+	running      bool
+	cancel       context.CancelFunc
+	events       <-chan agent.Event
+	stream       strings.Builder // assistant text of the in-flight response
+	thinking     strings.Builder
+	calling      string // tool the model is currently writing a call for
+	tools        []toolRun
+	perm         *agent.Event    // permission prompt being shown
+	permQueue    []agent.Event   // further prompts (parallel subagents)
+	permFeedback *textarea.Model // denial feedback, when the third option is selected
 	// bgReplies marks prompts from background tasks, which must survive
 	// the end of the foreground turn.
 	bgReplies map[chan<- agent.PermissionReply]bool
@@ -212,12 +213,18 @@ func (m *model) applyTheme(isDark bool) {
 	m.isDark = isDark
 	m.st = newStyles(isDark)
 	m.input.SetStyles(textarea.DefaultStyles(isDark))
+	if m.permFeedback != nil {
+		m.permFeedback.SetStyles(textarea.DefaultStyles(isDark))
+	}
 	m.setWidth(m.width)
 }
 
 func (m *model) setWidth(w int) {
 	m.width = w
 	m.input.SetWidth(max(w-4, 10))
+	if m.permFeedback != nil {
+		m.permFeedback.SetWidth(max(w-10, 10))
+	}
 	style := "dark"
 	if !m.isDark {
 		style = "light"
@@ -386,6 +393,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if w := m.routing; w != nil && w.step == rtBudget {
 		var cmd tea.Cmd
 		w.fields[w.focus], cmd = w.fields[w.focus].Update(msg)
+		return m, cmd
+	}
+	if m.permFeedback != nil {
+		var cmd tea.Cmd
+		*m.permFeedback, cmd = m.permFeedback.Update(msg)
 		return m, cmd
 	}
 
@@ -592,6 +604,20 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 }
 
 func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
+	if m.permFeedback != nil {
+		switch msg.String() {
+		case "enter":
+			return m.replyPermission(agent.PermissionReply{Allow: false, Reason: strings.TrimSpace(m.permFeedback.Value())})
+		case "esc":
+			return m.replyPermission(agent.PermissionReply{Allow: false})
+		case "ctrl+c":
+			m.interrupt()
+			return m.replyPermission(agent.PermissionReply{Allow: false})
+		}
+		var cmd tea.Cmd
+		*m.permFeedback, cmd = m.permFeedback.Update(msg)
+		return cmd
+	}
 	const options = 3
 	var reply *agent.PermissionReply
 	switch msg.String() {
@@ -603,31 +629,56 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 		reply = &agent.PermissionReply{Allow: true}
 	case "2", "a":
 		reply = &agent.PermissionReply{Allow: true, Always: true}
-	case "3", "n", "esc":
+	case "3", "n":
+		m.startPermissionFeedback()
+		return nil
+	case "esc":
 		reply = &agent.PermissionReply{Allow: false}
 	case "ctrl+c":
 		reply = &agent.PermissionReply{Allow: false}
 		m.interrupt()
 	case "enter":
-		reply = &[]agent.PermissionReply{{Allow: true}, {Allow: true, Always: true}, {Allow: false}}[m.permIdx]
+		if m.permIdx == 2 {
+			m.startPermissionFeedback()
+			return nil
+		}
+		reply = &[]agent.PermissionReply{{Allow: true}, {Allow: true, Always: true}}[m.permIdx]
 	}
 	if reply == nil {
 		return nil
 	}
+	return m.replyPermission(*reply)
+}
+
+func (m *model) startPermissionFeedback() {
+	ta := textarea.New()
+	ta.Placeholder = "What should larik do instead?"
+	ta.ShowLineNumbers = false
+	ta.Prompt = "› "
+	ta.DynamicHeight = true
+	ta.MinHeight, ta.MaxHeight = 1, 4
+	ta.SetWidth(max(m.width-10, 10))
+	ta.SetStyles(textarea.DefaultStyles(m.isDark))
+	ta.Focus()
+	m.permFeedback = &ta
+}
+
+func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 	ev := m.perm
 	m.perm = nil
+	m.permFeedback = nil
 	delete(m.bgReplies, ev.Reply)
 	if len(m.permQueue) > 0 {
 		next := m.permQueue[0]
 		m.permQueue = m.permQueue[1:]
 		m.perm, m.permIdx = &next, 0
 	}
-	ev.Reply <- *reply
+	ev.Reply <- reply
 	if !reply.Allow {
 		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input, m.shortPaths)))
 	}
 	if reply.Always {
-		return m.println(m.st.dim.Render("  ⎿ won't ask again for " + ev.SuggestedRule + " · saved to .larik/settings.local.json"))
+		return m.println(m.st.dim.Render("  ⎿ won't ask again for " + ev.SuggestedRule + " this session"))
 	}
 	return nil
 }
@@ -682,6 +733,7 @@ func (m *model) dropForegroundPerms() {
 	}
 	if !keep(m.perm) {
 		m.perm = nil
+		m.permFeedback = nil
 		if len(queue) > 0 {
 			m.perm, queue = &queue[0], queue[1:]
 			m.permIdx = 0

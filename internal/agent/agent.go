@@ -34,9 +34,9 @@ type Options struct {
 	MaxTurns    int
 	Tools       *tools.Registry
 	Perms       *permission.Checker
-	Session     *session.Session  // optional
-	Checkpoints *checkpoint.Store // optional
-	OnAllowRule func(rule string) // persists "always allow" answers
+	Session     *session.Session        // optional
+	Checkpoints *checkpoint.Store       // optional
+	OnAllowRule func(rule string) error // persists "always allow" answers
 
 	// LoadTools, if set, supplies the tool set at the start of each fresh
 	// context (first prompt, and after Clear). The set then stays fixed so
@@ -125,7 +125,7 @@ func New(opts Options) *Agent {
 	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup", baseSystem: opts.System}
 	a.opts.System = WithLanguage(opts.System, opts.Language)
 	if opts.Checkpoints != nil {
-		a.env.BeforeWrite = func(path string) { _ = opts.Checkpoints.Capture(path) }
+		a.env.BeforeWrite = opts.Checkpoints.Capture
 	}
 	a.env.Sandbox = opts.Sandbox
 	if opts.LSP.Enabled() {

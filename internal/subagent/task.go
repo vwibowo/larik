@@ -9,6 +9,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/llm"
+	"larik/internal/permission"
 	"larik/internal/session"
 	"larik/internal/tools"
 	"larik/internal/worktree"
@@ -188,6 +189,9 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	default:
 		return tools.Result{Content: fmt.Sprintf("unknown isolation %q (only \"worktree\")", isolation), IsError: true}
 	}
+	if isolation == "worktree" && parent.Perms().Mode() == permission.ModePlan {
+		return tools.Result{Content: "plan mode cannot create a worktree", IsError: true}
+	}
 	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns, minimalContext: role.Context == "minimal"}
 	if role.MaxTurns > 0 {
 		c.maxTurns = role.MaxTurns
@@ -245,6 +249,9 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	cwd := parent.Cwd()
 	var wt *worktree.Worktree
 	if c.worktree {
+		if parent.Perms().Mode() == permission.ModePlan {
+			return tools.Result{Content: "plan mode cannot create a worktree", IsError: true}
+		}
 		var err error
 		if wt, err = worktree.Create(ctx, t.WorktreeRoot, t.Repo); err != nil {
 			return tools.Result{Content: "could not create a worktree: " + err.Error(), IsError: true}

@@ -31,7 +31,7 @@ func testModel(t *testing.T) *model {
 		Tools:       tools.Default(),
 		Perms:       permission.NewChecker(permission.ModeDefault, permission.Rules{}, dir),
 		Session:     sess,
-		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt")),
+		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt"), dir),
 	})
 	cfg := &config.Config{Cwd: dir, ConfigDir: filepath.Join(dir, "config"), Providers: map[string]config.ProviderConfig{}}
 	return newModel(Options{Agent: a, Config: cfg})

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"larik/internal/agent"
 )
 
@@ -36,7 +37,7 @@ func TestPermissionPromptBash(t *testing.T) {
 		t.Error("the save note shows only when option 2 is selected")
 	}
 	m.permIdx = 1
-	if !strings.Contains(plain(m.permissionView()), "saved to .larik/settings.local.json") {
+	if !strings.Contains(plain(m.permissionView()), "save to private project settings") {
 		t.Error("option 2 selected should say where the rule is saved")
 	}
 }
@@ -75,5 +76,23 @@ func TestStatusLineWhileAPromptWaits(t *testing.T) {
 	v := plain(m.liveView())
 	if !strings.Contains(v, "Waiting for your answer…") || strings.Contains(v, "esc to interrupt") {
 		t.Fatalf("status while a prompt waits: %q", v)
+	}
+}
+
+func TestPermissionDenialSendsFeedback(t *testing.T) {
+	m := testModel(t)
+	replies := make(chan agent.PermissionReply, 1)
+	m.perm = permEvent("bash", map[string]any{"command": "make deploy"})
+	m.perm.Reply = replies
+	m.handlePermissionKey(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if m.permFeedback == nil || !strings.Contains(plain(m.permissionView()), "Tell larik what to do instead") {
+		t.Fatal("denial did not open feedback input")
+	}
+	for _, r := range "Run tests first" {
+		m.handlePermissionKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m.handlePermissionKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := <-replies; got.Allow || got.Reason != "Run tests first" {
+		t.Fatalf("denial reply = %+v", got)
 	}
 }

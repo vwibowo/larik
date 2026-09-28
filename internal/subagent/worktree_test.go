@@ -32,6 +32,10 @@ func gitRepo(t *testing.T) string {
 // worktreeParent runs a parent whose child, in a worktree, performs
 // childCall once and then reports.
 func worktreeParent(t *testing.T, repo, childCall string, taskInput string) (*funcProvider, []agent.Event, string) {
+	return worktreeParentMode(t, repo, childCall, taskInput, permission.ModeAcceptEdits)
+}
+
+func worktreeParentMode(t *testing.T, repo, childCall string, taskInput string, mode permission.Mode) (*funcProvider, []agent.Event, string) {
 	t.Helper()
 	fp := &funcProvider{}
 	fp.respond = func(req llm.Request) llm.Message {
@@ -55,7 +59,7 @@ func worktreeParent(t *testing.T, repo, childCall string, taskInput string) (*fu
 		Model:    "m",
 		Cwd:      repo,
 		Tools:    tools.NewRegistry(append(tools.Builtin(), task)...),
-		Perms:    permission.NewChecker(permission.ModeAcceptEdits, permission.Rules{}, repo),
+		Perms:    permission.NewChecker(mode, permission.Rules{}, repo),
 	})
 	evs := drain(a.Run(context.Background(), "go"), false)
 	var result string
@@ -65,6 +69,19 @@ func worktreeParent(t *testing.T, repo, childCall string, taskInput string) (*fu
 		}
 	}
 	return fp, evs, result
+}
+
+func TestPlanModeDoesNotCreateWorktree(t *testing.T) {
+	repo := gitRepo(t)
+	_, evs, result := worktreeParentMode(t, repo, "", `{"description":"look","prompt":"look around","subagent_type":"explore","isolation":"worktree"}`, permission.ModePlan)
+	if !strings.Contains(result, "plan mode cannot create a worktree") {
+		t.Fatalf("task result = %q", result)
+	}
+	for _, e := range evs {
+		if e.Kind == agent.EvNotice && strings.Contains(e.Text, "working in worktree") {
+			t.Fatal("plan mode created a worktree")
+		}
+	}
 }
 
 func TestWorktreeIsolation(t *testing.T) {
@@ -113,18 +130,18 @@ func TestWorktreeRemovedWhenUnchanged(t *testing.T) {
 	}
 }
 
-func TestWorktreeWritesOutsideAsk(t *testing.T) {
+func TestWorktreeWritesOutsideDenied(t *testing.T) {
 	repo := gitRepo(t)
 	// The child tries to write into the parent's checkout by absolute path:
 	// outside its own directory, so accept-edits asks (and drain denies).
 	_, evs, _ := worktreeParent(t, repo, `{"path":"`+filepath.Join(repo, "escape.txt")+`","content":"x"}`,
 		`{"description":"x","prompt":"x","subagent_type":"general-purpose","isolation":"worktree"}`)
-	var asked bool
+	var denied bool
 	for _, e := range evs {
-		asked = asked || (e.Kind == agent.EvPermission && e.ToolName == "write")
+		denied = denied || (e.Kind == agent.EvToolEnd && e.ToolName == "write" && e.IsError && strings.Contains(e.Output, "inside the project"))
 	}
-	if !asked {
-		t.Error("write outside the worktree should ask")
+	if !denied {
+		t.Error("write outside the worktree should be denied")
 	}
 	if _, err := os.Stat(filepath.Join(repo, "escape.txt")); err == nil {
 		t.Error("denied write happened")

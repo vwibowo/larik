@@ -559,8 +559,30 @@ func (s *Server) answerPerm(w http.ResponseWriter, r *http.Request, l *live) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if !l.answer(r.PathValue("rid"), agent.PermissionReply{Allow: req.Allow, Always: req.Always && req.Allow, Reason: req.Reason}) {
+	always := req.Always && req.Allow
+	reply := agent.PermissionReply{Allow: req.Allow, Always: always, Reason: req.Reason}
+	var persisted chan error
+	if always {
+		persisted = make(chan error, 1)
+		reply.Persisted = persisted
+	}
+	if !l.answer(r.PathValue("rid"), reply) {
 		writeErr(w, http.StatusNotFound, "no pending permission request "+r.PathValue("rid"))
+		return
+	}
+	if always {
+		select {
+		case err := <-persisted:
+			if err != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"allowed": true, "persisted": false, "error": err.Error()})
+			} else {
+				writeJSON(w, http.StatusOK, map[string]any{"allowed": true, "persisted": true})
+			}
+		case <-r.Context().Done():
+			return
+		case <-time.After(10 * time.Second):
+			writeJSON(w, http.StatusGatewayTimeout, map[string]any{"allowed": true, "persisted": false, "error": "approval result was not received"})
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

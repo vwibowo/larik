@@ -85,7 +85,7 @@ flowchart TB
 | **Subagent** | A child `Agent` with a fresh context, its own prompt and a restricted tool set, started by the `task` tool. |
 | **Worktree subagent** | A subagent that works in its own git worktree on a new `larik/task-*` branch. |
 | **Background task** | A subagent started with `run_in_background`; its result comes back later as a `<task-notification>`. |
-| **Personal vs shared config** | Personal files (`~/.config/larik/config.json`, `.larik/settings.local.json`) are trusted. Shared files (`.larik/settings.json`, `.mcp.json`) may only tighten security. |
+| **Personal vs shared config** | Personal files (`~/.config/larik/config.json`, `~/.config/larik/projects/`) are trusted. Shared files (`.larik/settings.json`, `.mcp.json`) may only tighten security. |
 
 ## Source map
 

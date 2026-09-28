@@ -169,9 +169,13 @@ func (m *model) permissionView() string {
 		prefixLines(m.permDetail(e), "  "),
 		"",
 	}
+	if m.permFeedback != nil {
+		lines = append(lines, "Tell larik what to do instead:", m.permFeedback.View(), "", m.st.dim.Render("enter send denial · esc deny without feedback · ctrl+c deny and stop"))
+		return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(lines, "\n"))
+	}
 	opts := []struct{ text, rule, key, note string }{
 		{text: "Yes", key: "y"},
-		{text: "Yes, and don't ask again for ", rule: e.SuggestedRule, key: "a", note: "saved to .larik/settings.local.json"},
+		{text: "Yes, and don't ask again for ", rule: e.SuggestedRule, key: "a", note: "save to private project settings"},
 		{text: "No, tell larik what to do instead", key: "n"},
 	}
 	for i, o := range opts {

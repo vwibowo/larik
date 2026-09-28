@@ -3,8 +3,11 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"larik/internal/llm"
+	"larik/internal/pathpolicy"
 )
 
 // Result is what a tool returns to the model. Display is an optional
@@ -36,7 +40,7 @@ type Env struct {
 
 	// BeforeWrite is called with the absolute path before a file is modified,
 	// so checkpoints can snapshot it.
-	BeforeWrite func(path string)
+	BeforeWrite func(path string) error
 
 	// Diagnostics, if set, returns compiler/linter feedback for a file just
 	// written (from language servers); it's appended to edit/write results.
@@ -94,10 +98,57 @@ func (e *Env) checkFresh(path string) error {
 	return nil
 }
 
-func (e *Env) beforeWrite(path string) {
+func (e *Env) beforeWrite(path string) error {
 	if e.BeforeWrite != nil {
-		e.BeforeWrite(path)
+		return e.BeforeWrite(path)
 	}
+	return nil
+}
+
+func (e *Env) writeRoot(path string) (*os.Root, string, error) {
+	rel, err := pathpolicy.WritePath(e.Cwd, path)
+	if err != nil {
+		return nil, "", err
+	}
+	root, err := os.OpenRoot(e.Cwd)
+	return root, rel, err
+}
+
+// replaceFile writes a sibling temporary file and renames it over the target.
+// Replacing the directory entry avoids modifying a hard-linked file outside
+// the project and avoids following a target symlink installed during the write.
+func replaceFile(root *os.Root, rel string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if fi, err := root.Stat(rel); err == nil {
+		mode = fi.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(rel), ".larik-write-"+hex.EncodeToString(nonce[:]))
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	var n int
+	if n, err = f.Write(data); err != nil || n != len(data) {
+		f.Close()
+		if err == nil {
+			return io.ErrShortWrite
+		}
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = root.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return root.Rename(tmp, rel)
 }
 
 func errorf(format string, args ...any) Result {

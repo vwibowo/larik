@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func setup(t *testing.T, mode permission.Mode, script ...llm.Message) (*Agent, *
 		Tools:       tools.Default(),
 		Perms:       permission.NewChecker(mode, permission.Rules{}, dir),
 		Session:     sess,
-		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt")),
+		Checkpoints: checkpoint.New(filepath.Join(dir, "ckpt"), dir),
 	})
 	return a, fp, dir
 }
@@ -119,6 +120,38 @@ func TestWriteThenUndo(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "hello.txt")); !os.IsNotExist(err) {
 		t.Fatalf("undo should delete created file, stat err=%v", err)
+	}
+}
+
+func TestAlwaysAllowSaveFailureIsReportedAndSessionRuleRemains(t *testing.T) {
+	a, _, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("t1", "write", `{"path":"first.txt","content":"first"}`)),
+		assistant(llm.TextBlock("done")),
+		assistant(toolUse("t2", "write", `{"path":"second.txt","content":"second"}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	a.opts.OnAllowRule = func(string) error { return fmt.Errorf("disk unavailable") }
+	result := make(chan error, 1)
+	evs := drain(a.Run(context.Background(), "first"), PermissionReply{Allow: true, Always: true, Persisted: result})
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "disk unavailable") {
+		t.Fatalf("persistence result = %v", err)
+	}
+	var warned bool
+	for _, ev := range evs {
+		if ev.Kind == EvNotice && strings.Contains(ev.Text, "disk unavailable") && strings.Contains(ev.Text, "only to this session") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("save failure was not reported: %v", kinds(evs))
+	}
+	for _, ev := range drain(a.Run(context.Background(), "second"), PermissionReply{Allow: false}) {
+		if ev.Kind == EvPermission {
+			t.Fatal("session rule did not suppress a second prompt")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "second.txt")); err != nil {
+		t.Fatalf("second permitted write did not run: %v", err)
 	}
 }
 

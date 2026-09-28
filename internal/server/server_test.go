@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -307,6 +308,64 @@ func TestPermissionOverSSE(t *testing.T) {
 	all := replay.until(t, idle)
 	if all[0].Seq != 1 || all[len(all)-1].Seq != evs[len(evs)-1].Seq {
 		t.Errorf("replay: %v", kinds(all))
+	}
+}
+
+func TestAlwaysAllowReportsPersistenceAndReloads(t *testing.T) {
+	h := newHarness(t)
+	st := h.create(map[string]any{})
+	s := h.stream(st.ID, "")
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "please write"}, nil); code != http.StatusAccepted {
+		t.Fatalf("prompt: %d", code)
+	}
+	evs := s.until(t, func(e Event) bool { return e.Kind == agent.EvPermission })
+	perm := evs[len(evs)-1]
+	var answer struct {
+		Allowed   bool `json:"allowed"`
+		Persisted bool `json:"persisted"`
+	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/permissions/"+perm.RequestID, map[string]any{"allow": true, "always": true}, &answer); code != http.StatusOK || !answer.Allowed || !answer.Persisted {
+		t.Fatalf("always answer: %d %+v", code, answer)
+	}
+	s.until(t, idle)
+	cfg, err := config.Load(h.cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cfg.Permissions.Allow, "write") {
+		t.Fatalf("reloaded settings lost the rule: %v", cfg.Permissions.Allow)
+	}
+}
+
+func TestAlwaysAllowSaveFailureIsVisibleToHTTPAndSSE(t *testing.T) {
+	h := newHarness(t)
+	st := h.create(map[string]any{})
+	s := h.stream(st.ID, "")
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "please write"}, nil); code != http.StatusAccepted {
+		t.Fatalf("prompt: %d", code)
+	}
+	evs := s.until(t, func(e Event) bool { return e.Kind == agent.EvPermission })
+	perm := evs[len(evs)-1]
+	if err := os.MkdirAll(config.LocalSettingsPath(h.cwd), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var answer struct {
+		Allowed   bool   `json:"allowed"`
+		Persisted bool   `json:"persisted"`
+		Error     string `json:"error"`
+	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/permissions/"+perm.RequestID, map[string]any{"allow": true, "always": true}, &answer); code != http.StatusOK || !answer.Allowed || answer.Persisted || answer.Error == "" {
+		t.Fatalf("failed save answer: %d %+v", code, answer)
+	}
+	evs = s.until(t, idle)
+	var warned bool
+	for _, ev := range evs {
+		if ev.Kind == agent.EvNotice && strings.Contains(ev.Text, "Could not save always-allow rule") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("SSE did not report save failure: %v", kinds(evs))
 	}
 }
 

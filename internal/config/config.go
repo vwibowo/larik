@@ -2,13 +2,14 @@
 //
 //	~/.config/larik/config.json      user defaults
 //	./.larik/settings.json           project settings (commit this)
-//	./.larik/settings.local.json     personal project settings, incl. "always allow" rules
+//	~/.config/larik/projects/<id>.json  personal project settings and approvals
 //
-// Later files override scalars; permission rules accumulate. MCP servers
-// are also read from the project's .mcp.json (see mcp.go).
+// Later trusted files override scalars. Shared files may only tighten
+// permissions; MCP servers are also read from .mcp.json (see mcp.go).
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"larik/internal/hooks"
@@ -84,11 +86,11 @@ type Config struct {
 	Permissions permission.Rules          `json:"permissions,omitempty"`
 	MCPServers  map[string]MCPServer      `json:"mcp_servers,omitempty"`
 	// ApprovedMCP maps project-scoped server names to the hash of the config
-	// the user approved. Only honored from settings.local.json.
+	// the user approved. Only honored from private project settings.
 	ApprovedMCP map[string]string `json:"approved_mcp_servers,omitempty"`
 	Hooks       hooks.Config      `json:"hooks,omitempty"`
 	// ApprovedHooks is the hash of the approved project hook set (from
-	// .larik/settings.json). Only honored from settings.local.json.
+	// .larik/settings.json). Only honored from private project settings.
 	ApprovedHooks string `json:"approved_project_hooks,omitempty"`
 
 	// Web configures web_fetch and web_search. The search backend (which
@@ -160,13 +162,20 @@ func dataDir() string {
 	return filepath.Join(home, ".local", "share", "larik")
 }
 
-// LocalSettingsPath is where "always allow" rules are persisted.
+// LocalSettingsPath is outside the repository, so project files cannot
+// impersonate a trusted personal settings layer.
 func LocalSettingsPath(cwd string) string {
-	return filepath.Join(cwd, ".larik", "settings.local.json")
+	canonical := filepath.Clean(cwd)
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	}
+	hash := sha256.Sum256([]byte(canonical))
+	return filepath.Join(configDir(), "projects", fmt.Sprintf("%s-%x.json", filepath.Base(canonical), hash[:8]))
 }
 
 func Load(cwd string) (*Config, error) {
 	cfg := &Config{
+		MaxTurns:    200,
 		Providers:   map[string]ProviderConfig{},
 		Models:      map[string]llm.ModelInfo{},
 		MCPServers:  map[string]MCPServer{},
@@ -263,7 +272,7 @@ func (c *Config) merge(path string, trusted bool) error {
 	} else {
 		c.ProjectHooks = c.ProjectHooks.Merge(o.Hooks)
 	}
-	if filepath.Base(path) == "settings.local.json" {
+	if trusted && path == LocalSettingsPath(c.Cwd) {
 		for k, v := range o.ApprovedMCP {
 			c.ApprovedMCP[k] = v
 		}
@@ -271,16 +280,16 @@ func (c *Config) merge(path string, trusted bool) error {
 			c.ApprovedHooks = o.ApprovedHooks
 		}
 	}
-	if o.Model != "" {
+	if trusted && o.Model != "" {
 		c.Model = o.Model
 	}
-	if o.Effort != "" {
+	if trusted && o.Effort != "" {
 		c.Effort = o.Effort
 	}
-	if o.Mode != "" {
+	if trusted && o.Mode != "" {
 		c.Mode = o.Mode
 	}
-	if o.MaxTurns != 0 {
+	if o.MaxTurns != 0 && (trusted || c.MaxTurns == 0 || o.MaxTurns < c.MaxTurns) {
 		c.MaxTurns = o.MaxTurns
 	}
 	if trusted && o.CheckpointRetentionDays != 0 {
@@ -307,18 +316,27 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 	}
 	for k, v := range o.Roles {
+		if !trusted {
+			continue
+		}
 		if c.Roles == nil {
 			c.Roles = map[string]string{}
 		}
 		c.Roles[k] = strings.TrimSpace(v)
 	}
 	for k, v := range o.Fallbacks {
+		if !trusted {
+			continue
+		}
 		if c.Fallbacks == nil {
 			c.Fallbacks = map[string][]string{}
 		}
 		c.Fallbacks[k] = v
 	}
 	for k, v := range o.RoleOptions {
+		if !trusted {
+			continue
+		}
 		if v.Isolation != "" && v.Isolation != "worktree" && v.Isolation != "none" {
 			return fmt.Errorf("%s: role_options.%s.isolation must be \"worktree\" or \"none\"", path, k)
 		}
@@ -336,19 +354,21 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.Budget.SessionUSD < 0 || o.Budget.WarnAt < 0 {
 		return fmt.Errorf("%s: budget values must not be negative", path)
 	}
-	if o.Budget.SessionUSD != 0 {
+	if o.Budget.SessionUSD != 0 && (trusted || c.Budget.SessionUSD == 0 || o.Budget.SessionUSD < c.Budget.SessionUSD) {
 		c.Budget.SessionUSD = o.Budget.SessionUSD
 	}
-	if o.Budget.WarnAt != 0 {
+	if trusted && o.Budget.WarnAt != 0 {
 		c.Budget.WarnAt = o.Budget.WarnAt
 	}
-	for k, v := range o.Providers {
-		c.Providers[k] = v
+	if trusted {
+		for k, v := range o.Providers {
+			c.Providers[k] = v
+		}
+		for k, v := range o.Models {
+			c.Models[k] = v
+		}
+		c.Permissions.Allow = append(c.Permissions.Allow, o.Permissions.Allow...)
 	}
-	for k, v := range o.Models {
-		c.Models[k] = v
-	}
-	c.Permissions.Allow = append(c.Permissions.Allow, o.Permissions.Allow...)
 	c.Permissions.Deny = append(c.Permissions.Deny, o.Permissions.Deny...)
 	return nil
 }
@@ -371,24 +391,71 @@ func PersistAllowRule(cwd, rule string) error {
 	})
 }
 
-// updateLocal edits settings.local.json as generic JSON so unknown keys survive.
+// updateLocal edits private project settings as generic JSON so unknown keys survive.
 func updateLocal(cwd string, edit func(raw map[string]any)) error {
-	return updateJSON(LocalSettingsPath(cwd), 0o644, edit)
+	return updateJSON(LocalSettingsPath(cwd), 0o600, edit)
 }
 
 // updateJSON edits a settings file as generic JSON so unknown keys survive.
 // A file that exists keeps its permissions, unless perm is private (no
-// group or other access), which is then enforced.
+// group or other access), which is then enforced. The sidecar lock covers
+// the entire read-modify-write sequence across processes.
 func updateJSON(path string, perm os.FileMode, edit func(raw map[string]any)) error {
+	_, err := updateJSONIf(path, perm, true, func(raw map[string]any) bool {
+		edit(raw)
+		return true
+	})
+	return err
+}
+
+// updateJSONIf runs edit under the settings lock. It leaves the file alone
+// when create is false and the file is absent, or edit reports no change.
+func updateJSONIf(path string, perm os.FileMode, create bool, edit func(raw map[string]any) bool) (bool, error) {
+	if !create {
+		if _, err := os.Stat(filepath.Dir(path)); os.IsNotExist(err) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+	}
+	dirPerm := os.FileMode(0o755)
+	if perm&0o077 == 0 {
+		dirPerm = 0o700
+	}
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
+		return false, err
+	}
+	if dirPerm == 0o700 {
+		if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+			return false, err
+		}
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false, fmt.Errorf("open settings lock: %w", err)
+	}
+	defer lock.Close()
+	if err := lock.Chmod(0o600); err != nil {
+		return false, fmt.Errorf("secure settings lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return false, fmt.Errorf("lock settings: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	raw := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return false, fmt.Errorf("%s: %w", path, err)
 		}
+	} else if os.IsNotExist(err) {
+		if !create {
+			return false, nil
+		}
+	} else {
+		return false, fmt.Errorf("%s: %w", path, err)
 	}
-	edit(raw)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	if !edit(raw) {
+		return false, nil
 	}
 	if fi, err := os.Stat(path); err == nil {
 		private := perm&0o077 == 0
@@ -397,11 +464,34 @@ func updateJSON(path string, perm os.FileMode, edit func(raw map[string]any)) er
 			perm &^= 0o077
 		}
 	}
-	b, _ := json.MarshalIndent(raw, "", "  ")
-	if err := os.WriteFile(path, append(b, '\n'), perm); err != nil {
-		return err
+	b, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return false, err
 	}
-	return os.Chmod(path, perm) // WriteFile keeps an existing file's mode
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".larik-config-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Themes are the accepted values of the "theme" setting.
@@ -489,7 +579,7 @@ func (c *Config) UserConfigPath() string {
 // default. A zero pc writes no provider entry. It also updates c.
 func (c *Config) SaveProvider(path, name string, pc ProviderConfig, model string) error {
 	perm := os.FileMode(0o644)
-	if pc.APIKey != "" {
+	if pc.APIKey != "" || path == LocalSettingsPath(c.Cwd) {
 		perm = 0o600 // the file now holds a secret
 	}
 	err := updateJSON(path, perm, func(raw map[string]any) {
@@ -566,7 +656,11 @@ func (c *Config) SaveRouting(path string, r Routing) error {
 	}
 	routingMu.Lock()
 	defer routingMu.Unlock()
-	err := updateJSON(path, 0o644, func(raw map[string]any) {
+	perm := os.FileMode(0o644)
+	if path == LocalSettingsPath(c.Cwd) {
+		perm = 0o600
+	}
+	err := updateJSON(path, perm, func(raw map[string]any) {
 		for key, v := range map[string]map[string]any{"roles": roles, "fallbacks": fallbacks, "role_options": options, "budget": budget} {
 			if len(v) == 0 {
 				delete(raw, key)
@@ -617,31 +711,20 @@ func (c *Config) Routing() Routing {
 }
 
 // RemoveProvider deletes a provider from the personal settings files (the
-// user config and .larik/settings.local.json), along with a default model
+// user config and private project settings), along with a default model
 // in the same file that uses it. It returns the files it changed. Shared
-// project settings are left alone; see ProviderInShared.
+// project settings are left alone; their provider definitions are ignored.
 func (c *Config) RemoveProvider(name string) ([]string, error) {
 	var changed []string
 	for _, path := range []string{c.UserConfigPath(), LocalSettingsPath(c.Cwd)} {
-		raw := map[string]any{}
-		data, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return changed, err
-		}
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return changed, fmt.Errorf("%s: %w", path, err)
-		}
-		ps, _ := raw["providers"].(map[string]any)
-		model, _ := raw["model"].(string)
-		_, has := ps[name]
-		usesIt := strings.HasPrefix(model, name+"/")
-		if !has && !usesIt {
-			continue
-		}
-		err = updateJSON(path, 0o644, func(raw map[string]any) {
+		changedFile, err := updateJSONIf(path, 0o644, false, func(raw map[string]any) bool {
+			ps, _ := raw["providers"].(map[string]any)
+			_, has := ps[name]
+			model, _ := raw["model"].(string)
+			usesIt := strings.HasPrefix(model, name+"/")
+			if !has && !usesIt {
+				return false
+			}
 			if ps, _ := raw["providers"].(map[string]any); ps != nil {
 				delete(ps, name)
 				if len(ps) == 0 {
@@ -651,11 +734,14 @@ func (c *Config) RemoveProvider(name string) ([]string, error) {
 			if usesIt {
 				delete(raw, "model")
 			}
+			return true
 		})
 		if err != nil {
 			return changed, err
 		}
-		changed = append(changed, path)
+		if changedFile {
+			changed = append(changed, path)
+		}
 	}
 	delete(c.Providers, name)
 	if strings.HasPrefix(c.Model, name+"/") {
@@ -664,9 +750,8 @@ func (c *Config) RemoveProvider(name string) ([]string, error) {
 	return changed, nil
 }
 
-// ProviderInShared reports whether the shared project settings
-// (.larik/settings.json) define a provider, which only editing that file
-// can remove.
+// ProviderInShared reports whether shared project settings contain a provider
+// definition. Such definitions are ignored when loading the active config.
 func (c *Config) ProviderInShared(name string) bool {
 	data, err := os.ReadFile(filepath.Join(c.Cwd, ".larik", "settings.json"))
 	if err != nil {

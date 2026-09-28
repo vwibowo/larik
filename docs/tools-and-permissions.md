@@ -53,14 +53,14 @@ classDiagram
 | Tool | Package | Read-only | Notes |
 |---|---|---|---|
 | `read` | tools | yes | Line-numbered; records the file's mtime; warms up the language server |
-| `write`, `edit` | tools | no | Refuse to overwrite a file not read, or changed since reading; snapshot for undo; append LSP diagnostics |
-| `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel |
+| `write`, `edit` | tools | no | Confined to the project, with protected paths and symlinks rejected; refuse stale overwrites; require an undo snapshot; append LSP diagnostics |
+| `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel; optional `checkpoint_paths` snapshots named project files for `/undo` |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics |
 | `skill` | skills | yes | Loads a skill's full instructions |
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
-| `task`, `task_wait`, `task_stop` | subagent | yes | The call itself changes nothing; the child's calls are checked one by one |
+| `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
 
 Tool output sent to the model is capped (`tools.MaxOutputBytes`, about 30 KB); `Truncate` keeps the head and the tail, since errors usually appear at the end.
 
@@ -71,7 +71,7 @@ Tool output sent to the model is capped (`tools.MaxOutputBytes`, about 30 KB); `
 | Field | Set by | Used for |
 |---|---|---|
 | `Cwd` | agent | Resolving relative paths |
-| `BeforeWrite(path)` | agent → `checkpoint.Store.Capture` | Snapshot before the first write in a turn |
+| `BeforeWrite(path) error` | agent → `checkpoint.Store.Capture` | Snapshot before the first write in a turn; failure stops the write |
 | `Diagnostics(ctx, path)` | agent → `lsp.Manager.Diagnostics` | Compiler errors appended to edit/write results |
 | `Touch(path)` | agent → `lsp.Manager.Touch` | Open a file in its language server after a read |
 | `Sandbox` | app | Confining `bash` |
@@ -125,7 +125,7 @@ flowchart TD
     d -->|Allow| run
     d -->|Ask| ask["emit EvPermission<br/>+ Notification hook"]
     ask -->|"allow"| run
-    ask -->|"allow always"| persist["AddAllow(rule)<br/>write settings.local.json"] --> run
+    ask -->|"allow always"| persist["AddAllow(rule)<br/>write private project settings"] --> run
     ask -->|"deny + feedback"| udeny(["deny: user feedback to model"])
     ask -->|"ctx cancelled"| intr(["interrupted"])
 ```
@@ -134,15 +134,16 @@ flowchart TD
 
 [permission.go:161](../internal/permission/permission.go:161), in order:
 
-1. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
-2. Mode **yolo** → Allow.
-3. Tool is **read-only** → Allow.
-4. Mode **plan** → Deny, except `web_fetch`/`web_search`, which fall through to ask (research is part of planning).
-5. Any **allow rule** matches → Allow.
-6. `bash` and the **sandbox** is on and the call didn't set `"sandbox": false` → Allow.
-7. `bash` and the command is on the **safe list** (`ls`, `git status`, `git diff`, `go vet`, …) with no shell operators → Allow.
-8. `write`/`edit` in **accept-edits** mode inside the working directory → Allow.
-9. Otherwise → **Ask**.
+1. `write`/`edit` outside the project, through a symlink, or to a protected project file → Deny (even in yolo).
+2. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
+3. Mode **yolo** → Allow.
+4. Tool is **read-only** → Allow.
+5. Mode **plan** → Deny, except `web_fetch`/`web_search`, which fall through to ask (research is part of planning).
+6. Any **allow rule** matches → Allow.
+7. `bash` and the **sandbox** is on and the call didn't set `"sandbox": false` → Allow.
+8. `bash` and the command is on the **safe list** (`ls`, exact `git status`, exact `git diff`, …) with no shell operators → Allow.
+9. `write`/`edit` in **accept-edits** mode inside the working directory → Allow.
+10. Otherwise → **Ask**.
 
 ### Rules
 
@@ -155,7 +156,7 @@ Rules are `tool` or `tool(pattern)`. The pattern matches a *subject* taken from 
 | `web_fetch` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
 | `mcp__server__tool` | none | whole-tool or whole-server | `mcp__github` |
 
-"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to `.larik/settings.local.json`.
+"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
 
 `Checker.WithCwd` gives a worktree subagent a checker that shares the parent's mode and rules (one `state` pointer) but resolves paths against the worktree. Switching mode with shift+tab applies to running subagents too.
 

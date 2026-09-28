@@ -193,9 +193,6 @@ func (m *model) removeProvider(name string, confirmed bool) tea.Cmd {
 		delete(m.modelLists, name)
 		m.buildProviders()
 		return nil
-	case cfg.ProviderInShared(name):
-		pm.note, pm.noteErr = name+" is defined in .larik/settings.json, shared with the project; edit that file to remove it", true
-		return nil
 	}
 	if _, saved := cfg.Providers[name]; !saved {
 		pm.note, pm.noteErr = "nothing saved for "+name, true

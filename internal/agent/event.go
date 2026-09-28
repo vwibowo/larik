@@ -61,9 +61,10 @@ type Event struct {
 }
 
 type PermissionReply struct {
-	Allow  bool
-	Always bool   // persist SuggestedRule
-	Reason string // optional feedback for the model on deny
+	Allow     bool
+	Always    bool         // persist SuggestedRule
+	Reason    string       // optional feedback for the model on deny
+	Persisted chan<- error // optional result of persisting an "always allow" answer
 }
 
 type UsageInfo struct {

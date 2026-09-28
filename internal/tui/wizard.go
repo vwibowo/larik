@@ -999,7 +999,7 @@ func (w *wizard) saveView(st styles) ([]string, string) {
 	}
 	rows := []string{
 		radio(w.scope == 0) + " " + tildePath(w.cfg.UserConfigPath()) + st.dim.Render("  every project"),
-		radio(w.scope == 1) + " " + ".larik/settings.local.json" + st.dim.Render("  this project only"),
+		radio(w.scope == 1) + " " + "Private project settings" + st.dim.Render("  this project only"),
 		check(w.makeDefault) + " Make " + w.model + " the default model",
 	}
 	for i, r := range rows {
@@ -1015,7 +1015,7 @@ func (w *wizard) saveView(st styles) ([]string, string) {
 		body = append(body, "", st.dim.Render("Nothing to save: larik will use "+w.model+" for this session only."))
 	}
 	if w.pc.APIKey != "" && w.scope == 1 {
-		body = append(body, st.warn.Render("! the API key will be stored in this project; keep .larik/settings.local.json out of git"))
+		body = append(body, st.dim.Render("The API key will be stored outside this project in your private config directory."))
 	}
 	return body, "↑/↓ move · space select · enter save and start · esc back"
 }

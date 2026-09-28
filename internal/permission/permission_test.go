@@ -2,6 +2,8 @@ package permission
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -30,8 +32,8 @@ func TestDecide(t *testing.T) {
 		{"edit asks by default", ModeDefault, call("edit", false, `{"path":"main.go"}`), Ask},
 		{"edit allow rule", ModeDefault, call("edit", false, `{"path":"docs/a/b.md"}`), Allow},
 		{"accept-edits inside", ModeAcceptEdits, call("write", false, `{"path":"x/y.go"}`), Allow},
-		{"accept-edits outside", ModeAcceptEdits, call("write", false, `{"path":"/etc/hosts"}`), Ask},
-		{"accept-edits dotdot", ModeAcceptEdits, call("write", false, `{"path":"../other/y.go"}`), Ask},
+		{"accept-edits outside", ModeAcceptEdits, call("write", false, `{"path":"/etc/hosts"}`), Deny},
+		{"accept-edits dotdot", ModeAcceptEdits, call("write", false, `{"path":"../other/y.go"}`), Deny},
 		{"plan denies writes", ModePlan, call("edit", false, `{"path":"main.go"}`), Deny},
 		{"plan allows reads", ModePlan, call("grep", true, `{"pattern":"x"}`), Allow},
 		{"yolo", ModeYolo, call("bash", false, `{"command":"make deploy"}`), Allow},
@@ -125,6 +127,31 @@ func TestSandboxedBash(t *testing.T) {
 	c.SetSandboxed(false)
 	if got, _ := c.Decide(call("bash", false, `{"command":"npm test"}`)); got != Ask {
 		t.Error("without a sandbox, commands ask as before")
+	}
+}
+
+func TestUnsandboxedMutatingLookalikesAsk(t *testing.T) {
+	c := NewChecker(ModeDefault, Rules{}, t.TempDir())
+	for _, command := range []string{"git branch -D topic", "git diff --output=out.patch", "go env -w GOPROXY=x", "go vet ./..."} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if got, _ := c.Decide(Call{Tool: "bash", Input: input}); got != Ask {
+			t.Errorf("%q: got %v, want Ask", command, got)
+		}
+	}
+}
+
+func TestFileWritePathBoundary(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	c := NewChecker(ModeAcceptEdits, Rules{}, dir)
+	for _, path := range []string{".git/hooks/pre-commit", ".GiT/HOOKS/pre-commit", ".larik/settings.json", "link/out.txt", "../out.txt"} {
+		input, _ := json.Marshal(map[string]string{"path": path})
+		if got, _ := c.Decide(Call{Tool: "write", Input: input}); got != Deny {
+			t.Errorf("%q: got %v, want Deny", path, got)
+		}
 	}
 }
 

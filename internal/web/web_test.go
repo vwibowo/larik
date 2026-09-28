@@ -129,6 +129,15 @@ func TestCrossHostRedirectIsReported(t *testing.T) {
 	}
 }
 
+func TestWWWRedirectNeedsSeparatePermission(t *testing.T) {
+	f := NewFetcher()
+	from, _ := http.NewRequest(http.MethodGet, "https://www.example.com/start", nil)
+	to, _ := http.NewRequest(http.MethodGet, "https://example.com/next", nil)
+	if err := f.client.CheckRedirect(to, []*http.Request{from}); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("www to apex redirect was followed: %v", err)
+	}
+}
+
 func TestBlockedAddresses(t *testing.T) {
 	f := NewFetcher()
 	for _, u := range []string{"http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/", "http://0.0.0.0:9/"} {

@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"larik/internal/llm"
+	"larik/internal/pathpolicy"
 )
 
 const (
@@ -28,11 +30,13 @@ func (Bash) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "bash",
 		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
+			"List project files the command may change in checkpoint_paths to let /undo restore their original contents; unlisted changes cannot be undone. " +
 			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost. " +
 			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
 		Schema: schema(`{"type":"object","properties":{
 			"command":{"type":"string"},
 			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"},
+			"checkpoint_paths":{"type":"array","items":{"type":"string"},"description":"Project files to snapshot before running the command for /undo"},
 			"sandbox":{"type":"boolean","description":"Set false to run outside the sandbox; requires user approval"}},
 			"required":["command"]}`),
 	}
@@ -52,12 +56,29 @@ func (l *lockedBuffer) Write(p []byte) (int, error) {
 
 func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	in, err := decode[struct {
-		Command string `json:"command"`
-		Timeout int    `json:"timeout"`
-		Sandbox *bool  `json:"sandbox"`
+		Command         string   `json:"command"`
+		Timeout         int      `json:"timeout"`
+		Sandbox         *bool    `json:"sandbox"`
+		CheckpointPaths []string `json:"checkpoint_paths"`
 	}](input)
 	if err != nil {
 		return errorf("%v", err)
+	}
+	if len(in.CheckpointPaths) > 0 && env.BeforeWrite == nil {
+		return errorf("checkpoints are unavailable in this session")
+	}
+	paths := make([]string, 0, len(in.CheckpointPaths))
+	for _, path := range in.CheckpointPaths {
+		rel, err := pathpolicy.WritePath(env.Cwd, path)
+		if err != nil {
+			return errorf("checkpoint path %q: %v", path, err)
+		}
+		paths = append(paths, filepath.Join(env.Cwd, rel))
+	}
+	for _, path := range paths {
+		if err := env.beforeWrite(path); err != nil {
+			return errorf("checkpoint %q: %v", path, err)
+		}
 	}
 	timeout := defaultBashTimeout
 	if in.Timeout > 0 {

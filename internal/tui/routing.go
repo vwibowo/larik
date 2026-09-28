@@ -609,7 +609,7 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		body = append(body, st.ok.Render("✓ Ready")+st.dim.Render(" · main model "+w.main), routingSummary(&preview), "", st.dim.Render("Save to"))
 		rows := []string{
 			radio(w.scope == 0) + " " + tildePath(w.cfg.UserConfigPath()) + st.dim.Render("  every project"),
-			radio(w.scope == 1) + " .larik/settings.local.json" + st.dim.Render("  this project only"),
+			radio(w.scope == 1) + " Private project settings" + st.dim.Render("  this project only"),
 		}
 		for i, r := range rows {
 			if i == w.scope {

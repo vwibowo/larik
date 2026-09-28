@@ -75,6 +75,9 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 	if failure != "" {
 		return ErrReported{failure}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 

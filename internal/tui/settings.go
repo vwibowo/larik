@@ -435,7 +435,7 @@ func (m *model) buildSettings() {
 	files := []struct{ path, label, what string }{
 		{cfg.UserConfigPath(), shortHome(cfg.UserConfigPath()), "yours, all projects · /config saves here"},
 		{filepath.Join(cfg.Cwd, ".larik", "settings.json"), ".larik/settings.json", "this project, shared"},
-		{config.LocalSettingsPath(cfg.Cwd), ".larik/settings.local.json", "this project, yours"},
+		{config.LocalSettingsPath(cfg.Cwd), "private project settings", "this project, yours"},
 	}
 	for _, f := range files {
 		note := "not created"

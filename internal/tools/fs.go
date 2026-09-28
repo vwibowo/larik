@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"larik/internal/llm"
+	"larik/internal/pathpolicy"
 )
 
 const (
@@ -121,16 +122,26 @@ func (Write) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	path := env.Abs(in.Path)
+	root, rel, err := env.writeRoot(path)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	defer root.Close()
 	if err := env.checkFresh(path); err != nil {
 		return errorf("%v", err)
 	}
-	_, statErr := os.Stat(path)
+	_, statErr := root.Stat(rel)
 	existed := statErr == nil
-	env.beforeWrite(path)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := env.beforeWrite(path); err != nil {
+		return errorf("cannot checkpoint %s: %v", path, err)
+	}
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return errorf("%v", err)
 	}
-	if err := os.WriteFile(path, []byte(in.Content), 0o644); err != nil {
+	if _, err := pathpolicy.WritePath(env.Cwd, path); err != nil {
+		return errorf("%v", err)
+	}
+	if err := replaceFile(root, rel, []byte(in.Content)); err != nil {
 		return errorf("%v", err)
 	}
 	env.markRead(path)
@@ -176,7 +187,12 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("old_string and new_string are identical")
 	}
 	path := env.Abs(in.Path)
-	data, err := os.ReadFile(path)
+	root, rel, err := env.writeRoot(path)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	defer root.Close()
+	data, err := root.ReadFile(rel)
 	if err != nil {
 		return errorf("%v", err)
 	}
@@ -195,8 +211,13 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("old_string appears %d times in %s; add surrounding context to make it unique or set replace_all", n, path)
 	}
 	updated := strings.Replace(content, in.Old, in.New, map[bool]int{true: -1, false: 1}[in.ReplaceAll])
-	env.beforeWrite(path)
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	if err := env.beforeWrite(path); err != nil {
+		return errorf("cannot checkpoint %s: %v", path, err)
+	}
+	if _, err := pathpolicy.WritePath(env.Cwd, path); err != nil {
+		return errorf("%v", err)
+	}
+	if err := replaceFile(root, rel, []byte(updated)); err != nil {
 		return errorf("%v", err)
 	}
 	env.markRead(path)

@@ -21,7 +21,7 @@ A coding agent runs commands chosen by a model that reads untrusted text (reposi
 flowchart TB
     subgraph TRUSTED["Trusted: written only by you"]
         UC["~/.config/larik/config.json"]
-        LS[".larik/settings.local.json"]
+        LS["~/.config/larik/projects/<project-id>.json"]
         USER["You, at the prompt"]
     end
     subgraph SHARED["Shared: anyone with repo commit access"]
@@ -59,7 +59,7 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 
 - **macOS:** `sandbox-exec -p <profile> bash -c <cmd>` with a generated Seatbelt profile (`deny default`, then specific allows).
 - **Linux:** `bwrap` with `/` bound read-only, writable paths bound read-write, protected paths re-bound read-only, `--unshare-net` and `--unshare-pid`.
-- **Elsewhere, or without `bwrap`:** no sandbox; every command asks, and Larik says so at startup.
+- **Elsewhere, or without `bwrap`:** no sandbox; commands ask except a small list of side-effect-free forms, and Larik warns at startup.
 
 | | Allowed | Denied |
 |---|---|---|
@@ -69,6 +69,8 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 | macOS services | a short list of system lookups CLI tools need | LaunchServices and Apple Events, so `open` and `osascript` can't launch something outside |
 
 The protected paths matter because the project itself is writable. Without them, a sandboxed command could add a git hook, a hook in `.larik/settings.json`, or an MCP server in `.mcp.json`, and that code would later run **outside** the sandbox. In Seatbelt the deny rules are emitted after the allow rules, because later rules win.
+
+The `write` and `edit` tools enforce the project boundary separately with `os.Root`. They reject protected paths and symlink components, and a failed checkpoint stops the write.
 
 **How it removes prompts.** The sandbox is what makes the default mode usable: `permission.Decide` allows sandboxed bash without asking ([permission.go:161](../internal/permission/permission.go:161)). If a command needs more (install packages, reach the network), the model re-runs it with `"sandbox": false`, and that call asks, with the prompt saying it runs unconfined. When a sandboxed command fails with typical sandbox errors ("Operation not permitted", DNS failures), the bash tool appends a hint telling the model exactly that ([bash.go](../internal/tools/bash.go)).
 

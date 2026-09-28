@@ -88,7 +88,7 @@ func NewFetcher() *Fetcher {
 			if len(via) >= 5 {
 				return errors.New("too many redirects")
 			}
-			if !sameSite(req.URL.Hostname(), via[0].URL.Hostname()) {
+			if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
 				return http.ErrUseLastResponse // report it instead of following
 			}
 			return nil
@@ -103,10 +103,6 @@ func NewFetcher() *Fetcher {
 func blockedIP(ip net.IP) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() ||
 		ip.Equal(net.ParseIP("100.100.100.200")) // Alibaba Cloud metadata
-}
-
-func sameSite(a, b string) bool {
-	return strings.TrimPrefix(strings.ToLower(a), "www.") == strings.TrimPrefix(strings.ToLower(b), "www.")
 }
 
 // Fetch downloads rawURL and converts it to text.

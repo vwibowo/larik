@@ -13,7 +13,7 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
 ./larik
 ```
 
-The first time you run `larik` in a terminal with nothing configured, a setup wizard walks you through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models (with Ollama, it can also download a recommended model, or any model you name, with a progress bar), and saves your choice to `~/.config/larik/config.json` or `.larik/settings.local.json`. Run `/connect` at any time to set up another provider.
+The first time you run `larik` in a terminal with nothing configured, a setup wizard walks through connecting a model. It finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models (with Ollama, it can also download a recommended model, or any model you name, with a progress bar), and saves your choice to `~/.config/larik/config.json` or private project settings under `~/.config/larik/projects/`. Run `/connect` at any time to add another provider.
 
 With no `--model` and no saved default, Larik picks the default model of the first provider whose key is set:
 
@@ -117,7 +117,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 | `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
 | `/effort [low…max\|default]` | Reasoning effort |
 | `/mode [default\|accept-edits\|plan\|yolo]` | Pick the permission mode from a list (`1`–`4`), or set it directly |
-| `/undo` | Revert the file changes from the last turn |
+| `/undo` | Revert checkpointed file changes from the last turn; `bash` changes need explicit `checkpoint_paths`, and MCP side effects are not covered |
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
 | `/cost` | Usage and cost, split by model when more than one was used |
@@ -151,11 +151,13 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 | `default` | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |
 | `accept-edits` | Edits inside the working directory run without asking. Commands still ask. |
 | `plan` | Only read-only tools run. |
-| `yolo` | Everything runs. Deny rules still apply. |
+| `yolo` | Tools run without prompts. Deny rules and the file-tool project boundary still apply. |
 
 Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
 
-Answering "always allow" writes the rule to `.larik/settings.local.json`.
+Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
+
+`write` and `edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git/hooks`, `.git/config`, `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
 
 ## Web
 
@@ -210,7 +212,7 @@ You can also set it explicitly:
 { "sandbox": { "enabled": false } }                               // turn it off
 ```
 
-Loosening the sandbox (enabling network, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and `.larik/settings.local.json`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
+Loosening the sandbox (enabling network, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and private project settings under `~/.config/larik/projects/`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
 
 ## Server mode
 
@@ -254,7 +256,7 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
 | `POST /v1/sessions/{id}/prompt` | `{text}` starts a run and returns 202 (409 if busy); `{text, wait: true}` returns the final answer |
 | `POST /v1/sessions/{id}/cancel` | Interrupt the current run |
 | `GET /v1/sessions/{id}/permissions` | Pending permission requests |
-| `POST /v1/sessions/{id}/permissions/{request_id}` | Answer: `{allow, always, reason}` |
+| `POST /v1/sessions/{id}/permissions/{request_id}` | Answer: `{allow, always, reason}`. An `always` answer returns `{allowed, persisted}` and an `error` if saving failed; other answers return 204. |
 | `POST /v1/sessions/{id}/compact` · `/undo` · `/clear` | Same as the TUI commands |
 | `GET /v1/sessions/{id}/tasks` · `DELETE …/tasks/{task_id}` | List or stop background tasks |
 
@@ -271,11 +273,13 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
 
 ## Configuration
 
-Settings are merged in this order, with later files winning:
+Settings are read in this order. Later **personal** files override model, provider, permission mode, and allow-rule settings; shared project files can only tighten security:
 
 1. `~/.config/larik/config.json`
 2. `.larik/settings.json`
-3. `.larik/settings.local.json`
+3. `~/.config/larik/projects/<project-id>.json` (private settings for this project)
+
+Put provider definitions, model selection, roles, fallbacks, permission mode, and allow rules in `~/.config/larik/config.json` or private project settings. Larik ignores those fields in the shared `.larik/settings.json`. Shared deny rules remain active. Larik never loads `.larik/settings.local.json` from the repository.
 
 ```json
 {
@@ -310,7 +314,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
 - `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
 - `roles`, `fallbacks`, `budget` ("Model routing" and "Session budget" in `/config`): see [Mixing cheap and strong models](#mixing-cheap-and-strong-models).
-- `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from `~/.config/larik/config.json` or `.larik/settings.local.json`.
+- `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from personal settings.
 
 `models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
 
@@ -329,7 +333,7 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 
 - Server tools appear as `mcp__<server>__<tool>`. In rules, `mcp__github` covers every tool on that server.
 - `${VAR}` and `${VAR:-default}` are expanded in the command, args, env, URL, and headers.
-- **Trust:** servers from shared project files (`.mcp.json`, `.larik/settings.json`) don't start until you run `/mcp approve <name>`. The approval is stored in `.larik/settings.local.json` and pinned to a hash of the server's config, so editing the command or URL requires re-approval. Servers in `~/.config/larik/config.json` or `settings.local.json` start automatically.
+- **Trust:** servers from shared project files (`.mcp.json`, `.larik/settings.json`) don't start until you run `/mcp approve <name>`. The approval is stored in private project settings and pinned to a hash of the server's config, so editing the command or URL requires re-approval. Servers in personal settings start automatically.
 - **Permissions:** MCP tools ask before running. The exception is tools that declare both `readOnlyHint: true` and `openWorldHint: false`.
 - **Stable tool set:** servers start in the background at launch, and their tools are loaded before the first request. The tool set then stays fixed for that context so prompt caches stay valid. Newly approved or restarted servers join after `/clear` or in a new session.
 - Stdio server stderr is written to `~/.local/share/larik/logs/mcp-<name>.log`.
@@ -428,7 +432,7 @@ Larik runs language servers so the model gets compiler feedback on its own edits
   }
   ```
 
-  New server commands are honored only from personal files (`~/.config/larik/config.json`, `.larik/settings.local.json`). A shared `.larik/settings.json` can only disable servers.
+  New server commands are honored only from personal files (`~/.config/larik/config.json`, private project settings). A shared `.larik/settings.json` can only disable servers.
 - **Timing:** edits wait for fresh diagnostics for up to 3s (15s while a server is still loading the project). Servers that stay silent on clean files get a shorter wait.
 - `/lsp` shows servers and their status.
 
@@ -468,7 +472,7 @@ Hooks are shell commands that run at points in the agent lifecycle. The format m
 
 **Precedence:** a hook `deny` beats everything. Permission deny rules beat a hook `allow`.
 
-**Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in `~/.config/larik/config.json` and `.larik/settings.local.json` always run.
+**Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in personal settings always run.
 
 Instructions are loaded from these files:
 - `AGENTS.md` (or `CLAUDE.md`) in each directory from the repo root down to the working directory.

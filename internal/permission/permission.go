@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"larik/internal/pathpolicy"
 )
 
 type Mode string
@@ -162,6 +163,11 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	subject := Subject(call.Tool, call.Input)
+	if call.Tool == "write" || call.Tool == "edit" {
+		if _, err := pathpolicy.WritePath(c.cwd, subject); err != nil {
+			return Deny, err.Error()
+		}
+	}
 
 	for _, r := range c.rules.Deny {
 		if c.matches(r, call.Tool, subject) {
@@ -287,20 +293,27 @@ func wildcard(pattern, s string) bool {
 	return strings.HasSuffix(s, parts[len(parts)-1])
 }
 
-// safeCommands never modify state. They are auto-allowed only when the
-// command has no shell operators that could chain in something else.
-var safeCommands = []string{
-	"ls", "pwd", "cat", "head", "tail", "wc", "file", "which", "echo", "date", "tree", "du", "df",
-	"git status", "git diff", "git log", "git show", "git branch", "git rev-parse", "git blame",
-	"go version", "go env", "go list", "go vet", "node --version", "python --version", "python3 --version",
+// Only argument-free commands or commands whose arguments cannot change
+// state are auto-allowed outside the sandbox. Many seemingly read-only
+// commands have write flags (for example git diff --output and go env -w).
+var safeExact = map[string]bool{
+	"pwd": true, "date": true, "git status": true, "git diff": true,
+	"git log": true, "git show": true, "git branch": true,
+	"go version": true, "go env": true,
+	"node --version": true, "python --version": true, "python3 --version": true,
 }
+
+var safeWithArgs = []string{"ls", "cat", "head", "tail", "wc", "which", "echo", "du", "df"}
 
 func safeCommand(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" || strings.ContainsAny(cmd, ";&|<>$`\n(){}") {
 		return false
 	}
-	for _, s := range safeCommands {
+	if safeExact[cmd] {
+		return true
+	}
+	for _, s := range safeWithArgs {
 		if cmd == s || strings.HasPrefix(cmd, s+" ") {
 			return true
 		}

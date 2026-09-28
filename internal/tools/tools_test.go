@@ -3,12 +3,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"larik/internal/checkpoint"
 )
 
 func run(t *testing.T, tool Tool, env *Env, input string) Result {
@@ -49,12 +52,64 @@ func TestWriteCreatesAndCaptures(t *testing.T) {
 	dir := t.TempDir()
 	env := NewEnv(dir)
 	var captured []string
-	env.BeforeWrite = func(p string) { captured = append(captured, p) }
+	env.BeforeWrite = func(p string) error { captured = append(captured, p); return nil }
 	if r := run(t, Write{}, env, `{"path":"sub/new.go","content":"package x\n"}`); r.IsError {
 		t.Fatal(r.Content)
 	}
 	if len(captured) != 1 || captured[0] != filepath.Join(dir, "sub/new.go") {
 		t.Fatalf("captured = %v", captured)
+	}
+}
+
+func TestWriteBoundaryAndCheckpointFailure(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	env := NewEnv(dir)
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".git/hooks/pre-commit", ".larik/settings.json", "link/outside.txt", "../outside.txt"} {
+		if r := run(t, Write{}, env, `{"path":"`+path+`","content":"bad"}`); !r.IsError {
+			t.Errorf("write to %s succeeded", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "outside.txt")); !os.IsNotExist(err) {
+		t.Fatal("write escaped through a symlink")
+	}
+	env.BeforeWrite = func(string) error { return fmt.Errorf("snapshot unavailable") }
+	if r := run(t, Write{}, env, `{"path":"safe.txt","content":"bad"}`); !r.IsError || !strings.Contains(r.Content, "snapshot unavailable") {
+		t.Fatalf("checkpoint failure should stop write: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "safe.txt")); !os.IsNotExist(err) {
+		t.Fatal("file was written without a checkpoint")
+	}
+}
+
+func TestWriteReplacesHardlinkWithoutChangingOutsideFile(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	external := filepath.Join(outside, "external.txt")
+	if err := os.WriteFile(external, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias.txt")
+	if err := os.Link(external, alias); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	env := NewEnv(dir)
+	if r := run(t, Read{}, env, `{"path":"alias.txt"}`); r.IsError {
+		t.Fatal(r.Content)
+	}
+	if r := run(t, Write{}, env, `{"path":"alias.txt","content":"replacement"}`); r.IsError {
+		t.Fatal(r.Content)
+	}
+	if data, _ := os.ReadFile(external); string(data) != "original" {
+		t.Fatalf("outside hardlink target changed: %q", data)
+	}
+	if data, _ := os.ReadFile(alias); string(data) != "replacement" {
+		t.Fatalf("project file was not replaced: %q", data)
+	}
+	if fi, _ := os.Stat(alias); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("replacement lost original permissions: %v", fi.Mode().Perm())
 	}
 }
 
@@ -76,6 +131,43 @@ func TestBash(t *testing.T) {
 	r := run(t, Bash{}, env, `{"command":"sleep 30 & sleep 30","timeout":1}`)
 	if !r.IsError || !strings.Contains(r.Content, "timed out") || time.Since(start) > 5*time.Second {
 		t.Fatalf("timeout not enforced: %+v after %s", r, time.Since(start))
+	}
+}
+
+func TestBashCheckpointPaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := checkpoint.New(filepath.Join(t.TempDir(), "checkpoints"), dir)
+	store.BeginTurn()
+	env := NewEnv(dir)
+	env.BeforeWrite = store.Capture
+	r := run(t, Bash{}, env, `{"command":"printf after > file.txt","checkpoint_paths":["file.txt"]}`)
+	if r.IsError {
+		t.Fatal(r.Content)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "after" {
+		t.Fatalf("bash result = %q", data)
+	}
+	if _, err := store.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "before" {
+		t.Fatalf("undo result = %q", data)
+	}
+
+	for _, input := range []string{
+		`{"command":"printf bad > file.txt","checkpoint_paths":["../outside.txt"]}`,
+		`{"command":"printf bad > file.txt","checkpoint_paths":[".larik/settings.json"]}`,
+	} {
+		if r := run(t, Bash{}, env, input); !r.IsError {
+			t.Fatalf("unsafe checkpoint path was accepted: %s", input)
+		}
+	}
+	if data, _ := os.ReadFile(path); string(data) != "before" {
+		t.Fatalf("rejected command changed file: %q", data)
 	}
 }
 

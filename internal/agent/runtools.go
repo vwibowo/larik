@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 
 	"larik/internal/hooks"
@@ -149,8 +150,20 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 		}
 		if r.Always {
 			perms.AddAllow(rule)
+			var err error
 			if a.opts.OnAllowRule != nil {
-				a.opts.OnAllowRule(rule)
+				err = a.opts.OnAllowRule(rule)
+			} else {
+				err = errors.New("approval persistence is unavailable")
+			}
+			if err != nil {
+				emit(Event{Kind: EvNotice, Text: "Could not save always-allow rule " + rule + ": " + err.Error() + ". It applies only to this session."})
+			}
+			if r.Persisted != nil {
+				select {
+				case r.Persisted <- err:
+				default:
+				}
 			}
 		}
 		return true, "", input
