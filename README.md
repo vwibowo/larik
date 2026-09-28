@@ -7,13 +7,13 @@ A terminal coding agent written in Go with a [Bubble Tea](https://github.com/cha
 To build and install `larik` into `/usr/local/bin`:
 
 ```bash
-./install.sh
+./scripts/install.sh
 ```
 
 The installer uses `sudo` when needed. Set `PREFIX` or `BINDIR` to install elsewhere, for example:
 
 ```bash
-PREFIX="$HOME/.local" ./install.sh
+PREFIX="$HOME/.local" ./scripts/install.sh
 ```
 
 To build without installing:
@@ -33,11 +33,11 @@ The first time you run `larik` in a terminal with nothing configured, a setup wi
 
 With no `--model` and no saved default, Larik picks the default model of the first provider whose key is set:
 
-| Key | Default model |
-|---|---|
+| Key                 | Default model             |
+| ------------------- | ------------------------- |
 | `ANTHROPIC_API_KEY` | `anthropic/claude-opus-5` |
-| `OPENAI_API_KEY` | `openai/gpt-5.5` |
-| `GEMINI_API_KEY` | `gemini/gemini-3.8-flash` |
+| `OPENAI_API_KEY`    | `openai/gpt-5.5`          |
+| `GEMINI_API_KEY`    | `gemini/gemini-3.8-flash` |
 
 ```bash
 ./larik --model openai/gpt-5.5
@@ -101,7 +101,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
     "worker": { "isolation": "worktree", "max_turns": 40 },
     "explore": { "max_turns": 30 }
   },
-  "budget": { "session_usd": 2.00, "warn_at": 0.8 }
+  "budget": { "session_usd": 2.0, "warn_at": 0.8 }
 }
 ```
 
@@ -114,6 +114,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
   - Every subagent is stopped when it repeats the same tool call with the same result 4 times within 8 turns. The main agent is told the subagent got stuck and to check its changes. The main agent itself isn't stopped this way, since you can see it and interrupt it.
 
   In the wizard, `w` toggles the worktree, `c` toggles a minimal prompt (below) and `+`/`-` change the turn cap. From the command line: `/routing worker.isolation=worktree worker.max_turns=30`.
+
 - **A smaller prompt for cheap models:** `role_options.<role>.context: "minimal"` drops your global instruction file (`~/.config/larik/AGENTS.md`) and the skills index from that role's subagents, keeping only this project's own `AGENTS.md`/`CLAUDE.md`. The presets set it for `worker` and `explore`: it's a smaller prompt with less to misread, and it stops a small model from loading a skill that has nothing to do with the task. From the command line: `/routing worker.context=minimal` (or `=` empty for the full prompt).
 - **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free.
 - **Comparing models before you trust one:** `larik bench --models worker,anthropic/claude-haiku-4-5,ollama/qwen3-coder` runs a few small, self-checking coding tasks (fix a failing test, implement a stub, rename a symbol across files) against each model in its own throwaway directory, then reports pass/fail, cost and time — no separate judge model, `go test` is the check. Use it to see whether a role you're about to add is actually good enough, not just cheap. See `larik bench -h`.
@@ -134,37 +135,37 @@ The input row fills the terminal width, stays at the bottom, and grows up to ten
 - **History.** `↑` on the first line recalls earlier prompts for this project, and `↓` goes back toward your draft. `ctrl+r` searches them. History is kept in the data directory under `history/`, up to 500 entries per project.
 - **`ctrl+g`** opens the prompt in `$VISUAL` or `$EDITOR` (falling back to `vi`). The text you save becomes the prompt.
 
-| Command | What it does |
-|---|---|
-| `/model [provider/model]` | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches |
-| `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
-| `/providers` | Connected or detected providers with status, plus a NVIDIA NIM connect shortcut; `enter` edit/connect, `t` test, `d` remove, `a` add |
-| `/routing [role=provider/model]` | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them |
-| `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
-| `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, token saver, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config token_saver=true` enables filtering |
-| `/theme [auto\|dark\|light]` | Color theme; `auto` follows the terminal's background. Moving through the list previews each one |
-| `/effort [low…max\|default]` | Set and save the default reasoning effort |
-| `/mode [default\|accept-edits\|plan\|yolo]` | Pick and save the default permission mode from a list (`1`–`4`), or set it directly |
-| `/undo` | Revert checkpointed file changes from the last turn; `bash` changes need explicit `checkpoint_paths`, and MCP side effects are not covered |
-| `/compact` | Summarize the conversation to free context |
-| `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
-| `/cost` | Usage and cost, split by model when more than one was used |
-| `/sessions` | Choose a session from a searchable, scrolling list (`✓ current`, `⑂` branch) |
-| `/resume [id]` | Open the session picker, or switch by ID (a unique prefix is enough) |
-| `/new` | Start a new session |
-| `/fork` | Branch the conversation into a new session and continue there |
-| `/rewind [n]` | List prompts, or branch off just before prompt `n` with it back in the input to edit |
-| `/mcp` | MCP server status and tools |
-| `/mcp approve <name>` | Allow a project-defined MCP server to start |
-| `/hooks` | List configured hooks |
-| `/hooks approve` | Allow the project's shared hooks to run |
-| `/skills` | List skills |
-| `/agents` | List subagents |
-| `/lsp` | Language servers and status |
-| `/tasks` / `/tasks stop <id>` | Background subagent tasks |
-| `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents |
-| `/sandbox` | Sandbox status |
-| `/<skill-name> [args]` | Run a skill |
+| Command                                          | What it does                                                                                                                                                                                                                                                             |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/model [provider/model]`                        | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches                                                                                                                                                                             |
+| `/connect [provider]`                            | Setup wizard: choose a provider, connect it, pick a model, save                                                                                                                                                                                                          |
+| `/providers`                                     | Connected or detected providers with status, plus a NVIDIA NIM connect shortcut; `enter` edit/connect, `t` test, `d` remove, `a` add                                                                                                                                     |
+| `/routing [role=provider/model]`                 | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them                                                                                                                                                                     |
+| `/keys`                                          | Keyboard shortcuts (also `?` on an empty prompt)                                                                                                                                                                                                                         |
+| `/config [key=value]`                            | Settings: theme, verbose output, spinner tips, auto-compact, token saver, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config token_saver=true` enables filtering |
+| `/theme [auto\|dark\|light]`                     | Color theme; `auto` follows the terminal's background. Moving through the list previews each one                                                                                                                                                                         |
+| `/effort [low…max\|default]`                     | Set and save the default reasoning effort                                                                                                                                                                                                                                |
+| `/mode [default\|accept-edits\|plan\|yolo]`      | Pick and save the default permission mode from a list (`1`–`4`), or set it directly                                                                                                                                                                                      |
+| `/undo`                                          | Revert checkpointed file changes from the last turn; `bash` changes need explicit `checkpoint_paths`, and MCP side effects are not covered                                                                                                                               |
+| `/compact`                                       | Summarize the conversation to free context                                                                                                                                                                                                                               |
+| `/clear`                                         | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers                                                                                                                                                                               |
+| `/cost`                                          | Usage and cost, split by model when more than one was used                                                                                                                                                                                                               |
+| `/sessions`                                      | Choose a session from a searchable, scrolling list (`✓ current`, `⑂` branch)                                                                                                                                                                                             |
+| `/resume [id]`                                   | Open the session picker, or switch by ID (a unique prefix is enough)                                                                                                                                                                                                     |
+| `/new`                                           | Start a new session                                                                                                                                                                                                                                                      |
+| `/fork`                                          | Branch the conversation into a new session and continue there                                                                                                                                                                                                            |
+| `/rewind [n]`                                    | List prompts, or branch off just before prompt `n` with it back in the input to edit                                                                                                                                                                                     |
+| `/mcp`                                           | MCP server status and tools                                                                                                                                                                                                                                              |
+| `/mcp approve <name>`                            | Allow a project-defined MCP server to start                                                                                                                                                                                                                              |
+| `/hooks`                                         | List configured hooks                                                                                                                                                                                                                                                    |
+| `/hooks approve`                                 | Allow the project's shared hooks to run                                                                                                                                                                                                                                  |
+| `/skills`                                        | List skills                                                                                                                                                                                                                                                              |
+| `/agents`                                        | List subagents                                                                                                                                                                                                                                                           |
+| `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
+| `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
+| `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
+| `/sandbox`                                       | Sandbox status                                                                                                                                                                                                                                                           |
+| `/<skill-name> [args]`                           | Run a skill                                                                                                                                                                                                                                                              |
 
 CLI flags such as `--model`, `--effort`, and `--mode` override saved defaults for that launch without changing the config file.
 
@@ -176,12 +177,12 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 
 ## Permissions
 
-| Mode | Behavior |
-|---|---|
-| `default` | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |
-| `accept-edits` | Edits inside the working directory run without asking. Commands still ask. |
-| `plan` | Only read-only tools run. |
-| `yolo` | Tools run without prompts. Deny rules and the file-tool project boundary still apply. |
+| Mode           | Behavior                                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default`      | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |
+| `accept-edits` | Edits inside the working directory run without asking. Commands still ask.                                                                                                            |
+| `plan`         | Only read-only tools run.                                                                                                                                                             |
+| `yolo`         | Tools run without prompts. Deny rules and the file-tool project boundary still apply.                                                                                                 |
 
 Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
 
@@ -192,6 +193,7 @@ Answering "always allow" writes the rule to private project settings under `~/.c
 ## Web
 
 **`web_fetch`** downloads a page and returns its main content as Markdown:
+
 - Scripts, navigation, headers and footers, and decorative images are stripped, and links are resolved against the page URL.
 - Text and JSON responses are returned as-is.
 - Long pages come back in chunks (`start` / `max_length`).
@@ -202,11 +204,11 @@ Answering "always allow" writes the rule to private project settings under `~/.c
 
 **`web_search`** appears when a search backend is configured. Larik detects one from the environment:
 
-| Backend | Setting |
-|---|---|
-| [Brave Search](https://brave.com/search/api/) | `BRAVE_API_KEY` |
-| [Tavily](https://tavily.com) | `TAVILY_API_KEY` |
-| [SearXNG](https://docs.searxng.org) (self-hosted; enable the JSON format) | `SEARXNG_URL` |
+| Backend                                                                   | Setting          |
+| ------------------------------------------------------------------------- | ---------------- |
+| [Brave Search](https://brave.com/search/api/)                             | `BRAVE_API_KEY`  |
+| [Tavily](https://tavily.com)                                              | `TAVILY_API_KEY` |
+| [SearXNG](https://docs.searxng.org) (self-hosted; enable the JSON format) | `SEARXNG_URL`    |
 
 You can also set it explicitly:
 
@@ -215,6 +217,7 @@ You can also set it explicitly:
 ```
 
 **Trust and permissions:**
+
 - Search settings are honored only from personal files, since a shared `.larik/settings.json` could otherwise send your queries to its own server. Shared files can only disable web tools (`"web": {"fetch_disabled": true}` or `{"search": {"disabled": true}}`).
 - Both tools ask before running (`web_search` can be always-allowed).
 - Plan mode asks for them rather than blocking them, because research is part of planning.
@@ -227,6 +230,7 @@ You can also set it explicitly:
 On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik has no Windows sandbox, so shell commands ask for approval.
 
 **Inside the sandbox, a command:**
+
 - **Can** read everything.
 - **Can** write only to the project (the git root), its own private temp directory, and common build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root). The literal `/tmp`, shared by every program on the machine, is never writable.
 - **Can't** write to `.git/hooks`, `.git/config`, `.larik/`, `.claude/` or `.mcp.json`, even inside the project, because changing them would let a later command or hook escape the sandbox.
@@ -234,6 +238,7 @@ On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik h
 - **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.
 
 **How it changes permissions:**
+
 - In `default` and `accept-edits` mode, sandboxed commands run **without asking**.
 - If a command needs more (installing packages, network access, writing elsewhere), the model re-runs it with `"sandbox": false`. That asks you first, and the prompt says it runs outside the sandbox.
 - Deny rules still apply, and plan mode still blocks `bash`.
@@ -259,6 +264,7 @@ Loosening the sandbox (enabling network, adding writable paths, disabling it) is
 On startup the server prints one JSON line to stdout, `{"url": "...", "token": "..."}`, for programs that launch it.
 
 **Auth and safety:**
+
 - Every request except `GET /v1/health` needs `Authorization: Bearer <token>`.
 - The token comes from `--token`, then `$LARIK_SERVER_TOKEN`, and otherwise is generated at random.
 - `GET …/events` also accepts `?token=`, because browser `EventSource` can't set headers.
@@ -273,26 +279,27 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
   -d '{"text":"summarize this repo","wait":true}'              # blocks, returns the answer
 ```
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /v1/health` | Liveness check (no auth) |
-| `GET /v1/info` | Version, cwd, providers, sandbox |
-| `GET /v1/sessions` | Sessions in this directory, with `loaded`/`busy` flags |
-| `POST /v1/sessions` | New session `{model, effort, mode}`, or load one with `{resume: id}` / `{continue: true}` |
-| `GET /v1/sessions/{id}` | Model, mode, busy, usage, pending permissions, running tasks |
-| `PATCH /v1/sessions/{id}` | Change `model`, `effort` or `mode` |
-| `DELETE /v1/sessions/{id}` | Stop and unload (the transcript stays on disk) |
-| `GET /v1/sessions/{id}/messages` | Full transcript (works for unloaded sessions too) |
-| `POST /v1/sessions/{id}/fork` | Branch into a new loaded session. `{at: i}` keeps the messages before index `i` (which must be a prompt) and returns that prompt's text; with no `at`, everything is kept |
-| `GET /v1/sessions/{id}/events` | SSE event stream |
-| `POST /v1/sessions/{id}/prompt` | `{text}` starts a run and returns 202 (409 if busy); `{text, wait: true}` returns the final answer |
-| `POST /v1/sessions/{id}/cancel` | Interrupt the current run |
-| `GET /v1/sessions/{id}/permissions` | Pending permission requests |
-| `POST /v1/sessions/{id}/permissions/{request_id}` | Answer: `{allow, always, reason}`. An `always` answer returns `{allowed, persisted}` and an `error` if saving failed; other answers return 204. |
-| `POST /v1/sessions/{id}/compact` · `/undo` · `/clear` | Same as the TUI commands |
-| `GET /v1/sessions/{id}/tasks` · `DELETE …/tasks/{task_id}` | List or stop background tasks |
+| Endpoint                                                   | Purpose                                                                                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/health`                                           | Liveness check (no auth)                                                                                                                                                  |
+| `GET /v1/info`                                             | Version, cwd, providers, sandbox                                                                                                                                          |
+| `GET /v1/sessions`                                         | Sessions in this directory, with `loaded`/`busy` flags                                                                                                                    |
+| `POST /v1/sessions`                                        | New session `{model, effort, mode}`, or load one with `{resume: id}` / `{continue: true}`                                                                                 |
+| `GET /v1/sessions/{id}`                                    | Model, mode, busy, usage, pending permissions, running tasks                                                                                                              |
+| `PATCH /v1/sessions/{id}`                                  | Change `model`, `effort` or `mode`                                                                                                                                        |
+| `DELETE /v1/sessions/{id}`                                 | Stop and unload (the transcript stays on disk)                                                                                                                            |
+| `GET /v1/sessions/{id}/messages`                           | Full transcript (works for unloaded sessions too)                                                                                                                         |
+| `POST /v1/sessions/{id}/fork`                              | Branch into a new loaded session. `{at: i}` keeps the messages before index `i` (which must be a prompt) and returns that prompt's text; with no `at`, everything is kept |
+| `GET /v1/sessions/{id}/events`                             | SSE event stream                                                                                                                                                          |
+| `POST /v1/sessions/{id}/prompt`                            | `{text}` starts a run and returns 202 (409 if busy); `{text, wait: true}` returns the final answer                                                                        |
+| `POST /v1/sessions/{id}/cancel`                            | Interrupt the current run                                                                                                                                                 |
+| `GET /v1/sessions/{id}/permissions`                        | Pending permission requests                                                                                                                                               |
+| `POST /v1/sessions/{id}/permissions/{request_id}`          | Answer: `{allow, always, reason}`. An `always` answer returns `{allowed, persisted}` and an `error` if saving failed; other answers return 204.                           |
+| `POST /v1/sessions/{id}/compact` · `/undo` · `/clear`      | Same as the TUI commands                                                                                                                                                  |
+| `GET /v1/sessions/{id}/tasks` · `DELETE …/tasks/{task_id}` | List or stop background tasks                                                                                                                                             |
 
 **The event stream:**
+
 - Each SSE message has `id: <seq>` and `event: <type>`. Its `data` is JSON: the agent event (the same schema as `-p --output json`) plus `seq`, `session`, and `request_id` on permission requests.
 - The server adds four event types:
   - `status` (`busy` true/false)
@@ -329,10 +336,20 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
     "deny": ["bash(rm -rf*)", "read(.env)"]
   },
   "providers": {
-    "work-gateway": { "type": "openai-compatible", "base_url": "https://llm.example.com/v1", "api_key_env": "WORK_LLM_KEY" }
+    "work-gateway": {
+      "type": "openai-compatible",
+      "base_url": "https://llm.example.com/v1",
+      "api_key_env": "WORK_LLM_KEY"
+    }
   },
   "models": {
-    "gpt-5.5": { "provider": "openai", "context_window": 400000, "max_output": 128000, "input_price": 0, "output_price": 0 }
+    "gpt-5.5": {
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output": 128000,
+      "input_price": 0,
+      "output_price": 0
+    }
   }
 }
 ```
@@ -358,8 +375,15 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 ```json
 {
   "mcpServers": {
-    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
-    "fs":     { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/notes"] }
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+    },
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/notes"]
+    }
   }
 }
 ```
@@ -382,6 +406,7 @@ Larik supports [Agent Skills](https://agentskills.io): folders containing a `SKI
 name: release-notes
 description: Write release notes from git history. Use when asked for a changelog or release notes.
 ---
+
 Collect commits since the last tag with `git log $(git describe --tags --abbrev=0)..HEAD` ...
 ```
 
@@ -390,6 +415,7 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
   2. `.agents/skills`, `.claude/skills`, `.larik/skills` in each directory from the repo root down to the working directory
 
   Existing Claude Code skills work as-is, symlinked skill folders are followed, and a higher-precedence skill with the same name overrides the lower one (`/skills` shows what was shadowed).
+
 - **Progressive disclosure:** only each skill's `name: description` is in the system prompt. The model loads the full instructions with the read-only `skill` tool when a task matches, and reads bundled files with the normal tools. The index is rebuilt at each fresh context (a new session or `/clear`) and stays fixed within it, so prompt caches stay valid. Add or edit a skill, then `/clear` to use it.
 - **Running a skill yourself:** type `/<skill-name> [args]`, in the TUI or with `-p`. `$ARGUMENTS` in the body is replaced with the args. Otherwise the args are appended.
 - **Frontmatter flags:** `disable-model-invocation: true` keeps a skill out of the model's index, so it only runs when you invoke it. `user-invocable: false` hides it from `/`.
@@ -400,6 +426,7 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
 The model can delegate work to subagents with the `task` tool. Each subagent gets a fresh context window, its own system prompt and a restricted tool set. Only its final message comes back, so broad searches and self-contained changes don't fill the main context. Several `task` calls in one turn run in parallel.
 
 Built-in agents:
+
 - **`general-purpose`:** all tools. Runs on the `worker` role.
 - **`explore`:** read-only search with `read`, `grep` and `glob`. Runs on the `explore` role.
 
@@ -411,23 +438,27 @@ To add your own, write `<name>.md` in `.larik/agents/` or `.claude/agents/`, or 
 ---
 name: reviewer
 description: Reviews a diff for bugs and missing tests. Use after making changes.
-tools: Read, Grep, Glob, Bash      # optional; omit for all tools. mcp__<server> allows a whole server
-model: worker                      # optional: inherit (default), a role (worker, explore, smart, opus/sonnet/haiku, your own), or provider/model
-isolation: worktree                # optional: always run in its own git worktree
+tools: Read, Grep, Glob, Bash # optional; omit for all tools. mcp__<server> allows a whole server
+model: worker # optional: inherit (default), a role (worker, explore, smart, opus/sonnet/haiku, your own), or provider/model
+isolation: worktree # optional: always run in its own git worktree
 ---
+
 You are a meticulous code reviewer. ...
 ```
 
 **What subagents share with the main agent:**
+
 - **Permissions:** the same rules and mode. Plan mode keeps subagents read-only too, and a subagent's permission prompts appear in your UI, labelled with the subagent and queued when several ask at once.
 - **Hooks:** the same hooks, with `SubagentStop` in place of `Stop`.
 - **Checkpoints:** the same store, so `/undo` reverts subagent edits along with the turn. Worktree subagents are the exception (see below).
 
 **Other behavior:**
+
 - Subagent tool calls are shown nested under their task. Their cost is included in the session totals, and each subagent's transcript is saved next to the session file.
 - Subagents can't start further subagents.
 
 **Worktree isolation:** inside a git repository, `task` accepts `isolation: "worktree"`, or an agent definition can set it. The subagent then works in its own git worktree on a new branch `larik/task-xxxxxx`, so parallel agents never overwrite each other's edits or yours.
+
 - **Where it runs:** the worktree is created under `~/.local/share/larik/worktrees/` from the current `HEAD` commit. Uncommitted changes in your checkout are not included. The subagent's working directory, path permissions and relative paths all point into the worktree.
 - **Confinement:** file writes outside the worktree ask for permission, as for any path outside the working directory. When the sandbox is on, `bash` may write only to the worktree and to the repository's `.git`, so commits work. `.git/hooks` and `.git/config` stay read-only.
 - **Finishing:** when the subagent ends, leftover changes are committed on its branch.
@@ -437,6 +468,7 @@ You are a meticulous code reviewer. ...
 - **Cleanup:** `/worktrees` lists kept worktrees and how many commits each has that aren't in `HEAD`. `/worktrees remove <branch|all>` deletes a worktree and its branch.
 
 **Background subagents:**
+
 - **Starting one:** with `run_in_background: true`, `task` returns an ID (`bg-1`) immediately and the main agent keeps working.
 - **Delivery:** when the subagent finishes, its result reaches the model as a `<task-notification>`. If the agent is mid-turn, the notification rides along with its next request. If the agent is idle, Larik starts a short turn automatically so the model can act on it.
 - **Tools for the model:** `task_wait` blocks on specific tasks (or all of them) and returns their results. `task_stop` cancels one.
@@ -460,12 +492,17 @@ Larik runs language servers so the model gets compiler feedback on its own edits
     "lsp": {
       "gopls": { "initialization_options": { "staticcheck": true } },
       "clangd": { "disabled": true },
-      "zls": { "command": ["zls"], "extensions": [".zig"], "root_markers": ["build.zig"] }
+      "zls": {
+        "command": ["zls"],
+        "extensions": [".zig"],
+        "root_markers": ["build.zig"]
+      }
     }
   }
   ```
 
   New server commands are honored only from personal files (`~/.config/larik/config.json`, private project settings). A shared `.larik/settings.json` can only disable servers.
+
 - **Timing:** edits wait for fresh diagnostics for up to 3s (15s while a server is still loading the project). Servers that stay silent on clean files get a shorter wait.
 - `/lsp` shows servers and their status.
 
@@ -476,29 +513,51 @@ Hooks are shell commands that run at points in the agent lifecycle. The format m
 ```json
 {
   "hooks": {
-    "PreToolUse":  [{ "matcher": "bash", "hooks": [{ "type": "command", "command": "./scripts/guard.sh", "timeout": 10 }] }],
-    "PostToolUse": [{ "matcher": "write|edit", "hooks": [{ "type": "command", "command": "gofmt -l . >&2 && exit 2 || true" }] }],
-    "Stop":        [{ "hooks": [{ "type": "command", "command": "./scripts/require-tests.sh" }] }]
+    "PreToolUse": [
+      {
+        "matcher": "bash",
+        "hooks": [
+          { "type": "command", "command": "./scripts/guard.sh", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write|edit",
+        "hooks": [
+          { "type": "command", "command": "gofmt -l . >&2 && exit 2 || true" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "./scripts/require-tests.sh" }
+        ]
+      }
+    ]
   }
 }
 ```
 
-| Event | Fires | Can do |
-|---|---|---|
-| `SessionStart` | first turn of each fresh context (matcher: `startup`, `resume`, `clear`) | Add context. Stdout goes to the model. |
-| `UserPromptSubmit` | before a prompt is sent | Block it, or add context (stdout) |
-| `PreToolUse` | before the permission check (matcher: tool name) | `allow` (skips the prompt), `deny`, `ask`, or rewrite the input with `updatedInput` |
-| `PostToolUse` | after a tool runs | Send feedback to the model |
-| `Stop` / `SubagentStop` | when the agent (or a subagent) would end its turn | `decision: "block"` makes it continue with your `reason` (at most 5 times; `stop_hook_active` is set) |
-| `PreCompact`, `Notification`, `SessionEnd` | compaction, permission prompts, exit | Observe only |
+| Event                                      | Fires                                                                    | Can do                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `SessionStart`                             | first turn of each fresh context (matcher: `startup`, `resume`, `clear`) | Add context. Stdout goes to the model.                                                                |
+| `UserPromptSubmit`                         | before a prompt is sent                                                  | Block it, or add context (stdout)                                                                     |
+| `PreToolUse`                               | before the permission check (matcher: tool name)                         | `allow` (skips the prompt), `deny`, `ask`, or rewrite the input with `updatedInput`                   |
+| `PostToolUse`                              | after a tool runs                                                        | Send feedback to the model                                                                            |
+| `Stop` / `SubagentStop`                    | when the agent (or a subagent) would end its turn                        | `decision: "block"` makes it continue with your `reason` (at most 5 times; `stop_hook_active` is set) |
+| `PreCompact`, `Notification`, `SessionEnd` | compaction, permission prompts, exit                                     | Observe only                                                                                          |
 
 **How a hook's result is read:**
+
 - **Stdin** is a JSON payload with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, and so on.
 - **Exit 0:** success. Stdout may be JSON: `decision`/`reason`, `continue: false` with `stopReason` (ends the turn), `systemMessage`, and `hookSpecificOutput` (`permissionDecision`, `updatedInput`, `additionalContext`).
 - **Exit 2:** blocks. Stderr is the reason, and it goes to the model.
 - **Other exit codes:** errors that don't block. They're shown to you.
 
 **Environment and timeouts:**
+
 - `LARIK_PROJECT_DIR` is set, and so is `CLAUDE_PROJECT_DIR` for compatibility.
 - The default timeout is 60s.
 - Matching hooks run in parallel.
@@ -508,6 +567,7 @@ Hooks are shell commands that run at points in the agent lifecycle. The format m
 **Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in personal settings always run.
 
 Instructions are loaded from these files:
+
 - `AGENTS.md` (or `CLAUDE.md`) in each directory from the repo root down to the working directory.
 - `~/.config/larik/AGENTS.md`.
 
