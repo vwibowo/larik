@@ -100,9 +100,7 @@ func (m *model) open(o app.Options, label, prefill string) tea.Cmd {
 	m.sess.Close("other")
 
 	m.sess, m.agent = s, s.Agent
-	m.conversation.Reset()
-	m.view.SetContent("")
-	m.view.GotoBottom()
+	m.resetConversation()
 	m.opts.Agent, m.opts.Hooks, m.opts.History = s.Agent, s.Hooks, s.History
 	m.perm, m.permQueue, m.bgReplies, m.queue = nil, nil, nil, nil
 	m.taskCalls = nil
@@ -140,7 +138,7 @@ func (m *model) listSessions(info, fail func(string) tea.Cmd) tea.Cmd {
 	if len(infos) == 0 {
 		return info("no sessions yet")
 	}
-	p := &picker{filterable: true}
+	p := &picker{filterable: true, matchDetail: true}
 	for _, in := range infos {
 		title := in.Title
 		if title == "" {
@@ -174,7 +172,11 @@ func (m *model) handleSessionPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	m.sessionPick = nil
-	return m.command("/resume " + item.value.(string))
+	id := item.value.(string)
+	if m.opts.App == nil { // the caller owns the session; switch on restart
+		return m.println(m.st.dim.Render("resume with: larik --resume " + id))
+	}
+	return m.command("/resume " + id)
 }
 
 func (m *model) sessionPickerView() string {

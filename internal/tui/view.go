@@ -19,119 +19,78 @@ import (
 )
 
 func (m *model) View() tea.View {
-	var parts []string
-	panel := false
-	panelKind := ""
+	height := m.height
+	if height <= 0 {
+		height = 24 // before the first size event
+	}
+	modal := m.perm != nil || m.showKeys // these take the composer's place
+	bottom := m.statusLine()
+	if !modal {
+		bottom = m.composerView() + "\n" + bottom
+	}
+	m.frameBottomRows = lipgloss.Height(bottom)
+	defer func() { m.frameBottomRows = 0 }()
+	room := max(height-m.frameBottomRows, 0)
 
-	if m.running || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
-		if live := m.liveView(); live != "" {
-			parts = append(parts, live)
-		}
-	}
-
-	switch {
-	case m.perm != nil:
-		panel = true
-		panelKind = "permission"
-		parts = append(parts, m.permissionView())
-	case m.showKeys:
-		panel = true
-		panelKind = "shortcuts"
-		parts = append(parts, m.shortcutsView())
-	case m.provs != nil:
-		panel = true
-		panelKind = "providers"
-		if it, ok := m.provs.list.selected(); ok {
-			panelKind += fmt.Sprintf(":%v", it.value)
-		}
-		parts = append(parts, m.providersView())
-	case m.settings != nil:
-		panel = true
-		panelKind = "settings:" + m.settings.editing
-		parts = append(parts, m.settingsView())
-	case m.wizard != nil:
-		panel = true
-		panelKind = fmt.Sprintf("wizard:%d", m.wizard.step)
-		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.availablePanelRows()-2)))
-	case m.routing != nil:
-		panel = true
-		panelKind = fmt.Sprintf("routing:%d", m.routing.step)
-		parts = append(parts, m.st.modal.Width(max(m.width-2, 10)).Render(m.routing.view(m.st, max(m.width-6, 20), m.availablePanelRows()-2)))
-	default:
-		switch {
-		case m.mpick != nil:
-			panel = true
-			panelKind = "model"
-			parts = append(parts, m.modelPickerView())
-		case m.modePick != nil:
-			panel = true
-			panelKind = "mode"
-			parts = append(parts, m.modePickerView())
-		case m.sessionPick != nil:
-			panel = true
-			panelKind = "sessions"
-			parts = append(parts, m.sessionPickerView())
-		case m.palette != nil:
-			panel = true
-			panelKind = "palette"
-			parts = append(parts, m.paletteView())
-		}
-	}
-	if m.perm != nil || m.showKeys {
-		v := tea.NewView(pinBottom(parts, []string{m.statusLine()}, m.height))
-		v.AltScreen = true
-		v.MouseMode = tea.MouseModeCellMotion
-		v.WindowTitle = "larik"
-		v.ReportFocus = m.notify != "off"
-		return v
-	}
-	bottomText := m.composerView() + "\n" + m.statusLine()
-	panelText := ""
+	panelKind, panelText := m.panel()
 	if m.panelKind != panelKind {
 		m.panelKind = panelKind
 		m.panelView.GotoTop()
 	}
-	if panel {
-		panelText = parts[len(parts)-1]
-		parts = parts[:len(parts)-1]
-	}
 	panelRows := 0
 	if panelText != "" {
 		lines := strings.Split(panelText, "\n")
-		panelRows = min(len(lines), m.availablePanelRows())
-		if panelRows >= 3 && len(lines) > panelRows {
+		panelRows = min(len(lines), panelRoom(room))
+		switch {
+		case panelRows == len(lines) || panelRows == 0:
+		case modal:
+			// Keep the answer options, which come last, in view.
+			panelText = strings.Join(lines[len(lines)-panelRows:], "\n")
+		case panelRows >= 3:
 			// Keep the modal border in place while its content scrolls.
 			m.panelView.SetContent(strings.Join(lines[1:len(lines)-1], "\n"))
 			m.panelView.SetHeight(panelRows - 2)
 			panelText = lines[0] + "\n" + m.panelView.View() + "\n" + lines[len(lines)-1]
-		} else if panelRows > 0 {
+		default:
 			m.panelView.SetContent(panelText)
 			m.panelView.SetHeight(panelRows)
-			if len(lines) > panelRows {
-				panelText = m.panelView.View()
-			}
+			panelText = m.panelView.View()
 		}
 	}
-	viewportRows := max(m.height-lipgloss.Height(bottomText)-panelRows, 0)
-	body := m.conversation.String()
-	if len(parts) > 0 {
-		if body != "" {
-			body += "\n"
+
+	// The live view sits under the conversation rather than inside it, so a
+	// spinner tick doesn't re-layout the whole conversation.
+	var live []string
+	if m.running || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
+		if s := m.liveView(); s != "" {
+			live = strings.Split(s, "\n")
 		}
-		body += strings.Join(parts, "\n")
 	}
+	liveRoom := room - panelRows
+	if liveRoom >= 8 {
+		liveRoom -= 3 // keep some conversation in view
+	}
+	liveRows := min(len(live), max(liveRoom, 0))
+	live = live[len(live)-liveRows:]
+
+	viewRows := max(room-panelRows-liveRows, 0)
 	atBottom := m.view.AtBottom()
-	m.view.SetHeight(viewportRows)
-	m.view.SetContent(body)
+	m.view.SetHeight(viewRows)
 	if atBottom {
 		m.view.GotoBottom()
 	}
-	content := m.view.View()
-	if panelRows > 0 {
-		content += "\n" + panelText
+	var rows []string
+	if viewRows > 0 {
+		rows = append(rows, m.view.View())
 	}
-	content += "\n" + bottomText
-	v := tea.NewView(content)
+	rows = append(rows, live...)
+	m.panelTop, m.panelRows = viewRows+liveRows, panelRows
+	if panelRows > 0 {
+		rows = append(rows, panelText)
+	}
+	rows = append(rows, bottom)
+
+	v := tea.NewView(strings.Join(rows, "\n"))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "larik"
@@ -139,57 +98,78 @@ func (m *model) View() tea.View {
 	return v
 }
 
-func (m *model) composerView() string {
-	return m.st.box.Width(max(m.width, 7)).Render(m.input.View())
+// panel renders the open panel, if any, and names it so its scroll
+// position resets when a different one opens.
+func (m *model) panel() (kind, text string) {
+	switch {
+	case m.perm != nil:
+		return "permission", m.permissionView()
+	case m.showKeys:
+		return "shortcuts", m.shortcutsView()
+	case m.provs != nil:
+		kind = "providers"
+		if it, ok := m.provs.list.selected(); ok {
+			kind += fmt.Sprintf(":%v", it.value)
+		}
+		return kind, m.providersView()
+	case m.settings != nil:
+		return "settings:" + m.settings.editing, m.settingsView()
+	case m.wizard != nil:
+		return fmt.Sprintf("wizard:%d", m.wizard.step), m.st.modal.Width(max(m.width-2, 10)).Render(m.wizard.view(m.st, max(m.width-6, 20), m.availablePanelRows()-2))
+	case m.routing != nil:
+		return fmt.Sprintf("routing:%d", m.routing.step), m.st.modal.Width(max(m.width-2, 10)).Render(m.routing.view(m.st, max(m.width-6, 20), m.availablePanelRows()-2))
+	case m.mpick != nil:
+		return "model", m.modelPickerView()
+	case m.modePick != nil:
+		return "mode", m.modePickerView()
+	case m.sessionPick != nil:
+		return "sessions", m.sessionPickerView()
+	case m.histPick != nil:
+		return "history", m.historyPickerView()
+	case m.palette != nil:
+		return "palette", m.paletteView()
+	case m.mention != nil:
+		return "mention", m.mentionView()
+	}
+	return "", ""
 }
 
-// availablePanelRows reserves room for the composer, status and at least a
-// few conversation rows while a picker is open.
+func (m *model) composerView() string {
+	box := m.st.box
+	if m.shellMode() {
+		box = box.BorderForeground(m.st.warn.GetForeground())
+	}
+	return box.Width(max(m.width, 7)).Render(m.input.View())
+}
+
+// availablePanelRows is the height a panel may use above the composer and
+// status line, leaving a few conversation rows visible.
 func (m *model) availablePanelRows() int {
 	height := m.height
 	if height <= 0 {
 		height = 24 // a few tests render a panel before the first size event
 	}
-	room := height - lipgloss.Height(m.composerView()) - lipgloss.Height(m.statusLine())
-	if room <= 1 {
+	bottom := m.frameBottomRows
+	if bottom == 0 {
+		bottom = lipgloss.Height(m.composerView()) + lipgloss.Height(m.statusLine())
+	}
+	return panelRoom(height - bottom)
+}
+
+func panelRoom(room int) int {
+	switch {
+	case room <= 1:
 		return 0
+	case room < 8:
+		return room - 1
 	}
-	reserve := 3
-	if room < 8 {
-		reserve = 1
-	}
-	return room - reserve
+	return room - 3
 }
 
 func (m *model) hasPickerPanel() bool {
 	return m.provs != nil || m.settings != nil || m.wizard != nil || m.routing != nil ||
-		m.mpick != nil || m.modePick != nil || m.sessionPick != nil || m.palette != nil
-}
-
-// pinBottom places temporary panels above the fixed composer and footer.
-func pinBottom(upper, bottom []string, height int) string {
-	if height <= 0 {
-		return strings.Join(append(upper, bottom...), "\n")
-	}
-	var topLines []string
-	if len(upper) > 0 {
-		topLines = strings.Split(strings.Join(upper, "\n"), "\n")
-	}
-	bottomLines := strings.Split(strings.Join(bottom, "\n"), "\n")
-	if len(bottomLines) >= height {
-		return strings.Join(bottomLines[len(bottomLines)-height:], "\n")
-	}
-	room := height - len(bottomLines)
-	if len(topLines) > room {
-		topLines = topLines[len(topLines)-room:]
-	}
-	lines := make([]string, 0, height)
-	for len(lines)+len(topLines) < room {
-		lines = append(lines, "")
-	}
-	lines = append(lines, topLines...)
-	lines = append(lines, bottomLines...)
-	return strings.Join(lines, "\n")
+		m.mpick != nil || m.modePick != nil || m.sessionPick != nil || m.palette != nil ||
+		m.histPick != nil || m.mention != nil
 }
 
 // liveView shows the in-flight response, clipped to the screen, and a
@@ -621,15 +601,25 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 	return strings.Join(out, "\n")
 }
 
+// renderMarkdown renders headings, code blocks and prose apart and joins
+// them without glamour's blank lines; only blank lines between prose
+// paragraphs remain.
 func (m *model) renderMarkdown(s string) string {
 	if m.md == nil {
 		return s
 	}
-	r, err := m.md.Render(s)
-	if err != nil {
-		return s
+	var b strings.Builder
+	for i, seg := range splitMarkdown(s) {
+		r, err := m.md.Render(seg.text)
+		if err != nil {
+			return s
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(trimBlankLines(r))
 	}
-	return strings.Trim(r, "\n")
+	return b.String()
 }
 
 func (m *model) renderToolCard(e agent.Event) string {

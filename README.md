@@ -122,9 +122,17 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 
 ## Keys and commands
 
-The input row fills the terminal width, stays at the bottom, and grows up to ten lines as you type. The conversation scrolls above it with Page Up/Down or the mouse wheel. In-session pickers and settings panels open just above the input and leave recent messages visible; use Ctrl+Page Up/Down or the mouse wheel over a panel to scroll panel content when it does not fit. Edit and file-write previews use syntax highlighting when the file type is recognized.
+The input row fills the terminal width, stays at the bottom, and grows up to ten lines as you type. The conversation scrolls above it with Page Up/Down, the mouse wheel, or Ctrl+Home/End on an empty input. Larik uses the terminal's alternate screen and captures the mouse, so to select text hold Shift while dragging (Option in iTerm2 and Terminal.app). On exit it prints the session ID to resume with `larik --resume <id>`. In-session pickers and settings panels open just above the input and leave recent messages visible; use Ctrl+Page Up/Down or the mouse wheel over a panel to scroll panel content when it does not fit. Edit and file-write previews use syntax highlighting when the file type is recognized.
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
+
+### Composer
+
+- **`@` mentions.** Typing `@` opens a file picker over the project (it follows `.gitignore` in a git repository). `↑/↓` chooses, `tab` or `enter` inserts, and picking a folder lets you go into it. When you send the prompt, each `@path` is attached. A file is attached with line numbers and counts as read, so the model can edit it straight away. `@path#L10-40` attaches only those lines, `@folder/` attaches a listing, and `@image.png` (also `.jpg`, `.gif`, `.webp`, up to 5 MB) attaches the image for vision models. Quote paths with spaces: `@"my notes.md"`. A mention that isn't a real path stays as text, deny rules for `read` still apply, and `/rewind` and the session list show the prompt as you typed it. Mentions also work in `larik -p` and `larik serve` prompts.
+- **Dropped files.** Pasting or dragging a file's absolute path into the terminal inserts it as an `@` mention.
+- **`!` shell commands.** A prompt starting with `!` runs the command directly and shows its output. The input border turns yellow while you type one. The command runs in the bash sandbox when one is available and doesn't ask for permission, but `bash` deny rules still apply. Its output is sent to the model with your next prompt. `esc` stops it.
+- **History.** `↑` on the first line recalls earlier prompts for this project, and `↓` goes back toward your draft. `ctrl+r` searches them. History is kept in the data directory under `history/`, up to 500 entries per project.
+- **`ctrl+g`** opens the prompt in `$VISUAL` or `$EDITOR` (falling back to `vi`). The text you save becomes the prompt.
 
 | Command | What it does |
 |---|---|

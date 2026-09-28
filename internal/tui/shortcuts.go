@@ -15,6 +15,11 @@ var shortcutGroups = []shortcutGroup{
 	{"typing", [][2]string{
 		{"enter", "send"},
 		{"shift+enter", "new line (also alt+enter, ctrl+j)"},
+		{"@", "mention a file or folder (@path#L10-20 for lines)"},
+		{"!", "run a shell command; output goes with the next prompt"},
+		{"↑ ↓", "previous and next prompts"},
+		{"ctrl+r", "search prompt history"},
+		{"ctrl+g", "edit the prompt in $EDITOR"},
 		{"ctrl+c", "clear the input"},
 		{"ctrl+d", "quit when the input is empty"},
 	}},

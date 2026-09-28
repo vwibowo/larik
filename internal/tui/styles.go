@@ -8,6 +8,8 @@ import (
 
 type styles struct {
 	accent, dim, user, err, warn, ok, diffAdd, diffDel, thinking, box, modal, statusMode lipgloss.Style
+	// Faint backgrounds behind highlighted added and removed code.
+	diffAddBg, diffDelBg lipgloss.Style
 	// Footer chips.
 	chip, chipWarn, chipPlain lipgloss.Style
 }
@@ -25,6 +27,8 @@ func newStyles(isDark bool) styles {
 		ok:         lipgloss.NewStyle().Foreground(pick("#1A7F37", "#5CCB7A")),
 		diffAdd:    lipgloss.NewStyle().Foreground(pick("#1A7F37", "#5CCB7A")),
 		diffDel:    lipgloss.NewStyle().Foreground(pick("#C0352B", "#FF7A70")),
+		diffAddBg:  lipgloss.NewStyle().Background(pick("#E6F4EA", "#15261B")),
+		diffDelBg:  lipgloss.NewStyle().Background(pick("#FBE9E7", "#2D1717")),
 		thinking:   lipgloss.NewStyle().Foreground(pick("#6B6B76", "#8A8A96")).Italic(true),
 		box:        lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(pick("#C9C9D1", "#44444F")).Padding(0, 1),
 		modal:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1),

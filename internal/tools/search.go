@@ -107,7 +107,7 @@ func goGrep(ctx context.Context, root string, in grepInput) (string, error) {
 	}
 	var b strings.Builder
 	count := 0
-	err = walkFiles(ctx, root, func(path string) error {
+	err = WalkFiles(ctx, root, func(path string) error {
 		if in.Glob != "" {
 			if ok, _ := doublestar.Match(in.Glob, filepath.Base(path)); !ok {
 				if ok, _ := doublestar.Match(in.Glob, path); !ok {
@@ -171,7 +171,7 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		mod  int64
 	}
 	var hits []hit
-	err = walkFiles(ctx, root, func(path string) error {
+	err = WalkFiles(ctx, root, func(path string) error {
 		rel, _ := filepath.Rel(root, path)
 		if ok, _ := doublestar.Match(in.Pattern, filepath.ToSlash(rel)); ok {
 			var mod int64
@@ -200,7 +200,9 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	return Result{Content: b.String()}
 }
 
-func walkFiles(ctx context.Context, root string, fn func(path string) error) error {
+// WalkFiles calls fn for each regular file under root, skipping hidden
+// directories and common dependency and build output directories.
+func WalkFiles(ctx context.Context, root string, fn func(path string) error) error {
 	fi, err := os.Stat(root)
 	if err != nil {
 		return err

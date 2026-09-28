@@ -7,14 +7,15 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
-	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
+	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/anthropics/anthropic-sdk-go v1.75.0
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go/v3 v3.66.0
 	golang.org/x/net v0.58.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	google.golang.org/genai v1.71.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -69,7 +70,6 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect

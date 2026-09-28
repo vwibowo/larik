@@ -53,6 +53,11 @@ type Block struct {
 	// Provider owns Signature/Raw; other providers ignore them.
 	Provider string          `json:"provider,omitempty"`
 	Raw      json.RawMessage `json:"raw,omitempty"`
+
+	// Attachment names the source (a path, or "!command") of a text or
+	// image block Larik attached to a prompt. Adapters send such blocks
+	// like any other; Text skips them so the prompt shows as typed.
+	Attachment string `json:"attachment,omitempty"`
 }
 
 type Message struct {
@@ -69,11 +74,12 @@ func UserText(s string) Message {
 	return Message{Role: RoleUser, Blocks: []Block{TextBlock(s)}}
 }
 
-// Text concatenates the visible text blocks of a message.
+// Text concatenates the visible text blocks of a message, leaving out
+// attachments.
 func (m Message) Text() string {
 	var s string
 	for _, b := range m.Blocks {
-		if b.Type == BlockText {
+		if b.Type == BlockText && b.Attachment == "" {
 			s += b.Text
 		}
 	}

@@ -61,6 +61,10 @@ func Run(opts Options) error {
 	if m.sess != nil {
 		m.sess.Close("prompt_input_exit")
 	}
+	// The alt screen takes the conversation with it; say how to get back.
+	if id := m.agent.SessionID(); id != "" && m.prompted {
+		fmt.Printf("session %s · resume with: larik --resume %s\n", id, id)
+	}
 	return err
 }
 
@@ -85,12 +89,23 @@ type model struct {
 	width    int
 	height   int
 
-	input        textarea.Model
-	spin         spinner.Model
-	view         viewport.Model
-	panelView    viewport.Model
-	panelKind    string
-	conversation strings.Builder
+	input     textarea.Model
+	spin      spinner.Model
+	view      viewport.Model // the conversation, pre-wrapped to width
+	panelView viewport.Model
+	panelKind string
+	// outputs is everything printed, oldest first, kept to re-wrap on
+	// resize; convLines is outputs wrapped to convWidth.
+	outputs     []string
+	outputBytes int
+	convLines   []string
+	convWidth   int
+	// Layout of the last frame, for routing mouse wheel events.
+	panelTop, panelRows int
+	// frameBottomRows caches the composer and status height while a
+	// frame renders; zero outside View.
+	frameBottomRows int
+	prompted        bool // a prompt was sent, so the session is worth resuming
 
 	running      bool
 	cancel       context.CancelFunc
@@ -142,6 +157,21 @@ type model struct {
 	palette       *picker
 	paletteQ      string // input the palette was built for
 	paletteHidden string // input the palette was dismissed at with esc
+
+	// The @ file popup and the project file index behind it.
+	mention       *picker
+	mentionTok    mentionToken
+	mentionHidden string // token dismissed with esc
+	files         []string
+	filesAt       time.Time
+	indexing      bool
+	// Prompt history: histIdx is the entry shown while browsing with
+	// ↑/↓, or -1, and histDraft the input from before browsing.
+	history     []string
+	histIdx     int
+	histDraft   string
+	histPick    *picker            // ctrl+r search
+	shellCancel context.CancelFunc // a "!" command is running
 }
 
 // Messages.
@@ -164,7 +194,7 @@ func newModel(opts Options) *model {
 	// synchronously before startup would block and swallow typed input.
 	const termDark = true
 	ta := textarea.New()
-	ta.Placeholder = "Ask larik to do something…  (/ for commands)"
+	ta.Placeholder = "Ask larik…  (/ commands · @ files · ! shell)"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
 	ta.MaxWidth = 0 // allow the composer to follow the terminal at any width
@@ -190,6 +220,7 @@ func newModel(opts Options) *model {
 		focused:  true,
 		tips:     true,
 		notify:   "off",
+		histIdx:  -1,
 	}
 	if c := opts.Config; c != nil {
 		m.verbose, m.tips, m.notify = c.VerboseOn(), c.TipsOn(), c.Notifications
@@ -198,7 +229,7 @@ func newModel(opts Options) *model {
 		}
 	}
 	m.showThinking = m.verbose
-	m.view.SoftWrap = true
+	m.loadHistory()
 	m.panelView.SoftWrap = false
 	m.applyTheme(m.wantDark())
 	return m
@@ -241,11 +272,10 @@ func (m *model) applyTheme(isDark bool) {
 
 func (m *model) setWidth(w int) {
 	m.width = w
-	atBottom := m.view.AtBottom()
 	m.view.SetWidth(max(w, 1))
 	m.panelView.SetWidth(max(w, 1))
-	if atBottom {
-		m.view.GotoBottom()
+	if m.convWidth != w {
+		m.rewrapConversation()
 	}
 	m.input.SetWidth(max(w-4, 4)) // the composer border and padding use four cells
 	if m.permFeedback != nil {
@@ -274,14 +304,37 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case outputMsg:
-		if m.conversation.Len() > 0 {
-			m.conversation.WriteByte('\n')
-		}
-		m.conversation.WriteString(string(msg))
+		m.appendOutput(string(msg))
 		return m, nil
 
+	case filesIndexedMsg:
+		m.files, m.filesAt, m.indexing = msg.files, time.Now(), false
+		if m.mention != nil { // rebuild the open popup with the new list
+			m.mention = nil
+			return m, m.syncMention()
+		}
+		return m, nil
+
+	case shellDoneMsg:
+		return m, m.shellDone(msg)
+
+	case editorDoneMsg:
+		if msg.err != nil {
+			return m, m.println(m.st.err.Render("editor: " + msg.err.Error()))
+		}
+		m.input.SetValue(msg.text)
+		return m, m.syncComposer()
+
+	case tea.PasteMsg:
+		if m.composerFocused() {
+			if p, ok := m.pastedPath(msg.Content); ok {
+				m.pasteMention(p)
+				return m, m.syncComposer()
+			}
+		}
+
 	case tea.MouseWheelMsg:
-		if m.hasPickerPanel() && msg.Y >= m.view.Height() && msg.Y < m.view.Height()+m.panelView.Height() {
+		if m.hasPickerPanel() && msg.Y >= m.panelTop && msg.Y < m.panelTop+m.panelRows {
 			m.panelView, _ = m.panelView.Update(msg)
 		} else {
 			m.view, _ = m.view.Update(msg)
@@ -433,12 +486,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleModePickerKey(msg)
 		case m.sessionPick != nil:
 			return m, m.handleSessionPickerKey(msg)
+		case m.histPick != nil:
+			return m, m.handleHistoryPickKey(msg)
 		case m.settings != nil:
 			return m, m.handleSettingsKey(msg)
 		case m.provs != nil:
 			return m, m.handleProvidersKey(msg)
 		case m.palette != nil:
 			if cmd, ok := m.handlePaletteKey(msg); ok {
+				return m, cmd
+			}
+		case m.mention != nil:
+			if cmd, ok := m.handleMentionKey(msg); ok {
 				return m, cmd
 			}
 		}
@@ -449,16 +508,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.view.PageDown()
 			return m, nil
-		case "ctrl+home":
-			m.view.GotoTop()
-			return m, nil
-		case "ctrl+end":
-			m.view.GotoBottom()
-			return m, nil
+		case "ctrl+home", "ctrl+end":
+			// With text in the input these jump within it instead.
+			if m.input.Value() == "" {
+				if msg.String() == "ctrl+home" {
+					m.view.GotoTop()
+				} else {
+					m.view.GotoBottom()
+				}
+				return m, nil
+			}
 		}
 		md, cmd := m.handleKey(msg)
-		m.syncPalette()
-		return md, cmd
+		return md, tea.Batch(cmd, m.syncComposer())
 	}
 
 	if m.wizard != nil { // e.g. cursor blinks for its text fields
@@ -477,8 +539,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	m.syncPalette() // e.g. after a paste
-	return m, cmd
+	return m, tea.Batch(cmd, m.syncComposer()) // e.g. after a paste
+}
+
+// composerFocused reports whether typing and pasting go to the composer.
+func (m *model) composerFocused() bool {
+	return m.perm == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
+		m.settings == nil && m.provs == nil && m.mpick == nil && m.modePick == nil &&
+		m.sessionPick == nil && m.histPick == nil && !m.showKeys
 }
 
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -509,6 +577,23 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.interrupt()
 			return m, nil
 		}
+		if m.shellCancel != nil {
+			m.shellCancel()
+			return m, nil
+		}
+	case "up":
+		if m.input.Line() == 0 && m.recallHistory(-1) {
+			return m, nil
+		}
+	case "down":
+		if m.histIdx >= 0 && m.input.Line() == m.input.LineCount()-1 && m.recallHistory(1) {
+			return m, nil
+		}
+	case "ctrl+r":
+		m.openHistoryPicker()
+		return m, nil
+	case "ctrl+g":
+		return m, m.openEditor()
 	case "shift+tab":
 		return m, m.cycleMode()
 	case "ctrl+o":
@@ -529,17 +614,28 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		m.recordHistory(text)
 		if strings.HasPrefix(text, "/") {
 			return m, m.command(text)
 		}
-		if m.running {
+		if strings.HasPrefix(text, "!") {
+			if m.running || m.shellCancel != nil {
+				return m, m.println(m.st.err.Render("wait for the current turn or command to finish (esc to interrupt)"))
+			}
+			return m, m.runShell(text[1:])
+		}
+		if m.running || m.shellCancel != nil {
 			m.queue = append(m.queue, text)
 			return m, nil
 		}
 		return m, m.submit(text)
 	}
+	before := m.input.Value()
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	if m.histIdx >= 0 && m.input.Value() != before { // editing detaches from history
+		m.histIdx, m.histDraft = -1, ""
+	}
 	return m, cmd
 }
 
@@ -553,7 +649,7 @@ func (m *model) interrupt() {
 // submit echoes the prompt and starts an agent run.
 func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
-	m.running, m.cancel = true, cancel
+	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
 	m.tip = nextTip()
 	m.events = m.agent.Run(ctx, text)

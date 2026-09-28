@@ -28,9 +28,12 @@ type picker struct {
 	items      []pickItem
 	filterable bool
 	filter     string
-	cursor     int // index into visible()
-	offset     int // first rendered line, for scrolling
-	height     int // max rows rendered; 0 means all
+	// matchDetail makes the filter search detail text too, e.g. session
+	// titles; labels and sections are always searched.
+	matchDetail bool
+	cursor      int // index into visible()
+	offset      int // first rendered line, for scrolling
+	height      int // max rows rendered; 0 means all
 	// extra returns rows added for the current filter, such as
 	// "use this id" when nothing matches exactly.
 	extra func(filter string) []pickItem
@@ -40,7 +43,11 @@ func (p *picker) visible() []pickItem {
 	f := strings.ToLower(strings.TrimSpace(p.filter))
 	var out []pickItem
 	for _, it := range p.items {
-		if f == "" || it.keep || strings.Contains(strings.ToLower(it.label+" "+it.detail+" "+it.section), f) {
+		text := it.label + " " + it.section
+		if p.matchDetail {
+			text += " " + it.detail
+		}
+		if f == "" || it.keep || strings.Contains(strings.ToLower(text), f) {
 			out = append(out, it)
 		}
 	}

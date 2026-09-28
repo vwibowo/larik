@@ -95,7 +95,8 @@ type Agent struct {
 	usage       llm.Usage
 	cost        float64
 	lastContext int
-	notes       []string // prepended to the next user message
+	notes       []string    // prepended to the next user message
+	pending     []llm.Block // attached to the next user message, e.g. "!" output
 	toolsLoaded bool
 
 	sessionStarted bool
@@ -315,6 +316,10 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 		emit(Event{Kind: EvNotice, Text: "prompt blocked by hook: " + res.Reason})
 		return "blocked"
 	}
+	var attached []llm.Block
+	if !quiet { // mentions in the prompt as typed, not in a skill's body
+		attached = a.resolveMentions(ctx, prompt, emit)
+	}
 	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running skill /" + name})
@@ -338,8 +343,13 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 		prompt = "<system-note>\n" + strings.Join(a.notes, "\n") + "\n</system-note>\n\n" + prompt
 		a.notes = nil
 	}
+	user := llm.UserText(prompt)
+	if !quiet {
+		user.Blocks = append(append(user.Blocks, a.pending...), attached...)
+		a.pending = nil
+	}
 	a.mu.Unlock()
-	a.appendMessage(llm.UserText(prompt), nil)
+	a.appendMessage(user, nil)
 
 	compactedThisTurn := false
 	stopContinuations := 0
