@@ -667,6 +667,11 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if summary == "" {
 		return errors.New("model returned an empty summary")
 	}
+	// The task list lives in the transcript being replaced; carry over
+	// what is left of it so the model can keep ticking items off.
+	if todos, ok := tools.LatestTodos(msgs); ok && !allDone(todos) {
+		summary += "\n\nYour task list (todo_write) before this summary:\n" + tools.FormatTodos(todos)
+	}
 	if midTurn {
 		summary += "\n\nContinue the task from where it left off."
 	}
@@ -680,6 +685,15 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 	emit(Event{Kind: EvCompacted, Summary: summary})
 	return nil
+}
+
+func allDone(todos []tools.Todo) bool {
+	for _, t := range todos {
+		if t.Status != tools.TodoCompleted {
+			return false
+		}
+	}
+	return true
 }
 
 // withUserText appends text as a user turn, merging into a trailing user

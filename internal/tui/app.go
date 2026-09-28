@@ -29,6 +29,7 @@ import (
 	"larik/internal/sandbox"
 	"larik/internal/skills"
 	"larik/internal/subagent"
+	"larik/internal/tools"
 )
 
 type Options struct {
@@ -176,6 +177,7 @@ type model struct {
 	histDraft   string
 	histPick    *picker            // ctrl+r search
 	shellCancel context.CancelFunc // a "!" command is running
+	todos       []tools.Todo       // the model's latest task list
 	// compactCancel is set while /compact runs. Compaction replaces the
 	// context when it finishes, so nothing else may use the agent then.
 	compactCancel context.CancelFunc
@@ -236,6 +238,7 @@ func newModel(opts Options) *model {
 		}
 	}
 	m.showThinking = m.verbose
+	m.todos, _ = tools.LatestTodos(opts.History)
 	m.loadHistory()
 	m.panelView.SoftWrap = false
 	m.applyTheme(m.wantDark())
@@ -817,6 +820,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvToolStart:
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:
+		m.updateTodos(e)
 		if e.Agent != "" {
 			if m.taskCalls == nil {
 				m.taskCalls = make(map[string]int)

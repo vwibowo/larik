@@ -16,6 +16,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/permission"
+	"larik/internal/tools"
 )
 
 func (m *model) View() tea.View {
@@ -184,6 +185,9 @@ func (m *model) liveView() string {
 		limit := max(m.height-12, 5)
 		b = append(b, lastLines(wrap(s, m.width-2), limit))
 	}
+	if m.running {
+		b = append(b, m.liveTodos()...)
+	}
 	tasks := m.taskRows()
 	b = append(b, tasks...)
 	for _, t := range m.tools {
@@ -215,6 +219,11 @@ func (m *model) liveView() string {
 		label = "Responding…"
 	default:
 		label = "Waiting for the model…"
+	}
+	// Name the task in progress rather than what the loop is doing, for
+	// the generic states.
+	if a := m.activeTodo(); a != "" && m.running && m.perm == nil && m.busyLabel == "" && m.calling == "" && !thinkingNow {
+		label = a + "…"
 	}
 	var meta []string
 	if m.running {
@@ -646,6 +655,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 			}
 			body += "\n" + m.st.dim.Render(truncateLines(strings.Join(preview, "\n"), 3))
 		}
+	case e.ToolName == tools.TodoToolName:
+		body = m.todoCard(e.Input)
 	case e.ToolName == "write":
 		var in struct{ Path, Content string }
 		_ = json.Unmarshal(e.Input, &in)
@@ -770,6 +781,11 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		}
 	case "task_stop":
 		arg = str(in["id"])
+	case tools.TodoToolName:
+		name = "todos"
+		if todos, err := tools.ParseTodos(input); err == nil {
+			arg = todoProgress(todos)
+		}
 	case "web_fetch":
 		arg = str(in["url"])
 	case "web_search":

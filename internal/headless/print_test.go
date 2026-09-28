@@ -33,3 +33,12 @@ func TestCanceledRunReturnsError(t *testing.T) {
 		t.Fatalf("canceled run returned %v", err)
 	}
 }
+
+func TestTodoListPrintsAsChecklist(t *testing.T) {
+	var out, errOut bytes.Buffer
+	p := &printer{format: FormatText, stdout: &out, stderr: &errOut, atLineStart: true}
+	p.handle(agent.Event{Kind: agent.EvToolStart, ToolName: tools.TodoToolName, Input: []byte(`{"todos":[{"content":"Fix the bug","status":"in_progress"},{"content":"Run the tests","status":"pending"}]}`)})
+	if got := errOut.String(); got != "→ tasks\n  [>] Fix the bug\n  [ ] Run the tests\n" {
+		t.Fatalf("stderr %q", got)
+	}
+}

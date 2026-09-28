@@ -62,7 +62,7 @@ func TestStdioServer(t *testing.T) {
 	for _, s := range reg.Specs() {
 		names = append(names, s.Name)
 	}
-	if got := strings.Join(names, ","); got != "read,write,edit,bash,raw_output,grep,glob,mcp__local__echo,mcp__local__fail" {
+	if got := strings.Join(names, ","); got != "read,write,edit,bash,raw_output,grep,glob,todo_write,mcp__local__echo,mcp__local__fail" {
 		t.Fatalf("tools = %s", got)
 	}
 

@@ -416,3 +416,19 @@ func TestDanglingToolUseAnsweredOnNextPrompt(t *testing.T) {
 		t.Fatalf("request sent with unanswered tool calls: %v", m)
 	}
 }
+
+func TestCompactionKeepsOpenTodos(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeYolo,
+		assistant(toolUse("t1", "todo_write", `{"todos":[{"content":"Read the code","status":"completed"},{"content":"Fix the bug","status":"in_progress"}]}`)),
+		assistant(llm.TextBlock("on it")),
+		assistant(llm.TextBlock("<summary>fixing a bug</summary>")),
+	)
+	drain(a.Run(context.Background(), "fix it"), PermissionReply{})
+	summary, err := a.Compact(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "[x] Read the code") || !strings.Contains(summary, "[>] Fix the bug") {
+		t.Fatalf("the open task list should survive compaction: %q", summary)
+	}
+}

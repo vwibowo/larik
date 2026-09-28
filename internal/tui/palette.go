@@ -29,6 +29,7 @@ var commands = []command{
 	{"/clear", "", "start a fresh context (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
 	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it", "conversation", ""},
+	{"/todos", "", "the model's task list for this work", "conversation", ""},
 	{"/cost", "", "token usage and cost for this session", "conversation", ""},
 	{"/sessions", "", "choose a session from this directory", "sessions", ""},
 	{"/resume", "[id]", "choose a session, or switch by ID", "sessions", ""},

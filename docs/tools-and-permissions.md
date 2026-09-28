@@ -57,6 +57,7 @@ classDiagram
 | `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel; optional `checkpoint_paths` snapshots named project files for `/undo` |
 | `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
+| `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics |
 | `skill` | skills | yes | Loads a skill's full instructions |

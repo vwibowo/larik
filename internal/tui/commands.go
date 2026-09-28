@@ -157,7 +157,11 @@ func (m *model) command(line string) tea.Cmd {
 	case "/clear":
 		m.agent.Clear()
 		m.stats = m.agent.Stats()
+		m.todos = nil // the model no longer sees it
 		return info("context cleared")
+
+	case "/todos":
+		return m.println(m.todosCommand())
 
 	case "/cost":
 		s := m.agent.Stats()

@@ -410,7 +410,9 @@ func (t *Tool) offeredRoles() []Role {
 func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.Registry {
 	var out []tools.Tool
 	for _, spec := range parent.Specs() {
-		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || !def.toolAllowed(spec.Name) {
+		// The task list is the main agent's, shown to the user; a child
+		// reports back in its final message instead.
+		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || !def.toolAllowed(spec.Name) {
 			continue
 		}
 		if inWorktree && spec.Name == "lsp" {

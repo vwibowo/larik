@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"larik/internal/agent"
+	"larik/internal/tools"
 )
 
 type Format string
@@ -141,6 +142,11 @@ func (p *printer) handle(e agent.Event) {
 			p.atLineStart = true
 		}
 	case agent.EvToolStart:
+		if todos, err := tools.ParseTodos(e.Input); e.ToolName == tools.TodoToolName && err == nil {
+			// The task list reads better as a checklist than as JSON.
+			fmt.Fprintf(p.stderr, "%s→ tasks\n%s\n", nest(e), indent(tools.FormatTodos(todos), nest(e)+"  "))
+			break
+		}
 		fmt.Fprintf(p.stderr, "%s→ %s %s\n", nest(e), e.ToolName, compact(e.Input))
 	case agent.EvToolEnd:
 		if e.IsError {
@@ -179,4 +185,8 @@ func nest(e agent.Event) string {
 		return ""
 	}
 	return "  ↳ [" + e.Agent + "] "
+}
+
+func indent(s, prefix string) string {
+	return prefix + strings.ReplaceAll(s, "\n", "\n"+prefix)
 }
