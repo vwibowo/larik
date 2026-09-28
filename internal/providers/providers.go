@@ -61,6 +61,16 @@ func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	if model == "" {
 		return Resolved{}, fmt.Errorf("model spec %q has no model id", spec)
 	}
+	kind := cfg.Providers[name].Type
+	if kind == "" {
+		kind = name
+	}
+	if err := ValidateModel(name, model); err != nil {
+		return Resolved{}, err
+	}
+	if err := ValidateModel(kind, model); err != nil {
+		return Resolved{}, err
+	}
 	p, err := build(cfg, name)
 	if err != nil {
 		return Resolved{}, err

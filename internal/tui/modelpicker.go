@@ -52,6 +52,9 @@ func (m *model) openModelPicker() tea.Cmd {
 			return nil
 		}
 		provider, id, _ := strings.Cut(f, "/")
+		if providers.ValidateModel(provider, id) != nil {
+			return nil
+		}
 		return []pickItem{{label: "Use “" + f + "”", detail: "as provider/model", value: pickModel{provider, id}}}
 	}
 	m.mpick = mp
@@ -148,7 +151,7 @@ func (m *model) buildModelList() {
 			continue
 		}
 		switch c.Name {
-		case "anthropic", "openai", "gemini", providers.Codex:
+		case "anthropic", "openai", "gemini", providers.Codex, providers.OpenCodeFree, "nvidia-nim":
 			items = append(items, pickItem{section: "not set up", label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{c.Name}})
 		}
 	}

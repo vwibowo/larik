@@ -141,6 +141,40 @@ func TestWizardRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestNewProviderWizardChoicesAndFreeModelGuard(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := config.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, _ := newWizard(cfg, true)
+	for _, name := range []string{providers.OpenCodeFree, "nvidia-nim"} {
+		w.provList.selectWhere(func(it pickItem) bool {
+			c, ok := it.value.(providers.Choice)
+			return ok && c.Name == name
+		})
+		it, _ := w.provList.selected()
+		choice, ok := it.value.(providers.Choice)
+		if !ok || choice.Name != name {
+			t.Fatalf("setup wizard has no choice for %s: %+v", name, it)
+		}
+	}
+	w.startAt(providers.OpenCodeFree)
+	w.endpoint = providers.EndpointOf(providers.OpenCodeFree, config.ProviderConfig{APIKey: "key"})
+	w.enterModels([]providers.Model{{ID: "big-pickle", Chat: true}})
+	if got := w.models.extra("gpt-5.5"); len(got) != 0 {
+		t.Fatalf("paid Zen model offered in wizard: %+v", got)
+	}
+	w.chooseModel("gpt-5.5")
+	if w.step != wizModel || !strings.Contains(w.err, "not a documented free") {
+		t.Fatalf("paid Zen model passed wizard guard: step=%d err=%q", w.step, w.err)
+	}
+	w.chooseModel("big-pickle")
+	if w.step != wizSave {
+		t.Fatalf("free model rejected: step=%d err=%q", w.step, w.err)
+	}
+}
+
 func TestWizardSaveScopeFollowsSelectionNotCursor(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, _ := config.Load(t.TempDir())

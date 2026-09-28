@@ -83,7 +83,8 @@ func (m *model) buildProviders() {
 	cfg := m.opts.Config
 	defProvider, _, _ := strings.Cut(cfg.Model, "/")
 	var items []pickItem
-	for _, n := range m.providerNames() {
+	names := m.providerNames()
+	for _, n := range names {
 		status, ok, warn := m.providerStatus(n)
 		var tags []string
 		if n == defProvider {
@@ -97,6 +98,13 @@ func (m *model) buildProviders() {
 			label += " (" + strings.Join(tags, ", ") + ")"
 		}
 		items = append(items, pickItem{label: label, detail: endpointSummary(providers.EndpointFor(cfg, n)), note: status, noteOK: ok, noteWarn: warn, value: pickProvider{n}})
+	}
+	for _, name := range []string{providers.OpenCodeFree, "nvidia-nim"} {
+		if slices.Contains(names, name) {
+			continue
+		}
+		c, _ := providers.ChoiceFor(name)
+		items = append(items, pickItem{label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{name}})
 	}
 	items = append(items, pickItem{label: "+ Add provider…", detail: "setup wizard: cloud, local or custom", value: pickAdd{}})
 	prev, had := pm.list.selected()
@@ -146,6 +154,9 @@ func (m *model) handleProvidersKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		if _, add := it.value.(pickAdd); add {
 			return m.openWizardFromProviders("")
+		}
+		if connect, ok := it.value.(pickConnect); ok {
+			return m.openWizardFromProviders(connect.provider)
 		}
 		return m.openWizardFromProviders(sel.name)
 	}

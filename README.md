@@ -1,6 +1,6 @@
 # Larik
 
-A terminal coding agent written in Go with a [Bubble Tea](https://github.com/charmbracelet/bubbletea) UI. It works with Anthropic, OpenAI, Google Gemini, and any OpenAI-compatible endpoint (OpenRouter, Ollama, Groq, DeepSeek, xAI, Mistral, Together, LM Studio).
+A terminal coding agent written in Go with a [Bubble Tea](https://github.com/charmbracelet/bubbletea) UI. It works with Anthropic, OpenAI, Google Gemini, and OpenAI-compatible endpoints including OpenCode Free, NVIDIA NIM, OpenRouter, Ollama, Groq, DeepSeek, xAI, Mistral, Together, and LM Studio.
 
 ## Quick start
 
@@ -39,6 +39,8 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 ### ChatGPT plan (Codex models)
 
 To use Codex models on your ChatGPT plan instead of an API key, run `/connect codex` (or pick "ChatGPT (Codex)" in the first-run wizard). larik opens the ChatGPT sign-in page in your browser and receives the result on `localhost:1455`, the same OAuth flow the Codex CLI uses. It keeps its own sign-in in `~/.config/larik/chatgpt-auth.json`, readable only by you, refreshes it before it expires, and never touches the Codex CLI's login. Sign out from `/providers` (select codex, press `d` twice).
+
+For OpenCode Zen's currently free Chat Completions models, run `/connect opencode-free` and enter an OpenCode Zen key, or set `OPENCODE_API_KEY`. Larik limits this preset to the [models OpenCode currently marks free](https://opencode.ai/docs/en/zen/), including `opencode-free/big-pickle`. These are limited-time offers; set a spending limit in your OpenCode account. For NVIDIA's hosted model catalog, run `/connect nvidia-nim` and enter a key, or set `NVIDIA_API_KEY`; for example, select an available `nvidia-nim/<model-id>` after connection. [NVIDIA's developer access](https://docs.api.nvidia.com/nim/docs/product) is for prototyping, research, development, and testing. Self-hosted NIM can use a custom OpenAI-compatible provider instead. Gemini and Claude in Larik use API keys, not Gemini CLI or Claude Code subscription credentials.
 
 ```bash
 ./larik --model codex/gpt-6-luna   # the fast, affordable one; good for testing
@@ -110,7 +112,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 |---|---|
 | `/model [provider/model]` | Pick a model from every connected provider, with reasoning effort (←/→); or switch directly |
 | `/connect [provider]` | Setup wizard: choose a provider, connect it, pick a model, save |
-| `/providers` | Every connected or detected provider with its status; `enter` edit, `t` test, `d` remove, `a` add |
+| `/providers` | Connected or detected providers with status, plus OpenCode Free and NVIDIA NIM connect shortcuts; `enter` edit/connect, `t` test, `d` remove, `a` add |
 | `/routing [role=provider/model]` | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them |
 | `/keys` | Keyboard shortcuts (also `?` on an empty prompt) |
 | `/config [key=value]` | Settings: theme, verbose output, spinner tips, auto-compact, token saver, notifications, response language, undo history, default mode, effort and model. Changes apply now and are saved to `~/.config/larik/config.json`; `/config token_saver=true` enables filtering |

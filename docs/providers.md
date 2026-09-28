@@ -105,7 +105,7 @@ classDiagram
 | [openai](../internal/llm/openai/openai.go) | Responses API (official SDK) | Stateless: `store: false` and `include: reasoning.encrypted_content`, so reasoning items come back encrypted, are kept as opaque blocks, and are replayed on the next request. No server-side conversation state. Also serves ChatGPT-plan Codex models (`NewChatGPT`) with an OAuth token source from [internal/chatgpt](../internal/chatgpt/chatgpt.go). |
 | [gemini](../internal/llm/gemini/gemini.go) | Google Gen AI SDK | Thought signatures on function calls and text are preserved and returned; thought summaries are marked display-only. Synthesizes call IDs when Gemini omits them. Wrapped in `llm.WithRetry`. |
 | [ollama](../internal/llm/ollama/ollama.go) | Native `/api/chat` | Sends `num_ctx` per request (32768 by default, capped at the model's maximum), because Ollama's OpenAI-compatible endpoint ignores the requested window and loads 4096 tokens. Reports the real window and tool support. |
-| [openaicompat](../internal/llm/openaicompat/compat.go) | Chat Completions | Any compatible server. Presets for OpenRouter, Groq, DeepSeek, xAI, Mistral, Together, Ollama and LM Studio. Reads reasoning deltas where servers send them. |
+| [openaicompat](../internal/llm/openaicompat/compat.go) | Chat Completions | Any compatible server. Presets for OpenCode Free, NVIDIA NIM, OpenRouter, Groq, DeepSeek, xAI, Mistral, Together, Ollama and LM Studio. Reads reasoning deltas where servers send them. |
 
 All adapters are tested against canned SSE served by [internal/llm/llmtest](../internal/llm/llmtest/llmtest.go), so the tests need no API keys.
 
@@ -147,6 +147,8 @@ Gemini uses `Provider: "gemini-display"` for thought summaries so they are never
 2. `head/rest` where `head` is a configured or built-in provider → that provider and `rest` (so `openrouter/anthropic/claude-sonnet-5` works).
 3. A bare id → the catalog's provider, or a naming convention (`claude-*`, `gemini-*`, `gpt-*`, `o3*`, `*codex*`).
 4. `build` constructs the adapter, reading the key from config (`api_key`, `api_key_env`) or the preset's environment variable. Custom endpoints use `"type": "openai-compatible"`.
+
+`opencode-free` uses `https://opencode.ai/zen/v1` and `OPENCODE_API_KEY`. Its model list and resolver permit only the [currently free Zen Chat Completions models](https://opencode.ai/docs/en/zen/); direct model IDs and routing fallbacks are checked too. OpenCode can change availability, and its account spending limit is the cost control. `nvidia-nim` uses `https://integrate.api.nvidia.com/v1` and `NVIDIA_API_KEY` for NVIDIA's hosted catalog. [Developer access](https://docs.api.nvidia.com/nim/docs/product) is for prototyping, research, development, and testing. A self-hosted NIM endpoint can use a custom OpenAI-compatible provider.
 
 ## Roles and fallbacks
 
