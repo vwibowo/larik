@@ -1,0 +1,228 @@
+{{define "landing"}}
+<main id="main">
+
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="dot" aria-hidden="true"></span>{{.Site.Version}} · written in Go · one binary</p>
+      <h1>One terminal agent.<br><span class="grad">Every model.</span></h1>
+      <p class="lead">Larik plans with your strongest model, hands the searching, reading and routine edits to cheap or local ones, and runs every shell command inside an OS sandbox. Anthropic, OpenAI, Gemini, your ChatGPT plan, Ollama and any OpenAI-compatible endpoint, in one session.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="{{url "/docs/getting-started/"}}">Get started <span aria-hidden="true">→</span></a>
+        <a class="btn" href="{{url "/download/"}}">Download</a>
+      </div>
+      <div class="install">
+        <span class="install-prompt" aria-hidden="true">$</span>
+        <code>go build -o larik ./cmd/larik &amp;&amp; ./larik</code>
+        <button class="copy" type="button" data-copy="go build -o larik ./cmd/larik && ./larik">Copy</button>
+      </div>
+    </div>
+
+    <div class="term" aria-label="An example Larik session" role="img">
+      <div class="term-bar"><span></span><span></span><span></span><em>larik — ~/code/api</em></div>
+      <div class="term-body">
+        <p class="t-line"><b class="c-acc">✻ larik</b><i> v0.1.0 · ~/code/api · seatbelt sandbox</i></p>
+        <p class="t-line"><i>  / commands · ? shortcuts · alt+p model · shift+tab mode</i></p>
+        <p class="t-line t-gap"><b class="c-user">› fix the failing auth tests and tell me what broke</b></p>
+        <p class="t-line t-gap"><i class="c-think">✻ Thought for 6s</i><i> · ctrl+o to show</i></p>
+        <p class="t-line"><b class="c-ok">●</b> <b>task › explore(find where session tokens are validated)</b></p>
+        <p class="t-line t-sub"><i>  └ gemini/gemini-3.8-flash · 9 tool calls · $0.002</i></p>
+        <p class="t-line"><b class="c-ok">●</b> <b>read(internal/auth/token.go)</b></p>
+        <p class="t-line t-sub"><i>  read 184 lines</i></p>
+        <p class="t-line"><b class="c-ok">●</b> <b>edit(internal/auth/token.go)</b></p>
+        <p class="t-line t-sub c-del">  - if exp.Before(now) {</p>
+        <p class="t-line t-sub c-add">  + if !exp.After(now) {</p>
+        <p class="t-line"><b class="c-ok">●</b> <b>bash(go test ./internal/auth/...)</b></p>
+        <p class="t-line t-sub"><i>  ok   api/internal/auth   0.41s</i></p>
+        <p class="t-line t-gap">A token expiring this very second still counted as</p>
+        <p class="t-line">valid. <code>exp == now</code> is now expired; all 23 tests pass.</p>
+        <p class="t-line t-gap t-foot"><span class="chip">sonnet-5</span><span class="chip chip-plain">default</span><i>  18% context · $0.04</i><span class="cursor" aria-hidden="true"></span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="providers" aria-label="Supported providers">
+  <div class="wrap">
+    <p>Works with</p>
+    <ul>
+      <li>Anthropic</li><li>OpenAI</li><li>Google Gemini</li><li>ChatGPT plan</li><li>Ollama</li><li>LM Studio</li><li>OpenRouter</li><li>Groq</li><li>DeepSeek</li><li>xAI</li><li>Mistral</li><li>Together</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow">Cheap and strong model routing</p>
+      <h2>Pay frontier prices only for the thinking.</h2>
+      <p class="section-lead">An agent spends most of its tokens reading: searching files, re-reading context, making routine edits. Larik keeps your strongest model in charge of planning and review, and sends the volume work to subagents on cheap, free-tier or local models, across providers.</p>
+      <ul class="checks">
+        <li><strong>Presets in one command.</strong> <code>/routing</code> lists every connected model with prices and offers Balanced, Cheapest, or Local and plan first.</li>
+        <li><strong>Fallbacks that don't waste a turn.</strong> A rate limit, exhausted quota or outage moves to the next model before output starts, and the failed one is left alone for a while.</li>
+        <li><strong>A budget that holds.</strong> Warn at 80%, stop before the request that would cross the cap. Local and plan models count as free.</li>
+        <li><strong>A leash for small models.</strong> Worktree isolation, turn caps, loop detection and a minimal prompt keep a cheap model from wrecking your checkout.</li>
+        <li><strong>Measure before you trust.</strong> <code>larik bench</code> runs self-checking coding tasks on each candidate and reports pass/fail, cost and time.</li>
+      </ul>
+      <a class="text-link" href="{{url "/docs/model-routing/"}}">Read the routing guide →</a>
+    </div>
+    <div class="routing-visual">
+      <div class="route route-main">
+        <span class="route-role">main</span>
+        <strong>anthropic/claude-sonnet-5</strong>
+        <span>plans · decides · reviews</span>
+      </div>
+      <div class="route-lines" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="route-row">
+        <div class="route"><span class="route-role">worker</span><strong>ollama/qwen3-coder</strong><span>edits, tests · in a worktree</span><em class="price free">free</em></div>
+        <div class="route"><span class="route-role">explore</span><strong>gemini/gemini-3.8-flash</strong><span>search, read</span><em class="price">cheap</em></div>
+      </div>
+      <div class="route-budget"><span>session budget</span><div class="bar"><i style="width:34%"></i></div><b>$0.68 / $2.00</b></div>
+      {{code "json" `{
+  "model": "anthropic/claude-sonnet-5",
+  "roles": {
+    "worker": "ollama/qwen3-coder",
+    "explore": "gemini/gemini-3.8-flash"
+  },
+  "fallbacks": { "worker": ["gemini/gemini-3.8-flash"] },
+  "budget": { "session_usd": 2.00, "warn_at": 0.8 }
+}`}}
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Built in, not bolted on</p>
+      <h2>Everything a serious coding agent needs.</h2>
+    </div>
+    <div class="features">
+      <a class="feature" href="{{url "/docs/sandbox/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>OS sandbox, on by default</h3>
+        <p>Shell commands run under Seatbelt on macOS or bubblewrap on Linux: write only to the project, no network but localhost, no way to rewrite git hooks. Sandboxed commands don't need to ask.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/subagents/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 7l7.4 3.8M8.3 17l7.4-3.8"/></svg>
+        <h3>Subagents in git worktrees</h3>
+        <p>Delegate searches and self-contained changes to parallel subagents with fresh contexts. Isolated ones work on their own branch for the main agent to review and merge. Run them in the background.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/commands/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9a6 6 0 0 1-6 6H6"/></svg>
+        <h3>Branch, rewind, undo</h3>
+        <p>Sessions are append-only transcripts. <code>/fork</code> a conversation, <code>/rewind</code> to before any prompt, <code>/undo</code> the last turn's file changes, and resume any of them later.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/hooks/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/><path d="M12 16v5"/></svg>
+        <h3>Claude Code–compatible</h3>
+        <p>Your existing hooks, Agent Skills, subagent definitions, <code>CLAUDE.md</code> and <code>.mcp.json</code> work unchanged. Bring your setup; switch models.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/mcp/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+        <h3>MCP, with approval</h3>
+        <p>Connect Model Context Protocol servers over stdio, HTTP or SSE. Servers from shared project files wait for your approval, pinned to a hash of their config.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/lsp/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/><path d="m13.5 5-3 14"/></svg>
+        <h3>Language servers</h3>
+        <p>Diagnostics come back after every edit, so the model sees the type error it just introduced. An <code>lsp</code> tool jumps to definitions and references.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/web/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/></svg>
+        <h3>Web fetch and search</h3>
+        <p>Pages come back as clean Markdown. Domain rules, blocked metadata addresses and cross-host redirects reported rather than followed. Brave, Tavily or SearXNG for search.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/permissions/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        <h3>Permissions you control</h3>
+        <p>Four modes, from plan (read-only) to yolo, cycled with <code>shift+tab</code>. Allow and deny rules with globs; deny always wins, in every mode.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Three front ends, one loop</p>
+      <h2>Use it in the terminal, in scripts, or from your editor.</h2>
+      <p class="section-lead">The terminal UI, headless mode and the HTTP server all read the same event stream from the same agent loop, so they behave the same way.</p>
+    </div>
+    <div class="fronts">
+      <div class="front">
+        <h3>Terminal UI</h3>
+        <p>A fast Bubble Tea interface: command palette, model picker, collapsible thinking, nested subagent activity and per-model cost.</p>
+        {{code "bash" "larik\nlarik -c            # continue here\nlarik -c --fork     # branch it"}}
+      </div>
+      <div class="front">
+        <h3>Headless</h3>
+        <p>One-shot prompts for CI and scripts, as plain text or one JSON event per line.</p>
+        {{code "bash" "larik -p \"summarize this repo\"\nlarik -p --output json \\\n  --mode yolo \"run tests\""}}
+      </div>
+      <div class="front">
+        <h3>HTTP + SSE server</h3>
+        <p>Drive sessions from an editor or web UI. Loopback only, token auth, replayable event stream.</p>
+        {{code "bash" "larik serve\n# {\"url\": \"http://127.0.0.1:4096\",\n#  \"token\": \"…\"}"}}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap split split-rev">
+    <div class="local-visual">
+      <div class="wizard">
+        <p><b class="c-acc">✻ Welcome to larik</b><i> · let's connect a model</i></p>
+        <p class="w-row w-on"><span>›</span> Ollama <i>● running · 6 models</i></p>
+        <p class="w-row"><span> </span> LM Studio <i>not running</i></p>
+        <p class="w-row"><span> </span> Anthropic <i>● ANTHROPIC_API_KEY found</i></p>
+        <p class="w-row"><span> </span> ChatGPT (Codex) <i>sign in with your plan</i></p>
+        <p class="w-row"><span> </span> OpenRouter, Groq, DeepSeek… <i>add a key</i></p>
+        <p class="w-pull">pulling qwen3-coder <span class="w-bar"><i></i></span> 62%</p>
+      </div>
+    </div>
+    <div>
+      <p class="eyebrow">Local-first</p>
+      <h2>Runs on the model on your laptop, too.</h2>
+      <p class="section-lead">The first-run wizard finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection and can download a recommended model with a progress bar.</p>
+      <ul class="checks">
+        <li><strong>A usable context window.</strong> Larik talks to Ollama natively and asks for a 32K window instead of the 4K default, then reads back what actually loaded.</li>
+        <li><strong>Honest warnings.</strong> It tells you when a request fills the window or the model can't call tools.</li>
+        <li><strong>Your ChatGPT plan.</strong> <code>/connect codex</code> signs in with the same OAuth flow as the Codex CLI, with its own credentials file.</li>
+      </ul>
+      <a class="text-link" href="{{url "/docs/getting-started/"}}">Set up a provider →</a>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Designed around the loop</p>
+      <h2>Small choices that keep it fast and cheap.</h2>
+    </div>
+    <div class="principles">
+      <div><h3>Cache-stable prompts</h3><p>The system prompt and tool set stay fixed within a context and the transcript is append-only, so every request after the first reads from the provider's prompt cache.</p></div>
+      <div><h3>Reasoning kept per model</h3><p>Switch from Claude to GPT to a local model mid-session. Each block remembers which model produced it, and each model gets its own thinking replayed.</p></div>
+      <div><h3>Clean compaction</h3><p>When context fills, the history is replaced with one summary that names the transcript file, so the model can grep the details it left out.</p></div>
+      <div><h3>One static binary</h3><p>No Node or Python runtime. Build it with <code>go build</code>, copy it anywhere, start it in milliseconds.</p></div>
+    </div>
+    <a class="text-link" href="{{url "/docs/internals/comparison/"}}">See how Larik compares with other harnesses →</a>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <h2>Bring your models. Keep your setup.</h2>
+    <p>Start with any key you already have, or none at all.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="{{url "/docs/getting-started/"}}">Get started <span aria-hidden="true">→</span></a>
+      <a class="btn" href="{{url "/docs/"}}">Read the docs</a>
+    </div>
+  </div>
+</section>
+
+</main>
+{{end}}

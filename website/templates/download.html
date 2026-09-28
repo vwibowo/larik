@@ -1,0 +1,59 @@
+{{define "download"}}
+<main id="main" class="page">
+  <section class="page-hero">
+    <p class="eyebrow">Download · {{.Site.Version}}</p>
+    <h1>Get Larik</h1>
+    <p class="lead">One binary, no runtime to install. Pick your platform, or build it from source in a few seconds with Go {{.Site.GoVersion}} or newer.</p>
+  </section>
+
+  <section class="dl-grid" aria-label="Prebuilt binaries">
+    {{range .Site.Downloads}}
+    {{if .URL}}
+    <a class="dl-card" href="{{.URL}}" data-os="{{.OS}}" data-arch="{{.Arch}}">
+      <span class="dl-os">{{.Label}}</span>
+      <span class="dl-detail">{{.Detail}}</span>
+      <span class="dl-file">{{.File}}</span>
+      <span class="dl-action">Download</span>
+    </a>
+    {{else}}
+    <div class="dl-card is-soon" data-os="{{.OS}}" data-arch="{{.Arch}}" aria-disabled="true">
+      <span class="dl-os">{{.Label}}</span>
+      <span class="dl-detail">{{.Detail}}</span>
+      <span class="dl-file">{{.File}}</span>
+      <span class="dl-action">Coming soon</span>
+    </div>
+    {{end}}
+    {{end}}
+  </section>
+  <p class="dl-note">Prebuilt binaries aren't published yet. Until they are, <a href="#build-from-source">build from source</a>. It takes one command.</p>
+
+  <section class="prose narrow" id="build-from-source">
+    <h2>Build from source</h2>
+    <p>You need <strong>Go {{.Site.GoVersion}}</strong> or newer. From a checkout of the Larik repository:</p>
+    {{code "bash" "go build -o larik ./cmd/larik\n./larik"}}
+    <p>To run it from anywhere, put the binary on your <code>PATH</code>:</p>
+    {{code "bash" "install -m 755 larik ~/.local/bin/larik"}}
+
+    <h2 id="first-run">First run</h2>
+    <p>Start <code>larik</code> in a project directory. With nothing configured, a setup wizard finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection, lists the provider's models and saves your choice. Run <code>/connect</code> any time to add another provider.</p>
+    <p>If you already have a key exported, Larik uses it right away:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Environment variable</th><th>Default model</th></tr></thead>
+      <tbody>
+        <tr><td><code>ANTHROPIC_API_KEY</code></td><td><code>anthropic/claude-opus-5</code></td></tr>
+        <tr><td><code>OPENAI_API_KEY</code></td><td><code>openai/gpt-5.5</code></td></tr>
+        <tr><td><code>GEMINI_API_KEY</code></td><td><code>gemini/gemini-3.8-flash</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>No key? Use a local model through Ollama or LM Studio, or <code>/connect codex</code> to sign in with a ChatGPT plan.</p>
+
+    <h2 id="optional">Optional extras</h2>
+    <ul>
+      <li><strong>Linux sandbox:</strong> install <a href="https://github.com/containers/bubblewrap">bubblewrap</a> (<code>bwrap</code>) so shell commands run confined. macOS uses the built-in Seatbelt.</li>
+      <li><strong>Local models:</strong> <a href="https://ollama.com">Ollama</a> or <a href="https://lmstudio.ai">LM Studio</a>. The wizard can download a recommended Ollama model for you.</li>
+      <li><strong>Language servers</strong> such as <code>gopls</code> or <code>typescript-language-server</code>, for diagnostics after every edit.</li>
+    </ul>
+    <div class="cta-row"><a class="btn btn-primary" href="{{url "/docs/getting-started/"}}">Read the getting started guide</a><a class="btn" href="{{url "/changelog/"}}">What's new</a></div>
+  </section>
+</main>
+{{end}}

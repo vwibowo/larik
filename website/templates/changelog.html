@@ -1,0 +1,16 @@
+{{define "changelog"}}
+<main id="main" class="page">
+  <section class="page-hero">
+    <p class="eyebrow">Changelog</p>
+    <h1>What's new in Larik</h1>
+    <p class="lead">Every release, newest first. Each entry links to the docs for what changed.</p>
+  </section>
+  <div class="changelog">
+    <nav class="release-nav" aria-label="Releases">
+      <h2>Releases</h2>
+      <ul>{{range .Page.TOC}}{{if eq .Level 1}}<li><a href="#{{.ID}}">{{.Text}}</a></li>{{end}}{{end}}</ul>
+    </nav>
+    <article class="prose releases">{{.Page.Body}}</article>
+  </div>
+</main>
+{{end}}

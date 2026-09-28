@@ -1,0 +1,45 @@
+{{define "doc"}}
+<div class="docs">
+  <aside class="sidebar" id="sidebar" aria-label="Docs">
+    {{range .Nav}}
+    <div class="side-group">
+      <h2>{{.Title}}</h2>
+      <ul>
+        {{range .Pages}}<li><a href="{{url .URL}}"{{if eq .URL $.Page.URL}} aria-current="page"{{end}}>{{.Nav}}</a></li>{{end}}
+      </ul>
+    </div>
+    {{end}}
+  </aside>
+
+  <main id="main" class="doc-main">
+    <button class="side-toggle" type="button" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>{{.Page.Section}} · {{.Page.Nav}}
+    </button>
+    <article class="prose">
+      <p class="crumbs"><a href="{{if eq .Page.Section "Guide"}}{{url "/docs/"}}{{else}}{{url "/docs/internals/"}}{{end}}">{{.Page.Section}}</a></p>
+      <h1>{{.Page.Title}}</h1>
+      {{.Page.Body}}
+      {{if eq .Page.URL "/docs/"}}
+      <div class="doc-cards">
+        {{range (index .Nav 0).Pages}}{{if ne .URL "/docs/"}}<a class="doc-card" href="{{url .URL}}"><strong>{{.Title}}</strong><span>{{.Desc}}</span></a>{{end}}{{end}}
+        <a class="doc-card doc-card-alt" href="{{url "/docs/internals/"}}"><strong>Internals →</strong><span>How Larik works inside, with diagrams: the agent loop, providers, persistence and the security model.</span></a>
+      </div>
+      {{end}}
+    </article>
+    <nav class="pager" aria-label="Pages">
+      {{with .Page.Prev}}<a class="pager-prev" href="{{url .URL}}"><span>Previous</span>{{.Title}}</a>{{else}}<span></span>{{end}}
+      {{with .Page.Next}}<a class="pager-next" href="{{url .URL}}"><span>Next</span>{{.Title}}</a>{{end}}
+    </nav>
+    <p class="source-note">Generated from <code>{{.Page.Source}}</code>{{with .Page.Anchor}} · section “{{.}}”{{end}}. Edit that file to change this page.</p>
+  </main>
+
+  {{if .Page.TOC}}
+  <aside class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    <ul>
+      {{range .Page.TOC}}<li class="toc-{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>{{end}}
+    </ul>
+  </aside>
+  {{end}}
+</div>
+{{end}}
