@@ -60,43 +60,52 @@ func TestProvidersStatusAndRemoval(t *testing.T) {
 	}
 }
 
-func TestNewProvidersHaveConnectRows(t *testing.T) {
-	t.Setenv("OPENCODE_API_KEY", "")
+func TestNVIDIAProviderHasConnectRows(t *testing.T) {
 	t.Setenv("NVIDIA_API_KEY", "")
 	m := testModel(t)
 	m.openProviders()
-	for _, name := range []string{providers.OpenCodeFree, "nvidia-nim"} {
+	for _, it := range m.provs.list.items {
+		if it.value == (pickConnect{"opencode-free"}) {
+			t.Fatal("removed provider appears in /providers")
+		}
+	}
+	for _, name := range []string{"nvidia-nim"} {
 		want := pickConnect{name}
 		m.provs.list.selectWhere(func(it pickItem) bool { return it.value == want })
 		if it, _ := m.provs.list.selected(); it.value != want {
 			t.Fatalf("/providers has no connect row for %s", name)
 		}
 	}
-	m.provs.list.selectWhere(func(it pickItem) bool { return it.value == pickConnect{providers.OpenCodeFree} })
+	m.provs.list.selectWhere(func(it pickItem) bool { return it.value == pickConnect{"nvidia-nim"} })
 	m.handleProvidersKey(press(tea.KeyEnter))
-	if m.wizard == nil || m.wizard.choice.Name != providers.OpenCodeFree || m.wizard.step != wizConnect {
+	if m.wizard == nil || m.wizard.choice.Name != "nvidia-nim" || m.wizard.step != wizConnect {
 		t.Fatal("the /providers connect row did not open its setup wizard")
 	}
 	m.openModelPicker()
-	for _, name := range []string{providers.OpenCodeFree, "nvidia-nim"} {
+	for _, it := range m.mpick.list.items {
+		if it.value == (pickConnect{"opencode-free"}) {
+			t.Fatal("removed provider appears in /model")
+		}
+	}
+	for _, name := range []string{"nvidia-nim"} {
 		want := pickConnect{name}
 		m.mpick.list.selectWhere(func(it pickItem) bool { return it.value == want })
 		if it, _ := m.mpick.list.selected(); it.value != want {
 			t.Fatalf("/model has no connect row for %s", name)
 		}
 	}
-	m.opts.Config.Providers[providers.OpenCodeFree] = config.ProviderConfig{APIKey: "key"}
+	m.opts.Config.Providers["nvidia-nim"] = config.ProviderConfig{APIKey: "key"}
 	if m.modelLists == nil {
 		m.modelLists = map[string]providerModels{}
 	}
-	m.modelLists[providers.OpenCodeFree] = providerModels{models: []providers.Model{{ID: "big-pickle", Chat: true}}}
+	m.modelLists["nvidia-nim"] = providerModels{models: []providers.Model{{ID: "meta/llama-test", Chat: true}}}
 	m.openProviders()
-	selectProvider(t, m, providers.OpenCodeFree)
+	selectProvider(t, m, "nvidia-nim")
 	m.openModelPicker()
-	want := pickModel{providers.OpenCodeFree, "big-pickle"}
+	want := pickModel{"nvidia-nim", "meta/llama-test"}
 	m.mpick.list.selectWhere(func(it pickItem) bool { return it.value == want })
 	if it, _ := m.mpick.list.selected(); it.value != want {
-		t.Fatal("connected OpenCode model did not appear in /model")
+		t.Fatal("connected NVIDIA model did not appear in /model")
 	}
 }
 

@@ -99,7 +99,7 @@ func (m *model) buildProviders() {
 		}
 		items = append(items, pickItem{label: label, detail: endpointSummary(providers.EndpointFor(cfg, n)), note: status, noteOK: ok, noteWarn: warn, value: pickProvider{n}})
 	}
-	for _, name := range []string{providers.OpenCodeFree, "nvidia-nim"} {
+	for _, name := range []string{"nvidia-nim"} {
 		if slices.Contains(names, name) {
 			continue
 		}

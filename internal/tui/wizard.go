@@ -562,9 +562,6 @@ func (w *wizard) enterModels(models []providers.Model) {
 		if f == "" || containsModel(models, f) {
 			return nil
 		}
-		if providers.ValidateModel(w.endpoint.Name, f) != nil || providers.ValidateModel(w.endpoint.Kind, f) != nil {
-			return nil
-		}
 		for _, s := range providers.OllamaSuggestions {
 			if s.ID == f {
 				return nil // already offered
@@ -683,14 +680,6 @@ func (w *wizard) modelKey(msg tea.KeyPressMsg) tea.Cmd {
 
 // chooseModel moves on to the save step with model.
 func (w *wizard) chooseModel(model string) {
-	if err := providers.ValidateModel(w.endpoint.Name, model); err != nil {
-		w.err = err.Error()
-		return
-	}
-	if err := providers.ValidateModel(w.endpoint.Kind, model); err != nil {
-		w.err = err.Error()
-		return
-	}
 	w.model = model
 	w.step, w.err = wizSave, ""
 	w.saveRow, w.scope = 0, 0

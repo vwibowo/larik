@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"testing"
 
 	"larik/internal/config"
@@ -16,7 +15,6 @@ import (
 func TestNewPresetEndpointsAndKeys(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{}}
 	for _, tc := range []struct{ name, url, env string }{
-		{OpenCodeFree, "https://opencode.ai/zen/v1", "OPENCODE_API_KEY"},
 		{"nvidia-nim", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -39,54 +37,19 @@ func TestNewPresetEndpointsAndKeys(t *testing.T) {
 	}
 }
 
-func TestOpenCodeFreeRejectsPaidModelsAndFallbacks(t *testing.T) {
-	t.Setenv("OPENCODE_API_KEY", "key")
+func TestOpenCodeFreeIsNotBuiltin(t *testing.T) {
+	t.Setenv("OPENCODE_API_KEY", "legacy-key")
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{}}
-	for _, id := range []string{"big-pickle", "space-bunny-free", "longcat-2.5-preview-free", "mimo-v2.6-flash-free", "mimo-v2.5-free", "ling-3.0-flash-fin-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free"} {
-		if _, err := Resolve(cfg, OpenCodeFree+"/"+id); err != nil {
-			t.Errorf("free model %s: %v", id, err)
-		}
+	if _, ok := ChoiceFor("opencode-free"); ok || slices.Contains(Usable(cfg), "opencode-free") {
+		t.Fatal("removed provider is still offered")
 	}
-	for _, id := range []string{"gpt-5.5", "claude-sonnet-5", "jev-1.13-free", "unknown-free"} {
-		if _, err := Resolve(cfg, OpenCodeFree+"/"+id); err == nil || !strings.Contains(err.Error(), "not a documented free") {
-			t.Errorf("paid/unsupported model %s: %v", id, err)
-		}
-	}
-	cfg.Providers["alias"] = config.ProviderConfig{Type: OpenCodeFree}
-	if _, err := Resolve(cfg, "alias/gpt-5.5"); err == nil {
-		t.Fatal("alias must retain the free-model restriction")
-	}
-	cfg.Providers[OpenCodeFree] = config.ProviderConfig{Type: "openai-compatible", BaseURL: "http://localhost:1/v1"}
-	if _, err := Resolve(cfg, OpenCodeFree+"/gpt-5.5"); err == nil {
-		t.Fatal("the built-in name must retain the free-model restriction")
-	}
-	delete(cfg.Providers, OpenCodeFree)
-	cfg.Model = "ollama/qwen3:4b"
-	cfg.Fallbacks = map[string][]string{cfg.Model: {OpenCodeFree + "/gpt-5.5"}}
-	r, err := Resolve(cfg, cfg.Model)
-	if err != nil || fmt.Sprintf("%T", r.Provider) == "*llm.fallback" {
-		t.Fatalf("invalid paid fallback should be skipped: %v, %T", err, r.Provider)
+	if _, err := Resolve(cfg, "opencode-free/big-pickle"); err == nil {
+		t.Fatal("removed provider still resolves without custom configuration")
 	}
 }
 
-func TestOpenCodeFreeFiltersModelListing(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer key" {
-			t.Errorf("request: %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
-		}
-		fmt.Fprint(w, `{"data":[{"id":"gpt-5.5"},{"id":"jev-1.13-free"},{"id":"mimo-v2.6-flash-free"},{"id":"big-pickle"}]}`)
-	}))
-	defer srv.Close()
-	e := EndpointOf(OpenCodeFree, config.ProviderConfig{BaseURL: srv.URL + "/v1", APIKey: "key"})
-	models, err := e.ListModels(context.Background())
-	if err != nil || len(models) != 2 || models[0].ID != "big-pickle" || models[1].ID != "mimo-v2.6-flash-free" {
-		t.Fatalf("filtered models: %v %+v", err, models)
-	}
-}
-
-func TestNewPresetsStreamTextAndToolCalls(t *testing.T) {
+func TestNVIDIAPresetStreamsTextAndToolCalls(t *testing.T) {
 	for _, tc := range []struct{ name, model string }{
-		{OpenCodeFree, "big-pickle"},
 		{"nvidia-nim", "meta/llama-test"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

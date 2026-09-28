@@ -47,7 +47,6 @@ func Choices() []Choice {
 		{Name: Codex, Title: "ChatGPT (Codex)", Desc: "Codex models on your ChatGPT plan, via sign-in", BaseURL: chatgpt.BaseURL, SignIn: true},
 	}
 	for _, c := range []struct{ name, title, desc string }{
-		{OpenCodeFree, "OpenCode Free", "limited-time free Zen chat models"},
 		{"nvidia-nim", "NVIDIA NIM", "hosted models for development and testing"},
 		{"openrouter", "OpenRouter", "many vendors behind one key"},
 		{"groq", "Groq", "fast hosted open models"},
@@ -214,13 +213,7 @@ func (e Endpoint) openAIModels(ctx context.Context) ([]Model, error) {
 	}
 	out := make([]Model, 0, len(list.Data))
 	for _, d := range list.Data {
-		if (e.Name == OpenCodeFree || e.Kind == OpenCodeFree) && !openCodeFreeModels[d.ID] {
-			continue
-		}
 		out = append(out, withCatalog(Model{ID: d.ID, Chat: likelyChat(d.ID)}))
-	}
-	if (e.Name == OpenCodeFree || e.Kind == OpenCodeFree) && len(out) == 0 {
-		return nil, fmt.Errorf("%s: no documented free Chat Completions models are available", OpenCodeFree)
 	}
 	sortModels(out)
 	return out, nil
