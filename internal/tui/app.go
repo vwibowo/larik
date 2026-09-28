@@ -16,6 +16,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 
 	"larik/internal/agent"
 	"larik/internal/app"
@@ -115,12 +116,13 @@ type model struct {
 	busyLabel    string // non-agent background work, e.g. compaction
 	quitArmed    bool
 
-	mpick      *modelPicker              // the /model dropdown, when open
-	modelLists map[string]providerModels // last model lists, by provider
-	wizard     *wizard                   // the connect wizard, when open
-	routing    *routingWizard            // the /routing wizard, when open
-	modePick   *picker                   // the /mode dropdown, when open
-	provs      *providerManager          // the /providers screen, when open
+	mpick       *modelPicker              // the /model dropdown, when open
+	modelLists  map[string]providerModels // last model lists, by provider
+	wizard      *wizard                   // the connect wizard, when open
+	routing     *routingWizard            // the /routing wizard, when open
+	modePick    *picker                   // the /mode dropdown, when open
+	sessionPick *picker                   // the /sessions and /resume dropdown
+	provs       *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
 	wizardReturn bool
 	showKeys     bool           // the ? shortcuts overlay
@@ -160,6 +162,7 @@ func newModel(opts Options) *model {
 	ta.Placeholder = "Ask larik to do something…  (/ for commands)"
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
+	ta.MaxWidth = 0 // allow the composer to follow the terminal at any width
 	ta.DynamicHeight = true
 	ta.MinHeight = 1
 	ta.MaxHeight = 10
@@ -214,7 +217,13 @@ func (m *model) wantDark() bool {
 func (m *model) applyTheme(isDark bool) {
 	m.isDark = isDark
 	m.st = newStyles(isDark)
-	m.input.SetStyles(textarea.DefaultStyles(isDark))
+	inputStyles := textarea.DefaultStyles(isDark)
+	if isDark {
+		inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.Color("#202024"))
+	} else {
+		inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.Color("#F0F0F2"))
+	}
+	m.input.SetStyles(inputStyles)
 	if m.permFeedback != nil {
 		m.permFeedback.SetStyles(textarea.DefaultStyles(isDark))
 	}
@@ -382,6 +391,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleModelPickerKey(msg)
 		case m.modePick != nil:
 			return m, m.handleModePickerKey(msg)
+		case m.sessionPick != nil:
+			return m, m.handleSessionPickerKey(msg)
 		case m.settings != nil:
 			return m, m.handleSettingsKey(msg)
 		case m.provs != nil:

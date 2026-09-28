@@ -69,11 +69,13 @@ func TestPaletteFiltersAndRanksExactFirst(t *testing.T) {
 
 func TestPaletteEnterRunsOrCompletes(t *testing.T) {
 	m := testModel(t)
+	m.opts.SessionDir = filepath.Join(m.opts.Config.Cwd, "sessions")
 	typeText(m, "/res")
 	m.Update(press(tea.KeyEnter))
-	if m.input.Value() != "/resume " {
-		t.Fatalf("a command with a required argument should complete, got %q", m.input.Value())
+	if m.sessionPick == nil || m.input.Value() != "" {
+		t.Fatalf("/resume should open the session picker, got input %q", m.input.Value())
 	}
+	m.Update(press(tea.KeyEscape))
 
 	m.input.Reset()
 	m.syncPalette()

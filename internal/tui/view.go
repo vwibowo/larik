@@ -46,6 +46,8 @@ func (m *model) View() tea.View {
 			parts = append(parts, m.modelPickerView())
 		case m.modePick != nil:
 			parts = append(parts, m.modePickerView())
+		case m.sessionPick != nil:
+			parts = append(parts, m.sessionPickerView())
 		case m.palette != nil:
 			parts = append(parts, m.paletteView())
 		}

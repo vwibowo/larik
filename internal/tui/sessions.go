@@ -16,7 +16,7 @@ import (
 
 // sessionCommand handles /sessions, /resume, /new, /fork and /rewind.
 func (m *model) sessionCommand(name string, args []string, info, fail func(string) tea.Cmd) tea.Cmd {
-	if name == "/sessions" {
+	if name == "/sessions" || (name == "/resume" && len(args) == 0) {
 		return m.listSessions(info, fail)
 	}
 	if m.opts.App == nil || m.sess == nil {
@@ -33,9 +33,6 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 
 	switch name {
 	case "/resume":
-		if len(args) == 0 {
-			return m.listSessions(info, fail)
-		}
 		path, err := session.Find(m.opts.App.SessionDir, args[0])
 		if err != nil {
 			return fail(err.Error())
@@ -140,31 +137,50 @@ func (m *model) listSessions(info, fail func(string) tea.Cmd) tea.Cmd {
 	if len(infos) == 0 {
 		return info("no sessions yet")
 	}
-	var b strings.Builder
-	for i, in := range infos {
-		if i == 15 {
-			fmt.Fprintf(&b, "… %d more\n", len(infos)-i)
-			break
-		}
-		mark := " "
-		if in.ID == m.agent.SessionID() {
-			mark = "*"
-		}
+	p := &picker{filterable: true}
+	for _, in := range infos {
 		title := in.Title
 		if title == "" {
 			title = "(empty)"
 		}
 		if in.ForkOf != "" {
-			title = "⑂ " + title + "  (branch of " + in.ForkOf + ")"
+			title = "⑂ " + title + " (branch of " + in.ForkOf + ")"
 		}
-		fmt.Fprintf(&b, "%s %s  %s  %s\n", mark, in.ID, in.Modified.Format("01-02 15:04"), title)
+		item := pickItem{label: in.ID, detail: in.Modified.Format("01-02 15:04") + "  " + oneLine(title, 90), value: in.ID}
+		if in.ID == m.agent.SessionID() {
+			item.note, item.noteOK = "✓ current", true
+		}
+		p.items = append(p.items, item)
 	}
-	if m.opts.App != nil {
-		b.WriteString("switch with /resume <id> (a unique prefix is enough)")
-	} else {
-		b.WriteString("resume with: larik --resume <id>")
+	p.home()
+	m.sessionPick = p
+	return nil
+}
+
+func (m *model) handleSessionPickerKey(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.String() == "esc" || msg.String() == "ctrl+c" {
+		m.sessionPick = nil
+		return nil
 	}
-	return info(b.String())
+	p := m.sessionPick
+	if !p.handleKey(msg) {
+		return nil
+	}
+	item, ok := p.selected()
+	if !ok {
+		return nil
+	}
+	m.sessionPick = nil
+	return m.command("/resume " + item.value.(string))
+}
+
+func (m *model) sessionPickerView() string {
+	p := m.sessionPick
+	w := max(m.width-6, 20)
+	p.height = max(min(14, m.height-8), 4)
+	header := spread(m.st.accent.Render("Sessions"), m.st.dim.Render("newest first"), w)
+	hint := m.st.dim.Render("↑/↓ move · type to filter · enter resume · esc close")
+	return m.st.modal.Width(max(m.width-2, 10)).Render(header + "\n" + p.filterLine(m.st, "filter by ID or title…") + "\n" + p.view(m.st, w) + "\n" + hint)
 }
 
 func oneLine(s string, n int) string {

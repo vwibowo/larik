@@ -40,7 +40,7 @@ func (p *picker) visible() []pickItem {
 	f := strings.ToLower(strings.TrimSpace(p.filter))
 	var out []pickItem
 	for _, it := range p.items {
-		if f == "" || it.keep || strings.Contains(strings.ToLower(it.label+" "+it.section), f) {
+		if f == "" || it.keep || strings.Contains(strings.ToLower(it.label+" "+it.detail+" "+it.section), f) {
 			out = append(out, it)
 		}
 	}

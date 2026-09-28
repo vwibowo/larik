@@ -82,7 +82,7 @@ func TestLiveViewStatusLine(t *testing.T) {
 
 func TestComposerFillsTerminalWidth(t *testing.T) {
 	m := testModel(t)
-	for _, width := range []int{8, 30, 80, 120} {
+	for _, width := range []int{8, 30, 80, 120, 600} {
 		m.setWidth(width)
 		box := m.st.box.Width(max(m.width, 7)).Render(m.input.View())
 		for _, line := range strings.Split(box, "\n") {

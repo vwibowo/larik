@@ -122,6 +122,8 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 
 ## Keys and commands
 
+The input row fills the terminal width and grows up to ten lines as you type.
+
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
 | Command | What it does |
@@ -139,8 +141,8 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 | `/compact` | Summarize the conversation to free context |
 | `/clear` | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers |
 | `/cost` | Usage and cost, split by model when more than one was used |
-| `/sessions` | List sessions for this directory (`*` current, `⑂` branch) |
-| `/resume <id>` | Switch to another session (a unique id prefix is enough) |
+| `/sessions` | Choose a session from a searchable, scrolling list (`✓ current`, `⑂` branch) |
+| `/resume [id]` | Open the session picker, or switch by ID (a unique prefix is enough) |
 | `/new` | Start a new session |
 | `/fork` | Branch the conversation into a new session and continue there |
 | `/rewind [n]` | List prompts, or branch off just before prompt `n` with it back in the input to edit |
