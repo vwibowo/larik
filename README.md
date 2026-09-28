@@ -194,7 +194,7 @@ You can also set it explicitly:
 
 **Inside the sandbox, a command:**
 - **Can** read everything.
-- **Can** write only to the project (the git root), temp directories and common build caches (Go, npm, Cargo, `~/.cache`, `~/Library/Caches`).
+- **Can** write only to the project (the git root), its own private temp directory, and common build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root). The literal `/tmp`, shared by every program on the machine, is never writable.
 - **Can't** write to `.git/hooks`, `.git/config`, `.larik/`, `.claude/` or `.mcp.json`, even inside the project, because changing them would let a later command or hook escape the sandbox.
 - **Has no network access** except localhost, so tests that start local servers still work.
 - **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.

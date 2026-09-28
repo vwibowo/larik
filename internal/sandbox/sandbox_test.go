@@ -19,6 +19,7 @@ func newTest(t *testing.T, cfg Config) (*Sandbox, string, string) {
 	if sb == nil {
 		t.Skipf("no sandbox on this machine: %s", warn)
 	}
+	t.Cleanup(func() { sb.Close() })
 	return sb, root, home
 }
 
@@ -178,5 +179,72 @@ func TestWorktreeSandbox(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "escape.txt")); err == nil {
 		t.Error("escaped into the original checkout")
+	}
+}
+
+// TestSystemTempDirIsNotWritable is the regression test for the incident
+// that prompted this: a sandboxed command must not be able to touch the
+// literal, machine-wide /tmp -- the shared directory a stray "rm -rf"
+// once reached, deleting another program's files -- even though its own
+// private scratch directory, and (on macOS) the per-user temp root that
+// real tools like mktemp resolve to regardless of $TMPDIR, still work.
+func TestSystemTempDirIsNotWritable(t *testing.T) {
+	sb, root, _ := newTest(t, Config{})
+
+	target := filepath.Join("/tmp", fmt.Sprintf("larik-sandbox-escape-%d.txt", os.Getpid()))
+	defer os.Remove(target)
+	if _, err := run(t, sb, root, "echo x > "+target); err == nil {
+		t.Errorf("write to %s must fail", target)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Error("escaped into /tmp")
+	}
+	if runtime.GOOS != "darwin" {
+		// Elsewhere os.TempDir() is ordinarily just another name for
+		// /tmp, so it must be denied the same way.
+		other := filepath.Join(real(os.TempDir()), fmt.Sprintf("larik-sandbox-escape2-%d.txt", os.Getpid()))
+		defer os.Remove(other)
+		if _, err := run(t, sb, root, "echo x > "+other); err == nil {
+			t.Errorf("write to %s must fail", other)
+		}
+	}
+
+	// The sandbox's own private temp directory, which $TMPDIR points to
+	// inside the sandbox, works for tools that honor it...
+	if out, err := run(t, sb, root, `t=$(mktemp "$TMPDIR/tmp.XXXXXX") && echo ok > "$t" && cat "$t"`); err != nil || strings.TrimSpace(out) != "ok" {
+		t.Errorf("an explicit $TMPDIR template should work: %v %s", err, out)
+	}
+	// ...and bare mktemp, which on macOS resolves to the per-user temp
+	// root via confstr rather than $TMPDIR, still works too.
+	if out, err := run(t, sb, root, `t=$(mktemp) && echo ok > "$t" && cat "$t"`); err != nil || strings.TrimSpace(out) != "ok" {
+		t.Errorf("bare mktemp inside the sandbox should work: %v %s", err, out)
+	}
+}
+
+// TestClosePerSandboxTempDir checks that each Sandbox gets its own
+// private directory, and that Close removes it without disturbing an
+// unrelated Sandbox's.
+func TestClosePerSandboxTempDir(t *testing.T) {
+	a, root, home := newTest(t, Config{})
+	b, _ := New(Config{}, root, home)
+	if b == nil {
+		t.Skip("no sandbox on this machine")
+	}
+	defer b.Close()
+
+	if a.tmpDir == "" || a.tmpDir == b.tmpDir {
+		t.Fatalf("each sandbox should get its own private directory, got %q and %q", a.tmpDir, b.tmpDir)
+	}
+	if _, err := os.Stat(a.tmpDir); err != nil {
+		t.Fatalf("tmpDir should exist: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	if _, err := os.Stat(a.tmpDir); !os.IsNotExist(err) {
+		t.Error("Close should remove the private directory")
+	}
+	if _, err := os.Stat(b.tmpDir); err != nil {
+		t.Error("closing one sandbox must not remove another's directory")
 	}
 }

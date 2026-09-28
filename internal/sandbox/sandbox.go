@@ -33,6 +33,14 @@ type Sandbox struct {
 	protected []string
 	network   bool
 	profile   string // Seatbelt profile
+	// tmpDir is this sandbox's own private scratch directory: the only
+	// place outside root, gitDir and the persistent build caches that a
+	// sandboxed command may write to. It stands in for the system temp
+	// directory, which sandboxed bash never gets write access to (see
+	// New), and is removed by Close. A worktree-derived Sandbox
+	// (ForWorktree) shares its parent's tmpDir rather than getting its
+	// own, so only the top-level Sandbox should have Close called on it.
+	tmpDir string
 }
 
 // protectedNames are project paths that must stay read-only even though
@@ -63,7 +71,13 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 		return nil, "no sandbox available on " + runtime.GOOS + "; bash commands run unsandboxed and ask for approval"
 	}
 
-	s.writable = uniq(append(append([]string{s.root}, defaultWritable(home)...), expand(cfg.Writable, home)...))
+	tmpDir, err := os.MkdirTemp("", "larik-sandbox-")
+	if err != nil {
+		return nil, "could not create a private temp directory (" + err.Error() + "); bash commands run unsandboxed and ask for approval"
+	}
+	s.tmpDir = real(tmpDir)
+
+	s.writable = uniq(append(append([]string{s.root, s.tmpDir}, defaultWritable(home)...), expand(cfg.Writable, home)...))
 	for _, name := range protectedNames {
 		s.protected = append(s.protected, filepath.Join(s.root, name))
 	}
@@ -71,6 +85,17 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 		s.profile = s.seatbeltProfile()
 	}
 	return s, ""
+}
+
+// Close removes this sandbox's private temp directory. Call it once, on
+// the top-level Sandbox from New, when it is no longer needed; a
+// worktree-derived Sandbox shares that directory and must not be closed
+// on its own.
+func (s *Sandbox) Close() error {
+	if s == nil || s.tmpDir == "" {
+		return nil
+	}
+	return os.RemoveAll(s.tmpDir)
 }
 
 // ForWorktree derives a sandbox for a git worktree at dir: writable are
@@ -100,12 +125,25 @@ func (s *Sandbox) ForWorktree(dir, gitDir string) *Sandbox {
 	return &w
 }
 
+// defaultWritable is the persistent, per-user directories a sandboxed
+// command may write to. It deliberately excludes the literal /tmp: on
+// every OS that's a single directory shared by every program any user on
+// the machine runs (Claude Code's own scratch files live there, for
+// instance), so granting it broad write access let a sandboxed command
+// destroy another program's files with a stray "rm -rf /tmp/..." during
+// testing. Each Sandbox instead gets its own private scratch directory
+// (New's tmpDir), which Command exposes to the child as
+// $TMPDIR/$TMP/$TEMP, for tools that read those.
+//
+// os.TempDir() itself stays writable on macOS (unlike on Linux, where it
+// is usually just another name for /tmp): it's scoped to this OS user,
+// not shared machine-wide, and several macOS tools resolve to it via
+// confstr(_CS_DARWIN_USER_TEMP_DIR) regardless of $TMPDIR -- notably
+// mktemp(1) with no template, which real build and setup scripts use.
 func defaultWritable(home string) []string {
-	paths := []string{"/tmp", os.TempDir()}
+	var paths []string
 	if runtime.GOOS == "darwin" {
-		// Per-user temp root (/var/folders/xx/yyy): holds T/ (TMPDIR) and
-		// C/ (caches used by clang, swift and friends).
-		paths = append(paths, filepath.Dir(real(os.TempDir())), filepath.Join(home, "Library", "Caches"))
+		paths = append(paths, os.TempDir(), filepath.Dir(real(os.TempDir())), filepath.Join(home, "Library", "Caches"))
 	}
 	paths = append(paths,
 		filepath.Join(home, ".cache"),
@@ -162,6 +200,9 @@ func uniq(paths []string) []string {
 func (s *Sandbox) Kind() string { return s.kind }
 
 // Command returns an exec.Cmd that runs script with bash in dir, confined.
+// $TMPDIR, $TMP and $TEMP point at this sandbox's own scratch directory,
+// so well-behaved tools (mktemp, go build, npm, …) land somewhere
+// writable without needing the real system temp directory.
 func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if s.kind == "seatbelt" {
@@ -170,7 +211,27 @@ func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 		cmd = exec.Command("bwrap", s.bwrapArgs(script, dir)...)
 	}
 	cmd.Dir = dir
+	cmd.Env = tmpEnv(s.tmpDir)
 	return cmd
+}
+
+// tmpEnv is the current environment with TMPDIR, TMP and TEMP replaced by
+// dir, so a script's own $TMPDIR lookup finds a directory the sandbox
+// actually allows writing to, however that variable was set for Larik
+// itself.
+func tmpEnv(dir string) []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env)+3)
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			switch k {
+			case "TMPDIR", "TMP", "TEMP":
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return append(out, "TMPDIR="+dir, "TMP="+dir, "TEMP="+dir)
 }
 
 // Summary describes the sandbox for the system prompt and UI.
@@ -179,8 +240,8 @@ func (s *Sandbox) Summary() string {
 	if s.network {
 		net = "on"
 	}
-	return fmt.Sprintf("bash commands run in a %s sandbox: writes allowed only in %s, temp directories and build caches; network %s; "+
-		".git/hooks, .git/config, .larik, .claude and .mcp.json are read-only", s.kind, s.root, net)
+	return fmt.Sprintf("bash commands run in a %s sandbox: writes allowed only in %s, its own private temp directory (%s) and build caches; network %s; "+
+		".git/hooks, .git/config, .larik, .claude and .mcp.json are read-only", s.kind, s.root, s.tmpDir, net)
 }
 
 // Writable lists paths commands may write to.

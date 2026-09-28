@@ -159,6 +159,7 @@ func (a *App) loadTools(ctx context.Context, notify func(string)) *tools.Registr
 func (a *App) Close() {
 	a.MCP.Close()
 	a.LSP.Close()
+	a.Sandbox.Close()
 }
 
 // Options select the session and runtime settings for Open. Empty fields
