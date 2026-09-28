@@ -1,8 +1,7 @@
 // Package tui is the interactive Bubble Tea front end.
 //
-// Finished output (messages, tool cards) is printed into the terminal's own
-// scrollback with tea.Println; the live view only holds what is still
-// changing: the streaming reply, running tools, prompts, input and status.
+// Finished output and live activity share a scrollable conversation area.
+// The composer and status stay fixed below it.
 package tui
 
 import (
@@ -14,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -85,8 +85,12 @@ type model struct {
 	width    int
 	height   int
 
-	input textarea.Model
-	spin  spinner.Model
+	input        textarea.Model
+	spin         spinner.Model
+	view         viewport.Model
+	panelView    viewport.Model
+	panelKind    string
+	conversation strings.Builder
 
 	running      bool
 	cancel       context.CancelFunc
@@ -148,6 +152,7 @@ type (
 		from *agent.Agent
 	}
 	runEndedMsg  struct{}
+	outputMsg    string
 	compactedMsg struct {
 		summary string
 		err     error
@@ -170,14 +175,16 @@ func newModel(opts Options) *model {
 	ta.Focus()
 
 	m := &model{
-		opts:   opts,
-		agent:  opts.Agent,
-		sess:   opts.Session,
-		bgStop: make(chan struct{}),
-		input:  ta,
-		spin:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		width:  80,
-		stats:  opts.Agent.Stats(),
+		opts:      opts,
+		agent:     opts.Agent,
+		sess:      opts.Session,
+		bgStop:    make(chan struct{}),
+		input:     ta,
+		spin:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		view:      viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
+		panelView: viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
+		width:     80,
+		stats:     opts.Agent.Stats(),
 
 		termDark: termDark,
 		focused:  true,
@@ -191,6 +198,8 @@ func newModel(opts Options) *model {
 		}
 	}
 	m.showThinking = m.verbose
+	m.view.SoftWrap = true
+	m.panelView.SoftWrap = false
 	m.applyTheme(m.wantDark())
 	return m
 }
@@ -232,6 +241,12 @@ func (m *model) applyTheme(isDark bool) {
 
 func (m *model) setWidth(w int) {
 	m.width = w
+	atBottom := m.view.AtBottom()
+	m.view.SetWidth(max(w, 1))
+	m.panelView.SetWidth(max(w, 1))
+	if atBottom {
+		m.view.GotoBottom()
+	}
 	m.input.SetWidth(max(w-4, 4)) // the composer border and padding use four cells
 	if m.permFeedback != nil {
 		m.permFeedback.SetWidth(max(w-10, 10))
@@ -258,6 +273,21 @@ func (m *model) Init() tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case outputMsg:
+		if m.conversation.Len() > 0 {
+			m.conversation.WriteByte('\n')
+		}
+		m.conversation.WriteString(string(msg))
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		if m.hasPickerPanel() && msg.Y >= m.view.Height() && msg.Y < m.view.Height()+m.panelView.Height() {
+			m.panelView, _ = m.panelView.Update(msg)
+		} else {
+			m.view, _ = m.view.Update(msg)
+		}
+		return m, nil
+
 	case tea.BackgroundColorMsg:
 		m.termDark = msg.IsDark()
 		if d := m.wantDark(); d != m.isDark {
@@ -377,6 +407,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleWizard(msg)
 
 	case tea.KeyPressMsg:
+		if m.hasPickerPanel() {
+			switch msg.String() {
+			case "ctrl+pgup":
+				m.panelView.PageUp()
+				return m, nil
+			case "ctrl+pgdown":
+				m.panelView.PageDown()
+				return m, nil
+			}
+		}
 		switch {
 		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
@@ -401,6 +441,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd, ok := m.handlePaletteKey(msg); ok {
 				return m, cmd
 			}
+		}
+		switch msg.String() {
+		case "pgup":
+			m.view.PageUp()
+			return m, nil
+		case "pgdown":
+			m.view.PageDown()
+			return m, nil
+		case "ctrl+home":
+			m.view.GotoTop()
+			return m, nil
+		case "ctrl+end":
+			m.view.GotoBottom()
+			return m, nil
 		}
 		md, cmd := m.handleKey(msg)
 		m.syncPalette()
@@ -712,7 +766,7 @@ func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 }
 
 func (m *model) println(s string) tea.Cmd {
-	return tea.Println(s)
+	return func() tea.Msg { return outputMsg(s) }
 }
 
 // waitBackground reads the agent's background-task stream for its lifetime.

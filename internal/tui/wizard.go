@@ -896,6 +896,7 @@ func (w *wizard) view(st styles, width, height int) string {
 	var hint string
 	switch w.step {
 	case wizProvider:
+		w.provList.height = max(min(12, height-6), 1)
 		if w.detected == nil {
 			body = append(body, st.dim.Render("looking for local servers and API keys…"))
 		}
@@ -911,7 +912,7 @@ func (w *wizard) view(st styles, width, height int) string {
 			body, hint = w.pullView(st, width), "esc stop the download"
 			break
 		}
-		w.models.height = max(min(10, height-10), 3)
+		w.models.height = max(min(10, height-7), 1)
 		body = append(body,
 			st.accent.Render("Choose a model")+st.dim.Render(" · from "+w.choice.Title+" at "+hostOf(w.endpoint.BaseURL)),
 			w.models.filterLine(st, "type to filter, or type a model id…"),

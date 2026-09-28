@@ -2,10 +2,12 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -90,6 +92,205 @@ func TestComposerFillsTerminalWidth(t *testing.T) {
 				t.Errorf("terminal %d: composer line width %d: %q", width, got, plain(line))
 			}
 		}
+	}
+}
+
+func TestComposerStaysAtBottom(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	for _, height := range []int{14, 24} {
+		m.height = height
+		checkPinnedView(t, m)
+	}
+	m.input.SetValue("first\nsecond\nthird")
+	checkPinnedView(t, m)
+	m.running = true
+	m.stream.WriteString(strings.Repeat("output line\n", 40))
+	checkPinnedView(t, m)
+	m.sessionPick = &picker{items: []pickItem{{label: "a session", value: "a"}}}
+	checkPinnedView(t, m)
+}
+
+func TestPickersSitAboveComposer(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 30
+	m.Update(outputMsg("visible conversation"))
+	m.palette = &picker{items: []pickItem{{label: "/model", detail: "pick a model"}}}
+	assertPanelAtBottom(t, m, m.paletteView())
+	m.palette = nil
+	m.mpick = &modelPicker{list: picker{}}
+	for i := range 30 {
+		m.mpick.list.items = append(m.mpick.list.items, pickItem{label: fmt.Sprintf("ollama/model-%d", i), value: pickModel{provider: "ollama", model: "m"}})
+	}
+	for _, height := range []int{30, 16} {
+		m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
+		assertPanelAtBottom(t, m, m.modelPickerView())
+		if m.view.Height() < 3 {
+			t.Fatalf("model picker left only %d conversation rows", m.view.Height())
+		}
+	}
+}
+
+func TestInSessionPanelsShareBottomLayout(t *testing.T) {
+	openers := []struct {
+		name string
+		open func(*model)
+		want string
+	}{
+		{"settings", func(m *model) { m.openSettings("") }, "Settings"},
+		{"providers", func(m *model) { m.openProviders() }, "Providers"},
+		{"connect", func(m *model) { m.openWizard("") }, "Connect a provider"},
+		{"routing", func(m *model) { m.openRouting(rtPreset) }, "Model routing"},
+	}
+	for _, tc := range openers {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testModel(t)
+			m.setWidth(80)
+			m.Update(outputMsg("visible conversation"))
+			tc.open(m)
+			for _, height := range []int{30, 16} {
+				m.height = height
+				checkPanelLayout(t, m, tc.want)
+			}
+			m.input.SetValue("first\nsecond\nthird")
+			checkPanelLayout(t, m, tc.want)
+		})
+	}
+}
+
+func TestLongPanelListsKeepSelectionVisible(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 16
+	m.Update(outputMsg("visible conversation"))
+	m.openSettings("")
+	for i := range 40 {
+		m.settings.list.items = append(m.settings.list.items, pickItem{label: fmt.Sprintf("extra setting %02d", i), value: i})
+	}
+	m.settings.list.selectWhere(func(it pickItem) bool { return it.value == 39 })
+	checkPanelLayout(t, m, "extra setting 39")
+	m.settings = nil
+	m.openProviders()
+	for i := range 40 {
+		m.provs.list.items = append(m.provs.list.items, pickItem{label: fmt.Sprintf("extra provider %02d", i), value: i})
+	}
+	m.provs.list.selectWhere(func(it pickItem) bool { return it.value == 39 })
+	checkPanelLayout(t, m, "extra provider 39")
+	m.provs = nil
+	m.openWizard("")
+	for i := range 40 {
+		m.wizard.provList.items = append(m.wizard.provList.items, pickItem{label: fmt.Sprintf("extra wizard provider %02d", i), value: i})
+	}
+	m.wizard.provList.selectWhere(func(it pickItem) bool { return it.value == 39 })
+	checkPanelLayout(t, m, "extra wizard provider 39")
+	m.wizard = nil
+	m.openRouting(rtPreset)
+	m.routing.presets.selectWhere(func(it pickItem) bool { return it.label == "Edit current" })
+	checkPanelLayout(t, m, "Edit current")
+}
+
+func TestLongPanelContentScrollsWithoutMovingComposer(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 16
+	m.Update(outputMsg("visible conversation"))
+	m.openRouting(rtRoles)
+	m.routing.err = strings.Repeat("long error detail ", 20)
+	before := plain(m.View().Content)
+	if m.panelView.TotalLineCount() <= m.panelView.Height() {
+		t.Fatal("test panel should exceed its available rows")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown, Mod: tea.ModCtrl})
+	after := plain(m.View().Content)
+	if before == after || m.panelView.YOffset() == 0 {
+		t.Fatal("Ctrl+Page Down should scroll overflowing panel content")
+	}
+	if !strings.Contains(after, "visible conversation") || !strings.HasSuffix(after, plain(m.composerView()+"\n"+m.statusLine())) {
+		t.Fatalf("scrolling the panel moved the conversation or composer: %q", after)
+	}
+}
+
+func checkPanelLayout(t *testing.T, m *model, panelText string) {
+	t.Helper()
+	view := plain(m.View().Content)
+	if got := len(strings.Split(view, "\n")); got != m.height {
+		t.Fatalf("panel layout has %d rows, want %d: %q", got, m.height, view)
+	}
+	if !strings.HasSuffix(view, plain(m.composerView()+"\n"+m.statusLine())) {
+		t.Fatalf("composer and status should remain at bottom: %q", view)
+	}
+	if !strings.Contains(view, "visible conversation") || !strings.Contains(view, panelText) {
+		t.Fatalf("conversation and %q should both be visible: %q", panelText, view)
+	}
+	if m.view.Height() < 3 {
+		t.Fatalf("panel left only %d conversation rows", m.view.Height())
+	}
+}
+
+func assertPanelAtBottom(t *testing.T, m *model, panel string) {
+	t.Helper()
+	view := plain(m.View().Content)
+	want := plain(panel + "\n" + m.composerView() + "\n" + m.statusLine())
+	if !strings.HasSuffix(view, want) {
+		t.Fatalf("picker should sit directly above composer: %q", view)
+	}
+	if !strings.Contains(view, "visible conversation") {
+		t.Fatalf("conversation should remain visible above picker: %q", view)
+	}
+	if got := len(strings.Split(view, "\n")); got != m.height {
+		t.Fatalf("picker layout has %d rows, want %d", got, m.height)
+	}
+}
+
+func TestConversationScrollsAboveComposer(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 18
+	m.Update(outputMsg("first response"))
+	initial := m.View()
+	if !initial.AltScreen || !strings.Contains(plain(initial.Content), "first response") {
+		t.Fatalf("response should render in the conversation viewport: %q", plain(initial.Content))
+	}
+	var history strings.Builder
+	for i := range 50 {
+		fmt.Fprintf(&history, "line %02d\n", i)
+	}
+	m.Update(outputMsg(history.String()))
+	bottom := plain(m.View().Content)
+	if !strings.Contains(bottom, "line 49") || strings.Contains(bottom, "line 00") {
+		t.Fatalf("viewport should follow the latest output: %q", bottom)
+	}
+	m.Update(press(tea.KeyPgUp))
+	older := plain(m.View().Content)
+	if older == bottom || !strings.Contains(older, "line 3") {
+		t.Fatalf("Page Up should show older output: %q", older)
+	}
+	m.Update(outputMsg("latest while scrolled"))
+	if strings.Contains(plain(m.View().Content), "latest while scrolled") {
+		t.Fatal("new output should not jump a scrolled viewport to the bottom")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !strings.Contains(plain(m.View().Content), "latest while scrolled") {
+		t.Fatal("Ctrl+End should return to the newest output")
+	}
+	m.running = true
+	m.stream.WriteString("streaming answer")
+	if !strings.Contains(plain(m.View().Content), "streaming answer") {
+		t.Fatal("live answer should share the conversation viewport")
+	}
+}
+
+func checkPinnedView(t *testing.T, m *model) {
+	t.Helper()
+	view := plain(m.View().Content)
+	lines := strings.Split(view, "\n")
+	if len(lines) != m.height {
+		t.Fatalf("view has %d rows, want %d", len(lines), m.height)
+	}
+	bottom := plain(m.composerView() + "\n" + m.statusLine())
+	if !strings.HasSuffix(view, bottom) {
+		t.Fatalf("composer and footer are not at bottom: %q", view)
 	}
 }
 

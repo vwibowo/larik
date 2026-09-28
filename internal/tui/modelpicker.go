@@ -300,7 +300,7 @@ func (m *model) switchModel(spec string, effort llm.Effort) tea.Cmd {
 func (m *model) modelPickerView() string {
 	mp := m.mpick
 	w := max(m.width-6, 20)
-	mp.list.height = max(min(14, m.height-12), 4)
+	mp.list.height = max(min(14, m.availablePanelRows()-7), 1)
 	head := spread(m.st.accent.Render("Switch model"), m.st.dim.Render("current: "+m.agent.ProviderName()+"/"+m.agent.Model()), w)
 
 	var eff []string

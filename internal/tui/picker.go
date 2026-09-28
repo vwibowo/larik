@@ -192,18 +192,28 @@ func (p *picker) view(st styles, width int) string {
 		return strings.Join(lines, "\n")
 	}
 	h := p.height
-	if cursorLine < p.offset+1 { // keep a line of context, often the section header
-		p.offset = max(cursorLine-1, 0)
-	}
-	if cursorLine > p.offset+h-2 { // the last line may become "↓ more"
-		p.offset = cursorLine - h + 2
+	if h <= 2 {
+		if cursorLine < p.offset {
+			p.offset = cursorLine
+		}
+		if cursorLine >= p.offset+h {
+			p.offset = cursorLine - h + 1
+		}
+	} else {
+		if cursorLine < p.offset+1 { // keep a line of context, often the section header
+			p.offset = max(cursorLine-1, 0)
+		}
+		if cursorLine > p.offset+h-2 { // the last line may become "↓ more"
+			p.offset = cursorLine - h + 2
+		}
 	}
 	p.offset = min(p.offset, len(lines)-h)
 	window := append([]string(nil), lines[p.offset:p.offset+h]...)
-	if p.offset > 0 {
+	selectedRow := cursorLine - p.offset
+	if p.offset > 0 && selectedRow != 0 {
 		window[0] = st.dim.Render("  ↑ more")
 	}
-	if p.offset+h < len(lines) {
+	if p.offset+h < len(lines) && selectedRow != h-1 {
 		window[h-1] = st.dim.Render("  ↓ more")
 	}
 	return strings.Join(window, "\n")

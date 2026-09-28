@@ -601,6 +601,7 @@ func (m *model) setTheme(name string) tea.Cmd {
 func (m *model) settingsView() string {
 	s := m.settings
 	w := max(m.width-6, 20)
+	rows := m.availablePanelRows()
 	var head, body, hint string
 	switch {
 	case s.input != nil:
@@ -609,11 +610,13 @@ func (m *model) settingsView() string {
 		body = s.input.View()
 		hint = "enter save · esc back"
 	case s.values != nil:
+		s.values.height = max(rows-4-boolRows(s.status != ""), 1)
 		spec, _ := settingByKey(s.editing)
 		head = spread(m.st.accent.Render(spec.title), m.st.dim.Render("saved for every project"), w)
 		body = s.values.view(m.st, w)
 		hint = "↑/↓ + enter choose · esc back"
 	default:
+		s.list.height = max(rows-4-boolRows(s.status != ""), 1)
 		head = spread(m.st.accent.Render("Settings"), m.st.dim.Render("/config"), w)
 		body = s.list.view(m.st, w)
 		hint = "↑/↓ move · enter or space change · esc close"
@@ -627,4 +630,11 @@ func (m *model) settingsView() string {
 		out += "\n" + st.Render(s.status)
 	}
 	return m.st.modal.Width(max(m.width-2, 10)).Render(out + "\n" + m.st.dim.Render(hint))
+}
+
+func boolRows(on bool) int {
+	if on {
+		return 1
+	}
+	return 0
 }

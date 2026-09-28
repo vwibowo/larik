@@ -122,7 +122,7 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 
 ## Keys and commands
 
-The input row fills the terminal width and grows up to ten lines as you type.
+The input row fills the terminal width, stays at the bottom, and grows up to ten lines as you type. The conversation scrolls above it with Page Up/Down or the mouse wheel. In-session pickers and settings panels open just above the input and leave recent messages visible; use Ctrl+Page Up/Down or the mouse wheel over a panel to scroll panel content when it does not fit. Edit and file-write previews use syntax highlighting when the file type is recognized.
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 

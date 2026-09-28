@@ -68,6 +68,19 @@ func TestPickerScrollKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+func TestPickerKeepsSelectionVisibleInOneOrTwoRows(t *testing.T) {
+	for _, height := range []int{1, 2} {
+		p := picker{height: height}
+		for _, label := range []string{"first", "second", "third", "fourth"} {
+			p.items = append(p.items, pickItem{label: label, value: label})
+		}
+		p.selectWhere(func(it pickItem) bool { return it.label == "fourth" })
+		if view := plain(p.view(newStyles(true), 40)); !strings.Contains(view, "fourth") {
+			t.Errorf("height %d hid the selected row: %q", height, view)
+		}
+	}
+}
+
 func TestWizardConnectsOllama(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[

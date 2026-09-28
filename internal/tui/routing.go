@@ -544,18 +544,18 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		if w.step == rtFallbacks {
 			what = "Add a fallback for " + w.choosing
 		}
-		w.models.height = max(min(12, height-10), 3)
+		w.models.height = max(min(12, height-7), 1)
 		body = append(body, st.accent.Render(what)+st.dim.Render(" · "+providers.RoleHints[w.choosing]),
 			w.models.filterLine(st, "type to filter, or type provider/model…"), w.models.view(st, width))
 		hint = "↑/↓ move · type to filter · enter select · esc back"
 	case w.step == rtPreset:
-		body = append(body,
+		w.presets.height = max(min(8, height-9), 1)
+		body = append(body, w.presets.view(st, width), "",
 			"Plan and review on your main model, "+st.accent.Render(w.main)+", and hand routine work to cheaper ones.",
 			st.dim.Render("Subagents run on the worker and explore roles; the main agent can also pick a role per task."), "")
 		if w.lists == nil {
 			body = append(body, st.dim.Render("listing your providers' models…"))
 		}
-		body = append(body, w.presets.view(st, width))
 		hint = "↑/↓ move · enter choose · esc cancel"
 	case w.step == rtRoles:
 		body = append(body, st.dim.Render("A role without a model uses the main model."), "")

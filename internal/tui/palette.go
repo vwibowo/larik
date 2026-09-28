@@ -166,7 +166,7 @@ func (m *model) complete(c command) {
 func (m *model) paletteView() string {
 	p := m.palette
 	w := max(m.width-6, 20)
-	p.height = max(min(12, m.height-8), 4)
+	p.height = max(min(12, m.availablePanelRows()-3), 1)
 	hint := "↑/↓ move · tab complete · enter run · esc close"
 	if len(p.visible()) == 0 {
 		return m.st.box.Width(max(m.width-2, 10)).Render(m.st.dim.Render("no matching command · enter sends it as typed · esc close"))
@@ -251,6 +251,7 @@ func (m *model) setMode(md permission.Mode) tea.Cmd {
 
 func (m *model) modePickerView() string {
 	w := max(m.width-6, 20)
+	m.modePick.height = max(m.availablePanelRows()-4, 1)
 	head := spread(m.st.accent.Render("Permission mode"), m.st.dim.Render("what larik may do without asking"), w)
 	hint := "1–4 or ↑/↓ + enter select · esc close"
 	return m.st.modal.Width(max(m.width-2, 10)).Render(head + "\n" + m.modePick.view(m.st, w) + "\n" + m.st.dim.Render(hint))

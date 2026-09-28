@@ -100,6 +100,9 @@ func (m *model) open(o app.Options, label, prefill string) tea.Cmd {
 	m.sess.Close("other")
 
 	m.sess, m.agent = s, s.Agent
+	m.conversation.Reset()
+	m.view.SetContent("")
+	m.view.GotoBottom()
 	m.opts.Agent, m.opts.Hooks, m.opts.History = s.Agent, s.Hooks, s.History
 	m.perm, m.permQueue, m.bgReplies, m.queue = nil, nil, nil, nil
 	m.taskCalls = nil
@@ -177,7 +180,7 @@ func (m *model) handleSessionPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *model) sessionPickerView() string {
 	p := m.sessionPick
 	w := max(m.width-6, 20)
-	p.height = max(min(14, m.height-8), 4)
+	p.height = max(min(14, m.availablePanelRows()-5), 1)
 	header := spread(m.st.accent.Render("Sessions"), m.st.dim.Render("newest first"), w)
 	hint := m.st.dim.Render("↑/↓ move · type to filter · enter resume · esc close")
 	return m.st.modal.Width(max(m.width-2, 10)).Render(header + "\n" + p.filterLine(m.st, "filter by ID or title…") + "\n" + p.view(m.st, w) + "\n" + hint)

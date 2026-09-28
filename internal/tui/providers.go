@@ -251,7 +251,16 @@ func (m *model) openWizardFromProviders(name string) tea.Cmd {
 func (m *model) providersView() string {
 	pm := m.provs
 	w := max(m.width-6, 20)
-	pm.list.height = max(min(12, m.height-16), 4)
+	budget := m.availablePanelRows()
+	var detail []string
+	if it, ok := pm.list.selected(); ok {
+		if p, ok := it.value.(pickProvider); ok {
+			detail = m.providerDetail(p.name)
+		}
+	}
+	// Keep the list navigable even when a provider has a long description.
+	detailRows := min(len(detail), max(budget-9-boolRows(pm.note != ""), 0))
+	pm.list.height = max(min(12, budget-6-detailRows-boolRows(pm.note != "")), 1)
 	head := m.st.accent.Render("Providers")
 	if path := tildePath(m.opts.Config.UserConfigPath()); len(path)+12 < w {
 		head = spread(head, m.st.dim.Render(path), w)
@@ -261,11 +270,7 @@ func (m *model) providersView() string {
 		pm.list.view(m.st, w),
 		m.st.dim.Render(strings.Repeat("─", w)),
 	}
-	if it, ok := pm.list.selected(); ok {
-		if p, ok := it.value.(pickProvider); ok {
-			lines = append(lines, m.providerDetail(p.name)...)
-		}
-	}
+	lines = append(lines, detail...)
 	if pm.note != "" {
 		style := m.st.ok
 		if pm.noteErr {
