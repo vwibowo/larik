@@ -184,8 +184,10 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default`      | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |
 | `accept-edits` | Edits inside the working directory run without asking. Commands still ask.                                                                                                            |
-| `plan`         | Only read-only tools run.                                                                                                                                                             |
+| `plan`         | Only read-only tools run. When the plan is ready, the model presents it with `exit_plan_mode`; approving it switches to `accept-edits` or `default`.                                  |
 | `yolo`         | Tools run without prompts. Deny rules and the file-tool project boundary still apply.                                                                                                 |
+
+**Leaving plan mode.** In plan mode the model is told it is planning, and when the plan is ready it calls `exit_plan_mode`. Larik prints the plan in the conversation and asks: **Yes, and accept edits**, **Yes, but ask before each edit**, or **No, keep planning**, which lets you say what to change. Approving switches the mode for this session only; your saved default stays as it is. In `larik -p` plan mode can't end, so the model gives the plan as its answer.
 
 Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
 

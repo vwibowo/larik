@@ -221,3 +221,15 @@ func strconvQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+func TestExitPlanToolAsksOnlyInPlanMode(t *testing.T) {
+	in := `{"plan":"x"}`
+	for mode, want := range map[Mode]Decision{ModePlan: Ask, ModeDefault: Allow, ModeAcceptEdits: Allow, ModeYolo: Allow} {
+		if got, _ := NewChecker(mode, Rules{}, "/w").Decide(call(ExitPlanTool, true, in)); got != want {
+			t.Errorf("%s: got %v, want %v", mode, got, want)
+		}
+	}
+	if r := SuggestRule(ExitPlanTool, json.RawMessage(in)); r != "" {
+		t.Errorf("no rule should be suggested for a plan, got %q", r)
+	}
+}

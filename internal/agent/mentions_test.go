@@ -136,7 +136,8 @@ func TestShellOutputRidesOnNextPrompt(t *testing.T) {
 	}
 	drain(a.Run(context.Background(), "what did it print?"), PermissionReply{})
 	msg := lastPrompt(t, fp)
-	if msg.Text() != "what did it print?" || len(msg.Blocks) != 2 || msg.Blocks[1].Attachment != "!echo hello-from-shell" ||
+	// Plan mode adds its note in front of the prompt.
+	if !strings.HasSuffix(msg.Text(), "what did it print?") || len(msg.Blocks) != 2 || msg.Blocks[1].Attachment != "!echo hello-from-shell" ||
 		!strings.Contains(msg.Blocks[1].Text, "<bash-output>hello-from-shell</bash-output>") {
 		t.Fatalf("prompt blocks: %+v", msg.Blocks)
 	}

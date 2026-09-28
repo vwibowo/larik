@@ -96,6 +96,7 @@ type Agent struct {
 	cost        float64
 	lastContext int
 	notes       []string    // prepended to the next user message
+	planNoted   bool        // the model was last told plan mode is on
 	pending     []llm.Block // attached to the next user message, e.g. "!" output
 	toolsLoaded bool
 
@@ -352,6 +353,7 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	}
 
 	a.mu.Lock()
+	a.planNotesLocked()
 	if len(a.notes) > 0 {
 		prompt = "<system-note>\n" + strings.Join(a.notes, "\n") + "\n</system-note>\n\n" + prompt
 		a.notes = nil

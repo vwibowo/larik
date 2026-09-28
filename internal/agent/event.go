@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"larik/internal/llm"
+	"larik/internal/permission"
 )
 
 type EventKind string
@@ -65,6 +66,9 @@ type PermissionReply struct {
 	Always    bool         // persist SuggestedRule
 	Reason    string       // optional feedback for the model on deny
 	Persisted chan<- error // optional result of persisting an "always allow" answer
+	// Mode, for an approved exit_plan_mode, is the permission mode to
+	// continue in (default when empty).
+	Mode permission.Mode
 }
 
 type UsageInfo struct {

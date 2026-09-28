@@ -87,7 +87,7 @@ func Setup(cwd, version string) (*App, error) {
 	}
 
 	a.AgentDefs = subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, gitRoot))
-	baseTools = append(baseTools, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
+	baseTools = append(baseTools, agent.ExitPlanTool{}, subagent.WaitTool{}, subagent.StopTool{}, &subagent.Tool{
 		Set:                a.AgentDefs,
 		ContextFunc:        a.childContext,
 		MinimalContextFunc: a.minimalChildContext,

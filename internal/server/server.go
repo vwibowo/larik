@@ -559,12 +559,21 @@ func (s *Server) answerPerm(w http.ResponseWriter, r *http.Request, l *live) {
 		Allow  bool   `json:"allow"`
 		Always bool   `json:"always"`
 		Reason string `json:"reason"`
+		Mode   string `json:"mode"` // exit_plan_mode: the mode to continue in
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
+	var mode permission.Mode
+	if req.Mode != "" {
+		var err error
+		if mode, err = permission.ParseMode(req.Mode); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	always := req.Always && req.Allow
-	reply := agent.PermissionReply{Allow: req.Allow, Always: always, Reason: req.Reason}
+	reply := agent.PermissionReply{Allow: req.Allow, Always: always, Reason: req.Reason, Mode: mode}
 	var persisted chan error
 	if always {
 		persisted = make(chan error, 1)

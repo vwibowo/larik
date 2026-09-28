@@ -96,6 +96,8 @@ With `{"wait": true}`, the handler subscribes before starting the run, reads eve
 
 **Permission requests outlive the HTTP request.** A pending request holds the agent's reply channel until any client answers. When a run ends, its unanswered requests expire (`permission_resolved: expired`). Requests from background tasks survive until the tasks end.
 
+**Approving a plan.** A permission request for `exit_plan_mode` carries the plan in `input.plan`. Answer `{"allow":true,"mode":"accept-edits"}` (or `"default"`) to approve it and leave plan mode; `mode` defaults to `default`. `{"allow":false,"reason":"…"}` keeps planning and passes the feedback to the model. An unknown `mode` is a 400.
+
 **Always allow reports persistence.** An answer with `{"allow":true,"always":true}` waits for the private settings write and returns `{"allowed":true,"persisted":true}` on success. If the write fails, it returns `persisted:false` with an error, and the event stream emits a notice. The tool call remains allowed and the rule remains active only in that session. Other permission answers return 204.
 
 **Idle sessions still deliver background results.** `drainBackground` reads `Agent.Background()` for the session's whole life. When a task finishes and the session is idle, `deliverNotifications` starts a turn by itself with `RunNotifications`, and `loop` keeps going until no undelivered results remain, so the model always sees them.

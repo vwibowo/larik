@@ -154,6 +154,11 @@ func urlHost(raw string) string {
 	return strings.ToLower(u.Hostname())
 }
 
+// ExitPlanTool is the tool that asks the user to approve a plan and leave
+// plan mode. In plan mode it always asks, since the prompt is the
+// approval; elsewhere it has nothing to do and is allowed.
+const ExitPlanTool = "exit_plan_mode"
+
 // networkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
 var networkTools = map[string]bool{"web_fetch": true, "web_search": true}
@@ -174,6 +179,12 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 			return Deny, fmt.Sprintf("denied by rule %q", r)
 		}
 	}
+	if call.Tool == ExitPlanTool {
+		if c.mode == ModePlan {
+			return Ask, ""
+		}
+		return Allow, ""
+	}
 	if c.mode == ModeYolo {
 		return Allow, ""
 	}
@@ -181,7 +192,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		return Allow, ""
 	}
 	if c.mode == ModePlan && !networkTools[call.Tool] {
-		return Deny, "plan mode is active: only read-only tools may run. Present your plan instead of making changes."
+		return Deny, "plan mode is active: only read-only tools may run. When your plan is ready, present it with exit_plan_mode for the user's approval."
 	}
 	if c.allows(call.Tool, subject) {
 		return Allow, ""
@@ -205,6 +216,9 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 // SuggestRule proposes an "always allow" rule for a call: the command's
 // first word(s) for bash, the tool name for everything else.
 func SuggestRule(tool string, input json.RawMessage) string {
+	if tool == ExitPlanTool {
+		return "" // approving a plan is never standing permission
+	}
 	if tool == "web_fetch" {
 		if host := Subject(tool, input); host != "" {
 			return "web_fetch(domain:" + host + ")"

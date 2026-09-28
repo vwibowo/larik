@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 
 	"larik/internal/agent"
@@ -40,5 +41,12 @@ func TestTodoListPrintsAsChecklist(t *testing.T) {
 	p.handle(agent.Event{Kind: agent.EvToolStart, ToolName: tools.TodoToolName, Input: []byte(`{"todos":[{"content":"Fix the bug","status":"in_progress"},{"content":"Run the tests","status":"pending"}]}`)})
 	if got := errOut.String(); got != "→ tasks\n  [>] Fix the bug\n  [ ] Run the tests\n" {
 		t.Fatalf("stderr %q", got)
+	}
+}
+
+func TestHeadlessKeepsPlanMode(t *testing.T) {
+	r := deny(agent.Event{ToolName: permission.ExitPlanTool})
+	if r.Allow || !strings.Contains(r.Reason, "final answer") {
+		t.Fatalf("got %+v", r)
 	}
 }

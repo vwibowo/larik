@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"larik/internal/agent"
+	"larik/internal/permission"
 	"larik/internal/tools"
 )
 
@@ -42,7 +43,7 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 			select {
 			case e := <-a.Background():
 				if e.Kind == agent.EvPermission {
-					e.Reply <- agent.PermissionReply{Allow: false, Reason: denyReason}
+					e.Reply <- deny(e)
 				}
 				p.handle(e)
 				if e.Kind == agent.EvTaskDone {
@@ -104,7 +105,7 @@ func (p *printer) consume(ch <-chan agent.Event) string {
 	var failure string
 	for e := range ch {
 		if e.Kind == agent.EvPermission {
-			e.Reply <- agent.PermissionReply{Allow: false, Reason: denyReason}
+			e.Reply <- deny(e)
 		}
 		if e.Kind == agent.EvError && e.Agent == "" {
 			failure = e.Text
@@ -189,4 +190,13 @@ func nest(e agent.Event) string {
 
 func indent(s, prefix string) string {
 	return prefix + strings.ReplaceAll(s, "\n", "\n"+prefix)
+}
+
+// deny answers a permission request, which a non-interactive run can't
+// put to anyone.
+func deny(e agent.Event) agent.PermissionReply {
+	if e.ToolName == permission.ExitPlanTool {
+		return agent.PermissionReply{Reason: "this is a non-interactive run, so plan mode can't end here; give the plan as your final answer"}
+	}
+	return agent.PermissionReply{Reason: denyReason}
 }

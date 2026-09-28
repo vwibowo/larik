@@ -302,6 +302,9 @@ func TestPermissionOverSSE(t *testing.T) {
 	if code := h.do("POST", "/v1/sessions/"+st.ID+"/permissions/"+perm.RequestID, map[string]any{"allow": true}, nil); code != 404 {
 		t.Errorf("answering twice: %d", code)
 	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/permissions/"+perm.RequestID, map[string]any{"allow": true, "mode": "sideways"}, nil); code != http.StatusBadRequest {
+		t.Errorf("an unknown mode: %d", code)
+	}
 
 	// Reconnecting with Last-Event-ID replays what was missed.
 	replay := h.stream(st.ID, "0")

@@ -63,6 +63,7 @@ classDiagram
 | `skill` | skills | yes | Loads a skill's full instructions |
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
 | `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
+| `exit_plan_mode` | agent | yes | Presents a plan. `Decide` always asks for it in plan mode (and allows it elsewhere); the prompt is the approval, and the reply's `Mode` (accept-edits or default) is applied by `authorize`. An empty plan is refused before asking. Not offered to subagents |
 
 Tool output sent to the model is capped (`tools.MaxOutputBytes`, about 30 KB); `Truncate` keeps the head and the tail, since errors usually appear at the end.
 
@@ -193,4 +194,6 @@ The agent goroutine blocks until someone answers or the turn is cancelled. Headl
 | `default` | run | ask | run | ask (safe list runs) | ask | enforced |
 | `accept-edits` | run | run | run | ask (safe list runs) | ask | enforced |
 | `plan` | run | denied | denied | denied | ask | enforced |
+
+In plan mode each prompt carries a short `<system-note>` saying so (in the user message, not the system prompt, so the cached prefix doesn't change), and the first prompt after plan mode ends says it has ended.
 | `yolo` | run | run | run | run | run | enforced |

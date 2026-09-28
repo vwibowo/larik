@@ -133,6 +133,10 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 		return true, "", input
 	}
 
+	exitPlan := use.Name == permission.ExitPlanTool
+	if exitPlan && PlanOf(input) == "" {
+		return false, "exit_plan_mode needs the plan: pass it as plan, in Markdown.", input
+	}
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)
@@ -141,6 +145,17 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 	case <-ctx.Done():
 		return false, "interrupted by user", input
 	case r := <-reply:
+		if exitPlan {
+			if !r.Allow {
+				msg := "The user didn't approve the plan, so plan mode stays on. Revise the plan"
+				if r.Reason != "" {
+					return false, msg + " with their feedback: " + r.Reason, input
+				}
+				return false, msg + ", or ask them what to change.", input
+			}
+			a.approvePlan(r.Mode)
+			return true, "", input
+		}
 		if !r.Allow {
 			msg := "The user denied this tool call."
 			if r.Reason != "" {

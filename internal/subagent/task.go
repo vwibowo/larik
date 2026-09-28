@@ -412,7 +412,7 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 	for _, spec := range parent.Specs() {
 		// The task list is the main agent's, shown to the user; a child
 		// reports back in its final message instead.
-		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || !def.toolAllowed(spec.Name) {
+		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || spec.Name == permission.ExitPlanTool || !def.toolAllowed(spec.Name) {
 			continue
 		}
 		if inWorktree && spec.Name == "lsp" {

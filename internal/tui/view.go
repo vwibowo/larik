@@ -408,6 +408,13 @@ func (m *model) permissionView() string {
 		{text: "Yes, and don't ask again for ", rule: e.SuggestedRule, key: "a", note: "save to private project settings"},
 		{text: "No, tell larik what to do instead", key: "n"},
 	}
+	if e.ToolName == permission.ExitPlanTool {
+		opts = []struct{ text, rule, key, note string }{
+			{text: "Yes, and accept edits", key: "y", note: "edit project files without asking; commands still ask"},
+			{text: "Yes, but ask before each edit", key: "2"},
+			{text: "No, keep planning", key: "n", note: "tell larik what to change"},
+		}
+	}
 	for i, o := range opts {
 		line := fmt.Sprintf("%d. %s", i+1, o.text)
 		cursor := "  "
@@ -422,7 +429,11 @@ func (m *model) permissionView() string {
 			lines = append(lines, m.st.dim.Render("     "+o.note))
 		}
 	}
-	lines = append(lines, "", m.st.dim.Render("↑/↓ select · enter confirm · esc deny · ctrl+c deny and stop"))
+	hint := "↑/↓ select · enter confirm · esc deny · ctrl+c deny and stop"
+	if e.ToolName == permission.ExitPlanTool {
+		hint = "↑/↓ select · enter confirm · esc keep planning · ctrl+c stop"
+	}
+	lines = append(lines, "", m.st.dim.Render(hint))
 	return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(lines, "\n"))
 }
 
@@ -448,6 +459,8 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Fetch this page?"
 	case "web_search":
 		return "Search the web?"
+	case permission.ExitPlanTool:
+		return "Ready to start on this plan?"
 	}
 	if server := mcp.ServerOf(e.ToolName); server != "" {
 		return "Use " + permToolName(e) + "?"
@@ -458,6 +471,9 @@ func (m *model) permQuestion(e *agent.Event) string {
 // permToolName is the tool as people know it: "bash (unsandboxed)",
 // "github › create_issue".
 func permToolName(e *agent.Event) string {
+	if e.ToolName == permission.ExitPlanTool {
+		return "leaves plan mode"
+	}
 	if server := mcp.ServerOf(e.ToolName); server != "" {
 		return server + " › " + strings.TrimPrefix(e.ToolName, mcp.Prefix+server+"__")
 	}
@@ -490,6 +506,9 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
 		return bold.Render(str(in["query"])) + "\n" + m.st.dim.Render("the query goes to the configured search provider")
+	case permission.ExitPlanTool:
+		plan := agent.PlanOf(e.Input)
+		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
 		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
 	}
@@ -657,6 +676,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 		}
 	case e.ToolName == tools.TodoToolName:
 		body = m.todoCard(e.Input)
+	case e.ToolName == permission.ExitPlanTool:
+		// the plan itself was printed when it was put to the user
 	case e.ToolName == "write":
 		var in struct{ Path, Content string }
 		_ = json.Unmarshal(e.Input, &in)
@@ -781,6 +802,9 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		}
 	case "task_stop":
 		arg = str(in["id"])
+	case permission.ExitPlanTool:
+		name = "plan"
+		arg = firstLine(agent.PlanOf(input))
 	case tools.TodoToolName:
 		name = "todos"
 		if todos, err := tools.ParseTodos(input); err == nil {
@@ -807,6 +831,21 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 	}
 	arg = oneLine(arg, 80)
 	return fmt.Sprintf("%s(%s)", name, arg)
+}
+
+// renderPlan shows a plan put to the user for approval.
+func (m *model) renderPlan(input json.RawMessage) string {
+	plan := agent.PlanOf(input)
+	if plan == "" {
+		plan = "(no plan given)"
+	}
+	head := m.st.accent.Render("◆ Plan")
+	return "\n" + head + "\n" + m.renderMarkdown(plan)
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return strings.TrimLeft(line, "# ")
 }
 
 // printBanner prints two short lines, plus warnings only when they apply.

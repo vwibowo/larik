@@ -26,6 +26,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/lsp"
 	"larik/internal/mcp"
+	"larik/internal/permission"
 	"larik/internal/sandbox"
 	"larik/internal/skills"
 	"larik/internal/subagent"
@@ -837,13 +838,23 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		return m.println(m.renderToolCard(e))
 	case agent.EvPermission:
+		// A plan goes into the conversation, where it can be scrolled and
+		// stays for reference; the prompt only asks about it.
+		var plan tea.Cmd
+		if e.ToolName == permission.ExitPlanTool {
+			plan = m.println(m.renderPlan(e.Input))
+		}
 		if m.perm != nil {
 			m.permQueue = append(m.permQueue, e)
-			return nil
+			return plan
 		}
 		ev := e
 		m.perm, m.permIdx = &ev, 0
-		return m.alert("needs your permission to use " + e.ToolName)
+		what := "needs your permission to use " + e.ToolName
+		if e.ToolName == permission.ExitPlanTool {
+			what = "has a plan for you to review"
+		}
+		return tea.Sequence(plan, m.alert(what))
 	case agent.EvUsage:
 		m.stats = *e.Usage
 	case agent.EvCompacted:
@@ -889,9 +900,9 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "down", "j", "tab":
 		m.permIdx = (m.permIdx + 1) % options
 	case "1", "y":
-		reply = &agent.PermissionReply{Allow: true}
+		reply = &m.permAllows()[0]
 	case "2", "a":
-		reply = &agent.PermissionReply{Allow: true, Always: true}
+		reply = &m.permAllows()[1]
 	case "3", "n":
 		m.startPermissionFeedback()
 		return nil
@@ -905,7 +916,7 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.startPermissionFeedback()
 			return nil
 		}
-		reply = &[]agent.PermissionReply{{Allow: true}, {Allow: true, Always: true}}[m.permIdx]
+		reply = &m.permAllows()[m.permIdx]
 	}
 	if reply == nil {
 		return nil
@@ -913,9 +924,22 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	return m.replyPermission(*reply)
 }
 
+// permAllows are the replies of the prompt's first two options: allow once
+// and always for a tool; for a plan, approve and accept edits or approve
+// and keep asking.
+func (m *model) permAllows() []agent.PermissionReply {
+	if m.perm != nil && m.perm.ToolName == permission.ExitPlanTool {
+		return []agent.PermissionReply{{Allow: true, Mode: permission.ModeAcceptEdits}, {Allow: true, Mode: permission.ModeDefault}}
+	}
+	return []agent.PermissionReply{{Allow: true}, {Allow: true, Always: true}}
+}
+
 func (m *model) startPermissionFeedback() {
 	ta := textarea.New()
 	ta.Placeholder = "What should larik do instead?"
+	if m.perm != nil && m.perm.ToolName == permission.ExitPlanTool {
+		ta.Placeholder = "What should change in the plan?"
+	}
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
 	ta.DynamicHeight = true
@@ -937,6 +961,16 @@ func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 		m.perm, m.permIdx = &next, 0
 	}
 	ev.Reply <- reply
+	if ev.ToolName == permission.ExitPlanTool {
+		if !reply.Allow {
+			return m.println(m.st.dim.Render("  ⎿ kept planning"))
+		}
+		mode := reply.Mode
+		if mode == "" {
+			mode = permission.ModeDefault
+		}
+		return m.println(m.st.dim.Render("  ⎿ plan approved · continuing in ") + modeLabels[mode])
+	}
 	if !reply.Allow {
 		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input, m.shortPaths)))
 	}
