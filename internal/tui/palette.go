@@ -56,7 +56,7 @@ var helpText = func() string {
 	for _, c := range commands {
 		fmt.Fprintf(&b, "  %-30s %s\n", strings.TrimSpace(c.name+" "+c.args), c.desc)
 	}
-	fmt.Fprintf(&b, "  %-30s %s\n", "/<skill-name> [args]", "run a skill")
+	fmt.Fprintf(&b, "  %-30s %s\n", "/<skill-name> [args]", "run a skill or a custom command (.claude/commands/<name>.md)")
 	b.WriteString(`
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
@@ -109,7 +109,14 @@ func (m *model) syncPalette() {
 	if m.opts.Skills != nil {
 		for _, sk := range m.opts.Skills.List() {
 			if sk.UserInvocable {
-				add("/"+sk.Name, "[args]", sk.Description, "skills", "")
+				args, section := "[args]", "skills"
+				if sk.ArgumentHint != "" {
+					args = sk.ArgumentHint
+				}
+				if sk.Command {
+					section = "custom commands"
+				}
+				add("/"+sk.Name, args, sk.Description, section, "")
 			}
 		}
 	}

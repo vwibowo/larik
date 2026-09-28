@@ -326,11 +326,14 @@ func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea
 func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 	set := m.opts.Skills
 	if set == nil || len(set.List()) == 0 {
-		return info("no skills found (add <name>/SKILL.md under .larik/skills, ~/.config/larik/skills, or .claude/skills)")
+		return info("no skills or commands found (add <name>/SKILL.md under .larik/skills, ~/.config/larik/skills or .claude/skills, or a command as <name>.md under .claude/commands or ~/.claude/commands)")
 	}
 	var b strings.Builder
 	for _, sk := range set.List() {
 		flags := []string{sk.Scope}
+		if sk.Command {
+			flags[0] += " command"
+		}
 		if !sk.ModelInvocable {
 			flags = append(flags, "manual only")
 		}
@@ -338,7 +341,7 @@ func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 			flags = append(flags, "model only")
 		}
 		desc := oneLine(sk.Description, 90)
-		fmt.Fprintf(&b, "/%-24s %s  [%s]\n", sk.Name, desc, strings.Join(flags, ", "))
+		fmt.Fprintf(&b, "/%-24s %s  [%s]\n", strings.TrimSpace(sk.Name+" "+sk.ArgumentHint), desc, strings.Join(flags, ", "))
 	}
 	for _, sk := range set.Shadowed {
 		fmt.Fprintf(&b, "  shadowed: %s (%s)\n", sk.Name, sk.Path)

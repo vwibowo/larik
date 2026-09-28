@@ -12,7 +12,7 @@ The comparisons describe publicly documented behavior at a high level. These pro
 | Model providers | Anthropic, OpenAI, Gemini, Ollama, any OpenAI-compatible, ChatGPT plan | Anthropic (incl. via cloud platforms) | OpenAI-first, others configurable | Gemini-first | Many | Many |
 | Tool calling | Native function calling | Native | Native | Native | Native | Mostly edit formats parsed from text |
 | OS sandbox for shell | Seatbelt / bubblewrap, on by default | Available (Seatbelt / bubblewrap) | Seatbelt / Landlock, central to its design | Optional containers / Seatbelt | No | No |
-| Hooks, skills, subagents, `.mcp.json` format | Claude Code–compatible | Native | Own formats | Own formats | Own formats | — |
+| Hooks, skills, custom commands, subagents, `.mcp.json` format | Claude Code–compatible | Native | Own formats | Own formats | Own formats | — |
 | Subagents in git worktrees | Built in, per task | Available | — | — | — | — |
 | LSP diagnostics fed back after edits | Built in | Via plugins | — | — | Built in | Lint/test commands |
 | Branchable sessions | Append-only JSONL, fork and rewind | Resume, rewind | Resume | Checkpoints | Sessions, share | Git commits per change |
@@ -49,7 +49,7 @@ The loop emits a single `Event` stream and needs only permission replies back. T
 
 ### 5. Compatible with the Claude Code ecosystem
 
-Hooks (same events, stdin payload, exit codes, JSON output; `CLAUDE_PROJECT_DIR` set), skills (`~/.claude/skills`, `.claude/skills`), subagent definitions (`.claude/agents/*.md`), `CLAUDE.md` instructions and `.mcp.json` all work unchanged. A team can adopt Larik for non-Anthropic models without rewriting its automation. Where Larik differs, it tightens: project hooks and project MCP servers need approval pinned to a content hash.
+Hooks (same events, stdin payload, exit codes, JSON output; `CLAUDE_PROJECT_DIR` set), skills (`~/.claude/skills`, `.claude/skills`), custom commands (`.claude/commands/*.md`, with `$ARGUMENTS`, `$1`… and `` !`cmd` ``), subagent definitions (`.claude/agents/*.md`), `CLAUDE.md` instructions and `.mcp.json` all work unchanged. A team can adopt Larik for non-Anthropic models without rewriting its automation. Where Larik differs, it tightens: project hooks and project MCP servers need approval pinned to a content hash.
 
 ### 6. Shared config can't loosen security
 

@@ -336,8 +336,8 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	}
 	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
-		emit(Event{Kind: EvNotice, Text: "running skill /" + name})
-		prompt = expanded
+		emit(Event{Kind: EvNotice, Text: "running /" + name})
+		prompt = a.runInline(ctx, name, expanded, emit)
 	}
 	if len(res.Context) > 0 {
 		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)

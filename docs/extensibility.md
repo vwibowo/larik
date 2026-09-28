@@ -123,6 +123,8 @@ Files are `<name>.md` with YAML frontmatter (`name`, `description`, `tools`, `mo
 
 Frontmatter flags: `disable-model-invocation` removes a skill from the index; `user-invocable: false` hides it from `/`.
 
+**Custom commands** (`commands/<name>.md` under `~/.claude`, the config dir, and `.claude` or `.larik` from repo root to cwd) are loaded into the same `Set` by `parseCommand`, with `Skill.Command` set. Their roots come first in `Roots`, so a skill overrides a command of the same name. Frontmatter is optional (the first body line stands in for a missing description); only commands with a `description` are model-invocable. `argument-hint` is read as a raw line, because Claude Code's `[a] [b]` style isn't valid YAML. When the user runs one, the agent replaces each `` !`cmd` `` with the bash tool's output, but only for commands `permission.Decide` allows without asking ([inline.go](../internal/agent/inline.go)); the rest are left out with a note. `allowed-tools` isn't honored, because a repository's file must not grant itself permissions.
+
 ## Hooks
 
 [hooks.go](../internal/hooks/hooks.go) runs shell commands at lifecycle points, in Claude Code's format, so existing scripts work.

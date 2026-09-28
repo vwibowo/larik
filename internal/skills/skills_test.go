@@ -65,7 +65,7 @@ func TestExpand(t *testing.T) {
 	mk(t, root, "deploy", "---\nname: deploy\ndescription: d\n---\nDeploy to $ARGUMENTS now.\n")
 	mk(t, root, "review", "---\nname: review\ndescription: r\n---\nReview the diff.\n")
 	mk(t, root, "hidden", "---\nname: hidden\ndescription: h\nuser-invocable: false\n---\nx\n")
-	set := Discover([]Root{{root, "project"}})
+	set := Discover([]Root{{Dir: root, Scope: "project"}})
 
 	got, ok := set.Expand("/deploy staging")
 	if !ok || !strings.Contains(got, "Deploy to staging now.") || strings.Contains(got, "ARGUMENTS:") {
@@ -89,7 +89,7 @@ func TestExpand(t *testing.T) {
 func TestTool(t *testing.T) {
 	root := t.TempDir()
 	mk(t, root, "pdf", "---\nname: pdf\ndescription: d\n---\nUse scripts/fill.py.\n")
-	tool := Tool{Set: Discover([]Root{{root, "user"}})}
+	tool := Tool{Set: Discover([]Root{{Dir: root, Scope: "user"}})}
 	r := tool.Run(context.Background(), nil, json.RawMessage(`{"name":"pdf"}`))
 	if r.IsError || !strings.Contains(r.Content, "Use scripts/fill.py.") || !strings.Contains(r.Content, filepath.Join(root, "pdf")) {
 		t.Errorf("%+v", r)
@@ -98,7 +98,7 @@ func TestTool(t *testing.T) {
 		t.Error("missing skill should error")
 	}
 	mk(t, root, "deploy", "---\nname: deploy\ndescription: d\ndisable-model-invocation: true\n---\nShip it.\n")
-	tool = Tool{Set: Discover([]Root{{root, "user"}})}
+	tool = Tool{Set: Discover([]Root{{Dir: root, Scope: "user"}})}
 	if r := tool.Run(context.Background(), nil, json.RawMessage(`{"name":"deploy"}`)); !r.IsError || strings.Contains(r.Content, "Ship it") {
 		t.Errorf("a disable-model-invocation skill must not load through the tool: %+v", r)
 	}
@@ -106,7 +106,7 @@ func TestTool(t *testing.T) {
 
 func TestReload(t *testing.T) {
 	root := t.TempDir()
-	set := Discover([]Root{{root, "project"}})
+	set := Discover([]Root{{Dir: root, Scope: "project"}})
 	if set.Index() != "" {
 		t.Fatal("no skills yet")
 	}

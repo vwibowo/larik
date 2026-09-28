@@ -31,6 +31,11 @@ type Skill struct {
 	ModelInvocable bool
 	// UserInvocable skills can be run as /name.
 	UserInvocable bool
+	// Command marks a Claude Code-style custom command: a single
+	// commands/<name>.md file rather than a <name>/SKILL.md folder.
+	Command bool
+	// ArgumentHint describes a command's arguments, e.g. "[issue-number]".
+	ArgumentHint string
 }
 
 type frontmatter struct {
@@ -38,6 +43,7 @@ type frontmatter struct {
 	Description            string `yaml:"description"`
 	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
 	UserInvocable          *bool  `yaml:"user-invocable"`
+	ArgumentHint           string `yaml:"argument-hint"`
 }
 
 // Set is the discovered skills, keyed by name. Reload rescans the same
@@ -50,21 +56,20 @@ type Set struct {
 	Warnings []string // unreadable or malformed skills
 }
 
-// Root is a directory whose subdirectories are skills.
+// Root is a directory whose subdirectories are skills, or with Commands,
+// whose .md files (in any subdirectory) are commands.
 type Root struct {
-	Dir   string
-	Scope string
+	Dir      string
+	Scope    string
+	Commands bool
 }
 
-// Roots lists skill directories in increasing precedence: user dirs, then
-// project dirs from the repo root down to cwd. Within a scope, .larik
-// beats .claude and .agents, so Larik-specific skills can override shared ones.
+// Roots lists skill and command directories in increasing precedence:
+// commands first, so a skill wins over a command of the same name (as in
+// Claude Code); then, for each, user dirs, then project dirs from the repo
+// root down to cwd. Within a scope, .larik beats .claude and .agents, so
+// Larik-specific skills can override shared ones.
 func Roots(home, configDir, cwd, repoRoot string) []Root {
-	roots := []Root{
-		{filepath.Join(home, ".agents", "skills"), "user"},
-		{filepath.Join(home, ".claude", "skills"), "user"},
-		{filepath.Join(configDir, "skills"), "user"},
-	}
 	var dirs []string
 	for d := cwd; ; d = filepath.Dir(d) {
 		dirs = append(dirs, d)
@@ -72,9 +77,23 @@ func Roots(home, configDir, cwd, repoRoot string) []Root {
 			break
 		}
 	}
+	roots := []Root{
+		{filepath.Join(home, ".claude", "commands"), "user", true},
+		{filepath.Join(configDir, "commands"), "user", true},
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		for _, sub := range []string{".claude", ".larik"} {
+			roots = append(roots, Root{filepath.Join(dirs[i], sub, "commands"), "project", true})
+		}
+	}
+	roots = append(roots,
+		Root{filepath.Join(home, ".agents", "skills"), "user", false},
+		Root{filepath.Join(home, ".claude", "skills"), "user", false},
+		Root{filepath.Join(configDir, "skills"), "user", false},
+	)
 	for i := len(dirs) - 1; i >= 0; i-- {
 		for _, sub := range []string{".agents", ".claude", ".larik"} {
-			roots = append(roots, Root{filepath.Join(dirs[i], sub, "skills"), "project"})
+			roots = append(roots, Root{filepath.Join(dirs[i], sub, "skills"), "project", false})
 		}
 	}
 	return roots
@@ -83,7 +102,24 @@ func Roots(home, configDir, cwd, repoRoot string) []Root {
 // Discover loads skills from roots; later roots override earlier ones.
 func Discover(roots []Root) *Set {
 	s := &Set{roots: roots, byName: map[string]Skill{}}
+	add := func(sk Skill) {
+		if prev, ok := s.byName[sk.Name]; ok && !sameFile(prev.Path, sk.Path) {
+			s.Shadowed = append(s.Shadowed, prev)
+		}
+		s.byName[sk.Name] = sk
+	}
 	for _, root := range roots {
+		if root.Commands {
+			for _, path := range commandFiles(root.Dir) {
+				sk, err := parseCommand(path, root.Scope)
+				if err != nil {
+					s.Warnings = append(s.Warnings, err.Error())
+					continue
+				}
+				add(sk)
+			}
+			continue
+		}
 		entries, err := os.ReadDir(root.Dir)
 		if err != nil {
 			continue
@@ -102,13 +138,101 @@ func Discover(roots []Root) *Set {
 				s.Warnings = append(s.Warnings, err.Error())
 				continue
 			}
-			if prev, ok := s.byName[sk.Name]; ok && !sameFile(prev.Path, sk.Path) {
-				s.Shadowed = append(s.Shadowed, prev)
-			}
-			s.byName[sk.Name] = sk
+			add(sk)
 		}
 	}
 	return s
+}
+
+// commandFiles lists the .md files under dir, sorted, following
+// Claude Code: a subdirectory only groups commands (frontend/test.md is
+// /test).
+func commandFiles(dir string) []string {
+	var out []string
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && path != dir && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.EqualFold(filepath.Ext(path), ".md") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+var hintRe = regexp.MustCompile(`(?m)^argument-hint:[ \t]*(.*)$`)
+
+// unmarshalFrontmatter parses YAML frontmatter. Claude Code writes
+// argument hints like "argument-hint: [pr] [priority]", which isn't valid
+// YAML, so that line is taken as it stands.
+func unmarshalFrontmatter(fm []byte, meta *frontmatter) error {
+	if m := hintRe.FindSubmatchIndex(fm); m != nil {
+		meta.ArgumentHint = strings.Trim(strings.TrimSpace(string(fm[m[2]:m[3]])), `"'`)
+		fm = append(append([]byte(nil), fm[:m[0]]...), fm[m[1]:]...)
+	}
+	return yaml.Unmarshal(fm, meta)
+}
+
+var commandNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// parseCommand reads a custom command file. Frontmatter is optional; a
+// command without a description uses its first line.
+func parseCommand(path, scope string) (Skill, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Skill{}, err
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if !commandNameRe.MatchString(name) || len(name) > 64 {
+		return Skill{}, fmt.Errorf("%s: invalid command name %q (letters, digits, - and _, max 64)", path, name)
+	}
+	var meta frontmatter
+	body := data
+	if fm, b, err := split(data); err == nil {
+		if err := unmarshalFrontmatter(fm, &meta); err != nil {
+			return Skill{}, fmt.Errorf("%s: invalid frontmatter: %v", path, err)
+		}
+		body = b
+	}
+	desc := strings.Join(strings.Fields(meta.Description), " ")
+	explicit := desc != ""
+	if !explicit {
+		desc = firstLine(string(body))
+	}
+	if r := []rune(desc); len(r) > maxDescription {
+		desc = string(r[:maxDescription])
+	}
+	return Skill{
+		Name:        name,
+		Description: desc,
+		Path:        path,
+		Dir:         filepath.Dir(path),
+		Scope:       scope,
+		// As in Claude Code, the model may run a command only when its
+		// author described it.
+		ModelInvocable: explicit && !meta.DisableModelInvocation,
+		UserInvocable:  meta.UserInvocable == nil || *meta.UserInvocable,
+		Command:        true,
+		ArgumentHint:   strings.TrimSpace(meta.ArgumentHint),
+	}, nil
+}
+
+// firstLine is a body's first non-empty line, without heading marks.
+func firstLine(body string) string {
+	for _, l := range strings.Split(body, "\n") {
+		if l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#")); l != "" {
+			if r := []rune(l); len(r) > 100 {
+				l = string(r[:99]) + "…"
+			}
+			return l
+		}
+	}
+	return ""
 }
 
 // Reload rescans the roots the set was discovered from.
@@ -140,7 +264,7 @@ func parse(path, dirName, scope string) (Skill, error) {
 		return Skill{}, fmt.Errorf("%s: %v", path, err)
 	}
 	var meta frontmatter
-	if err := yaml.Unmarshal(fm, &meta); err != nil {
+	if err := unmarshalFrontmatter(fm, &meta); err != nil {
 		return Skill{}, fmt.Errorf("%s: invalid frontmatter: %v", path, err)
 	}
 	name := strings.TrimSpace(meta.Name)
@@ -162,6 +286,7 @@ func parse(path, dirName, scope string) (Skill, error) {
 		Scope:          scope,
 		ModelInvocable: !meta.DisableModelInvocation && desc != "",
 		UserInvocable:  meta.UserInvocable == nil || *meta.UserInvocable,
+		ArgumentHint:   strings.TrimSpace(meta.ArgumentHint),
 	}
 	return sk, nil
 }
@@ -225,7 +350,10 @@ func (s *Set) Body(name string) (Skill, string, error) {
 	}
 	_, body, err := split(data)
 	if err != nil {
-		return sk, "", err
+		if !sk.Command { // a command's frontmatter is optional
+			return sk, "", err
+		}
+		body = bytes.TrimPrefix(bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")), []byte("\xef\xbb\xbf"))
 	}
 	return sk, strings.TrimSpace(string(body)), nil
 }
@@ -254,13 +382,35 @@ func (s *Set) Index() string {
 		strings.Join(lines, "\n") + "\n</skills>"
 }
 
-// Render formats a loaded skill for the model.
+var positional = regexp.MustCompile(`\$([1-9])`)
+
+// Render formats a loaded skill for the model. $ARGUMENTS in the body
+// becomes the arguments, and $1…$9 the arguments split on spaces; when
+// the body uses neither, the arguments follow it.
 func Render(sk Skill, body, args string) string {
+	used := false
 	if strings.Contains(body, "$ARGUMENTS") {
 		body = strings.ReplaceAll(body, "$ARGUMENTS", args)
+		used = true
+	}
+	if positional.MatchString(body) {
+		fields := strings.Fields(args)
+		body = positional.ReplaceAllStringFunc(body, func(m string) string {
+			if i := int(m[1] - '1'); i < len(fields) {
+				return fields[i]
+			}
+			return ""
+		})
+		used = true
+	}
+	if used {
 		args = ""
 	}
-	out := fmt.Sprintf("<skill name=%q base_dir=%q>\n%s\n</skill>", sk.Name, sk.Dir, body)
+	tag := "skill"
+	if sk.Command {
+		tag = "command"
+	}
+	out := fmt.Sprintf("<%s name=%q base_dir=%q>\n%s\n</%s>", tag, sk.Name, sk.Dir, body, tag)
 	if strings.TrimSpace(args) != "" {
 		out += "\n\nARGUMENTS: " + strings.TrimSpace(args)
 	}
@@ -283,7 +433,11 @@ func (s *Set) Expand(prompt string) (string, bool) {
 	if err != nil {
 		return prompt, false
 	}
-	return "The user invoked the /" + name + " skill.\n\n" + Render(sk, body, args), true
+	kind := "skill"
+	if sk.Command {
+		kind = "command"
+	}
+	return "The user invoked the /" + name + " " + kind + ".\n\n" + Render(sk, body, args), true
 }
 
 // SplitFrontmatter separates YAML frontmatter from a markdown body.

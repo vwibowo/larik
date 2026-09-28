@@ -422,9 +422,29 @@ Collect commits since the last tag with `git log $(git describe --tags --abbrev=
   Existing Claude Code skills work as-is, symlinked skill folders are followed, and a higher-precedence skill with the same name overrides the lower one (`/skills` shows what was shadowed).
 
 - **Progressive disclosure:** only each skill's `name: description` is in the system prompt. The model loads the full instructions with the read-only `skill` tool when a task matches, and reads bundled files with the normal tools. The index is rebuilt at each fresh context (a new session or `/clear`) and stays fixed within it, so prompt caches stay valid. Add or edit a skill, then `/clear` to use it.
-- **Running a skill yourself:** type `/<skill-name> [args]`, in the TUI or with `-p`. `$ARGUMENTS` in the body is replaced with the args. Otherwise the args are appended.
+- **Running a skill yourself:** type `/<skill-name> [args]`, in the TUI or with `-p`. `$ARGUMENTS` in the body is replaced with the args, and `$1` to `$9` with the args one by one (split on spaces). Otherwise the args are appended.
 - **Frontmatter flags:** `disable-model-invocation: true` keeps a skill out of the model's index, so it only runs when you invoke it. `user-invocable: false` hides it from `/`.
 - Skills are instructions, like `AGENTS.md`. Anything a skill asks the model to run still goes through the normal permission checks.
+
+### Custom commands
+
+Claude Code–style custom commands work too: a Markdown file whose name is the command.
+
+```markdown
+---
+description: Fix a GitHub issue
+argument-hint: [issue-number] [priority]
+---
+
+Fix issue #$1 with priority $2. Current branch: !`git branch --show-current`
+```
+
+- **Where:** `~/.claude/commands` and `~/.config/larik/commands` for yours; `.claude/commands` and `.larik/commands` from the repo root down to the working directory for the project's. A file in a subdirectory still takes its own name (`frontend/review.md` is `/review`).
+- **Running one:** type `/<name> [args]`. The palette lists commands with their `argument-hint`, and `/skills` lists them with the skills. Arguments work as for skills.
+- **Frontmatter is optional.** Without a `description`, the first line of the file describes the command in the palette. Only a command with a `description` goes in the model's index, where it can load it with the `skill` tool; `disable-model-invocation: true` keeps a described one out.
+- **Skills win:** a skill and a command with the same name resolve to the skill, and built-in commands such as `/model` always win.
+- **`` !`command` ``** runs the command when you invoke the command file and puts its output in its place, in the sandbox when there is one. It runs only when your permission rules would allow it without asking (sandboxed commands, the safe list, allow rules); otherwise it is left out with a note, since a command file can come from a repository. Claude Code's `allowed-tools` frontmatter is ignored for the same reason. `model` is ignored too.
+- New or edited commands appear after `/clear` or in a new session, like skills.
 
 ## Subagents
 

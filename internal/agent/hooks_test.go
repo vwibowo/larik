@@ -179,3 +179,22 @@ func TestSkillCommandExpands(t *testing.T) {
 		t.Fatalf("prompt = %q", got)
 	}
 }
+
+func TestCommandRunsInlineShell(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "status.md"), []byte("---\ndescription: Summarize the status\n---\nState: !`echo inline-ok`\nRemote: !`curl -s example.com`\nSummarize for $ARGUMENTS.\n"), 0o644)
+
+	a, fp, _ := withHooks(t, permission.ModeDefault, permission.Rules{}, nil, assistant(llm.TextBlock("done")))
+	a.opts.Skills = skills.Discover([]skills.Root{{Dir: root, Scope: "project", Commands: true}})
+	evs := drain(a.Run(context.Background(), "/status the team"), PermissionReply{})
+	got := fp.requests[0].Messages[0].Text()
+	if !strings.Contains(got, "State: inline-ok") || !strings.Contains(got, "/status command") || !strings.Contains(got, "Summarize for the team.") {
+		t.Fatalf("prompt = %q", got)
+	}
+	if !strings.Contains(got, "[curl -s example.com was not run") || strings.Contains(got, "Example Domain") {
+		t.Fatalf("a command that would ask must not run: %q", got)
+	}
+	if n := notices(evs); !strings.Contains(n, "ran `echo inline-ok`") || !strings.Contains(n, "didn't run `curl -s example.com`") {
+		t.Errorf("notices: %s", n)
+	}
+}
