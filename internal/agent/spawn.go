@@ -45,14 +45,22 @@ type SpawnOptions struct {
 	// which belong to the parent's tree.
 	Cwd     string
 	Sandbox tools.Sandbox
+
+	// Label names the child in a debug trace, and TraceParent is the task
+	// call that started it.
+	Label, TraceParent string
 }
 
 // Spawn creates a subagent that shares this agent's permissions (and mode),
 // hooks and checkpoints, but has its own context, prompt and tools.
 func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
-	effort, noAutoCompact, compactWith := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith
+	effort, noAutoCompact, compactWith, tr := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace
 	a.mu.Unlock()
+	label := o.Label
+	if label == "" {
+		label = o.Type
+	}
 	opts := Options{
 		Provider:      o.Provider,
 		Model:         o.Model,
@@ -71,6 +79,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		LSP:           a.opts.LSP,
 		Sandbox:       a.opts.Sandbox,
 		Subagent:      o.Type,
+		Trace:         tr.Child(label, o.TraceParent),
 	}
 	if o.Cwd != "" && o.Cwd != a.opts.Cwd {
 		opts.Cwd = o.Cwd

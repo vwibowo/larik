@@ -202,6 +202,9 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 | `/init [focus]`                                  | Study the project and write `AGENTS.md`, or improve the `AGENTS.md` or `CLAUDE.md` it has; works with `-p` too. Applies from the next fresh context                                                                                                                      |
 | `/export [file]`                                 | Save the whole session as Markdown (prompts, replies, tool calls and capped results; no thinking or attached file contents). Default `larik-<session>.md` here; never overwrites                                                                                         |
 | `/copy`                                          | Copy the last reply, as Markdown, to the clipboard (natively and through the terminal, so it works over SSH)                                                                                                                                                             |
+| `/vim`                                           | Switch vim editing of the prompt on or off; see [Vim mode](#vim-mode)                                                                                                                                                                                                    |
+| `/debug [on\|off]`                               | Record this session for review: requests as sent, responses, raw HTTP, tools and timing; see [Debug mode and traces](#debug-mode-and-traces)                                                                                                                             |
+| `/trace`                                         | Open the recorded trace in the browser: a timeline, every request as sent, and the raw HTTP exchanges                                                                                                                                                                    |
 | `/cost`                                          | Usage and cost, split by model when more than one was used                                                                                                                                                                                                               |
 | `/sessions`                                      | Choose a session from a searchable, scrolling list (`✓ current`, `⑂` branch)                                                                                                                                                                                             |
 | `/resume [id]`                                   | Open the session picker, or switch by ID (a unique prefix is enough)                                                                                                                                                                                                     |
@@ -365,6 +368,22 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
 - A run's permission requests wait until some client answers them or the run is cancelled.
 - When background tasks finish while a session is idle, the server starts a turn by itself to hand their results to the model.
 
+## Debug mode and traces
+
+Debug mode records what the harness does in a session, so you can review it afterwards or watch it live: each prompt, every model request as it was sent (system prompt, tools, messages, parameters), each response with its timing, token use and cost, the raw HTTP exchange with the provider, tool calls with their input and output, permission answers and how long they waited, hooks, notices and compactions. Subagents are recorded in their own lanes.
+
+Turn it on with `larik --debug` (also `larik -p --debug` and `larik serve --debug`), `LARIK_DEBUG=1`, `"debug": true` in personal settings, or `/debug on` in a session (`/debug off` stops it, `/debug` shows where it's recording). While it records, the footer shows `● rec`.
+
+Review a trace with `/trace` in the TUI, or `larik trace` from a shell, which opens the latest traced session in this directory (`larik trace <session-id>` for another). It serves a page on `127.0.0.1` behind a random token and opens your browser:
+
+- **Timeline:** one lane per agent. Each request is split into waiting for the first output and generating; tool calls, permission waits and hooks sit beside them, with prompts marked. Long idle stretches are collapsed. Scroll to zoom, drag to pan, shift+drag to filter the list to a time range, double-click to reset. It follows a live session as it grows.
+- **List:** every record in order, grouped by prompt, filterable by kind, agent and text.
+- **Inspector:** for a request, its overview (model, timing, tokens per second, usage, cost), the prompt as sent with the system prompt and tool list diffed against the previous request and new messages marked, the response, and the raw HTTP request and streamed response. For a tool call, its input, output and permission answer.
+
+`larik trace --html trace.html` writes one self-contained page instead, to keep or share.
+
+Traces are stored next to the session, in `<session>.trace/` under the data directory (owner-only), and deleted after 14 days (`debug_retention_days`; negative keeps them). Only new messages are written with each request, so a trace grows with the conversation rather than with its square; the raw HTTP bodies, though, hold each full request. API keys and other credential headers are redacted; prompts, file contents and tool output are not, so treat a trace like the session itself.
+
 ## Configuration
 
 Settings are read in this order. Later **personal** files override model, provider, permission mode, and allow-rule settings; shared project files can only tighten security:
@@ -414,6 +433,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`.
 - `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
+- `debug` and `debug_retention_days` (not in `/config`): see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).
 - `keybindings` and `status_line` (not in `/config`): see [Rebinding keys](#rebinding-keys) and [Status line](#status-line).
 - `mouse`: wheel scrolling in the TUI (default on). Off leaves the mouse to the terminal, so text can be selected without a modifier.

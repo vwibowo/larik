@@ -37,7 +37,7 @@ func (p *Provider) Name() string { return Name }
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
 		p.once.Do(func() {
-			cc := &genai.ClientConfig{APIKey: p.apiKey, Backend: genai.BackendGeminiAPI}
+			cc := &genai.ClientConfig{APIKey: p.apiKey, Backend: genai.BackendGeminiAPI, HTTPClient: llm.HTTPClient}
 			if p.baseURL != "" {
 				cc.HTTPOptions.BaseURL = p.baseURL
 			}

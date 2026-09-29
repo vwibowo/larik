@@ -78,6 +78,9 @@ func Dir(dataDir, cwd string) string {
 // RawDir holds exact shell output outside the model transcript.
 func RawDir(sessionPath string) string { return strings.TrimSuffix(sessionPath, ".jsonl") + ".raw" }
 
+// TraceDir is where debug mode records a session's trace.
+func TraceDir(sessionPath string) string { return strings.TrimSuffix(sessionPath, ".jsonl") + ".trace" }
+
 // RawPath maps an opaque tool-call ID to a path without allowing traversal.
 func RawPath(sessionPath, toolID string) string {
 	return filepath.Join(RawDir(sessionPath), RawName(toolID))

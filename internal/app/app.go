@@ -23,6 +23,7 @@ import (
 	"larik/internal/skills"
 	"larik/internal/subagent"
 	"larik/internal/tools"
+	"larik/internal/trace"
 	"larik/internal/web"
 )
 
@@ -38,6 +39,10 @@ type App struct {
 	MCP       *mcp.Manager
 	LSP       *lsp.Manager
 	Sandbox   *sandbox.Sandbox // nil when unavailable or disabled
+
+	// Debug traces every session opened (debug setting, --debug or
+	// LARIK_DEBUG); /debug turns it on or off for one session.
+	Debug bool
 
 	// Resolve turns a provider/model spec into a provider; tests replace it.
 	Resolve func(cfg *config.Config, spec string) (providers.Resolved, error)
@@ -56,7 +61,7 @@ func Setup(cwd, version string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Cwd: cwd, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve}
+	a := &App{Cfg: cfg, Cwd: cwd, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve, Debug: cfg.DebugOn()}
 
 	home, _ := os.UserHomeDir()
 	gitRoot := agent.GitRoot(cwd)
@@ -66,6 +71,9 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	if keep := cfg.CheckpointRetention(); keep > 0 {
 		_ = checkpoint.Prune(filepath.Join(cfg.DataDir, "checkpoints"), keep)
+	}
+	if keep := cfg.DebugRetention(); keep > 0 {
+		_ = trace.Prune(filepath.Join(cfg.DataDir, "sessions"), keep)
 	}
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools := tools.Builtin()
@@ -184,14 +192,46 @@ type Session struct {
 	Agent   *agent.Agent
 	Hooks   *hooks.Runner
 	History []llm.Message // prior messages for display when resumed
-	sess    *session.Session
+	// TraceErr is why debug recording couldn't start, when App.Debug is on.
+	TraceErr error
+	sess     *session.Session
+	trace    *trace.Recorder
 }
+
+// StartTrace turns on debug recording for the session, continuing its
+// trace if it has one.
+func (s *Session) StartTrace() (*trace.Recorder, error) {
+	if s.trace != nil {
+		return s.trace, nil
+	}
+	rec, err := trace.Open(session.TraceDir(s.Path))
+	if err != nil {
+		return nil, err
+	}
+	s.trace = rec
+	s.Agent.SetTrace(rec.Tracer())
+	return rec, nil
+}
+
+// StopTrace turns debug recording off.
+func (s *Session) StopTrace() {
+	if s.trace == nil {
+		return
+	}
+	s.Agent.SetTrace(nil)
+	s.trace.Close()
+	s.trace = nil
+}
+
+// Trace is the session's recorder while debug recording is on, else nil.
+func (s *Session) Trace() *trace.Recorder { return s.trace }
 
 // Close stops background work, fires SessionEnd with reason and closes
 // the session file.
 func (s *Session) Close(reason string) {
 	s.Agent.StopAllBackground()
 	s.Agent.End(reason)
+	s.StopTrace()
 	s.sess.Close()
 }
 
@@ -315,6 +355,9 @@ func (a *App) Open(o Options) (*Session, error) {
 		ag.Restore(state)
 		s.History = state.All
 		s.ForkOf = state.Meta.ForkOf
+	}
+	if a.Debug {
+		_, s.TraceErr = s.StartTrace()
 	}
 	return s, nil
 }

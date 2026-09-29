@@ -4,6 +4,12 @@
 
 ### Added
 
+- **`@` mentions.** Typing `@` opens a file picker; each `@path` in a prompt attaches the file (with line numbers, so the model can edit it straight away), `@path#L10-40` a range, `@folder/` a listing, and `@image.png` an image for vision models. Pasted or dropped file paths become mentions, and mentions work in `larik -p` and `larik serve` too. See [Composer](/docs/commands/#composer).
+- **`!` shell commands** run straight from the prompt, in the sandbox, with their output sent along with your next prompt.
+- **Prompt history** per project: `↑/↓` to recall, `ctrl+r` to search. `ctrl+g` edits the prompt in `$EDITOR`.
+- **A session picker:** `/sessions` and `/resume` without an ID open a searchable list.
+- **NVIDIA NIM** as a provider preset: `/connect nvidia-nim`, or set `NVIDIA_API_KEY`. See [Getting started](/docs/getting-started/).
+- **An install script,** `scripts/install.sh`, that builds and installs `larik`.
 - **Task list.** The model keeps a checklist with `todo_write` for work with several steps. The open items are pinned under the conversation during a turn, and `/todos` shows the list. See [Commands and keys](/docs/commands/).
 - **Leaving plan mode.** In plan mode the model presents its plan with `exit_plan_mode`; approving it switches to the mode you pick and continues. See [Permissions](/docs/permissions/).
 - **Custom commands** from `.claude/commands/*.md` and `~/.claude/commands/`, with `$ARGUMENTS`, `$1`… and `` !`cmd` ``. See [Skills](/docs/skills/#custom-commands).
@@ -17,9 +23,17 @@
 - **Rebindable keys** with the `keybindings` setting. See [Rebinding keys](/docs/commands/#rebinding-keys).
 - **Vim mode** for the prompt: `/vim`, or **Editor mode** in `/config`. See [Vim mode](/docs/commands/#vim-mode).
 - **Mouse scrolling** can be switched off in `/config`, so text can be selected without a modifier.
+- **Debug mode and trace viewer.** `--debug`, `LARIK_DEBUG=1` or `/debug on` records every request as sent, each response with its timing, tokens and cost, the raw HTTP exchange, tool calls, permission answers and hooks. `larik trace` or `/trace` opens it in the browser: a timeline of each agent's requests and tools, a filterable list, and an inspector that diffs each prompt against the one before. `--html` exports one page. See [Debug mode and traces](/docs/debug-mode-and-traces/).
+
+### Changed
+
+- The conversation scrolls above a fixed input row (Page Up/Down or the mouse wheel), and pickers and settings open just above the input with recent messages still visible.
+- Edit and file-write previews use syntax highlighting, and diffs show their changed lines as one highlighted block.
+- `/model`, `/effort`, `/mode` and `shift+tab` save your choice as the default for future launches. `--model`, `--effort` and `--mode` still override it for one launch.
 
 ### Fixed
 
+- Changing a provider's credentials takes effect straight away, without switching models.
 - Interrupting a turn at the wrong moment could leave a tool call without a result, which made every later request fail. Sessions already left that way are repaired on the next prompt.
 - An "always allow" rule for a command no longer matches the same command chained with others (`git status; curl … | sh`).
 - Sandboxed commands can no longer redirect the project's git metadata to run code the next time `git` runs outside the sandbox.

@@ -22,6 +22,12 @@ func WithCallID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, callIDKey{}, id)
 }
 
+// CallID is the id of the tool call ctx runs, or "".
+func CallID(ctx context.Context) string {
+	id, _ := ctx.Value(callIDKey{}).(string)
+	return id
+}
+
 // RawOutput reads a bounded byte range of a prior bash call's exact output.
 type RawOutput struct{}
 

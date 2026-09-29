@@ -51,6 +51,13 @@ type Config struct {
 	// means the default (7), a negative value keeps them forever. The
 	// cleanup covers every project, so only personal files may set it.
 	CheckpointRetentionDays int `json:"checkpoint_retention_days,omitempty"`
+	// Debug records every session's requests, responses and tool calls
+	// for `larik trace`. Honored only from personal files: traces hold
+	// prompts and file contents.
+	Debug *bool `json:"debug,omitempty"`
+	// DebugRetentionDays is how long traces are kept: 0 means the
+	// default (14), a negative value keeps them forever.
+	DebugRetentionDays int `json:"debug_retention_days,omitempty"`
 	// Theme picks the TUI colors: "auto" (follow the terminal's
 	// background, the default), "dark" or "light".
 	Theme string `json:"theme,omitempty"`
@@ -340,6 +347,12 @@ func (c *Config) merge(path string, trusted bool) error {
 	if trusted && o.CheckpointRetentionDays != 0 {
 		c.CheckpointRetentionDays = o.CheckpointRetentionDays
 	}
+	if trusted && o.Debug != nil {
+		c.Debug = o.Debug
+	}
+	if trusted && o.DebugRetentionDays != 0 {
+		c.DebugRetentionDays = o.DebugRetentionDays
+	}
 	// A bad value in your own file is an error to fix; one in a file that
 	// came with the repository is ignored, so a clone can't stop Larik
 	// from starting.
@@ -615,6 +628,21 @@ func on(b *bool, def bool) bool {
 
 // CheckpointRetention is how long /undo snapshots are kept; 0 means
 // keep them forever.
+// DebugOn reports whether sessions are traced.
+func (c *Config) DebugOn() bool { return on(c.Debug, false) }
+
+// DebugRetention is how long traces are kept; zero means forever.
+func (c *Config) DebugRetention() time.Duration {
+	switch d := c.DebugRetentionDays; {
+	case d < 0:
+		return 0
+	case d == 0:
+		return 14 * 24 * time.Hour
+	default:
+		return time.Duration(d) * 24 * time.Hour
+	}
+}
+
 func (c *Config) CheckpointRetention() time.Duration {
 	switch d := c.CheckpointRetentionDays; {
 	case d < 0:

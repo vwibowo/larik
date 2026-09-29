@@ -6,8 +6,9 @@ Larik keeps four kinds of state on disk. All of it is under `~/.local/share/lari
 ~/.local/share/larik/
 ├── sessions/<cwd-slug>/
 │   ├── 20260927-101500-a1b2c3.jsonl          one session (or branch)
-│   └── 20260927-101500-a1b2c3-agents/        subagent transcripts for that session
-│       └── 20260927-101733-d4e5f6.jsonl
+│   ├── 20260927-101500-a1b2c3-agents/        subagent transcripts for that session
+│   │   └── 20260927-101733-d4e5f6.jsonl
+│   └── 20260927-101500-a1b2c3.trace/         debug mode only: events.jsonl + http/ bodies
 ├── checkpoints/<session-id>/<turn>/
 │   ├── manifest.json                         which files, whether they existed, mode
 │   └── 0.bin, 1.bin, …                       original bytes
@@ -131,6 +132,7 @@ Each layer is marked **trusted** (personal: only you write it) or not (shared: a
 | Sandbox | may disable, enable network, add writable paths | may only switch it on |
 | LSP servers | may add commands | may only disable |
 | Web search backend | honored | ignored (it would receive every query); may only disable web tools |
+| Debug recording and trace retention | honored | ignored (traces hold prompts and file contents) |
 | Status line command, key bindings and editor mode | honored | ignored (the status line runs a command; the others are how you type) |
 | Approvals themselves | read from private project settings only | ignored |
 

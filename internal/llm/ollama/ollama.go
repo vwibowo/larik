@@ -172,7 +172,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			return
 		}
 		hreq.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(hreq)
+		resp, err := llm.HTTPClient.Do(hreq)
 		if err != nil {
 			yield(llm.StreamEvent{}, err)
 			return
@@ -380,7 +380,7 @@ func call(ctx context.Context, url string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := llm.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

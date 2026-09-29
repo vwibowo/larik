@@ -50,7 +50,7 @@ func New(name, apiKey, baseURL string) *Provider {
 	if apiKey == "" {
 		apiKey = "none" // local servers ignore it, but the SDK requires one
 	}
-	p := &Provider{name: name, client: sdk.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL))}
+	p := &Provider{name: name, client: sdk.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL), option.WithHTTPClient(llm.HTTPClient))}
 	if name == "ollama" || strings.Contains(baseURL, ":11434") {
 		p.ollama = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
 	}
@@ -112,7 +112,7 @@ func ollamaGet(ctx context.Context, url string, body any, out any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := llm.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

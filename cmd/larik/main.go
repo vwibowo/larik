@@ -41,6 +41,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "bench" {
 		return runBench(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "trace" {
+		return runTrace(os.Args[2:])
+	}
 	var (
 		print   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")
@@ -52,10 +55,12 @@ func run() error {
 		fork    = flag.Bool("fork", false, "with -c or --resume: branch into a new session, leaving the original untouched")
 		list    = flag.Bool("sessions", false, "list sessions for this directory and exit")
 		showVer = flag.Bool("version", false, "print version and exit")
+		debug   = flag.Bool("debug", false, "record this session's requests, responses and tool calls for `larik trace` (also $LARIK_DEBUG=1)")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n"+
-			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n\n")
+			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n"+
+			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -120,6 +125,9 @@ func run() error {
 		return err
 	}
 	defer a.Close()
+	if *debug || envDebug() {
+		a.Debug = true
+	}
 	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont, Fork: *fork})
 	if err != nil {
 		return err
@@ -136,9 +144,16 @@ func run() error {
 		if !cfg.ProjectHooksApproved() {
 			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
 		}
+		if s.TraceErr != nil {
+			fmt.Fprintln(os.Stderr, "! debug trace: "+s.TraceErr.Error())
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
+		err := headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
+		if rec := s.Trace(); rec != nil {
+			fmt.Fprintf(os.Stderr, "trace: %s (view with: larik trace %s)\n", rec.Dir(), s.ID)
+		}
+		return err
 	}
 
 	// The TUI owns the session from here: it can switch to others and

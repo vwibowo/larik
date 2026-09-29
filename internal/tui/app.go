@@ -30,6 +30,7 @@ import (
 	"larik/internal/skills"
 	"larik/internal/subagent"
 	"larik/internal/tools"
+	"larik/internal/trace/viewer"
 )
 
 type Options struct {
@@ -60,6 +61,9 @@ func Run(opts Options) error {
 	}
 	m := newModel(opts)
 	_, err := tea.NewProgram(m).Run()
+	if m.traceView != nil {
+		m.traceView.Close()
+	}
 	if m.sess != nil {
 		m.sess.Close("prompt_input_exit")
 	}
@@ -91,11 +95,14 @@ type model struct {
 	width    int
 	height   int
 
-	input     textarea.Model
-	keys      keymap   // the keybindings setting applied to the defaults
-	keyWarn   []string // keybindings that couldn't apply, for the banner
-	status    *statusCmd
-	vim       *vimEditor // nil unless editor_mode is vim
+	input   textarea.Model
+	keys    keymap   // the keybindings setting applied to the defaults
+	keyWarn []string // keybindings that couldn't apply, for the banner
+	status  *statusCmd
+	vim     *vimEditor // nil unless editor_mode is vim
+	// traceView serves traceDir to the browser once /trace opened it.
+	traceView *viewer.Server
+	traceDir  string
 	spin      spinner.Model
 	view      viewport.Model // the conversation, pre-wrapped to width
 	panelView viewport.Model

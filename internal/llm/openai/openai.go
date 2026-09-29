@@ -38,7 +38,7 @@ func New(name, apiKey, baseURL string) *Provider {
 	if name == "" {
 		name = Name
 	}
-	var opts []option.RequestOption
+	opts := []option.RequestOption{option.WithHTTPClient(llm.HTTPClient)}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
@@ -70,6 +70,7 @@ func NewChatGPT(name, baseURL string, token TokenFunc) *Provider {
 		option.WithAPIKey("chatgpt-sign-in"), // replaced per request
 		option.WithBaseURL(baseURL),
 		option.WithMiddleware(auth),
+		option.WithHTTPClient(llm.HTTPClient),
 	)
 	return &Provider{client: client, name: name, noMaxTokens: true}
 }

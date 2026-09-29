@@ -14,9 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -282,21 +280,6 @@ func (m *Manager) browserSignIn(ctx context.Context, name, redirect, authURL str
 }
 
 const signInPage = `<!doctype html><meta charset="utf-8"><title>larik</title><body style="font:16px system-ui;margin:4em auto;max-width:32em">%s</body>`
-
-// openURL opens a URL in the default browser.
-func openURL(u string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", u)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	default:
-		cmd = exec.Command("xdg-open", u)
-	}
-	_ = cmd.Start()
-	go cmd.Wait()
-}
 
 // SetSignInHook sets the function told each sign-in page's URL.
 func (m *Manager) SetSignInHook(fn func(server, url string)) {

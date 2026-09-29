@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Larik trace</title>
+<style>
+:root {
+  --bg: #fbfbfc; --panel: #ffffff; --line: #e3e4e8; --line2: #eef0f3;
+  --fg: #1d1f24; --dim: #6b7080; --faint: #9aa0ad;
+  --accent: #6b4fd8; --accent-soft: #ece8fb;
+  --wait: #c9c2ef; --decode: #6b4fd8; --tool: #1f9d74; --tool-soft: #d5f1e7;
+  --perm: #d98a1c; --hook: #3b82c4; --err: #d0453a; --warn: #c07a12; --note: #8a8f9c;
+  --add: #e3f5e8; --add-fg: #1b6b35; --del: #fbe6e4; --del-fg: #9b2c24;
+  --sel: #fff6d6; --code: #f4f5f7;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111215; --panel: #17181c; --line: #2a2c33; --line2: #212329;
+    --fg: #e6e7ea; --dim: #9ca1ad; --faint: #6c717d;
+    --accent: #9d86ff; --accent-soft: #2a2442;
+    --wait: #463d73; --decode: #9d86ff; --tool: #3cc494; --tool-soft: #173a2e;
+    --perm: #eaa13a; --hook: #5ea6e6; --err: #f06a5f; --warn: #e3a13c; --note: #858a96;
+    --add: #15321f; --add-fg: #7fd99a; --del: #3a1b19; --del-fg: #f29a91;
+    --sel: #3a3420; --code: #1e2025;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+button, select, input { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+header .sid { font-family: var(--mono); color: var(--dim); font-size: 12px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
+.badge.live { color: var(--tool); border-color: var(--tool); }
+.stats { display: flex; gap: 14px; color: var(--dim); font-size: 12px; margin-left: auto; flex-wrap: wrap; }
+.stats b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+#tl-wrap { border-bottom: 1px solid var(--line); background: var(--panel); position: relative; }
+#tl-bar { display: flex; gap: 12px; align-items: center; padding: 4px 14px; font-size: 12px; color: var(--dim); }
+#tl-bar label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
+#tl-bar .legend { display: flex; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; }
+#tl { display: block; width: 100%; cursor: grab; }
+#tl.dragging { cursor: grabbing; }
+#tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 420px; display: none; z-index: 10; white-space: pre-wrap; }
+main { flex: 1; display: flex; min-height: 0; }
+#left { width: 42%; min-width: 320px; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+#filters { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; background: var(--panel); }
+#filters input[type=search] { flex: 1; min-width: 120px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); }
+#filters select { padding: 2px 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); }
+.chip { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; font-size: 12px; cursor: pointer; background: var(--bg); color: var(--dim); user-select: none; }
+.chip.on { background: var(--accent-soft); color: var(--fg); border-color: var(--accent); }
+#brushnote { font-size: 12px; color: var(--accent); display: none; }
+#ledger { flex: 1; overflow-y: auto; position: relative; }
+#ledger .row { position: absolute; left: 0; right: 0; height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line2); cursor: pointer; white-space: nowrap; overflow: hidden; }
+#ledger .row:hover { background: var(--line2); }
+#ledger .row.sel { background: var(--sel); }
+#ledger .row.turn { font-weight: 600; background: var(--accent-soft); }
+.row .t { font-family: var(--mono); font-size: 11px; color: var(--faint); width: 58px; flex: none; text-align: right; }
+.row .k { width: 16px; flex: none; text-align: center; }
+.row .lane { font-size: 11px; color: var(--dim); max-width: 120px; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.row .s { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.row .m { color: var(--dim); font-size: 12px; flex: none; font-variant-numeric: tabular-nums; }
+#right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#tabs { display: flex; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); background: var(--panel); min-height: 33px; }
+#tabs button { border: 0; background: none; padding: 6px 10px; border-bottom: 2px solid transparent; cursor: pointer; color: var(--dim); }
+#tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+#insp { flex: 1; overflow: auto; padding: 12px 16px 40px; }
+.empty { color: var(--dim); padding: 30px; text-align: center; }
+h2 { font-size: 13px; margin: 16px 0 6px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+h2:first-child { margin-top: 0; }
+table.kv { border-collapse: collapse; font-size: 12px; }
+table.kv td { padding: 2px 14px 2px 0; vertical-align: top; }
+table.kv td:first-child { color: var(--dim); white-space: nowrap; }
+pre { font: 12px/1.45 var(--mono); background: var(--code); border: 1px solid var(--line2); border-radius: 6px; padding: 8px 10px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; max-height: 520px; overflow: auto; }
+.nowrap pre { white-space: pre; }
+.copy { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); padding: 0 6px; cursor: pointer; color: var(--dim); }
+.msg { border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; background: var(--panel); }
+.msg.new { border-left: 3px solid var(--accent); }
+.msg > .hd { padding: 4px 10px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line2); display: flex; gap: 8px; }
+.msg > .hd b { color: var(--fg); }
+.msg > .bd { padding: 4px 10px 8px; }
+.blk { margin: 6px 0; }
+.blk .lbl { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .03em; }
+.blk.thinking pre { color: var(--dim); font-style: italic; }
+.blk.err pre { border-color: var(--err); }
+.diff .a { background: var(--add); color: var(--add-fg); display: block; }
+.diff .d { background: var(--del); color: var(--del-fg); display: block; }
+details > summary { cursor: pointer; color: var(--dim); font-size: 12px; margin: 4px 0; }
+.pill { font-size: 11px; border-radius: 8px; padding: 0 6px; background: var(--line2); color: var(--dim); }
+.pill.err { background: var(--del); color: var(--del-fg); }
+.pill.ok { background: var(--tool-soft); color: var(--tool); }
+.pill.new { background: var(--accent-soft); color: var(--accent); }
+.x { border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; padding: 6px 10px; }
+img.att { max-width: 320px; max-height: 240px; border: 1px solid var(--line); border-radius: 4px; }
+a { color: var(--accent); cursor: pointer; }
+@media (max-width: 760px) {
+  main { flex-direction: column; }
+  #left { width: 100%; min-width: 0; height: 45%; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Larik trace</h1><span class="sid" id="sid"></span><span class="badge" id="live"></span>
+  <div class="stats" id="stats"></div>
+</header>
+<div id="tl-wrap">
+  <div id="tl-bar">
+    <label><input type="checkbox" id="collapse" checked> collapse idle time</label>
+    <label><input type="checkbox" id="follow" checked> follow</label>
+    <span>scroll to zoom · drag to pan · shift+drag to filter · double-click to reset</span>
+    <span class="legend">
+      <span><i class="sw" style="background:var(--wait)"></i>waiting</span>
+      <span><i class="sw" style="background:var(--decode)"></i>generating</span>
+      <span><i class="sw" style="background:var(--tool)"></i>tool</span>
+      <span><i class="sw" style="background:var(--perm)"></i>permission</span>
+      <span><i class="sw" style="background:var(--hook)"></i>hook</span>
+      <span><i class="sw" style="background:var(--err)"></i>error</span>
+    </span>
+  </div>
+  <canvas id="tl"></canvas>
+</div>
+<div id="tip"></div>
+<main>
+  <section id="left">
+    <div id="filters">
+      <input type="search" id="q" placeholder="Search prompts, tools, output…">
+      <select id="agent"><option value="">all agents</option></select>
+      <span id="kinds"></span>
+      <span id="brushnote"></span>
+    </div>
+    <div id="ledger"><div id="spacer"></div></div>
+  </section>
+  <section id="right">
+    <div id="tabs"></div>
+    <div id="insp"><div class="empty">Select a record in the timeline or the list.</div></div>
+  </section>
+</main>
+<script>
+"use strict";
+const BOOT = /*BOOT*/null;
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtN = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n || 0);
+const fmtMS = (ms) => ms == null ? "–" : ms < 1000 ? Math.round(ms) + "ms" : ms < 60000 ? (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + "s" : Math.floor(ms / 60000) + "m" + String(Math.round(ms % 60000 / 1000)).padStart(2, "0") + "s";
+const fmtUSD = (x) => x ? "$" + (x < 0.01 ? x.toFixed(4) : x.toFixed(2)) : "–";
+const oneLine = (s, n = 140) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const pretty = (v) => { if (typeof v === "string") { try { return JSON.stringify(JSON.parse(v), null, 2); } catch { return v; } } return JSON.stringify(v, null, 2); };
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// ---------- state ----------
+const S = {
+  recs: [], lastSeq: 0, live: false, M: null,
+  sel: null, tab: null,
+  kinds: { turn: true, req: true, tool: true, perm: true, hook: false, note: true },
+  agent: "", q: "", brush: null,
+  view: null, // [v0, v1] in virtual time
+  collapse: true, follow: true,
+  rows: [], bodies: {},
+};
+const KIND_LABEL = { turn: "prompts", req: "requests", tool: "tools", perm: "permissions", hook: "hooks", note: "notes" };
+
+// ---------- model ----------
+function build(recs) {
+  const M = { lanes: [], laneIdx: new Map(), reqs: new Map(), tools: new Map(), items: [], marks: [], turns: [], t0: Infinity, t1: 0,
+    tot: { reqs: 0, input: 0, output: 0, cacheR: 0, cacheW: 0, cost: 0, tools: 0, errors: 0, models: new Set() }, recs };
+  const ctx = new Map();
+  const lane = (r) => {
+    const key = r.agent || "main";
+    if (!M.laneIdx.has(key)) { M.laneIdx.set(key, M.lanes.length); M.lanes.push({ key, parent: r.parent || "" }); }
+    return key;
+  };
+  for (const r of recs) {
+    const d = r.data || {};
+    const L = lane(r);
+    M.t0 = Math.min(M.t0, r.t); M.t1 = Math.max(M.t1, r.t);
+    switch (r.kind) {
+      case "turn_start": M.turns.push(r); M.marks.push({ t: r.t, kind: "turn", rec: r, lane: L }); break;
+      case "request": {
+        let c = ctx.get(L);
+        if (!c) { c = { msgs: [], system: "", tools: [], last: null }; ctx.set(L, c); }
+        const from = d.reset ? 0 : (d.from || 0);
+        c.msgs = c.msgs.slice(0, from).concat(d.messages || []);
+        if (d.system !== undefined) c.system = d.system;
+        if (d.tools) c.tools = d.tools;
+        else if (d.tool_names && c.tools.length !== d.tool_names.length) c.tools = d.tool_names.map((n) => ({ name: n }));
+        const q = { id: r.req, rec: r, lane: L, messages: c.msgs, newFrom: from, system: c.system, tools: c.tools, prev: c.last, http: [], resp: null };
+        c.last = q; M.reqs.set(r.req, q); M.tot.reqs++; if (d.model) M.tot.models.add(d.model);
+        break;
+      }
+      case "response": {
+        const q = M.reqs.get(r.req); if (!q) break;
+        q.resp = r;
+        const u = d.usage || {};
+        M.tot.input += u.input || 0; M.tot.output += u.output || 0; M.tot.cacheR += u.cache_read || 0; M.tot.cacheW += u.cache_write || 0;
+        M.tot.cost += d.cost_usd || 0; if (d.error) M.tot.errors++;
+        if (d.start) M.t0 = Math.min(M.t0, d.start);
+        break;
+      }
+      case "http": { const q = M.reqs.get(r.req); if (q) q.http.push(r); break; }
+      case "tool_start": M.tools.set(d.id, Object.assign(M.tools.get(d.id) || {}, { id: d.id, start: r, lane: L })); M.tot.tools++; break;
+      case "tool_end": { const t = M.tools.get(d.id) || { id: d.id, lane: L }; t.end = r; M.tools.set(d.id, t); if (d.is_error) M.tot.errors++; break; }
+      case "permission": { const t = M.tools.get(d.id) || { id: d.id, lane: L }; t.perm = r; M.tools.set(d.id, t); break; }
+      case "error": M.tot.errors++; M.marks.push({ t: r.t, kind: "error", rec: r, lane: L }); break;
+      case "notice": case "compaction": case "state": M.marks.push({ t: r.t, kind: r.kind, rec: r, lane: L }); break;
+    }
+  }
+  // Subagent lanes follow the lane that started them.
+  const order = []; const seen = new Set();
+  const place = (ln, depth) => {
+    if (seen.has(ln.key)) return; seen.add(ln.key); ln.depth = depth; order.push(ln);
+    for (const c of M.lanes) {
+      if (c.key === ln.key || seen.has(c.key) || !c.parent) continue;
+      const t = M.tools.get(c.parent);
+      if (t && t.lane === ln.key) place(c, depth + 1);
+    }
+  };
+  if (M.laneIdx.has("main")) place(M.lanes[M.laneIdx.get("main")], 0);
+  for (const ln of M.lanes) place(ln, ln.parent ? 1 : 0);
+  M.lanes = order; M.lanes.forEach((ln, i) => M.laneIdx.set(ln.key, i));
+
+  const now = Date.now(), open = (t) => S.live ? Math.max(M.t1, Math.min(now, M.t1 + 600000)) : Math.max(M.t1, t);
+  for (const q of M.reqs.values()) {
+    const d = q.resp?.data;
+    const s = d?.start || q.rec.t;
+    const e = d ? s + (d.duration_ms || 0) : open(s);
+    const ttft = d ? Math.min(d.ttft_ms || 0, e - s) : e - s;
+    M.items.push({ type: "req", id: q.id, lane: q.lane, s, e, split: s + ttft, err: !!d?.error, open: !d });
+  }
+  for (const t of M.tools.values()) {
+    if (t.perm && t.perm.data.wait_ms > 0) {
+      const a = t.perm.data.asked || t.perm.t - t.perm.data.wait_ms;
+      M.items.push({ type: "perm", id: t.id, lane: t.lane, s: a, e: a + t.perm.data.wait_ms });
+    }
+    if (!t.start) continue;
+    const s = t.start.t, e = t.end ? t.end.t : open(s);
+    M.items.push({ type: "tool", id: t.id, lane: t.lane, s, e, err: !!t.end?.data.is_error, open: !t.end });
+  }
+  for (const r of recs) if (r.kind === "hook") {
+    const s = r.data.start || r.t;
+    M.items.push({ type: "hook", seq: r.seq, lane: r.agent || "main", s, e: s + (r.data.duration_ms || 0) });
+  }
+  for (const it of M.items) M.t1 = Math.max(M.t1, it.e);
+  if (!isFinite(M.t0)) { M.t0 = now; M.t1 = now + 1000; }
+  if (M.t1 - M.t0 < 1000) M.t1 = M.t0 + 1000;
+  buildTimeMap(M);
+  return M;
+}
+
+// Idle time between bursts of activity is squeezed to a sliver, so a
+// session with long pauses still shows its work.
+function buildTimeMap(M) {
+  const G = 1500;
+  const iv = M.items.map((i) => [i.s, Math.max(i.e, i.s + 1)]).concat(M.marks.map((m) => [m.t, m.t + 1])).sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [a, b] of iv) { const l = merged[merged.length - 1]; if (l && a <= l[1] + 200) l[1] = Math.max(l[1], b); else merged.push([a, b]); }
+  const R = [M.t0], V = [0];
+  const push = (r, v) => { if (r > R[R.length - 1]) { R.push(r); V.push(v); } };
+  for (const [a, b] of merged) {
+    const lr = R[R.length - 1], lv = V[V.length - 1];
+    if (a > lr) push(a, lv + (S.collapse ? Math.min(a - lr, G) : a - lr));
+    const r0 = R[R.length - 1], v0 = V[V.length - 1];
+    push(b, v0 + (b - Math.max(a, r0)));
+  }
+  const lr = R[R.length - 1], lv = V[V.length - 1];
+  if (M.t1 > lr) push(M.t1, lv + (S.collapse ? Math.min(M.t1 - lr, G) : M.t1 - lr));
+  M.R = R; M.V = V; M.vmax = V[V.length - 1] || 1;
+}
+function toV(M, t) {
+  const R = M.R, V = M.V;
+  if (t <= R[0]) return V[0] - (R[0] - t);
+  if (t >= R[R.length - 1]) return V[V.length - 1] + (t - R[R.length - 1]);
+  let lo = 0, hi = R.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (R[m] <= t) lo = m; else hi = m; }
+  const f = (t - R[lo]) / (R[hi] - R[lo] || 1);
+  return V[lo] + f * (V[hi] - V[lo]);
+}
+function fromV(M, v) {
+  const R = M.R, V = M.V;
+  if (v <= V[0]) return R[0];
+  if (v >= V[V.length - 1]) return R[R.length - 1];
+  let lo = 0, hi = V.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (V[m] <= v) lo = m; else hi = m; }
+  const f = (v - V[lo]) / (V[hi] - V[lo] || 1);
+  return R[lo] + f * (R[hi] - R[lo]);
+}
+
+// ---------- ledger rows ----------
+function reqSummary(q) {
+  const d = q.rec.data, r = q.resp?.data;
+  const what = d.purpose ? d.purpose + " · " : "";
+  let s = what + (d.model || "") ;
+  if (r?.message) {
+    const uses = (r.message.blocks || []).filter((b) => b.type === "tool_use").map((b) => b.name);
+    const text = (r.message.blocks || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
+    s += uses.length ? " → " + uses.join(", ") : text ? " → " + oneLine(text, 90) : "";
+  }
+  if (r?.error) s += " → error: " + oneLine(r.error, 80);
+  return s;
+}
+function toolArg(name, input) {
+  if (!input) return "";
+  const i = typeof input === "string" ? (() => { try { return JSON.parse(input); } catch { return {}; } })() : input;
+  return i.command || i.path || i.file_path || i.pattern || i.url || i.query || i.description || i.prompt || i.name || "";
+}
+function buildRows() {
+  const M = S.M; if (!M) return;
+  const rows = [];
+  const t0 = M.t0;
+  for (const r of M.recs) {
+    const d = r.data || {}, L = r.agent || "main";
+    let row = null;
+    switch (r.kind) {
+      case "turn_start": row = { kind: "turn", icon: "›", s: d.prompt, m: d.attachments ? d.attachments.length + " attached" : "", ent: { type: "rec", seq: r.seq } }; break;
+      case "request": {
+        const q = M.reqs.get(r.req), rd = q.resp?.data, u = rd?.usage || {};
+        const m = rd ? `${fmtN((u.input || 0) + (u.cache_read || 0) + (u.cache_write || 0))}→${fmtN(u.output || 0)} · ${fmtMS(rd.duration_ms)}` : "…";
+        row = { kind: "req", icon: rd?.error ? "✕" : "◆", s: reqSummary(q), m, ent: { type: "req", id: r.req }, err: !!rd?.error, text: JSON.stringify(q.rec.data.messages || []).slice(0, 20000) + JSON.stringify(rd?.message || "") };
+        break;
+      }
+      case "tool_start": {
+        const t = M.tools.get(d.id), e = t.end;
+        const dur = e ? fmtMS(e.t - r.t) : "…";
+        row = { kind: "tool", icon: e?.data.is_error ? "✕" : "⚙", s: d.name + " " + oneLine(toolArg(d.name, d.input), 100), m: dur, ent: { type: "tool", id: d.id }, err: e?.data.is_error,
+          text: JSON.stringify(d.input || "") + (e ? e.data.output : "") };
+        break;
+      }
+      case "tool_end": if (!M.tools.get(r.data.id)?.start) row = { kind: "tool", icon: "✕", s: d.name + " (not run): " + oneLine(d.output, 100), m: "", ent: { type: "tool", id: d.id }, err: true, text: d.output }; break;
+      case "permission": row = { kind: "perm", icon: "?", s: `${d.tool}: ${d.decision}${d.reason ? " — " + oneLine(d.reason, 60) : ""}`, m: d.wait_ms > 0 ? fmtMS(d.wait_ms) : "", ent: { type: "tool", id: d.id, tab: "Permission" } }; break;
+      case "hook": row = { kind: "hook", icon: "↯", s: `${d.event}${d.target ? " (" + d.target + ")" : ""}${d.block ? " · blocked" : ""}${d.halt ? " · halted" : ""}${d.context ? " · added context" : ""}`, m: fmtMS(d.duration_ms), ent: { type: "rec", seq: r.seq }, err: d.block || d.halt }; break;
+      case "notice": row = { kind: "note", icon: "i", s: d.text, m: "", ent: { type: "rec", seq: r.seq } }; break;
+      case "error": row = { kind: "note", icon: "!", s: d.text, m: "", ent: { type: "rec", seq: r.seq }, err: true }; break;
+      case "compaction": row = { kind: "note", icon: "≡", s: "compacted: " + oneLine(d.text, 100), m: "", ent: { type: "rec", seq: r.seq } }; break;
+      case "state": row = { kind: "note", icon: "●", s: d.recording ? "recording started" : "recording stopped", m: "", ent: { type: "rec", seq: r.seq } }; break;
+      case "turn_end": row = { kind: "turn", icon: "■", s: "turn ended: " + d.stop, m: "", ent: { type: "rec", seq: r.seq }, end: true }; break;
+    }
+    if (!row) continue;
+    row.t = r.t; row.lane = L; row.rel = r.t - t0;
+    rows.push(row);
+  }
+  const q = S.q.toLowerCase();
+  S.rows = rows.filter((r) => S.kinds[r.kind] &&
+    (!S.agent || r.lane === S.agent) &&
+    (!S.brush || (r.t >= S.brush[0] && r.t <= S.brush[1])) &&
+    (!q || (r.s || "").toLowerCase().includes(q) || (r.text || "").toLowerCase().includes(q)));
+  renderLedger(true);
+}
+
+const ROW = 26;
+function renderLedger(resize) {
+  const L = $("ledger"), sp = $("spacer");
+  if (resize) sp.style.height = S.rows.length * ROW + "px";
+  const top = L.scrollTop, h = L.clientHeight;
+  const a = Math.max(0, Math.floor(top / ROW) - 10), b = Math.min(S.rows.length, Math.ceil((top + h) / ROW) + 10);
+  let html = "";
+  for (let i = a; i < b; i++) {
+    const r = S.rows[i];
+    const sel = S.sel && sameEnt(S.sel, r.ent) ? " sel" : "";
+    const cls = r.kind === "turn" && !r.end ? " turn" : "";
+    html += `<div class="row${cls}${sel}" style="top:${i * ROW}px" data-i="${i}">` +
+      `<span class="t">${fmtMS(r.rel)}</span><span class="k" style="color:${r.err ? "var(--err)" : "var(--dim)"}">${esc(r.icon)}</span>` +
+      (r.lane !== "main" ? `<span class="lane">${esc(r.lane)}</span>` : "") +
+      `<span class="s">${esc(oneLine(r.s, 200))}</span><span class="m">${esc(r.m)}</span></div>`;
+  }
+  sp.innerHTML = html;
+}
+const sameEnt = (a, b) => a && b && a.type === b.type && (a.type === "rec" ? a.seq === b.seq : a.id === b.id);
+
+// ---------- timeline ----------
+const LANE_H = 24, AXIS_H = 20, LABEL_W = 150;
+const TL = { canvas: $("tl"), hits: [], drag: null };
+function laneLabel(ln) { return (ln.depth ? "↳ ".padStart(ln.depth * 2 + 1, " ") : "") + (ln.key === "main" ? "main" : ln.key); }
+function drawTimeline() {
+  const M = S.M, c = TL.canvas; if (!M) return;
+  const W = c.parentElement.clientWidth, H = AXIS_H + Math.max(1, M.lanes.length) * LANE_H + 6;
+  const dpr = window.devicePixelRatio || 1;
+  c.width = W * dpr; c.height = H * dpr; c.style.height = H + "px";
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  if (!S.view) S.view = [0, M.vmax];
+  const [v0, v1] = S.view, PW = W - LABEL_W - 10;
+  const X = (t) => LABEL_W + (toV(M, t) - v0) / (v1 - v0) * PW;
+  TL.X = X; TL.PW = PW; TL.W = W;
+  g.font = "11px system-ui, sans-serif";
+  // lanes
+  M.lanes.forEach((ln, i) => {
+    const y = AXIS_H + i * LANE_H;
+    g.fillStyle = i % 2 ? css("--bg") : css("--panel"); g.fillRect(0, y, W, LANE_H);
+    g.fillStyle = css("--dim"); g.textBaseline = "middle";
+    g.fillText(fit(g, laneLabel(ln), LABEL_W - 12), 8, y + LANE_H / 2);
+  });
+  // axis ticks in real time
+  g.strokeStyle = css("--line"); g.fillStyle = css("--faint");
+  const ticks = 8;
+  for (let i = 0; i <= ticks; i++) {
+    const v = v0 + (v1 - v0) * i / ticks, t = fromV(M, v), x = LABEL_W + PW * i / ticks;
+    g.beginPath(); g.moveTo(x, AXIS_H - 4); g.lineTo(x, H); g.stroke();
+    g.fillText(fmtMS(t - M.t0), x + 3, 9);
+  }
+  g.save(); g.beginPath(); g.rect(LABEL_W, 0, PW + 10, H); g.clip();
+  // brush
+  if (S.brush) { const a = X(S.brush[0]), b = X(S.brush[1]); g.fillStyle = css("--accent-soft"); g.fillRect(a, AXIS_H, b - a, H - AXIS_H); }
+  TL.hits = [];
+  const color = { req: "--decode", tool: "--tool", perm: "--perm", hook: "--hook" };
+  const hpad = { req: 4, tool: 7, perm: 9, hook: 10 };
+  for (const it of M.items) {
+    const li = M.laneIdx.get(it.lane); if (li == null) continue;
+    const y = AXIS_H + li * LANE_H + hpad[it.type], h = LANE_H - hpad[it.type] * 2;
+    let a = X(it.s), b = Math.max(X(it.e), a + 2);
+    if (b < LABEL_W || a > W) continue;
+    if (it.type === "req") {
+      const m = X(it.split);
+      g.fillStyle = css("--wait"); g.fillRect(a, y, Math.max(m - a, 0), h);
+      g.fillStyle = it.err ? css("--err") : css("--decode"); g.fillRect(m, y, Math.max(b - m, 1), h);
+    } else {
+      g.fillStyle = it.err ? css("--err") : css(color[it.type]);
+      g.globalAlpha = it.type === "perm" ? 0.55 : 1; g.fillRect(a, y, b - a, h); g.globalAlpha = 1;
+    }
+    if (it.open) { g.fillStyle = css("--bg"); g.globalAlpha = .5; g.fillRect(b - 3, y, 3, h); g.globalAlpha = 1; }
+    if (S.sel && ((it.type === "req" && S.sel.type === "req" && S.sel.id === it.id) || ((it.type === "tool" || it.type === "perm") && S.sel.type === "tool" && S.sel.id === it.id) || (it.type === "hook" && S.sel.type === "rec" && S.sel.seq === it.seq))) {
+      g.strokeStyle = css("--fg"); g.lineWidth = 1.5; g.strokeRect(a - .5, y - .5, b - a + 1, h + 1); g.lineWidth = 1;
+    }
+    TL.hits.push({ it, a, b, y, h });
+  }
+  for (const mk of M.marks) {
+    const x = X(mk.t); if (x < LABEL_W || x > W) continue;
+    if (mk.kind === "turn") {
+      g.strokeStyle = css("--accent"); g.setLineDash([3, 3]); g.beginPath(); g.moveTo(x, AXIS_H); g.lineTo(x, H); g.stroke(); g.setLineDash([]);
+      TL.hits.push({ mk, a: x - 3, b: x + 3, y: AXIS_H, h: 8 });
+      continue;
+    }
+    const li = M.laneIdx.get(mk.lane) ?? 0, y = AXIS_H + li * LANE_H + LANE_H / 2;
+    g.fillStyle = mk.kind === "error" ? css("--err") : mk.kind === "compaction" ? css("--accent") : css("--note");
+    g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
+    TL.hits.push({ mk, a: x - 4, b: x + 4, y: y - 4, h: 8 });
+  }
+  g.restore();
+}
+function fit(g, s, w) { if (g.measureText(s).width <= w) return s; while (s.length > 1 && g.measureText(s + "…").width > w) s = s.slice(0, -1); return s + "…"; }
+function hitAt(x, y) {
+  for (let i = TL.hits.length - 1; i >= 0; i--) { const h = TL.hits[i]; if (x >= h.a - 1 && x <= h.b + 1 && y >= h.y - 1 && y <= h.y + h.h + 1) return h; }
+  return null;
+}
+function tipFor(h) {
+  const M = S.M;
+  if (h.mk) { const d = h.mk.rec.data || {}; return h.mk.kind === "turn" ? "prompt: " + oneLine(d.prompt, 200) : h.mk.kind + ": " + oneLine(d.text ?? JSON.stringify(d), 200); }
+  const it = h.it;
+  if (it.type === "req") {
+    const q = M.reqs.get(it.id), d = q.resp?.data, u = d?.usage || {};
+    return `${q.rec.data.purpose ? q.rec.data.purpose + " " : ""}request ${q.id} · ${q.rec.data.model}\n` +
+      (d ? `waiting ${fmtMS(d.ttft_ms)} · generating ${fmtMS(d.duration_ms - d.ttft_ms)} · total ${fmtMS(d.duration_ms)}\n` +
+        `in ${fmtN(u.input)} · cache read ${fmtN(u.cache_read)} · out ${fmtN(u.output)} · ${fmtUSD(d.cost_usd)}` + (d.error ? "\nerror: " + oneLine(d.error, 160) : "") : "in progress…");
+  }
+  if (it.type === "tool" || it.type === "perm") {
+    const t = M.tools.get(it.id), s = t.start?.data || t.end?.data || {};
+    if (it.type === "perm") return `permission for ${t.perm.data.tool}: ${t.perm.data.decision}\nwaited ${fmtMS(t.perm.data.wait_ms)}`;
+    return `${s.name} ${oneLine(toolArg(s.name, s.input), 120)}\n${t.end ? fmtMS(t.end.t - t.start.t) + (t.end.data.is_error ? " · error" : "") : "running…"}`;
+  }
+  if (it.type === "hook") { const r = M.recs.find((x) => x.seq === it.seq); return `hook ${r.data.event} · ${fmtMS(r.data.duration_ms)}`; }
+  return "";
+}
+function entOfHit(h) {
+  if (h.mk) return { type: "rec", seq: h.mk.rec.seq };
+  const it = h.it;
+  if (it.type === "req") return { type: "req", id: it.id };
+  if (it.type === "tool") return { type: "tool", id: it.id };
+  if (it.type === "perm") return { type: "tool", id: it.id, tab: "Permission" };
+  return { type: "rec", seq: it.seq };
+}
+function vAtX(x) { const [v0, v1] = S.view; return v0 + (x - LABEL_W) / TL.PW * (v1 - v0); }
+TL.canvas.addEventListener("wheel", (e) => {
+  if (!S.M) return; e.preventDefault();
+  const x = e.offsetX; if (x < LABEL_W) return;
+  const [v0, v1] = S.view, v = vAtX(x), k = Math.exp(e.deltaY * 0.0015);
+  let n0 = v - (v - v0) * k, n1 = v + (v1 - v) * k;
+  if (n1 - n0 < 5) return;
+  if (n1 - n0 > S.M.vmax * 1.05) { n0 = 0; n1 = S.M.vmax; }
+  S.view = [n0, n1]; S.follow = n1 >= S.M.vmax - 1; $("follow").checked = S.follow; drawTimeline();
+}, { passive: false });
+TL.canvas.addEventListener("mousedown", (e) => {
+  if (!S.M || e.offsetX < LABEL_W) return;
+  TL.drag = { x: e.offsetX, view: S.view.slice(), brush: e.shiftKey, moved: false };
+  if (!e.shiftKey) TL.canvas.classList.add("dragging");
+});
+window.addEventListener("mousemove", (e) => {
+  const r = TL.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  if (TL.drag) {
+    const dx = x - TL.drag.x; if (Math.abs(dx) > 3) TL.drag.moved = true;
+    if (TL.drag.brush) {
+      const a = fromV(S.M, vAtX(Math.min(TL.drag.x, x))), b = fromV(S.M, vAtX(Math.max(TL.drag.x, x)));
+      S.brushDraft = [a, b]; S.brush = S.brushDraft; drawTimeline();
+    } else {
+      const [v0, v1] = TL.drag.view, dv = dx / TL.PW * (v1 - v0);
+      S.view = [v0 - dv, v1 - dv]; S.follow = false; $("follow").checked = false; drawTimeline();
+    }
+    return;
+  }
+  const tip = $("tip");
+  if (x < 0 || y < 0 || x > r.width || y > r.height) { tip.style.display = "none"; return; }
+  const h = hitAt(x, y);
+  if (!h) { tip.style.display = "none"; return; }
+  tip.textContent = tipFor(h); tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8) + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+window.addEventListener("mouseup", (e) => {
+  if (!TL.drag) return;
+  const d = TL.drag; TL.drag = null; TL.canvas.classList.remove("dragging");
+  if (d.brush) { if (!d.moved) S.brush = null; updateBrushNote(); buildRows(); drawTimeline(); return; }
+  if (!d.moved) {
+    const r = TL.canvas.getBoundingClientRect(), h = hitAt(e.clientX - r.left, e.clientY - r.top);
+    if (h) select(entOfHit(h), true);
+  }
+});
+TL.canvas.addEventListener("dblclick", () => { S.view = [0, S.M.vmax]; S.brush = null; S.follow = true; $("follow").checked = true; updateBrushNote(); buildRows(); drawTimeline(); });
+function updateBrushNote() {
+  const n = $("brushnote");
+  if (!S.brush) { n.style.display = "none"; return; }
+  n.style.display = "inline"; n.innerHTML = `${fmtMS(S.brush[0] - S.M.t0)}–${fmtMS(S.brush[1] - S.M.t0)} <a id="clearbrush">clear</a>`;
+  $("clearbrush").onclick = () => { S.brush = null; updateBrushNote(); buildRows(); drawTimeline(); };
+}
+
+// ---------- inspector ----------
+function select(ent, scroll) {
+  S.sel = ent; S.tab = ent.tab || null;
+  renderInspector(); renderLedger(false); drawTimeline();
+  if (scroll) {
+    const i = S.rows.findIndex((r) => sameEnt(r.ent, ent));
+    if (i >= 0) { const L = $("ledger"); if (i * ROW < L.scrollTop || i * ROW > L.scrollTop + L.clientHeight - ROW) L.scrollTop = i * ROW - L.clientHeight / 3; }
+  }
+}
+$("ledger").addEventListener("click", (e) => { const el = e.target.closest(".row"); if (el) select(S.rows[+el.dataset.i].ent, false); });
+$("ledger").addEventListener("scroll", () => renderLedger(false));
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || !S.sel || (e.key !== "j" && e.key !== "k" && e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
+  const i = S.rows.findIndex((r) => sameEnt(r.ent, S.sel));
+  const n = e.key === "j" || e.key === "ArrowDown" ? i + 1 : i - 1;
+  if (n >= 0 && n < S.rows.length) { e.preventDefault(); select(S.rows[n].ent, true); }
+});
+
+function setTabs(names) {
+  if (!S.tab || !names.includes(S.tab)) S.tab = names[0];
+  $("tabs").innerHTML = names.map((n) => `<button class="${n === S.tab ? "on" : ""}" data-t="${esc(n)}">${esc(n)}</button>`).join("");
+  $("tabs").querySelectorAll("button").forEach((b) => b.onclick = () => { S.tab = b.dataset.t; renderInspector(); });
+}
+function renderInspector() {
+  const M = S.M, el = $("insp"), ent = S.sel;
+  if (!ent || !M) { $("tabs").innerHTML = ""; el.innerHTML = '<div class="empty">Select a record in the timeline or the list.</div>'; return; }
+  let html = "";
+  if (ent.type === "req") {
+    const q = M.reqs.get(ent.id); if (!q) return;
+    setTabs(["Overview", "Prompt", "Response", "Raw HTTP"]);
+    html = { Overview: reqOverview, Prompt: reqPrompt, Response: reqResponse, "Raw HTTP": reqHTTP }[S.tab](q);
+  } else if (ent.type === "tool") {
+    const t = M.tools.get(ent.id); if (!t) return;
+    setTabs(t.perm ? ["Call", "Permission"] : ["Call"]);
+    html = S.tab === "Permission" ? permView(t) : toolView(t);
+  } else {
+    const r = M.recs.find((x) => x.seq === ent.seq); if (!r) return;
+    setTabs(["Record"]);
+    html = recView(r);
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard?.writeText(COPY[b.dataset.copy] || ""));
+  el.querySelectorAll("[data-go]").forEach((a) => a.onclick = () => select(JSON.parse(a.dataset.go), true));
+  el.querySelectorAll("[data-body]").forEach(loadBody);
+}
+let COPY = {}, copyN = 0;
+function codeBlock(text, label) {
+  const k = "c" + (++copyN); COPY[k] = text;
+  return (label ? `<h2>${esc(label)} <button class="copy" data-copy="${k}">copy</button></h2>` : `<div style="text-align:right"><button class="copy" data-copy="${k}">copy</button></div>`) + `<pre>${esc(text)}</pre>`;
+}
+function kv(rows) { return '<table class="kv">' + rows.filter((r) => r && r[1] !== undefined && r[1] !== "" && r[1] !== null).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join("") + "</table>"; }
+function goLink(ent, text) { return `<a data-go='${esc(JSON.stringify(ent))}'>${esc(text)}</a>`; }
+
+function reqOverview(q) {
+  const d = q.rec.data, r = q.resp?.data || {}, u = r.usage || {};
+  const gen = r.duration_ms != null ? r.duration_ms - (r.ttft_ms || 0) : null;
+  const tps = gen > 0 && u.output ? (u.output / (gen / 1000)).toFixed(1) + " tok/s" : "";
+  let html = "<h2>Request " + esc(q.id) + (r.error ? ' <span class="pill err">error</span>' : q.resp ? ' <span class="pill ok">done</span>' : ' <span class="pill">in progress</span>') + "</h2>";
+  html += kv([
+    ["agent", esc(q.lane)], ["purpose", esc(d.purpose)], ["provider", esc(d.provider)], ["model", esc(d.model) + (r.message?.model && r.message.model !== d.model ? " (answered by " + esc(r.message.model) + ")" : "")],
+    ["effort", esc(d.effort)], ["max tokens", esc(d.max_tokens)],
+    ["messages", `${d.messages_total} (${d.reset ? "context rewritten, all sent anew" : (d.messages_total - q.newFrom) + " new"})`],
+    ["tools", `${(q.tools || []).length}${d.tools && q.prev ? ' <span class="pill new">changed</span>' : ""}`],
+    ["system prompt", `${(q.system || "").length.toLocaleString()} chars${d.system !== undefined && q.prev ? ' <span class="pill new">changed</span>' : ""}`],
+  ]);
+  html += "<h2>Timing</h2>" + kv([
+    ["sent", r.start ? new Date(r.start).toLocaleTimeString() + " (+" + fmtMS(r.start - S.M.t0) + ")" : ""],
+    ["first output", fmtMS(r.ttft_ms)], ["thinking", r.thinking_ms ? fmtMS(r.thinking_ms) : ""],
+    ["generating", gen != null ? fmtMS(gen) : ""], ["total", fmtMS(r.duration_ms)], ["speed", tps],
+  ]);
+  if (q.resp) html += "<h2>Usage</h2>" + kv([
+    ["input", fmtN(u.input)], ["cache read", fmtN(u.cache_read)], ["cache write", fmtN(u.cache_write)],
+    ["context", fmtN((u.input || 0) + (u.cache_read || 0) + (u.cache_write || 0))], ["output", fmtN(u.output)],
+    ["cost", fmtUSD(r.cost_usd)], ["stop reason", esc(r.stop_reason)],
+  ]);
+  if (r.notices?.length) html += "<h2>Notices</h2>" + r.notices.map((n) => `<div>${esc(n)}</div>`).join("");
+  if (r.error) html += codeBlock(r.error, "Error");
+  if (q.http.length) html += `<h2>HTTP</h2><div>${q.http.length} exchange${q.http.length > 1 ? "s" : ""}: ` + q.http.map((h) => `${esc(h.data.status || "failed")} in ${fmtMS(h.data.done - h.data.sent)}`).join(", ") + "</div>";
+  return html;
+}
+function reqPrompt(q) {
+  const d = q.rec.data;
+  let html = "";
+  const sysChanged = q.prev && q.prev.system !== q.system;
+  html += `<h2>System prompt ${sysChanged ? '<span class="pill new">changed</span>' : ""}</h2>`;
+  if (sysChanged) html += `<details open><summary>changes since request ${esc(q.prev.id)}</summary>${diffView(q.prev.system, q.system)}</details>`;
+  html += `<details><summary>full text (${(q.system || "").length.toLocaleString()} chars)</summary>${codeBlock(q.system || "")}</details>`;
+  const names = (q.tools || []).map((t) => t.name);
+  const prevNames = q.prev ? (q.prev.tools || []).map((t) => t.name) : null;
+  const toolsChanged = prevNames && JSON.stringify(prevNames) !== JSON.stringify(names);
+  html += `<h2>Tools (${names.length}) ${d.tools && q.prev ? '<span class="pill new">changed</span>' : ""}</h2>`;
+  if (toolsChanged) html += diffView(prevNames.join("\n"), names.join("\n"));
+  html += `<details><summary>${esc(names.join(", ")) || "none"}</summary>` + (q.tools || []).map((t) =>
+    t.description !== undefined ? `<div class="x"><b>${esc(t.name)}</b><div style="color:var(--dim)">${esc(t.description)}</div>${codeBlock(pretty(t.schema))}</div>` : `<div>${esc(t.name)}</div>`).join("") + "</details>";
+  const msgs = q.messages || [], from = q.newFrom;
+  html += `<h2>Messages (${msgs.length}) <span class="pill new">${msgs.length - from} new</span></h2>`;
+  if (from > 0) html += `<details><summary>${from} earlier message${from > 1 ? "s" : ""}, sent before</summary>${msgs.slice(0, from).map((m, i) => msgView(m, i, false)).join("")}</details>`;
+  html += msgs.slice(from).map((m, i) => msgView(m, from + i, true)).join("");
+  return html;
+}
+function reqResponse(q) {
+  const r = q.resp?.data;
+  if (!r) return '<div class="empty">No response yet.</div>';
+  if (!r.message) return codeBlock(r.error || "no message", "Error");
+  return msgView(r.message, null, false) + (r.error ? codeBlock(r.error, "Error") : "");
+}
+function reqHTTP(q) {
+  if (!q.http.length) return '<div class="empty">No HTTP exchange recorded for this request (the provider may not use HTTP, or recording started after it).</div>';
+  return q.http.map((h, i) => {
+    const d = h.data;
+    return `<div class="x"><h2>${esc(d.method)} ${esc(d.status || "")} ${d.error ? '<span class="pill err">' + esc(oneLine(d.error, 80)) + "</span>" : ""}</h2>` +
+      `<div style="font-family:var(--mono);font-size:12px;word-break:break-all">${esc(d.url)}</div>` +
+      kv([["headers after", fmtMS(d.headers - d.sent)], ["complete after", fmtMS(d.done - d.sent)], ["request", fmtN(d.request_bytes) + " bytes"], ["response", fmtN(d.response_bytes) + " bytes" + (d.truncated ? " (recording cut at 32 MB)" : "")]]) +
+      `<details><summary>request headers</summary>${codeBlock(hdrs(d.request_headers))}</details>` +
+      `<details><summary>response headers</summary>${codeBlock(hdrs(d.response_headers))}</details>` +
+      (d.request_body ? `<h2>Request body</h2><div data-body="${esc(d.request_body)}" data-json="1">loading…</div>` : "") +
+      (d.response_body ? `<h2>Response body</h2><div class="nowrap" data-body="${esc(d.response_body)}">loading…</div>` : "") + "</div>";
+  }).join("");
+}
+function hdrs(h) { return Object.entries(h || {}).map(([k, v]) => `${k}: ${[].concat(v).join(", ")}`).join("\n"); }
+async function loadBody(el) {
+  const name = el.dataset.body;
+  let text = S.bodies[name];
+  if (text === undefined && BOOT?.mode !== "static") {
+    try { const r = await fetch(`/api/body/${encodeURIComponent(name)}?t=${encodeURIComponent(TOKEN)}`); text = r.ok ? await r.text() : "(unavailable)"; } catch { text = "(unavailable)"; }
+    S.bodies[name] = text;
+  }
+  if (text === undefined) text = "(not in this export)";
+  el.innerHTML = codeBlock(el.dataset.json ? pretty(text) : text);
+  el.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard?.writeText(COPY[b.dataset.copy] || ""));
+}
+function msgView(m, idx, isNew) {
+  const blocks = (m.blocks || []).map(blockView).join("");
+  return `<div class="msg${isNew ? " new" : ""}"><div class="hd"><b>${esc(m.role)}</b>${idx != null ? "<span>#" + idx + "</span>" : ""}${m.model ? "<span>" + esc(m.model) + "</span>" : ""}</div><div class="bd">${blocks}</div></div>`;
+}
+function blockView(b) {
+  switch (b.type) {
+    case "text": return `<div class="blk">${b.attachment ? '<div class="lbl">attached: ' + esc(b.attachment) + "</div>" : ""}${codeBlock(b.text || "")}</div>`;
+    case "thinking": return `<div class="blk thinking"><details><summary>thinking${b.duration_ms ? " · " + fmtMS(b.duration_ms) : ""}${b.redacted ? " (redacted)" : ""}</summary>${codeBlock(b.text || "")}</details></div>`;
+    case "tool_use": return `<div class="blk"><div class="lbl">tool call · ${esc(b.name)} · <a data-go='${esc(JSON.stringify({ type: "tool", id: b.id }))}'>${esc(b.id)}</a></div>${codeBlock(pretty(b.input ?? {}))}</div>`;
+    case "tool_result": return `<div class="blk${b.is_error ? " err" : ""}"><div class="lbl">tool result · ${esc(b.name || "")} · ${esc(b.id)}${b.is_error ? " · error" : ""}</div>${codeBlock(b.content || "")}</div>`;
+    case "image": return `<div class="blk"><div class="lbl">image · ${esc(b.media_type)}${b.attachment ? " · " + esc(b.attachment) : ""}</div>${b.data ? `<img class="att" src="data:${esc(b.media_type)};base64,${esc(b.data)}">` : ""}</div>`;
+    default: return `<div class="blk"><div class="lbl">${esc(b.type)}${b.provider ? " · " + esc(b.provider) : ""}</div>${codeBlock(pretty(b.raw ?? b))}</div>`;
+  }
+}
+function toolView(t) {
+  const s = t.start?.data || t.end?.data || {}, e = t.end?.data;
+  let html = `<h2>${esc(s.name)} ${e ? (e.is_error ? '<span class="pill err">error</span>' : '<span class="pill ok">done</span>') : '<span class="pill">running</span>'}</h2>`;
+  html += kv([["agent", esc(t.lane)], ["call", esc(t.id)], ["started", t.start ? "+" + fmtMS(t.start.t - S.M.t0) : "not run"], ["duration", t.start && t.end ? fmtMS(t.end.t - t.start.t) : ""],
+    ["permission", t.perm ? esc(t.perm.data.decision) + (t.perm.data.wait_ms > 0 ? " after " + fmtMS(t.perm.data.wait_ms) : "") : ""]]);
+  const sub = S.M.lanes.find((l) => l.parent === t.id);
+  if (sub) html += `<div style="margin:6px 0">Subagent: ${goLink({ type: "rec", seq: firstSeqOf(sub.key) }, sub.key)}</div>`;
+  html += codeBlock(pretty(s.input ?? {}), "Input");
+  if (e) html += codeBlock(e.output || "", e.is_error ? "Error" : "Output");
+  return html;
+}
+function firstSeqOf(lane) { const r = S.M.recs.find((x) => (x.agent || "main") === lane); return r ? r.seq : 0; }
+function permView(t) {
+  const d = t.perm.data;
+  return `<h2>Permission for ${esc(d.tool)}</h2>` + kv([["decision", esc(d.decision)], ["reason", esc(d.reason)], ["rule it suggested", `<code>${esc(d.rule)}</code>`],
+    ["asked", d.asked ? "+" + fmtMS(d.asked - S.M.t0) : ""], ["waited", d.wait_ms > 0 ? fmtMS(d.wait_ms) : "not asked"]]);
+}
+function recView(r) {
+  const d = r.data || {};
+  if (r.kind === "turn_start") {
+    let html = `<h2>Prompt</h2>` + codeBlock(d.prompt || "");
+    if (d.sent) html += codeBlock(d.sent, "As sent (expanded, with notes and hook context)");
+    if (d.attachments) html += "<h2>Attachments</h2>" + d.attachments.map((a) => `<div>${esc(a)}</div>`).join("");
+    const next = S.M.recs.find((x) => x.seq > r.seq && x.kind === "request" && (x.agent || "") === (r.agent || ""));
+    if (next) html += `<div style="margin-top:10px">First request: ${goLink({ type: "req", id: next.req }, next.req)}</div>`;
+    return html;
+  }
+  if (r.kind === "hook") return `<h2>Hook: ${esc(d.event)}</h2>` + kv([["target", esc(d.target)], ["duration", fmtMS(d.duration_ms)], ["blocked", d.block ? "yes" : ""], ["halted", d.halt ? "yes" : ""], ["permission", esc(d.permission)]]) +
+    (d.reason ? codeBlock(d.reason, "Reason") : "") + (d.context ? codeBlock(d.context.join("\n"), "Context added") : "") + (d.messages ? codeBlock(d.messages.join("\n"), "Messages") : "") + (d.updated_input ? codeBlock(pretty(d.updated_input), "Updated input") : "");
+  if (d.text !== undefined) return `<h2>${esc(r.kind)}${r.agent ? " · " + esc(r.agent) : ""}</h2>` + codeBlock(d.text);
+  return `<h2>${esc(r.kind)}</h2>` + codeBlock(pretty(r));
+}
+
+// Line diff by longest common subsequence; big inputs fall back to
+// showing both sides.
+function diffView(a, b) {
+  const A = String(a || "").split("\n"), B = String(b || "").split("\n");
+  if (A.length * B.length > 4e6) return `<div class="diff">${codeBlock("(too large to diff; showing the new text)\n\n" + b)}</div>`;
+  const n = A.length, m = B.length, L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && A[i] === B[j]) { out.push({ t: " ", s: A[i] }); i++; j++; }
+    else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) { out.push({ t: "+", s: B[j] }); j++; }
+    else { out.push({ t: "-", s: A[i] }); i++; }
+  }
+  // Keep three lines of context around changes.
+  const keep = new Uint8Array(out.length);
+  out.forEach((o, k) => { if (o.t !== " ") for (let x = Math.max(0, k - 3); x <= Math.min(out.length - 1, k + 3); x++) keep[x] = 1; });
+  let html = "", skipped = 0;
+  out.forEach((o, k) => {
+    if (!keep[k]) { skipped++; return; }
+    if (skipped) { html += `<span style="color:var(--faint)">  ⋯ ${skipped} unchanged line${skipped > 1 ? "s" : ""}</span>\n`; skipped = 0; }
+    html += o.t === "+" ? `<span class="a">+ ${esc(o.s)}</span>` : o.t === "-" ? `<span class="d">- ${esc(o.s)}</span>` : `  ${esc(o.s)}\n`;
+  });
+  if (!html) html = "(no changes)";
+  return `<div class="diff"><pre>${html}</pre></div>`;
+}
+
+// ---------- header ----------
+function renderHeader() {
+  const M = S.M, T = M.tot;
+  $("sid").textContent = BOOT?.title || "";
+  const lv = $("live"); lv.textContent = BOOT?.mode === "static" ? "export" : S.live ? "live" : "finished"; lv.className = "badge" + (S.live ? " live" : "");
+  const wall = M.t1 - M.t0;
+  $("stats").innerHTML = [
+    ["models", esc([...T.models].join(", ") || "–")], ["requests", T.reqs], ["tools", T.tools],
+    ["input", fmtN(T.input)], ["cache read", fmtN(T.cacheR)], ["cache write", fmtN(T.cacheW)], ["output", fmtN(T.output)],
+    ["cost", fmtUSD(T.cost)], ["wall", fmtMS(wall)], T.errors ? ["errors", `<span style="color:var(--err)">${T.errors}</span>`] : null,
+  ].filter(Boolean).map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("");
+  const sel = $("agent"), cur = S.agent;
+  sel.innerHTML = '<option value="">all agents</option>' + M.lanes.map((l) => `<option value="${esc(l.key)}">${esc(l.key)}</option>`).join("");
+  sel.value = cur;
+}
+
+// ---------- data flow ----------
+function refresh() {
+  const prevMax = S.M ? S.M.vmax : 0, atEnd = S.view && S.M && S.view[1] >= S.M.vmax - 1;
+  S.M = build(S.recs);
+  if (!S.view) S.view = [0, S.M.vmax];
+  else if (S.follow && atEnd) { const w = S.view[1] - S.view[0]; S.view = S.view[0] <= 0 && w >= prevMax - 1 ? [0, S.M.vmax] : [S.M.vmax - w, S.M.vmax]; }
+  renderHeader(); buildRows(); drawTimeline();
+  if (S.sel) renderInspector();
+}
+function ingest(lines) {
+  for (const l of lines) { const r = typeof l === "string" ? JSON.parse(l) : l; S.recs.push(r); S.lastSeq = Math.max(S.lastSeq, r.seq); }
+}
+async function poll() {
+  try {
+    const r = await fetch(`/api/events?after=${S.lastSeq}&t=${encodeURIComponent(TOKEN)}`);
+    if (r.ok) {
+      const j = await r.json();
+      const wasLive = S.live; S.live = j.live;
+      if (j.records.length) { ingest(j.records); refresh(); }
+      else if (wasLive !== S.live || S.live) { if (S.M) { S.M = build(S.recs); renderHeader(); drawTimeline(); } }
+    }
+  } catch {}
+  setTimeout(poll, S.live ? 1000 : 3000);
+}
+
+// ---------- controls ----------
+function renderKinds() {
+  $("kinds").innerHTML = Object.keys(S.kinds).map((k) => `<span class="chip${S.kinds[k] ? " on" : ""}" data-k="${k}">${KIND_LABEL[k]}</span>`).join(" ");
+  $("kinds").querySelectorAll(".chip").forEach((c) => c.onclick = () => { S.kinds[c.dataset.k] = !S.kinds[c.dataset.k]; renderKinds(); buildRows(); });
+}
+let qTimer;
+$("q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value; buildRows(); }, 150); });
+$("agent").addEventListener("change", (e) => { S.agent = e.target.value; buildRows(); });
+$("collapse").addEventListener("change", (e) => { S.collapse = e.target.checked; S.view = null; refresh(); });
+$("follow").addEventListener("change", (e) => { S.follow = e.target.checked; if (S.follow && S.M) { const w = S.view[1] - S.view[0]; S.view = [S.M.vmax - w, S.M.vmax]; drawTimeline(); } });
+window.addEventListener("resize", () => { drawTimeline(); renderLedger(false); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => drawTimeline());
+
+renderKinds();
+if (BOOT?.mode === "static") {
+  S.bodies = BOOT.bodies || {};
+  ingest(BOOT.records || []);
+  refresh();
+} else {
+  poll();
+}
+</script>
+</body>
+</html>

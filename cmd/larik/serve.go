@@ -30,6 +30,7 @@ func runServe(args []string) error {
 		model       = fs.String("model", "", "default provider/model for new sessions")
 		effort      = fs.String("effort", "", "default reasoning effort for new sessions")
 		mode        = fs.String("mode", "", "default permission mode for new sessions")
+		debug       = fs.Bool("debug", false, "record a trace of every session for `larik trace` (also $LARIK_DEBUG=1)")
 		allowRemote = fs.Bool("allow-remote", false, "allow listening on non-loopback addresses (anyone who can reach the port and has the token can run commands)")
 	)
 	fs.Usage = func() {
@@ -76,6 +77,9 @@ func runServe(args []string) error {
 		return err
 	}
 	defer a.Close()
+	if *debug || envDebug() {
+		a.Debug = true
+	}
 	if *model != "" {
 		if _, err := providers.Resolve(a.Cfg, *model); err != nil {
 			return err

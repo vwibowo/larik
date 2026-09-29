@@ -33,7 +33,7 @@ func New(name, apiKey, baseURL string) *Provider {
 	if name == "" {
 		name = Name
 	}
-	var opts []option.RequestOption
+	opts := []option.RequestOption{option.WithHTTPClient(llm.HTTPClient)}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}

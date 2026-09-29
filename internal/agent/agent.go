@@ -20,6 +20,7 @@ import (
 	"larik/internal/session"
 	"larik/internal/skills"
 	"larik/internal/tools"
+	"larik/internal/trace"
 )
 
 // compactThreshold is the fraction of the context window that triggers
@@ -86,6 +87,10 @@ type Options struct {
 	// each fresh context, so edits to instruction files and new skills
 	// apply after Clear. The prompt stays fixed within a context.
 	BuildSystem func() string
+
+	// Trace records requests, responses and tool calls in debug mode;
+	// nil records nothing. SetTrace changes it.
+	Trace *trace.Tracer
 }
 
 type Agent struct {
@@ -319,7 +324,14 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 // runWith runs one turn. system marks Larik-generated prompts (background
 // notifications), which skip prompt hooks and skill expansion.
 func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit func(Event)) string {
-	emit = a.reportingSaveErrors(emit)
+	emit = a.traceEvents(a.reportingSaveErrors(emit))
+	stop := a.runTurn(ctx, prompt, system, emit)
+	a.tracer().TurnEnd(stop)
+	return stop
+}
+
+func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit func(Event)) string {
+	typed := prompt
 	a.loadTools(ctx, emit)
 	sub := a.opts.Subagent != ""
 	quiet := sub || system // no session/prompt hooks or skill expansion
@@ -389,6 +401,7 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	}
 	a.mu.Unlock()
 	a.answerDangling()
+	a.tracer().TurnStart(typed, user.Text(), attachmentNames(attached))
 	a.appendMessage(user, nil)
 
 	compactedThisTurn := false
@@ -496,27 +509,40 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		Effort:    a.opts.Effort,
 	}
 	provider := a.opts.Provider
+	tr := a.opts.Trace
 	a.mu.Unlock()
 	a.checkTools(ctx, provider, req.Model, len(req.Tools) > 0, emit)
+	reqID := tr.Request(provider.Name(), req, "")
+	ctx = tr.Wire(ctx, reqID)
 
 	var partial strings.Builder
 	// How long the model thought: from sending the request until its
 	// first text or tool call. Measured this way because some providers
 	// send reasoning only at the end, just before the answer.
 	start := time.Now()
-	var thought time.Duration
+	var thought, ttft time.Duration
 	endThinking := func() {
 		if thought == 0 {
 			thought = time.Since(start)
 		}
 	}
+	var notices []string
+	traced := func(r trace.Response) {
+		r.Start, r.DurationMS = start.UnixMilli(), time.Since(start).Milliseconds()
+		r.TTFTMS, r.ThinkingMS, r.Notices = ttft.Milliseconds(), thought.Milliseconds(), notices
+		tr.Response(reqID, r)
+	}
 	for ev, err := range provider.Stream(ctx, req) {
 		if err != nil {
+			traced(trace.Response{Error: err.Error()})
 			if ctx.Err() != nil {
 				a.keepPartial(partial.String())
 				return llm.Message{}, "", ctx.Err()
 			}
 			return llm.Message{}, "", err
+		}
+		if ttft == 0 && ev.Type != llm.EventNotice {
+			ttft = time.Since(start)
 		}
 		switch ev.Type {
 		case llm.EventTextDelta:
@@ -529,6 +555,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 			endThinking()
 			emit(Event{Kind: EvToolCallDelta, ToolName: ev.Text})
 		case llm.EventNotice:
+			notices = append(notices, ev.Text)
 			emit(Event{Kind: EvNotice, Text: ev.Text})
 		case llm.EventDone:
 			endThinking()
@@ -547,6 +574,8 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 			if msg.Model == "" {
 				msg.Model = req.Model
 			}
+			usage := ev.Usage
+			traced(trace.Response{Message: &msg, Usage: &usage, CostUSD: llm.Lookup(msg.Model).Cost(ev.Usage), StopReason: string(ev.StopReason)})
 			a.probeWindow(ctx, provider, msg.Model, ev.Usage, emit)
 			a.recordUsage(msg.Model, ev.Usage, emit)
 			a.appendMessage(msg, &ev.Usage)
@@ -555,9 +584,11 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		}
 	}
 	if ctx.Err() != nil {
+		traced(trace.Response{Error: ctx.Err().Error()})
 		a.keepPartial(partial.String())
 		return llm.Message{}, "", ctx.Err()
 	}
+	traced(trace.Response{Error: "stream ended without a final message"})
 	return llm.Message{}, "", errors.New("stream ended without a final message")
 }
 
@@ -655,6 +686,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 	provider := a.opts.Provider
 	pick := a.opts.CompactWith
+	tr := a.opts.Trace
 	a.mu.Unlock()
 	if len(msgs) == 0 {
 		return errors.New("nothing to compact")
@@ -667,9 +699,13 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 	req.Messages = withUserText(msgs, compactionPrompt)
 
+	reqID := tr.Request(provider.Name(), req, "compaction")
+	ctx = tr.Wire(ctx, reqID)
+	start := time.Now()
 	var final llm.Message
 	for ev, err := range provider.Stream(ctx, req) {
 		if err != nil {
+			tr.Response(reqID, trace.Response{Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds(), Error: err.Error()})
 			return err
 		}
 		switch ev.Type {
@@ -677,6 +713,9 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 			emit(Event{Kind: EvNotice, Text: ev.Text})
 		case llm.EventDone:
 			final = ev.Message
+			usage := ev.Usage
+			tr.Response(reqID, trace.Response{Message: &final, Usage: &usage, CostUSD: llm.Lookup(req.Model).Cost(usage),
+				StopReason: string(ev.StopReason), Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds()})
 			model := final.Model
 			if model == "" {
 				model = req.Model
@@ -709,6 +748,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if a.opts.Session != nil {
 		a.saveFailed(a.opts.Session.AppendCompaction(summary))
 	}
+	tr.Note(trace.KindCompaction, summary)
 	emit(Event{Kind: EvCompacted, Summary: summary})
 	return nil
 }

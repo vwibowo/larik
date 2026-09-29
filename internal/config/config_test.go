@@ -613,3 +613,21 @@ func TestEditorModeIsPersonal(t *testing.T) {
 		t.Error("an unknown editor_mode should be an error")
 	}
 }
+
+func TestDebugIsPersonal(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"debug":true,"debug_retention_days":-1}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DebugOn() || cfg.DebugRetention() != 14*24*time.Hour {
+		t.Error("shared project settings must not turn on recording or keep traces forever")
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"debug":true,"debug_retention_days":3}`)
+	if cfg, err = Load(cwd); err != nil || !cfg.DebugOn() || cfg.DebugRetention() != 3*24*time.Hour {
+		t.Errorf("personal debug settings: %v %v", cfg.DebugOn(), cfg.DebugRetention())
+	}
+}

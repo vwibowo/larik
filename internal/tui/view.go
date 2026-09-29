@@ -554,6 +554,9 @@ func (m *model) statusLine() string {
 		chip = m.st.chipWarn
 	}
 	modeChip := chip.Render(modeLabels[mode]) + m.vimTag()
+	if m.sess != nil && m.sess.Trace() != nil {
+		modeChip += " " + m.st.err.Render("● rec")
+	}
 	if m.status != nil && len(m.status.lines) > 0 && !m.quitArmed {
 		return m.customStatus(modeChip)
 	}
@@ -898,6 +901,11 @@ func (m *model) printBanner() tea.Cmd {
 	warn := func(s string) { lines = append(lines, m.st.warn.Render("  ! "+s)) }
 	if m.opts.Sandbox == nil && m.opts.SandboxNote != "" {
 		warn("no sandbox: " + m.opts.SandboxNote)
+	}
+	if m.sess != nil && m.sess.TraceErr != nil {
+		warn("debug trace: " + m.sess.TraceErr.Error())
+	} else if m.sess != nil && m.sess.Trace() != nil {
+		warn("debug mode: recording prompts, requests and tool output to " + shortPath(m.sess.Trace().Dir()) + " · /trace to review")
 	}
 	if m.opts.SearchNote != "" {
 		warn("web_search disabled: " + m.opts.SearchNote)

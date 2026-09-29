@@ -48,6 +48,8 @@ var commands = []command{
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
 	{"/config", "[key=value]", "settings: theme, verbose, tips, mouse, auto-compact, notifications, language, undo history, defaults", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
+	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},
+	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},
 	{"/theme", "[auto|dark|light]", "pick the color theme, or follow the terminal (auto)", "other", ""},
 	{"/keys", "", "keyboard shortcuts", "other", "?"},
 	{"/help", "", "commands and keys", "other", ""},

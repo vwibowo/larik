@@ -16,6 +16,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"larik/internal/browser"
 	"larik/internal/config"
 	"larik/internal/tools"
 )
@@ -100,7 +101,7 @@ func NewManager(cfg *config.Config, version string) *Manager {
 		Base:    tools.Builtin(),
 	}
 	m.Dial = m.dial
-	m.OpenURL = openURL
+	m.OpenURL = browser.Open
 	return m
 }
 

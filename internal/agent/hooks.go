@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -19,7 +20,33 @@ func (a *Agent) runHook(ctx context.Context, emit func(Event), in hooks.Input, t
 	if a.opts.Perms != nil {
 		in.PermissionMode = string(a.opts.Perms.Mode())
 	}
+	start := time.Now()
 	res := a.opts.Hooks.Run(ctx, in, target)
+	if t := a.tracer(); t != nil {
+		d := map[string]any{"target": target}
+		for k, v := range map[string]any{"block": res.Block, "halt": res.Halt, "reason": res.Reason, "halt_reason": res.HaltReason,
+			"permission": res.Permission, "context": res.Context, "messages": res.Messages, "updated_input": res.UpdatedInput} {
+			switch v := v.(type) {
+			case bool:
+				if v {
+					d[k] = v
+				}
+			case string:
+				if v != "" {
+					d[k] = v
+				}
+			case []string:
+				if len(v) > 0 {
+					d[k] = v
+				}
+			case json.RawMessage:
+				if len(v) > 0 {
+					d[k] = v
+				}
+			}
+		}
+		t.Hook(string(in.HookEventName), start, d)
+	}
 	for _, m := range res.Messages {
 		emit(Event{Kind: EvNotice, Text: "hook: " + m})
 	}

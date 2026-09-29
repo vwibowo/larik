@@ -192,7 +192,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if isolation == "worktree" && parent.Perms().Mode() == permission.ModePlan {
 		return tools.Result{Content: "plan mode cannot create a worktree", IsError: true}
 	}
-	c := childRun{def: def, label: label, prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns, minimalContext: role.Context == "minimal"}
+	c := childRun{def: def, label: label, callID: tools.CallID(ctx), prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns, minimalContext: role.Context == "minimal"}
 	if role.MaxTurns > 0 {
 		c.maxTurns = role.MaxTurns
 	}
@@ -214,6 +214,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 type childRun struct {
 	def            Definition
 	label          string
+	callID         string // the task call, for a debug trace
 	prompt         string
 	worktree       bool
 	model          string // role or spec asked for by the caller; overrides def.Model
@@ -245,6 +246,9 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 		Model:    model,
 		System:   def.Prompt + "\n\n" + footer + "\n\n" + shared,
 		MaxTurns: c.maxTurns,
+
+		Label:       label,
+		TraceParent: c.callID,
 	}
 	cwd := parent.Cwd()
 	var wt *worktree.Worktree

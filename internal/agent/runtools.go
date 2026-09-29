@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -121,15 +122,22 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 		return true, "", input
 	}
 	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: tool.ReadOnly(), Input: input})
+	tr := a.tracer()
+	record := func(answer, why string, asked time.Time) {
+		tr.Permission(use.ID, use.Name, permission.SuggestRule(use.Name, input), answer, why, asked)
+	}
 	switch {
 	case decision == permission.Deny:
+		record("deny (rule)", reason, time.Now())
 		return false, "Permission denied: " + reason, input
 	case pre.Permission == "allow":
+		record("allow (hook)", pre.Reason, time.Now())
 		return true, "", input
 	case pre.Permission == "ask":
 		decision = permission.Ask
 	}
 	if decision == permission.Allow {
+		record("allow (rules or mode)", reason, time.Now())
 		return true, "", input
 	}
 
@@ -140,11 +148,25 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)
+	asked := time.Now()
 	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, Reply: reply})
 	select {
 	case <-ctx.Done():
+		record("interrupted", "", asked)
 		return false, "interrupted by user", input
 	case r := <-reply:
+		switch {
+		case exitPlan && r.Allow:
+			record("plan approved", "continue in "+string(r.Mode), asked)
+		case exitPlan:
+			record("plan not approved", r.Reason, asked)
+		case !r.Allow:
+			record("deny", r.Reason, asked)
+		case r.Always:
+			record("always allow", "", asked)
+		default:
+			record("allow", "", asked)
+		}
 		if exitPlan {
 			if !r.Allow {
 				msg := "The user didn't approve the plan, so plan mode stays on. Revise the plan"

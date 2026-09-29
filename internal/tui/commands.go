@@ -173,6 +173,12 @@ func (m *model) command(line string) tea.Cmd {
 	case "/copy":
 		return m.copyReply()
 
+	case "/debug":
+		return m.debugCommand(arg)
+
+	case "/trace":
+		return m.openTrace()
+
 	case "/vim":
 		if m.vim != nil {
 			return m.configCommand("editor_mode=normal")
