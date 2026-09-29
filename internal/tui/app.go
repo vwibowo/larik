@@ -298,17 +298,20 @@ func (m *model) wantDark() bool {
 func (m *model) applyTheme(isDark bool) {
 	m.isDark = isDark
 	m.st = newStyles(isDark)
-	inputStyles := textarea.DefaultStyles(isDark)
-	if isDark {
-		inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.Color("#202024"))
-	} else {
-		inputStyles.Focused.CursorLine = inputStyles.Focused.CursorLine.Background(lipgloss.Color("#F0F0F2"))
-	}
-	m.input.SetStyles(inputStyles)
+	m.input.SetStyles(transparentInput(isDark))
 	if m.permFeedback != nil {
-		m.permFeedback.SetStyles(textarea.DefaultStyles(isDark))
+		m.permFeedback.SetStyles(transparentInput(isDark))
 	}
 	m.setWidth(m.width)
+}
+
+// transparentInput is the textarea's default theme without the cursor-line
+// background, so the composer shows the terminal's own background.
+func transparentInput(isDark bool) textarea.Styles {
+	st := textarea.DefaultStyles(isDark)
+	st.Focused.CursorLine = lipgloss.NewStyle()
+	st.Blurred.CursorLine = lipgloss.NewStyle()
+	return st
 }
 
 func (m *model) setWidth(w int) {
@@ -322,11 +325,7 @@ func (m *model) setWidth(w int) {
 	if m.permFeedback != nil {
 		m.permFeedback.SetWidth(max(w-10, 10))
 	}
-	style := "dark"
-	if !m.isDark {
-		style = "light"
-	}
-	m.md, _ = glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(max(w-4, 20)))
+	m.md, _ = glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(w-4, 20)))
 }
 
 func (m *model) Init() tea.Cmd {
@@ -1038,7 +1037,7 @@ func (m *model) startPermissionFeedback() {
 	ta.DynamicHeight = true
 	ta.MinHeight, ta.MaxHeight = 1, 4
 	ta.SetWidth(max(m.width-10, 10))
-	ta.SetStyles(textarea.DefaultStyles(m.isDark))
+	ta.SetStyles(transparentInput(m.isDark))
 	ta.Focus()
 	m.permFeedback = &ta
 }
@@ -1062,7 +1061,7 @@ func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 		if mode == "" {
 			mode = permission.ModeDefault
 		}
-		return m.println(m.st.dim.Render("  ⎿ plan approved · continuing in ") + modeLabels[mode])
+		return m.println(m.st.dim.Render("  ⎿ plan approved · continuing in ") + m.st.modeStyle(mode).UnsetPadding().Render(modeLabels[mode]))
 	}
 	if !reply.Allow {
 		return m.println(m.st.dim.Render("  ⎿ denied " + toolTitle(ev.ToolName, ev.Input, m.shortPaths)))

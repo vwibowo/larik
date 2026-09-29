@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/agent"
+	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/tools"
@@ -482,5 +483,34 @@ func TestResumedThinkingShowsSavedTime(t *testing.T) {
 	msg := llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockThinking, Text: "hmm", DurationMS: 14_200}, llm.TextBlock("hi")}}
 	if out := plain(m.renderAssistant(msg, 0)); !strings.Contains(out, "Thought for 14s") {
 		t.Fatalf("resumed history should show the saved time: %q", out)
+	}
+}
+
+func TestFooterShowsSandboxEffortBarAndBudget(t *testing.T) {
+	m := testModel(t)
+	m.width = 140
+	m.agent.SetEffort(llm.EffortMax)
+	m.stats = agent.UsageInfo{CostUSD: 0.68}
+	m.opts.Config.Budget = config.Budget{SessionUSD: 2}
+
+	got := plain(m.statusLine())
+	for _, want := range []string{"⚠ no sandbox", "effort max █", "$0.68/$2.00"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("footer lacks %q: %q", want, got)
+		}
+	}
+
+	// Amber at the warn threshold, red at the cap, plain below it.
+	m.stats.CostUSD = 1.7
+	warn := m.costText()
+	m.stats.CostUSD = 2.1
+	capped := m.costText()
+	m.stats.CostUSD = 0.5
+	low := m.costText()
+	if warn == plain(warn) || capped == plain(capped) || warn == capped {
+		t.Errorf("cost should be colored differently at warn and cap: %q %q", warn, capped)
+	}
+	if low != plain(low) {
+		t.Errorf("cost below the warn threshold should be plain: %q", low)
 	}
 }

@@ -267,7 +267,7 @@ func (m *model) setMode(md permission.Mode) tea.Cmd {
 		return m.println(m.st.err.Render("couldn't save mode: " + err.Error()))
 	}
 	m.modePick = nil
-	return m.println(m.st.dim.Render("mode set to " + modeLabels[md] + " · saved as default"))
+	return m.println(m.st.dim.Render("mode set to ") + m.st.modeStyle(md).UnsetPadding().Render(modeLabels[md]) + m.st.dim.Render(" · saved as default"))
 }
 
 func (m *model) modePickerView() string {

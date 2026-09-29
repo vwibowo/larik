@@ -156,6 +156,23 @@ Normal mode supports:
 
 Actions and their defaults: `submit` (enter), `newline` (shift+enter, alt+enter, ctrl+j), `interrupt` (esc), `quit` (ctrl+d on an empty input), `history_search` (ctrl+r), `external_editor` (ctrl+g), `paste_image` (ctrl+v), `cycle_mode` (shift+tab), `toggle_thinking` (ctrl+o), `model_picker` (alt+p), `shortcuts` (?), `scroll_up` (pgup), `scroll_down` (pgdown), `scroll_top` (ctrl+home), `scroll_bottom` (ctrl+end). Keys are written as Bubble Tea names them: `ctrl+`, `alt+`, `shift+` and `super+` in front of a character or `enter`, `tab`, `esc`, `space`, `up`, `pgup`, `f5` and so on. A key you give one action is taken from whichever action had it by default. `ctrl+c` can't be rebound, and a plain character can't be bound (it would stop you typing it) except to `shortcuts`. Keys inside pickers and permission prompts stay as they are. The banner lists entries that couldn't apply, and `?` and the hints across the interface show the keys as bound. Shared `.larik/settings.json` files can't rebind keys.
 
+### Footer colors
+
+Each thing you should recognize at a glance has its own color in the footer:
+
+| Item | Color |
+|---|---|
+| Mode `default` | plain text |
+| Mode `plan` (read-only) | blue |
+| Mode `accept edits` | violet |
+| Mode `yolo` | red |
+| Effort `low` … `max` | one magenta hue that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
+| `◈ sandbox` / `⚠ no sandbox` | green when the sandbox is on; amber when it is off (red if you are also in `yolo`) |
+| Cost | plain; with a session budget it reads `$0.68/$2.00`, amber at the warning threshold and red at the cap |
+| Context | the bar and the percentage turn amber at 70% and red at 90% |
+
+Teal is kept for Larik's own chrome: the model marker, the spinner, headings and borders. A subagent that is waiting for a permission answer is shown in amber.
+
 ### Status line
 
 `status_line` replaces the footer's model, context and cost with a command's output. The permission mode stays on the left:
@@ -431,7 +448,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 
 Personal settings, all editable from `/config` (which changes only the key you edit):
 
-- `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`.
+- `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`. Both themes use a teal accent and leave the background transparent, so your terminal's own background shows through; only diff lines keep a faint green or red tint.
 - `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
 - `debug` and `debug_retention_days` (not in `/config`): see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.

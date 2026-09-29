@@ -315,7 +315,7 @@ func (m *model) floatTodos(conversation string, width int) string {
 	limit := min(max(m.height/4, 3), 7)
 	content := append([]string{m.st.accent.Render("Tasks · " + todoProgress(m.todos))}, m.todoLinesWidth(m.todos, limit, cardWidth-4)...)
 	innerWidth := max(cardWidth-4, 1)
-	card := lipgloss.NewStyle().Background(lipgloss.Color("#202024")).Render(m.st.modal.Width(innerWidth).Render(strings.Join(content, "\n")))
+	card := m.st.modal.Width(innerWidth).Render(strings.Join(content, "\n"))
 	baseLines := strings.Split(conversation, "\n")
 	cardLines := strings.Split(card, "\n")
 	cardRows := min(len(cardLines), len(baseLines))
@@ -525,7 +525,8 @@ func (m *model) taskRows() []string {
 				activity = toolTitle(t.name, t.input, m.shortPaths)
 			}
 		}
-		if m.perm != nil && taskMatches(task.label, m.perm.Agent) {
+		waiting := m.perm != nil && taskMatches(task.label, m.perm.Agent)
+		if waiting {
 			activity = "waiting for permission"
 		}
 		name := task.label
@@ -537,7 +538,11 @@ func (m *model) taskRows() []string {
 			age = elapsed(time.Since(task.started))
 		}
 		line := fmt.Sprintf("  ↳ %s · %s · %s · %s", name, age, plural(calls, "tool"), activity)
-		rows = append(rows, m.st.dim.Render(ansi.Truncate(line, max(m.width-2, 10), "…")))
+		style := m.st.dim
+		if waiting {
+			style = m.st.warn
+		}
+		rows = append(rows, style.Render(ansi.Truncate(line, max(m.width-2, 10), "…")))
 	}
 	if len(running) > limit {
 		rows = append(rows, m.st.dim.Render(fmt.Sprintf("  … +%d subagents", len(running)-limit)))
@@ -737,14 +742,7 @@ func (m *model) permDetail(e *agent.Event) string {
 // the terminal is narrow.
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
-	chip := m.st.chip
-	switch mode {
-	case permission.ModeDefault:
-		chip = m.st.chipPlain
-	case permission.ModeYolo:
-		chip = m.st.chipWarn
-	}
-	modeChip := chip.Render(modeLabels[mode]) + m.vimTag()
+	modeChip := m.st.modeStyle(mode).Render(modeLabels[mode]) + m.vimTag()
 	if m.sess != nil && m.sess.Trace() != nil {
 		modeChip += " " + m.st.err.Render("● rec")
 	}
@@ -756,7 +754,17 @@ func (m *model) statusLine() string {
 	provider := m.st.dim.Render(" " + m.agent.ProviderName())
 	var extra []string
 	if e := m.agent.Effort(); e != "" {
-		extra = append(extra, m.st.dim.Render("effort ")+string(e))
+		style, mark := m.st.effortStyle(e)
+		extra = append(extra, m.st.dim.Render("effort ")+style.Render(string(e)+" "+mark))
+	}
+	// Sandbox state stays in the footer: it is the one safety setting that
+	// used to hide in the sidebar.
+	sandbox := m.st.ok.Render("◈ sandbox")
+	if m.opts.Sandbox == nil {
+		sandbox = m.st.warn.Bold(true).Render("⚠ no sandbox")
+		if m.agent.Perms().Mode() == permission.ModeYolo {
+			sandbox = m.st.err.Bold(true).Render("⚠ no sandbox")
+		}
 	}
 	ctxPct, ctxBar := "", "" // "31%", "▰▰▰▱▱▱▱▱▱▱ "
 	if m.stats.ContextWindow > 0 && m.stats.ContextTokens > 0 {
@@ -771,11 +779,11 @@ func (m *model) statusLine() string {
 		const cells = 10
 		full := (pct*cells + 50) / 100
 		ctxBar = style.Render(strings.Repeat("▰", full)) + m.st.dim.Render(strings.Repeat("▱", cells-full)) + " "
-		ctxPct = fmt.Sprintf("%d%%", pct)
+		ctxPct = style.Render(fmt.Sprintf("%d%%", pct))
 	}
 	var tail []string
 	if m.stats.CostUSD > 0 {
-		tail = append(tail, fmt.Sprintf("$%.2f", m.stats.CostUSD))
+		tail = append(tail, m.costText())
 	}
 	if n := m.agent.RunningBackground(); n > 0 {
 		tail = append(tail, fmt.Sprintf("⧗ %d background", n))
@@ -785,7 +793,7 @@ func (m *model) statusLine() string {
 	}
 
 	sep := m.st.dim.Render(" · ")
-	build := func(hint, withProvider, withBar bool) string {
+	build := func(hint, withProvider, withBar, withSandbox bool) string {
 		left := modeChip
 		if k := m.keys.hint(actCycleMode); hint && k != "" {
 			left += m.st.dim.Render(" " + k)
@@ -793,6 +801,9 @@ func (m *model) statusLine() string {
 		parts := []string{model}
 		if withProvider {
 			parts[0] += provider
+		}
+		if withSandbox {
+			parts = append(parts, sandbox)
 		}
 		parts = append(parts, extra...)
 		if ctxPct != "" {
@@ -810,12 +821,35 @@ func (m *model) statusLine() string {
 		}
 		return left + strings.Repeat(" ", gap) + right
 	}
-	for _, v := range [][3]bool{{true, true, true}, {false, true, true}, {false, true, false}, {false, false, false}} {
-		if line := build(v[0], v[1], v[2]); line != "" {
+	for _, v := range [][4]bool{{true, true, true, true}, {false, true, true, true}, {false, true, false, true}, {false, false, false, true}, {false, false, false, false}} {
+		if line := build(v[0], v[1], v[2], v[3]); line != "" {
 			return line
 		}
 	}
 	return modeChip + "\n" + model + provider
+}
+
+// costText is the session cost. With a session budget it shows the cap and
+// turns amber at the warn threshold and red at the cap.
+func (m *model) costText() string {
+	spent := m.stats.CostUSD
+	text := fmt.Sprintf("$%.2f", spent)
+	c := m.opts.Config
+	if c == nil {
+		return text
+	}
+	b := c.Routing().Budget
+	if b.SessionUSD <= 0 {
+		return text
+	}
+	text += fmt.Sprintf("/$%.2f", b.SessionUSD)
+	switch {
+	case spent >= b.SessionUSD:
+		return m.st.err.Render(text)
+	case spent >= b.WarnFraction()*b.SessionUSD:
+		return m.st.warn.Render(text)
+	}
+	return text
 }
 
 // renderAssistant formats a finished assistant message for scrollback.

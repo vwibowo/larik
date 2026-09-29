@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Footer colors.** The permission modes each have their own color (plan blue, accept edits violet, yolo red), effort is a magenta ramp with a bar that grows from `low` to `max`, and the footer now always shows whether the sandbox is on. Cost shows the session budget (`$0.68/$2.00`) and turns amber, then red, as it nears the cap; the context percentage matches its bar; subagents waiting for permission turn amber. See [Footer colors](/docs/commands/#footer-colors).
+- **A teal theme with a transparent background.** The terminal UI now uses the site's teal accent in both `dark` and `light`, and no longer paints backgrounds of its own (footer chips, the task card, the composer's cursor line, Markdown headings and code): your terminal's background shows through. Diff lines keep their faint green and red tint.
 - **`@` mentions.** Typing `@` opens a file picker; each `@path` in a prompt attaches the file (with line numbers, so the model can edit it straight away), `@path#L10-40` a range, `@folder/` a listing, and `@image.png` an image for vision models. Pasted or dropped file paths become mentions, and mentions work in `larik -p` and `larik serve` too. See [Composer](/docs/commands/#composer).
 - **`!` shell commands** run straight from the prompt, in the sandbox, with their output sent along with your next prompt.
 - **Prompt history** per project: `↑/↓` to recall, `ctrl+r` to search. `ctrl+g` edits the prompt in `$EDITOR`.
