@@ -540,7 +540,7 @@ Larik runs language servers so the model gets compiler feedback on its own edits
 
 ## Hooks
 
-Hooks are shell commands that run at points in the agent lifecycle. The format matches Claude Code's, so existing hook scripts work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
+Hooks run at points in the agent lifecycle: shell commands, or prompts a model answers. The format matches Claude Code's, so existing hooks work. Matchers are case-insensitive, so `Bash` matches Larik's `bash`.
 
 ```json
 {
@@ -595,6 +595,19 @@ Hooks are shell commands that run at points in the agent lifecycle. The format m
 - Matching hooks run in parallel.
 
 **Precedence:** a hook `deny` beats everything. Permission deny rules beat a hook `allow`.
+
+**Prompt hooks** ask a model instead of running a command, for checks that need judgment:
+
+```json
+{ "hooks": { "Stop": [ { "hooks": [
+  { "type": "prompt", "prompt": "Did the agent run the tests and see them pass? Look at the transcript at transcript_path in: $ARGUMENTS" }
+] } ] } }
+```
+
+- `$ARGUMENTS` becomes the hook input as JSON; without it, the input is appended.
+- The model answers `{"ok": true}` or `{"ok": false, "reason": "…"}`. `ok: false` acts like exit code 2 for that event: a `Stop` hook makes the agent continue with the reason, a `PreToolUse` hook denies the call, a `UserPromptSubmit` hook blocks the prompt.
+- It runs on the hook's `model` (a provider/model or a routing role) if set, otherwise on your `explore` role, otherwise on the session's model. Its cost counts toward the session and its budget. The default timeout is 30s.
+- An answer that can't be read, a timeout or an error doesn't block; you see a message.
 
 **Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in personal settings always run.
 

@@ -309,6 +309,7 @@ func (a *App) Open(o Options) (*Session, error) {
 			return b.SessionUSD, b.WarnFraction()
 		},
 	})
+	hookRunner.SetEvaluator(a.hookEvaluator(ag))
 	s := &Session{ID: sess.ID, Path: sess.Path, Agent: ag, Hooks: hookRunner, sess: sess}
 	if state != nil {
 		ag.Restore(state)

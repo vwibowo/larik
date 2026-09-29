@@ -198,3 +198,30 @@ func TestCommandRunsInlineShell(t *testing.T) {
 		t.Errorf("notices: %s", n)
 	}
 }
+
+func TestStopPromptHookKeepsAgentWorking(t *testing.T) {
+	cfg := hooks.Config{hooks.Stop: {{Hooks: []hooks.Command{{Type: "prompt", Prompt: "Are the tests passing? $ARGUMENTS"}}}}}
+	a, fp, _ := withHooks(t, permission.ModeYolo, permission.Rules{}, cfg,
+		assistant(llm.TextBlock("done, I think")),
+		assistant(llm.TextBlock("ran them, all green")),
+	)
+	asked := 0
+	a.opts.Hooks.SetEvaluator(func(_ context.Context, _, _, prompt string) (string, error) {
+		asked++
+		if asked == 1 {
+			return `{"ok": false, "reason": "you haven't run the tests"}`, nil
+		}
+		if !strings.Contains(prompt, `"stop_hook_active":true`) {
+			t.Error("the second check should know a Stop hook already continued the agent")
+		}
+		return `{"ok": true}`, nil
+	})
+	drain(a.Run(context.Background(), "fix it"), PermissionReply{})
+	if asked != 2 || len(fp.requests) != 2 {
+		t.Fatalf("asked %d times, %d requests", asked, len(fp.requests))
+	}
+	last := fp.requests[1].Messages
+	if got := last[len(last)-1].Text(); !strings.Contains(got, "you haven't run the tests") {
+		t.Fatalf("the reason should go back to the model: %q", got)
+	}
+}

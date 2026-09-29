@@ -151,6 +151,8 @@ How a hook runs ([hooks.go:191](../internal/hooks/hooks.go:191)):
 - **Exit 2**: block; stderr is the reason and goes to the model (for `PreToolUse` it's a deny).
 - **Other codes**: non-blocking error shown to the user.
 
+**Prompt hooks** (`"type": "prompt"`, [prompt.go](../internal/hooks/prompt.go)) send the hook's `prompt`, with `$ARGUMENTS` replaced by the input JSON, to a model through the runner's `Evaluator`, which `app.hookEvaluator` supplies per session: the hook's `model`, else the `explore` role, else the session's model, with spend added to the agent's totals. The hooks package itself has no model code. The reply is parsed for `{"ok": …, "reason": …}` (prose or a code fence around it is tolerated, as is the older `decision: approve|block`), and `ok: false` becomes the same `Result` as exit code 2. Unreadable answers, timeouts (30 s default) and errors fail open with a message.
+
 Inside the agent ([agent/hooks.go](../internal/agent/hooks.go)), hook output enters the conversation wrapped in `<hook-context source="…">` or `<hook-feedback source="…">` tags, so the model can tell it apart from the user.
 
 ## Language servers

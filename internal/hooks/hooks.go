@@ -1,10 +1,14 @@
-// Package hooks runs user-configured shell commands at points in the agent
+// Package hooks runs user-configured hooks at points in the agent
 // lifecycle. The configuration, stdin payload, exit codes and JSON output
 // follow the Claude Code hooks format so existing hook scripts work.
 //
-// Exit code 0: success; stdout may be a JSON object (see output).
+// A command hook is a shell command:
+// exit code 0: success; stdout may be a JSON object (see output).
 // Exit code 2: blocking; stderr is the reason, routed per event.
 // Other codes: non-blocking error, shown to the user.
+//
+// A prompt hook asks a model instead (see prompt.go): {"ok": false,
+// "reason": …} blocks like exit code 2.
 package hooks
 
 import (
@@ -46,8 +50,14 @@ var Events = []Event{SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, St
 const defaultTimeout = 60 * time.Second
 
 type Command struct {
-	Type    string `json:"type"` // only "command" is supported
-	Command string `json:"command"`
+	Type    string `json:"type"` // "command" (default) or "prompt"
+	Command string `json:"command,omitempty"`
+	// Prompt is a prompt hook's question for the model; $ARGUMENTS is
+	// replaced with the hook input as JSON (appended when absent).
+	Prompt string `json:"prompt,omitempty"`
+	// Model is a prompt hook's provider/model or routing role; empty uses
+	// the explore role, else the session's model.
+	Model   string `json:"model,omitempty"`
 	Timeout int    `json:"timeout,omitempty"` // seconds
 }
 
@@ -164,6 +174,9 @@ type Runner struct {
 
 	mu  sync.Mutex
 	cfg Config
+	// evaluate answers prompt hooks (SetEvaluator); nil makes them fail
+	// open with a message.
+	evaluate Evaluator
 }
 
 func NewRunner(cfg Config, cwd, sessionID, transcriptPath string) *Runner {
@@ -237,6 +250,9 @@ func matches(pattern, target string) bool {
 }
 
 func (r *Runner) exec(ctx context.Context, ev Event, c Command, payload []byte) Result {
+	if c.Type == "prompt" {
+		return r.evalPrompt(ctx, ev, c, payload)
+	}
 	if c.Type != "" && c.Type != "command" {
 		return Result{Messages: []string{fmt.Sprintf("%s hook: unsupported type %q", ev, c.Type)}}
 	}

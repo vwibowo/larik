@@ -349,7 +349,14 @@ func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea
 					matcher = "*"
 				}
 				for _, h := range mt.Hooks {
-					fmt.Fprintf(&b, "  %-16s %-12s %s\n", ev, matcher, h.Command)
+					what := h.Command
+					if h.Type == "prompt" {
+						what = "prompt: " + oneLine(h.Prompt, 70)
+						if h.Model != "" {
+							what += " (" + h.Model + ")"
+						}
+					}
+					fmt.Fprintf(&b, "  %-16s %-12s %s\n", ev, matcher, what)
 				}
 			}
 		}
