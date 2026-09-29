@@ -158,6 +158,7 @@ func (m *model) command(line string) tea.Cmd {
 		m.agent.Clear()
 		m.stats = m.agent.Stats()
 		m.todos = nil // the model no longer sees it
+		m.todoCompletionPrinted = false
 		return info("context cleared")
 
 	case "/init":
@@ -187,6 +188,10 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/todos":
 		return m.println(m.todosCommand())
+
+	case "/info":
+		m.showInfo = !m.showInfo
+		return nil
 
 	case "/cost":
 		s := m.agent.Stats()

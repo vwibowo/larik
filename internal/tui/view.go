@@ -33,6 +33,17 @@ func (m *model) View() tea.View {
 	defer func() { m.frameBottomRows = 0 }()
 	room := max(height-m.frameBottomRows, 0)
 
+	showSidebar := m.showInfo && m.width >= 100 && !m.showKeys
+	sidebarWidth := 0
+	if showSidebar {
+		sidebarWidth = min(max(m.width/3, 30), 44)
+	}
+	conversationWidth := max(m.width-sidebarWidth, 1)
+	if m.convWidth != conversationWidth {
+		m.rewrapConversationWidth(conversationWidth)
+	}
+	m.view.SetWidth(conversationWidth)
+
 	panelKind, panelText := m.panel()
 	if m.panelKind != panelKind {
 		m.panelKind = panelKind
@@ -82,7 +93,24 @@ func (m *model) View() tea.View {
 	}
 	var rows []string
 	if viewRows > 0 {
-		rows = append(rows, m.view.View())
+		conversation := m.view.View()
+		if showSidebar {
+			left := strings.Split(conversation, "\n")
+			right := strings.Split(m.sessionSidebar(sidebarWidth, viewRows), "\n")
+			for i := range left {
+				l := ansi.Truncate(left[i], conversationWidth, " ")
+				r := ""
+				if i < len(right) {
+					r = right[i]
+				}
+				rows = append(rows, l+" "+r)
+			}
+		} else {
+			if m.openTodos() && m.width >= 64 {
+				conversation = m.floatTodos(conversation, conversationWidth)
+			}
+			rows = append(rows, conversation)
+		}
 	}
 	rows = append(rows, live...)
 	m.panelTop, m.panelRows = viewRows+liveRows, panelRows
@@ -109,6 +137,8 @@ func (m *model) panel() (kind, text string) {
 		return "permission", m.permissionView()
 	case m.showKeys:
 		return "shortcuts", m.shortcutsView()
+	case m.showInfo && m.width < 100:
+		return "session-info", m.sessionInfoView()
 	case m.provs != nil:
 		kind = "providers"
 		if it, ok := m.provs.list.selected(); ok {
@@ -135,6 +165,123 @@ func (m *model) panel() (kind, text string) {
 		return "mention", m.mentionView()
 	}
 	return "", ""
+}
+
+func (m *model) sessionInfoBody() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Session info  ·  F2 or any key to close\n\nModel: %s/%s\nPermission mode: %s",
+		m.agent.ProviderName(), m.agent.Model(), m.agent.Perms().Mode())
+	if m.opts.Sandbox != nil {
+		b.WriteString("\nSandbox: " + m.opts.Sandbox.Summary())
+	} else if m.opts.SandboxNote != "" {
+		b.WriteString("\nSandbox: unavailable (" + m.opts.SandboxNote + ")")
+	} else {
+		b.WriteString("\nSandbox: disabled")
+	}
+
+	b.WriteString("\n\nMCP servers")
+	if m.opts.MCP == nil || len(m.opts.MCP.Statuses()) == 0 {
+		b.WriteString("\n  none configured")
+	} else {
+		for _, server := range m.opts.MCP.Statuses() {
+			fmt.Fprintf(&b, "\n  %s · %s · %s", server.Name, server.State, server.Transport)
+			if len(server.Tools) > 0 {
+				available := make(map[string]bool)
+				for _, spec := range m.agent.Tools().Specs() {
+					available[spec.Name] = true
+				}
+				enabled := 0
+				for _, tool := range server.Tools {
+					if available[tool] {
+						enabled++
+					}
+				}
+				fmt.Fprintf(&b, " · %d/%d tools in current context", enabled, len(server.Tools))
+				for _, tool := range server.Tools {
+					state := "not in current context"
+					if available[tool] {
+						state = "enabled"
+					}
+					fmt.Fprintf(&b, "\n    %s · %s", tool, state)
+				}
+			}
+		}
+	}
+
+	b.WriteString("\n\nSkills")
+	if m.opts.Skills == nil || len(m.opts.Skills.List()) == 0 {
+		b.WriteString("\n  none available")
+	} else {
+		for _, skill := range m.opts.Skills.List() {
+			state := "available"
+			if m.usedSkills[skill.Name] {
+				state = "used this session"
+			}
+			fmt.Fprintf(&b, "\n  /%-20s %s", skill.Name, state)
+		}
+	}
+
+	b.WriteString("\n\nLanguage servers")
+	if m.opts.LSP == nil || len(m.opts.LSP.Statuses()) == 0 {
+		b.WriteString("\n  none detected")
+	} else {
+		for _, server := range m.opts.LSP.Statuses() {
+			state := "idle"
+			if len(server.Running) > 0 {
+				state = "running: " + strings.Join(server.Running, ", ")
+			}
+			if len(server.Failed) > 0 {
+				state = "failed: " + strings.Join(server.Failed, "; ")
+			}
+			fmt.Fprintf(&b, "\n  %s · %s · %s", server.Name, server.Languages, state)
+		}
+	}
+	return b.String()
+}
+
+func (m *model) sessionInfoView() string {
+	return m.st.modal.Width(max(m.width-2, 10)).Render(m.sessionInfoBody())
+}
+
+func (m *model) sessionSidebar(width, height int) string {
+	var b strings.Builder
+	if m.openTodos() {
+		b.WriteString(m.st.accent.Render("Tasks · " + todoProgress(m.todos)))
+		b.WriteString("\n")
+		limit := max(height/3, 3)
+		b.WriteString(strings.Join(m.todoLinesWidth(m.todos, limit, max(width-4, 8)), "\n"))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.st.accent.Render("Session · F2 to hide"))
+	b.WriteString("\n")
+	b.WriteString(m.sessionInfoBody())
+	innerWidth := max(width-4, 1)
+	content := lipgloss.NewStyle().Width(innerWidth).Render(b.String())
+	return m.st.modal.Width(innerWidth).Render(content)
+}
+
+// floatTodos overlays a compact checklist card over the top-right of the
+// conversation viewport. The card is bounded so it never consumes the view.
+func (m *model) floatTodos(conversation string, width int) string {
+	cardWidth := min(max(width/3, 26), 44)
+	cardWidth = min(cardWidth, width-4)
+	if cardWidth < 12 {
+		return conversation
+	}
+	limit := min(max(m.height/4, 3), 7)
+	content := append([]string{m.st.accent.Render("Tasks · " + todoProgress(m.todos))}, m.todoLinesWidth(m.todos, limit, cardWidth-4)...)
+	innerWidth := max(cardWidth-4, 1)
+	card := lipgloss.NewStyle().Background(lipgloss.Color("#202024")).Render(m.st.modal.Width(innerWidth).Render(strings.Join(content, "\n")))
+	baseLines := strings.Split(conversation, "\n")
+	cardLines := strings.Split(card, "\n")
+	cardRows := min(len(cardLines), len(baseLines))
+	start := max(width-lipgloss.Width(card), 0)
+	for i := 0; i < cardRows; i++ {
+		left := ansi.Cut(baseLines[i], 0, start)
+		right := ansi.Cut(baseLines[i], start+lipgloss.Width(card), width)
+		baseLines[i] = left + cardLines[i] + right
+	}
+	return strings.Join(baseLines, "\n")
 }
 
 func (m *model) composerView() string {
@@ -187,7 +334,7 @@ func (m *model) liveView() string {
 		limit := max(m.height-12, 5)
 		b = append(b, lastLines(wrap(s, m.width-2), limit))
 	}
-	if m.running {
+	if m.running && m.width < 64 {
 		b = append(b, m.liveTodos()...)
 	}
 	tasks := m.taskRows()
@@ -703,7 +850,8 @@ func (m *model) renderToolCard(e agent.Event) string {
 			body += "\n" + m.st.dim.Render(truncateLines(strings.Join(preview, "\n"), 3))
 		}
 	case e.ToolName == tools.TodoToolName:
-		body = m.todoCard(e.Input)
+		// Keep each update as a compact activity entry. The live task card
+		// shows progress; only the final completed list enters the transcript.
 	case e.ToolName == permission.ExitPlanTool:
 		// the plan itself was printed when it was put to the user
 	case e.ToolName == "write":

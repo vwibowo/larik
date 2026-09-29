@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/tools"
@@ -20,24 +22,63 @@ func TestTodosPinnedWhileRunning(t *testing.T) {
 	m := testModel(t)
 	m.width, m.height = 100, 40
 	card := plain(printed(m.handleEvent(todoEnd(todoInput, ""))))
-	for _, want := range []string{"todos(1/3 done)", "✔ Read the code", "◼ Fix the bug", "◻ Run the tests"} {
+	for _, want := range []string{"todos(1/3 done)"} {
 		if !strings.Contains(card, want) {
 			t.Errorf("card lacks %q:\n%s", want, card)
 		}
 	}
 	m.running = true
 	live := plain(m.liveView())
-	if !strings.Contains(live, "Tasks · 1/3 done") || !strings.Contains(live, "Fixing the bug…") {
-		t.Fatalf("live view:\n%s", live)
+	if !strings.Contains(live, "Fixing the bug…") || strings.Contains(live, "Tasks ·") {
+		t.Fatalf("task checklist should float separately from live status:\n%s", live)
+	}
+	floating := plain(m.View().Content)
+	if !strings.Contains(floating, "Tasks · 1/3 done") || !strings.Contains(floating, "Fix the bug") {
+		t.Fatalf("floating card should show active tasks:\n%s", floating)
 	}
 
-	m.handleEvent(todoEnd(`{"todos":[{"content":"Read the code","status":"completed"}]}`, ""))
+	completed := plain(printed(m.handleEvent(todoEnd(`{"todos":[{"content":"Read the code","status":"completed"}]}`, ""))))
+	if !strings.Contains(completed, "Tasks complete · 1/1 done") || !strings.Contains(completed, "✔ Read the code") {
+		t.Fatalf("completed list should move to conversation once:\n%s", completed)
+	}
 	if strings.Contains(plain(m.liveView()), "Tasks ·") {
 		t.Error("a finished list shouldn't stay pinned")
+	}
+	repeated := plain(printed(m.handleEvent(todoEnd(`{"todos":[{"content":"Read the code","status":"completed"}]}`, ""))))
+	if strings.Contains(repeated, "Tasks complete") {
+		t.Fatalf("completed task summary should not be repeated:\n%s", repeated)
 	}
 	m.handleEvent(todoEnd(todoInput, "worker: x"))
 	if len(m.todos) != 1 {
 		t.Error("a subagent's list must not replace the main one")
+	}
+}
+
+func TestTodosUseCompactFallbackOnNarrowTerminals(t *testing.T) {
+	m := testModel(t)
+	m.todos, _ = tools.ParseTodos(json.RawMessage(todoInput))
+	m.running = true
+	m.width, m.height = 50, 20
+	live := plain(m.liveView())
+	if !strings.Contains(live, "Tasks · 1/3 done") {
+		t.Fatalf("narrow terminal should keep task status in the live area:\n%s", live)
+	}
+	if got := lipgloss.Width(plain(strings.Join(m.liveTodos(), "\n"))); got > 50 {
+		t.Fatalf("narrow task fallback exceeds terminal width: %d", got)
+	}
+}
+
+func TestTodosMoveIntoInfoSidebar(t *testing.T) {
+	m := testModel(t)
+	m.todos, _ = tools.ParseTodos(json.RawMessage(todoInput))
+	m.showInfo = true
+	m.width, m.height = 120, 32
+	view := plain(m.View().Content)
+	if !strings.Contains(view, "Tasks · 1/3 done") || !strings.Contains(view, "Session · F2 to hide") {
+		t.Fatalf("wide info sidebar should include tasks and session details:\n%s", view)
+	}
+	if m.view.Width() >= m.width {
+		t.Fatalf("conversation viewport should narrow beside the sidebar: width=%d terminal=%d", m.view.Width(), m.width)
 	}
 }
 

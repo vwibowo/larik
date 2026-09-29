@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,18 +10,28 @@ import (
 	"larik/internal/tools"
 )
 
-// The model's task list (todo_write). The list lives in the transcript;
-// the TUI keeps the latest one to pin it under the conversation while a
-// turn runs.
+// The model's task list (todo_write) lives in the transcript. The TUI keeps
+// the latest state for the floating task card and archives its completed list.
 
 // updateTodos records the list from a finished top-level todo_write call.
-func (m *model) updateTodos(e agent.Event) {
+func (m *model) updateTodos(e agent.Event) bool {
 	if e.ToolName != tools.TodoToolName || e.IsError || e.Agent != "" {
-		return
+		return false
 	}
-	if todos, err := tools.ParseTodos(e.Input); err == nil {
-		m.todos = todos
+	todos, err := tools.ParseTodos(e.Input)
+	if err != nil {
+		return false
 	}
+	m.todos = todos
+	if len(todos) == 0 || m.openTodos() {
+		m.todoCompletionPrinted = false
+		return false
+	}
+	if m.todoCompletionPrinted {
+		return false
+	}
+	m.todoCompletionPrinted = true
+	return true
 }
 
 // openTodos reports whether the list has anything left to do.
@@ -62,6 +71,10 @@ func todoProgress(todos []tools.Todo) string {
 // A long list keeps the item in progress in view, with the rows before
 // and after it summarized.
 func (m *model) todoLines(todos []tools.Todo, limit int) []string {
+	return m.todoLinesWidth(todos, limit, max(m.width-8, 10))
+}
+
+func (m *model) todoLinesWidth(todos []tools.Todo, limit, width int) []string {
 	first, last := 0, len(todos)
 	if limit > 0 && len(todos) > limit {
 		cur := 0
@@ -77,7 +90,6 @@ func (m *model) todoLines(todos []tools.Todo, limit int) []string {
 		first = max(min(cur-1, len(todos)-limit), 0)
 		last = first + limit
 	}
-	width := max(m.width-8, 10)
 	var out []string
 	if first > 0 {
 		out = append(out, m.st.dim.Render(fmt.Sprintf("… %d earlier", first)))
@@ -106,19 +118,15 @@ func (m *model) liveTodos() []string {
 		return nil
 	}
 	out := []string{m.st.dim.Render("Tasks · " + todoProgress(m.todos))}
-	for _, l := range m.todoLines(m.todos, max(m.height/4, 3)) {
+	for _, l := range m.todoLines(m.todos, min(max(m.height/4, 3), 5)) {
 		out = append(out, "  "+l)
 	}
 	return out
 }
 
-// todoCard is the scrollback body of a todo_write call: the whole list.
-func (m *model) todoCard(input json.RawMessage) string {
-	todos, err := tools.ParseTodos(input)
-	if err != nil || len(todos) == 0 {
-		return m.st.dim.Render("(task list cleared)")
-	}
-	return strings.Join(m.todoLines(todos, 0), "\n")
+// completedTodosCard archives the final checklist in the conversation once.
+func (m *model) completedTodosCard() string {
+	return m.st.ok.Render("✔ Tasks complete · "+todoProgress(m.todos)) + "\n" + strings.Join(m.todoLines(m.todos, 0), "\n")
 }
 
 // todosCommand handles /todos: the current list, in full.

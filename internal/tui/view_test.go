@@ -18,6 +18,51 @@ import (
 
 func plain(s string) string { return ansi.Strip(s) }
 
+func TestSessionInfoSidebarTogglePersistsWhileTypingAndResponding(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.height = 30
+	m.Update(outputMsg("conversation remains visible"))
+	panel := plain(m.sessionInfoView())
+	for _, want := range []string{"Session info", "MCP servers", "Skills", "Language servers", "Permission mode"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("session info panel lacks %q: %q", want, panel)
+		}
+	}
+
+	m.input.SetValue("draft stays intact")
+	m.Update(press(tea.KeyF2))
+	if !m.showInfo || m.input.Value() != "draft stays intact" {
+		t.Fatalf("F2 should show the sidebar without changing the draft: showInfo=%v input=%q", m.showInfo, m.input.Value())
+	}
+	view := plain(m.View().Content)
+	if !strings.Contains(view, "Session · F2 to hide") || !strings.Contains(view, "conversation remains visible") || !strings.Contains(view, "draft stays intact") {
+		t.Fatalf("sidebar, conversation, and composer should all remain visible: %q", view)
+	}
+
+	m.running = true
+	m.stream.WriteString("streaming response")
+	if view = plain(m.View().Content); !strings.Contains(view, "Session · F2 to hide") || !strings.Contains(view, "streaming response") {
+		t.Fatalf("sidebar should remain visible during a response: %q", view)
+	}
+	m.Update(press(tea.KeyF2))
+	if m.showInfo {
+		t.Fatal("F2 should hide the sidebar during a response")
+	}
+}
+
+func TestInfoCommandTogglesSidebar(t *testing.T) {
+	m := testModel(t)
+	m.command("/info")
+	if !m.showInfo {
+		t.Fatal("/info should show session info")
+	}
+	m.command("/info")
+	if m.showInfo {
+		t.Fatal("/info should hide session info")
+	}
+}
+
 func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 	m := testModel(t)
 	m.stats = agent.UsageInfo{ContextWindow: 1000, ContextTokens: 310}

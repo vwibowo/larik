@@ -31,7 +31,11 @@ func (m *model) appendOutput(s string) {
 
 // rewrapConversation re-wraps all output for the current width.
 func (m *model) rewrapConversation() {
-	m.convWidth = m.width
+	m.rewrapConversationWidth(m.width)
+}
+
+func (m *model) rewrapConversationWidth(width int) {
+	m.convWidth = width
 	m.convLines = m.convLines[:0]
 	for _, s := range m.outputs {
 		m.convLines = append(m.convLines, wrapOutput(s, m.convWidth)...)

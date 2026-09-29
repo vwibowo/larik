@@ -158,8 +158,10 @@ type model struct {
 	provs       *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
 	wizardReturn bool
-	showKeys     bool           // the ? shortcuts overlay
-	settings     *settingsPanel // the /config screen, when open
+	showKeys     bool            // the ? shortcuts overlay
+	showInfo     bool            // the F2 session information panel
+	usedSkills   map[string]bool // skills explicitly invoked in this TUI session
+	settings     *settingsPanel  // the /config screen, when open
 
 	// Settings from /config.
 	verbose bool   // tool output in full
@@ -189,12 +191,13 @@ type model struct {
 	loadingResources bool
 	// Prompt history: histIdx is the entry shown while browsing with
 	// ↑/↓, or -1, and histDraft the input from before browsing.
-	history     []string
-	histIdx     int
-	histDraft   string
-	histPick    *picker            // ctrl+r search
-	shellCancel context.CancelFunc // a "!" command is running
-	todos       []tools.Todo       // the model's latest task list
+	history               []string
+	histIdx               int
+	histDraft             string
+	histPick              *picker            // ctrl+r search
+	shellCancel           context.CancelFunc // a "!" command is running
+	todos                 []tools.Todo       // the model's latest task list
+	todoCompletionPrinted bool               // completed list already moved into conversation history
 	// compactCancel is set while /compact runs. Compaction replaces the
 	// context when it finishes, so nothing else may use the agent then.
 	compactCancel context.CancelFunc
@@ -669,6 +672,10 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if k != "ctrl+c" {
 		m.quitArmed = false
 	}
+	if k == "f2" {
+		m.showInfo = !m.showInfo
+		return m, nil
+	}
 	if k == "ctrl+c" {
 		switch {
 		case m.running:
@@ -895,7 +902,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvToolStart:
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:
-		m.updateTodos(e)
+		if m.updateTodos(e) {
+			return m.println(m.completedTodosCard())
+		}
 		if e.Agent != "" {
 			if m.taskCalls == nil {
 				m.taskCalls = make(map[string]int)
@@ -934,6 +943,16 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvCompacted:
 		return m.println(m.st.dim.Render("✓ Context compacted to stay within the model's window."))
 	case agent.EvNotice:
+		if strings.HasPrefix(e.Text, "running /") && m.opts.Skills != nil {
+			name := strings.TrimPrefix(e.Text, "running /")
+			name, _, _ = strings.Cut(name, " ")
+			if _, ok := m.opts.Skills.Get(name); ok {
+				if m.usedSkills == nil {
+					m.usedSkills = make(map[string]bool)
+				}
+				m.usedSkills[name] = true
+			}
+		}
 		return m.println(m.st.warn.Render("! " + e.Text))
 	case agent.EvError:
 		return m.println(m.st.err.Render("✗ " + e.Text))

@@ -52,6 +52,7 @@ var commands = []command{
 	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},
 	{"/theme", "[auto|dark|light]", "pick the color theme, or follow the terminal (auto)", "other", ""},
 	{"/keys", "", "keyboard shortcuts", "other", "?"},
+	{"/info", "", "show session tools, skills and language servers", "other", "f2"},
 	{"/help", "", "commands and keys", "other", ""},
 	{"/quit", "", "exit", "other", "ctrl+d"},
 }
@@ -67,7 +68,7 @@ var helpText = func() string {
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
   @path attach a file · !cmd run a shell command · ↑/↓ history · ctrl+r search history · ctrl+g $EDITOR · ctrl+v paste image
-  / command palette · ? shortcuts · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
+  / command palette · ? shortcuts · F2 session info · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
   ctrl+c clear input / interrupt / quit`)
 	return b.String()
 }()
