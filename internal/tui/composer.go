@@ -21,6 +21,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/clipboard"
 	"larik/internal/llm"
+	"larik/internal/mcp"
 	"larik/internal/session"
 	"larik/internal/tools"
 )
@@ -117,11 +118,53 @@ func (m *model) syncMention() tea.Cmd {
 			}
 			p.items = append(p.items, pickItem{label: base, detail: dir, value: f})
 		}
+		for _, r := range rankResources(m.resources, tok.query, mentionRows) {
+			label := r.Name
+			if label == "" {
+				label = r.URI
+			}
+			p.items = append(p.items, pickItem{section: "MCP resources", label: label, detail: r.Server + " · " + r.URI, value: r.Ref()})
+		}
 		p.home()
 		m.mention = p
 	}
 	m.mentionTok = tok
-	return cmd
+	return tea.Batch(cmd, m.loadResources())
+}
+
+// resourcesLoadedMsg carries the MCP resources for the @ popup.
+type resourcesLoadedMsg struct{ resources []mcp.Resource }
+
+// loadResources lists MCP resources for the @ popup, at most every
+// indexMaxAge, when a server offers any.
+func (m *model) loadResources() tea.Cmd {
+	mgr := m.opts.MCP
+	if mgr == nil || m.loadingResources || time.Since(m.resourcesAt) < indexMaxAge {
+		return nil
+	}
+	m.loadingResources = true
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		rs, _ := mgr.Resources(ctx, "")
+		return resourcesLoadedMsg{rs}
+	}
+}
+
+// rankResources keeps the resources whose server:uri or name contains the
+// query, in their listed order.
+func rankResources(rs []mcp.Resource, query string, n int) []mcp.Resource {
+	q := strings.ToLower(query)
+	var out []mcp.Resource
+	for _, r := range rs {
+		if len(out) == n {
+			break
+		}
+		if q == "" || strings.Contains(strings.ToLower(r.Ref()), q) || strings.Contains(strings.ToLower(r.Name), q) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // handleMentionKey handles keys while the @ popup shows; ok is false for

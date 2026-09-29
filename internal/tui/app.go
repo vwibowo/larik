@@ -173,6 +173,10 @@ type model struct {
 	files         []string
 	filesAt       time.Time
 	indexing      bool
+	// MCP resources offered in the @ popup, and when they were listed.
+	resources        []mcp.Resource
+	resourcesAt      time.Time
+	loadingResources bool
 	// Prompt history: histIdx is the entry shown while browsing with
 	// ↑/↓, or -1, and histDraft the input from before browsing.
 	history     []string
@@ -320,6 +324,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case outputMsg:
 		m.appendOutput(string(msg))
+		return m, nil
+
+	case mcpSignInURLMsg:
+		return m, m.println(m.st.dim.Render("sign in to "+msg.server+" in your browser; if it didn't open, visit:\n  ") + msg.url)
+
+	case mcpLoginDoneMsg:
+		return m, m.mcpLoginDone(msg.server)
+
+	case resourcesLoadedMsg:
+		m.resources, m.resourcesAt, m.loadingResources = msg.resources, time.Now(), false
+		if m.mention != nil { // rebuild the open popup with them
+			m.mention = nil
+			return m, m.syncMention()
+		}
 		return m, nil
 
 	case filesIndexedMsg:

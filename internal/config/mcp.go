@@ -21,10 +21,27 @@ type MCPServer struct {
 	URL      string            `json:"url,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
 	Disabled bool              `json:"disabled,omitempty"`
+	// OAuth configures sign-in for an http server that asks for it. It is
+	// optional: without it Larik registers itself with the server's
+	// authorization server (dynamic client registration).
+	OAuth *MCPOAuth `json:"oauth,omitempty"`
 
 	Name    string `json:"-"`
 	Source  string `json:"-"` // file that defined it
 	Trusted bool   `json:"-"` // defined in a personal (non-shared) file
+}
+
+// MCPOAuth is a server's OAuth settings.
+type MCPOAuth struct {
+	// ClientID (and ClientSecret, for a confidential client) use a client
+	// registered ahead of time instead of registering dynamically.
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"` // ${VAR} is expanded
+	// Scopes replaces the scopes the server asks for.
+	Scopes []string `json:"scopes,omitempty"`
+	// CallbackPort fixes the local port the sign-in redirects to, for a
+	// client registered with a specific redirect URI; 0 picks a free one.
+	CallbackPort int `json:"callback_port,omitempty"`
 }
 
 // Transport returns the normalized transport type.
@@ -53,7 +70,8 @@ func (s MCPServer) Hash() string {
 		E [][2]string
 		U string
 		H [][2]string
-	}{s.Transport(), s.Command, s.Args, sortedPairs(s.Env), s.URL, sortedPairs(s.Headers)})
+		O *MCPOAuth `json:",omitempty"`
+	}{s.Transport(), s.Command, s.Args, sortedPairs(s.Env), s.URL, sortedPairs(s.Headers), s.OAuth})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
 }

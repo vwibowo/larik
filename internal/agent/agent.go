@@ -50,6 +50,9 @@ type Options struct {
 
 	// Skills expands "/skill-name args" prompts; nil disables that.
 	Skills *skills.Set
+	// MCP, if set, reads MCP resources for @server:uri mentions and runs
+	// /mcp__server__prompt commands.
+	MCP MCPContent
 
 	// LSP feeds language-server diagnostics back after edits; nil disables.
 	LSP *lsp.Manager
@@ -344,6 +347,17 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	if rest, ok := strings.CutPrefix(prompt, InitCommand); ok && !quiet && (rest == "" || rest[0] == ' ') {
 		emit(Event{Kind: EvNotice, Text: "running /init"})
 		prompt = a.initPrompt(rest)
+	} else if a.opts.MCP != nil && !quiet && strings.HasPrefix(prompt, "/mcp__") {
+		text, ok, err := a.opts.MCP.ExpandPrompt(ctx, prompt)
+		switch {
+		case err != nil:
+			emit(Event{Kind: EvError, Text: err.Error()})
+			return "error"
+		case ok:
+			name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
+			emit(Event{Kind: EvNotice, Text: "running /" + name})
+			prompt = text
+		}
 	} else if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running /" + name})

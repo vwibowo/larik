@@ -41,6 +41,8 @@ type Status struct {
 	State     State
 	Err       string
 	Tools     []string // model-facing tool names
+	Prompts   []string // slash commands for its prompts
+	Resources bool     // offers resources
 	LogPath   string
 }
 
@@ -50,10 +52,17 @@ type server struct {
 	err     error
 	session *sdk.ClientSession
 	tools   []tools.Tool
-	logPath string
-	logFile *os.File
-	done    chan struct{}      // closed when the connection attempt finishes
-	stop    context.CancelFunc // ends the connection's context
+	// prompts the server offers, listed when it connected, and whether it
+	// has resources (listed on demand, since they change).
+	prompts   []*sdk.Prompt
+	resources bool
+	logPath   string
+	logFile   *os.File
+	done      chan struct{}      // closed when the connection attempt finishes
+	stop      context.CancelFunc // ends the connection's context
+	// interactive lets this connection open a browser to sign in
+	// (/mcp login); background connections don't.
+	interactive bool
 }
 
 // Manager owns server connections for one Larik process.
@@ -70,6 +79,12 @@ type Manager struct {
 	// Dial builds the transport for a server; tests replace it.
 	Dial func(ctx context.Context, s *server) (sdk.Transport, error)
 
+	// OpenURL opens a sign-in page in the browser.
+	OpenURL func(url string)
+	// onSignIn is told a sign-in page's URL, to show in case no browser
+	// opens (SetSignInHook).
+	onSignIn func(server, url string)
+
 	mu      sync.Mutex
 	servers map[string]*server
 	closed  bool
@@ -85,6 +100,7 @@ func NewManager(cfg *config.Config, version string) *Manager {
 		Base:    tools.Builtin(),
 	}
 	m.Dial = m.dial
+	m.OpenURL = openURL
 	return m
 }
 
@@ -176,6 +192,10 @@ func (m *Manager) Statuses() []Status {
 		for _, t := range s.tools {
 			st.Tools = append(st.Tools, t.Spec().Name)
 		}
+		for _, p := range s.prompts {
+			st.Prompts = append(st.Prompts, "/"+PromptCommand(name, p.Name))
+		}
+		st.Resources = s.resources
 		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -216,9 +236,14 @@ func (m *Manager) connect(s *server) {
 	// would close the stream as soon as connect returned. Only the
 	// handshake and tool listing are bounded by ConnectTimeout.
 	ctx, stop := context.WithCancel(context.Background())
-	timer := time.AfterFunc(ConnectTimeout, stop)
+	limit := ConnectTimeout
+	if s.interactive {
+		limit += loginTimeout // time to sign in in the browser
+	}
+	timer := time.AfterFunc(limit, stop)
 
-	session, ts, err := m.open(ctx, s)
+	c, err := m.open(ctx, s)
+	session, ts := c.session, c.tools
 	if !timer.Stop() && err == nil {
 		err = fmt.Errorf("timed out after %s", ConnectTimeout)
 	}
@@ -226,6 +251,9 @@ func (m *Manager) connect(s *server) {
 	defer m.mu.Unlock()
 	s.session, s.stop = session, stop
 	switch {
+	case err != nil && errors.Is(err, errNeedsLogin):
+		s.release()
+		s.state, s.err = StateNeedsAuth, fmt.Errorf("sign in with /mcp login %s", s.cfg.Name)
 	case err != nil:
 		s.release()
 		s.state, s.err = StateFailed, err
@@ -233,31 +261,51 @@ func (m *Manager) connect(s *server) {
 		s.release()
 		s.state, s.err = StateFailed, errors.New("closed")
 	default:
-		s.tools, s.state = ts, StateConnected
+		s.tools, s.prompts, s.resources, s.state = ts, c.prompts, c.resources, StateConnected
 	}
 }
 
-func (m *Manager) open(ctx context.Context, s *server) (*sdk.ClientSession, []tools.Tool, error) {
+// connection is what open learned about a server.
+type connection struct {
+	session   *sdk.ClientSession
+	tools     []tools.Tool
+	prompts   []*sdk.Prompt
+	resources bool
+}
+
+func (m *Manager) open(ctx context.Context, s *server) (connection, error) {
 	transport, err := m.Dial(ctx, s)
 	if err != nil {
-		return nil, nil, err
+		return connection{}, err
 	}
 	session, err := m.client.Connect(ctx, transport, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect: %w", err)
+		return connection{}, fmt.Errorf("connect: %w", err)
 	}
-	var ts []tools.Tool
-	if res := session.InitializeResult(); res != nil && res.Capabilities != nil && res.Capabilities.Tools == nil {
-		return session, nil, nil // server offers no tools (e.g. resources only)
+	c := connection{session: session}
+	caps := &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{}} // assume tools if unsaid
+	if res := session.InitializeResult(); res != nil && res.Capabilities != nil {
+		caps = res.Capabilities
 	}
-	used := map[string]bool{}
-	for t, err := range session.Tools(ctx, nil) {
-		if err != nil {
-			return session, nil, fmt.Errorf("list tools: %w", err)
+	if caps.Tools != nil {
+		used := map[string]bool{}
+		for t, err := range session.Tools(ctx, nil) {
+			if err != nil {
+				return c, fmt.Errorf("list tools: %w", err)
+			}
+			c.tools = append(c.tools, newTool(s.cfg.Name, session, t, used))
 		}
-		ts = append(ts, newTool(s.cfg.Name, session, t, used))
 	}
-	return session, ts, nil
+	if caps.Prompts != nil {
+		for p, err := range session.Prompts(ctx, nil) {
+			if err != nil {
+				break // prompts are extra; a server that can't list them still works
+			}
+			c.prompts = append(c.prompts, p)
+		}
+	}
+	c.resources = caps.Resources != nil
+	return c, nil
 }
 
 // dial builds the real transport for a server config.
@@ -296,7 +344,11 @@ func (m *Manager) dial(ctx context.Context, s *server) (sdk.Transport, error) {
 		if cfg.Transport() == "sse" {
 			return &sdk.SSEClientTransport{Endpoint: url, HTTPClient: client}, nil
 		}
-		return &sdk.StreamableClientTransport{Endpoint: url, HTTPClient: client}, nil
+		oauth, err := m.oauthHandler(s, s.interactive)
+		if err != nil {
+			return nil, fmt.Errorf("oauth: %w", err)
+		}
+		return &sdk.StreamableClientTransport{Endpoint: url, HTTPClient: client, OAuthHandler: oauth}, nil
 	}
 	return nil, fmt.Errorf("unsupported MCP transport %q", cfg.Type)
 }
@@ -348,6 +400,8 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 			notify(msg)
 		case StateConnecting:
 			notify(fmt.Sprintf("MCP server %q is still starting; its tools will load after /clear", st.Name))
+		case StateNeedsAuth:
+			notify(fmt.Sprintf("MCP server %q needs you to sign in; run /mcp login %s", st.Name, st.Name))
 		case StateNeedsApproval:
 			notify(fmt.Sprintf("MCP server %q from %s is not approved yet; review it and run /mcp approve %s", st.Name, filepath.Base(st.Source), st.Name))
 		}
@@ -369,7 +423,23 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 		seen[name] = true
 		all = append(all, t)
 	}
+	// Resources are read through two generic tools, offered only when a
+	// connected server has any.
+	if m.anyResources() {
+		all = append(all, ListResourcesTool{m}, ReadResourceTool{m})
+	}
 	return tools.NewRegistry(all...)
+}
+
+func (m *Manager) anyResources() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.servers {
+		if s.state == StateConnected && s.resources {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) pending() int {

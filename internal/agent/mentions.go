@@ -95,6 +95,14 @@ func (a *Agent) resolveMentions(ctx context.Context, text string, emit func(Even
 	for _, mn := range findMentions(text) {
 		abs := a.env.Abs(expandHome(mn.path))
 		fi, err := os.Stat(abs)
+		if err != nil && !seen[mn.path] {
+			// Not a file: maybe an MCP resource, @server:uri.
+			seen[mn.path] = true
+			if res, ok := a.mentionResource(ctx, mn.path, notice); ok {
+				blocks = append(blocks, res...)
+			}
+			continue
+		}
 		if err != nil || seen[abs] {
 			continue
 		}
@@ -222,4 +230,29 @@ func plural(n int, word string) string {
 		return "1 " + word
 	}
 	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// MCPContent is what the agent needs from MCP servers besides their
+// tools: resources for @server:uri mentions, and prompts run as
+// /mcp__server__prompt.
+type MCPContent interface {
+	IsServer(name string) bool
+	ReadResource(ctx context.Context, server, uri string) ([]llm.Block, error)
+	ExpandPrompt(ctx context.Context, line string) (text string, ok bool, err error)
+}
+
+// mentionResource attaches @server:uri when server is a connected MCP
+// server. ok is false when the mention isn't one, so it stays prose.
+func (a *Agent) mentionResource(ctx context.Context, path string, notice func(string, ...any)) (blocks []llm.Block, ok bool) {
+	server, uri, found := strings.Cut(path, ":")
+	if !found || uri == "" || a.opts.MCP == nil || !a.opts.MCP.IsServer(server) {
+		return nil, false
+	}
+	blocks, err := a.opts.MCP.ReadResource(ctx, server, uri)
+	if err != nil {
+		notice("couldn't attach @%s: %v", path, err)
+		return nil, true
+	}
+	notice("attached @%s (MCP resource)", path)
+	return blocks, true
 }

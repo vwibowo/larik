@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -13,6 +14,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/clipboard"
 	"larik/internal/llm"
+	"larik/internal/mcp"
 )
 
 // printed runs cmd and returns the output it prints, if any.
@@ -186,5 +188,27 @@ func TestMouseSettingReleasesTheMouse(t *testing.T) {
 	}
 	if v := m.View(); v.MouseMode != tea.MouseModeNone {
 		t.Fatalf("with mouse scrolling off the terminal should get the mouse: %v", v.MouseMode)
+	}
+}
+
+func TestMentionPopupOffersResources(t *testing.T) {
+	m := testModel(t)
+	m.files, m.filesAt = []string{"notes.md"}, time.Now()
+	m.resources, m.resourcesAt = []mcp.Resource{
+		{Server: "wiki", URI: "page://onboarding", Name: "Onboarding notes"},
+		{Server: "wiki", URI: "page://deploy", Name: "Deploy"},
+	}, time.Now()
+	typeText(m, "see @note")
+	var values []string
+	for _, it := range m.mention.visible() {
+		values = append(values, it.value.(string))
+	}
+	if strings.Join(values, ",") != "notes.md,wiki:page://onboarding" {
+		t.Fatalf("popup: %v", values)
+	}
+	m.mention.cursor = 1
+	m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := m.input.Value(); got != "see @wiki:page://onboarding " {
+		t.Fatalf("composer = %q", got)
 	}
 }

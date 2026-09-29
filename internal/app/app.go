@@ -296,6 +296,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		LoadTools:   a.loadTools,
 		Hooks:       hookRunner,
 		Skills:      a.Skills,
+		MCP:         a.MCP,
 		LSP:         a.LSP,
 		Sandbox:     sbTool,
 

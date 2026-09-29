@@ -38,7 +38,7 @@ var commands = []command{
 	{"/resume", "[id]", "choose a session, or switch by ID", "sessions", ""},
 	{"/new", "", "start a new session", "sessions", ""},
 	{"/fork", "", "branch the conversation into a new session and continue there", "sessions", ""},
-	{"/mcp", "[approve <name>]", "MCP servers, status and tools; approve a project-defined server", "tools", ""},
+	{"/mcp", "[approve|login|logout <name>]", "MCP servers, their tools, prompts and resources; approve a project server, or sign in to one", "tools", ""},
 	{"/hooks", "[approve]", "configured lifecycle hooks; approve the project's shared hooks", "tools", ""},
 	{"/skills", "", "list available skills", "tools", ""},
 	{"/agents", "", "list subagents the model can delegate to", "tools", ""},
@@ -121,6 +121,11 @@ func (m *model) syncPalette() {
 				}
 				add("/"+sk.Name, args, sk.Description, section, "")
 			}
+		}
+	}
+	if m.opts.MCP != nil {
+		for _, p := range m.opts.MCP.Prompts() {
+			add("/"+p.Command, p.ArgHint(), p.Description, "MCP prompts", "")
 		}
 	}
 	// Exact and prefix matches first, each group keeping its section order.

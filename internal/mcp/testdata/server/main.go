@@ -50,5 +50,23 @@ func NewServer() *mcp.Server {
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "boom"}}}, nil, nil
 		})
+	s.AddResource(&mcp.Resource{URI: "note://readme", Name: "readme", Description: "The project notes", MIMEType: "text/plain"},
+		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/plain", Text: "remember the milk"}}}, nil
+		})
+	// A 1x1 PNG.
+	dot := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+	s.AddResource(&mcp.Resource{URI: "img://dot", Name: "dot", MIMEType: "image/png"},
+		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "image/png", Blob: dot}}}, nil
+		})
+	s.AddPrompt(&mcp.Prompt{Name: "review", Description: "Review a file", Arguments: []*mcp.PromptArgument{
+		{Name: "file", Required: true}, {Name: "focus"},
+	}}, func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		a := req.Params.Arguments
+		return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{
+			{Role: "user", Content: &mcp.TextContent{Text: "Review " + a["file"] + " focusing on " + a["focus"] + "."}},
+		}}, nil
+	})
 	return s
 }

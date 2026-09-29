@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -62,7 +63,7 @@ func TestStdioServer(t *testing.T) {
 	for _, s := range reg.Specs() {
 		names = append(names, s.Name)
 	}
-	if got := strings.Join(names, ","); got != "read,write,edit,bash,raw_output,grep,glob,todo_write,multi_edit,mcp__local__echo,mcp__local__fail" {
+	if got := strings.Join(names, ","); got != "read,write,edit,bash,raw_output,grep,glob,todo_write,multi_edit,mcp__local__echo,mcp__local__fail,list_mcp_resources,read_mcp_resource" {
 		t.Fatalf("tools = %s", got)
 	}
 
@@ -266,5 +267,56 @@ func TestCollidingServerNamesKeepToolNamesUnique(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(notices, "\n"), "skipped") {
 		t.Errorf("expected a notice about the skipped tools, got %v", notices)
+	}
+}
+
+func TestResourcesAndPrompts(t *testing.T) {
+	bin := buildServer(t)
+	cfg := newCfg(t, map[string]config.MCPServer{"notes": {Command: bin, Trusted: true}})
+	m := NewManager(cfg, "test")
+	m.Start()
+	defer m.Close()
+	reg := m.Registry(context.Background(), func(s string) {})
+	if _, ok := reg.Get("list_mcp_resources"); !ok {
+		t.Fatal("a server with resources should bring the resource tools")
+	}
+	ctx := context.Background()
+
+	rs, err := m.Resources(ctx, "")
+	if err != nil || len(rs) != 2 || rs[0].Ref() != "notes:img://dot" && rs[1].Ref() != "notes:img://dot" {
+		t.Fatalf("resources: %+v %v", rs, err)
+	}
+	blocks, err := m.ReadResource(ctx, "notes", "note://readme")
+	if err != nil || len(blocks) != 1 || !strings.Contains(blocks[0].Text, "remember the milk") || blocks[0].Attachment != "notes:note://readme" {
+		t.Fatalf("read text: %+v %v", blocks, err)
+	}
+	blocks, err = m.ReadResource(ctx, "notes", "img://dot")
+	if err != nil || len(blocks) != 2 || blocks[1].Type != "image" || blocks[1].MediaType != "image/png" {
+		t.Fatalf("read image: %+v %v", blocks, err)
+	}
+	if _, err := m.ReadResource(ctx, "nope", "x"); !errors.Is(err, ErrUnknownServer) {
+		t.Fatalf("unknown server: %v", err)
+	}
+	readTool, _ := reg.Get("read_mcp_resource")
+	if r := readTool.Run(ctx, nil, json.RawMessage(`{"server":"notes","uri":"note://readme"}`)); !strings.Contains(r.Content, "remember the milk") {
+		t.Fatalf("tool: %+v", r)
+	}
+
+	ps := m.Prompts()
+	if len(ps) != 1 || ps[0].Command != "mcp__notes__review" || ps[0].ArgHint() != "<file> [focus]" {
+		t.Fatalf("prompts: %+v", ps)
+	}
+	text, ok, err := m.ExpandPrompt(ctx, "/mcp__notes__review main.go error handling and tests")
+	if err != nil || !ok || !strings.Contains(text, "Review main.go focusing on error handling and tests.") {
+		t.Fatalf("expand: %q %v %v", text, ok, err)
+	}
+	if _, ok, err := m.ExpandPrompt(ctx, "/mcp__notes__review"); !ok || err == nil || !strings.Contains(err.Error(), "<file>") {
+		t.Fatalf("missing argument: %v %v", ok, err)
+	}
+	if _, ok, _ := m.ExpandPrompt(ctx, "/mcp__notes__other"); ok {
+		t.Fatal("an unknown prompt isn't one")
+	}
+	if st := m.Statuses()[0]; !st.Resources || len(st.Prompts) != 1 {
+		t.Fatalf("status: %+v", st)
 	}
 }

@@ -244,6 +244,17 @@ func (m *model) command(line string) tea.Cmd {
 		}
 		return m.submit(line) // the agent expands the skill
 	}
+	if strings.HasPrefix(name, "/"+mcp.Prefix) && m.opts.MCP != nil {
+		for _, p := range m.opts.MCP.Prompts() {
+			if "/"+p.Command == name {
+				if !m.idle() {
+					m.queue = append(m.queue, line)
+					return nil
+				}
+				return m.submit(line) // the agent fetches the prompt
+			}
+		}
+	}
 	return fail("unknown command " + name + " (try /help or /skills)")
 }
 
@@ -251,6 +262,15 @@ func (m *model) mcpCommand(args []string, info, fail func(string) tea.Cmd) tea.C
 	mgr := m.opts.MCP
 	if mgr == nil {
 		return fail("MCP is not available")
+	}
+	if len(args) >= 2 && args[0] == "login" {
+		return m.mcpLogin(args[1])
+	}
+	if len(args) >= 2 && args[0] == "logout" {
+		if err := mgr.Logout(args[1]); err != nil {
+			return fail(err.Error())
+		}
+		return info("signed out of " + args[1] + "; its tools leave at the next fresh context (/clear)")
 	}
 	if len(args) >= 2 && args[0] == "approve" {
 		name := args[1]
@@ -276,17 +296,29 @@ func (m *model) mcpCommand(args []string, info, fail func(string) tea.Cmd) tea.C
 		mark := map[mcp.State]string{mcp.StateConnected: "●", mcp.StateFailed: "✗", mcp.StateConnecting: "…", mcp.StateNeedsApproval: "?", mcp.StateDisabled: "○"}[st.State]
 		fmt.Fprintf(&b, "%s %s  [%s] %s", mark, st.Name, st.Transport, st.State)
 		if st.State == mcp.StateConnected {
-			fmt.Fprintf(&b, " · %d tools", len(st.Tools))
+			fmt.Fprintf(&b, " · %s", plural(len(st.Tools), "tool"))
+			if len(st.Prompts) > 0 {
+				fmt.Fprintf(&b, " · %s", plural(len(st.Prompts), "prompt"))
+			}
+			if st.Resources {
+				b.WriteString(" · resources (@" + st.Name + ":…)")
+			}
 		}
 		b.WriteString("\n")
 		if st.Err != "" {
 			fmt.Fprintf(&b, "    %s\n", st.Err)
+		}
+		if st.State == mcp.StateNeedsAuth {
+			fmt.Fprintf(&b, "    /mcp login %s\n", st.Name)
 		}
 		if st.State == mcp.StateNeedsApproval {
 			fmt.Fprintf(&b, "    defined in %s · /mcp approve %s\n", st.Source, st.Name)
 		}
 		for _, t := range st.Tools {
 			fmt.Fprintf(&b, "    %s\n", t)
+		}
+		for _, p := range st.Prompts {
+			fmt.Fprintf(&b, "    %s\n", p)
 		}
 	}
 	return info(strings.TrimRight(b.String(), "\n"))
@@ -526,4 +558,56 @@ func routingSavingsNote(mainModel string, total llm.Usage, actualUSD float64) st
 	}
 	return fmt.Sprintf("  routing saved $%.4f (%.0f%%) versus running everything on %s ($%.4f)",
 		saved, 100*saved/counterfactual, mainModel, counterfactual)
+}
+
+type (
+	mcpSignInURLMsg struct{ server, url string }
+	mcpLoginDoneMsg struct{ server string }
+)
+
+// mcpLogin signs in to an http MCP server: Larik opens the sign-in page
+// in the browser and prints its URL, in case none opens.
+func (m *model) mcpLogin(name string) tea.Cmd {
+	mgr := m.opts.MCP
+	urls := make(chan string, 1)
+	mgr.SetSignInHook(func(server, url string) {
+		if server == name {
+			select {
+			case urls <- url:
+			default:
+			}
+		}
+	})
+	done, err := mgr.Login(name)
+	if err != nil {
+		return m.println(m.st.err.Render(err.Error()))
+	}
+	waitURL := func() tea.Msg {
+		select {
+		case u := <-urls:
+			return mcpSignInURLMsg{name, u}
+		case <-done:
+			return nil
+		}
+	}
+	waitDone := func() tea.Msg {
+		<-done
+		return mcpLoginDoneMsg{name}
+	}
+	return tea.Batch(m.println(m.st.dim.Render("connecting to "+name+"…")), waitURL, waitDone)
+}
+
+func (m *model) mcpLoginDone(name string) tea.Cmd {
+	for _, st := range m.opts.MCP.Statuses() {
+		if st.Name != name {
+			continue
+		}
+		switch st.State {
+		case mcp.StateConnected:
+			return m.println(m.st.ok.Render("✓ connected to "+name) + m.st.dim.Render(" · "+plural(len(st.Tools), "tool")+"; they join the next fresh context (/clear or a new session)"))
+		default:
+			return m.println(m.st.err.Render(name + ": " + st.Err))
+		}
+	}
+	return nil
 }

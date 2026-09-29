@@ -103,4 +103,5 @@ Worktree subagents get a derived sandbox (`ForWorktree`) where the worktree repl
 
 - API keys come from the environment or `api_key_env`; `api_key` in a config file is supported but not required.
 - ChatGPT (Codex) sign-in is stored in `~/.config/larik/chatgpt-auth.json` with owner-only permissions, refreshed before expiry, and separate from the Codex CLI's login.
+- MCP server sign-ins (`/mcp login`) are stored per server and URL in `~/.config/larik/mcp-auth/`, owner-only. A server never opens a browser on its own: sign-in runs only when you ask, and a server from a shared project file must be approved first.
 - Session files and checkpoints are created `0600` in `0700` directories.

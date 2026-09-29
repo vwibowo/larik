@@ -63,6 +63,7 @@ classDiagram
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics |
 | `skill` | skills | yes | Loads a skill's full instructions |
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
+| `list_mcp_resources`, `read_mcp_resource` | mcp | yes | Offered when a connected server has resources; reads go to already-approved servers |
 | `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
 | `exit_plan_mode` | agent | yes | Presents a plan. `Decide` always asks for it in plan mode (and allows it elsewhere); the prompt is the approval, and the reply's `Mode` (accept-edits or default) is applied by `authorize`. An empty plan is refused before asking. Not offered to subagents |
 

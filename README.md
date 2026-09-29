@@ -405,7 +405,9 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 - **Stable tool set:** servers start in the background at launch, and their tools are loaded before the first request. The tool set then stays fixed for that context so prompt caches stay valid. Newly approved or restarted servers join after `/clear` or in a new session.
 - Stdio server stderr is written to `~/.local/share/larik/logs/mcp-<name>.log`.
 - Text results are passed to the model. Images and binary resources are summarized, not sent.
-- OAuth is not supported yet. For token-based remote servers, use `headers`.
+- **Resources:** when a server offers resources, the model gets `list_mcp_resources` and `read_mcp_resource`. You can attach one yourself as `@<server>:<uri>`; the `@` picker lists them under "MCP resources". Text is attached as text and images as images.
+- **Prompts:** a server's prompts are slash commands named `/mcp__<server>__<prompt>`, listed in the `/` palette with their arguments. Arguments go in order, split on spaces, and the last one takes the rest of the line. They work with `-p` too.
+- **OAuth:** an `http` server that asks for sign-in shows as "needs sign-in" instead of opening a browser at startup. Run `/mcp login <name>`: Larik opens the server's sign-in page, catches the redirect on `127.0.0.1`, and keeps the tokens in `~/.config/larik/mcp-auth/` (owner-only), refreshing them as needed, so `-p` and `larik serve` use the sign-in too. `/mcp logout <name>` forgets it. By default Larik registers itself with the server's authorization server; for a server that needs a pre-registered client, set `"oauth": {"client_id": "…", "client_secret": "${SECRET}", "callback_port": 8765}`, and `"scopes"` to choose scopes. Sign-in isn't available for `sse` servers; use `headers` there, or for token-based servers.
 
 ## Skills
 

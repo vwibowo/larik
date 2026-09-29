@@ -111,6 +111,9 @@ Files are `<name>.md` with YAML frontmatter (`name`, `description`, `tools`, `mo
 - Each server tool becomes a `tools.Tool` named `mcp__<server>__<tool>` (sanitized, de-duplicated). It is read-only only if the server declares `readOnlyHint: true` **and** `openWorldHint: false`: an open-world tool could leak data through its inputs.
 - Text results pass through; images and binary resources are summarized.
 - Project-scoped servers need `/mcp approve`, pinned to `MCPServer.Hash()`.
+- **Resources** ([content.go](../internal/mcp/content.go)): at connect, `open` notes whether a server has the resources capability; `Registry` then adds `list_mcp_resources` and `read_mcp_resource` (read-only). The agent attaches `@server:uri` mentions through the `agent.MCPContent` interface (`IsServer`, `ReadResource`), so the loop doesn't import the MCP package. A mention whose server isn't connected stays prose.
+- **Prompts:** listed at connect and run as `/mcp__<server>__<prompt>`, expanded in `runWith` by `MCPContent.ExpandPrompt` (arguments in order, the last takes the rest). A failing expansion ends the turn with an error before any request.
+- **OAuth** ([oauth.go](../internal/mcp/oauth.go)): streamable HTTP transports get an SDK `AuthorizationCodeHandler`. Larik supplies the redirect (a local listener on `127.0.0.1`), the browser step and token storage (`mcp-auth/<server>-<url hash>.json`, `0600`, rewritten when a token refreshes). Background connections use a fetcher that fails with `errNeedsLogin`, giving `StateNeedsAuth` rather than a surprise browser window; `Manager.Login` reconnects with an interactive one. Without `oauth.client_id` the client registers dynamically. `oauth` is part of `MCPServer.Hash()`, so changing it needs re-approval for project servers.
 
 ## Skills
 
