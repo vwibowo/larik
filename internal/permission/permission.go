@@ -140,7 +140,7 @@ func Subject(tool string, input json.RawMessage) string {
 	switch tool {
 	case "bash":
 		return in.Command
-	case "web_fetch":
+	case "web_fetch", "browser_navigate":
 		return urlHost(in.URL)
 	}
 	return in.Path
@@ -164,7 +164,11 @@ var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": 
 
 // networkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
-var networkTools = map[string]bool{"web_fetch": true, "web_search": true}
+var networkTools = map[string]bool{"web_fetch": true, "web_search": true, "browser_navigate": true}
+
+// domainTools take URLs; their rules name a domain, e.g.
+// web_fetch(domain:go.dev).
+var domainTools = map[string]bool{"web_fetch": true, "browser_navigate": true}
 
 // Decide returns the decision and, for Deny, a reason to show the model.
 func (c *Checker) Decide(call Call) (Decision, string) {
@@ -222,9 +226,9 @@ func SuggestRule(tool string, input json.RawMessage) string {
 	if tool == ExitPlanTool {
 		return "" // approving a plan is never standing permission
 	}
-	if tool == "web_fetch" {
+	if domainTools[tool] {
 		if host := Subject(tool, input); host != "" {
-			return "web_fetch(domain:" + host + ")"
+			return tool + "(domain:" + host + ")"
 		}
 	}
 	if tool != "bash" {
@@ -262,7 +266,7 @@ func (c *Checker) matches(rule, tool, subject string) bool {
 	if tool == "bash" {
 		return wildcard(pattern, strings.TrimSpace(subject))
 	}
-	if tool == "web_fetch" {
+	if domainTools[tool] {
 		// web_fetch(domain:go.dev) also covers subdomains like pkg.go.dev.
 		d, ok := strings.CutPrefix(pattern, "domain:")
 		d = strings.TrimPrefix(strings.ToLower(d), "*.")

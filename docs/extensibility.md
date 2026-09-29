@@ -168,3 +168,15 @@ The read-only `lsp` tool offers definition, references, hover, symbols, workspac
 ## Web
 
 `web_fetch` ([fetch.go](../internal/web/fetch.go)) converts HTML to Markdown (stripping scripts, nav, headers, footers), resolves links, pages long content with `start`/`max_length`, and caches for 15 minutes. `web_search` picks a backend (Brave, Tavily, SearXNG) from personal config or environment keys. Both ask before running; see [security](security.md#web-tools) for the network protections.
+
+### Browser
+
+The `browser_*` tools ([browsercdp](../internal/browsercdp/)) drive Chrome over the DevTools Protocol with [chromedp](https://github.com/chromedp/chromedp): pure Go, no CGo, no webview. `browsercdp.Session` launches Chrome on the first call (from `context.Background`, so a tool call ending never closes the browser) with a persistent profile in the data directory, and starts over if the user closed the window.
+
+- **Snapshots.** [snapshot.js](../internal/browsercdp/snapshot.js) walks the visible DOM, including open shadow roots, and outlines headings, text, and interactive elements. Each interactive element gets a `data-larik-ref` attribute that later snapshots of the same document reuse; `window.__larikFind` looks refs up across shadow roots. Snapshots cap at 20k characters.
+- **Input is real.** Clicks scroll the element into view and dispatch mouse events at its center; typing focuses the field, clears it through the native `value` setter (so React and similar notice), and sends key events. After an input action, `act` waits up to 300 ms for a navigation to begin, and the snapshot then waits for `readyState == "complete"`, retrying while the old document is torn down.
+- **Tabs.** Each tab is a chromedp context. Before each call `syncTabs` drops tabs the user closed and adopts ones the page opened, making a new one active. The first tab's context is the browser's, so closing it closes the page instead of cancelling the context.
+- **History** goes through `Page.navigateToHistoryEntry` rather than `chromedp.NavigateBack`, which waits for a load event that back/forward-cached pages never fire.
+- **Dialogs** would block the page and every later call, so a listener answers them (alerts accepted, the rest dismissed) and logs them with console messages and exceptions in a 200-line buffer per tab.
+
+The tools' results are text. A `browser_screenshot` tool needs tool results that carry images, which `tools.Result` doesn't yet.

@@ -119,6 +119,10 @@ type Config struct {
 	// receives every query) is honored only from personal files.
 	Web WebConfig `json:"web,omitempty"`
 
+	// Browser configures the browser_* tools. It launches a program, so
+	// only personal files may enable it; shared files may only disable it.
+	Browser BrowserConfig `json:"browser,omitempty"`
+
 	// Sandbox configures the OS sandbox for bash. Shared project files may
 	// only tighten it (enable it); loosening needs a personal file.
 	Sandbox sandbox.Config `json:"sandbox,omitempty"`
@@ -293,6 +297,21 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		if o.Web.Search.Disabled {
 			c.Web.Search.Disabled = true
+		}
+	}
+	if b := browserSection(data); b != nil {
+		if trusted {
+			if b.Enabled != nil {
+				c.Browser.Enabled = *b.Enabled
+			}
+			if b.Headless != nil {
+				c.Browser.Headless = *b.Headless
+			}
+			if b.ChromePath != nil {
+				c.Browser.ChromePath = *b.ChromePath
+			}
+		} else if b.Enabled != nil && !*b.Enabled {
+			c.Browser.Enabled = false // a shared file may only switch it off
 		}
 	}
 	if trusted {
@@ -908,6 +927,31 @@ func (c *Config) ApproveProjectHooks() error {
 	}
 	c.ApprovedHooks = hash
 	return nil
+}
+
+// BrowserConfig is the "browser" settings section: the browser_* tools,
+// which drive a Chrome window. Off unless a personal file enables it.
+type BrowserConfig struct {
+	Enabled  bool `json:"enabled,omitempty"`
+	Headless bool `json:"headless,omitempty"`
+	// ChromePath overrides the Chrome or Chromium binary to launch.
+	ChromePath string `json:"chrome_path,omitempty"`
+}
+
+// browserPatch is one file's "browser" section with presence kept, so a
+// later file can switch a setting back off.
+type browserPatch struct {
+	Enabled    *bool   `json:"enabled"`
+	Headless   *bool   `json:"headless"`
+	ChromePath *string `json:"chrome_path"`
+}
+
+func browserSection(data []byte) *browserPatch {
+	var o struct {
+		Browser *browserPatch `json:"browser"`
+	}
+	_ = json.Unmarshal(data, &o) // the whole file already parsed once
+	return o.Browser
 }
 
 // WebConfig is the "web" settings section.

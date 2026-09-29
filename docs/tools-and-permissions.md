@@ -60,6 +60,8 @@ classDiagram
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
+| `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_history`, `browser_tabs`, `browser_eval` | browsercdp | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
+| `browser_snapshot`, `browser_console` | browsercdp | yes | Read the active tab |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics, code_actions (listing) |
 | `apply_code_action` | lsp | no | Applies a listed code action by title; treated like `edit` by rules and modes, each changed file checked against the project boundary and snapshotted for `/undo`; not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |
@@ -146,7 +148,7 @@ flowchart TD
 2. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
 3. Mode **yolo** → Allow.
 4. Tool is **read-only** → Allow.
-5. Mode **plan** → Deny, except `web_fetch`/`web_search`, which fall through to ask (research is part of planning).
+5. Mode **plan** → Deny, except `web_fetch`/`web_search`/`browser_navigate`, which fall through to ask (research is part of planning).
 6. Any **allow rule** matches → Allow.
 7. `bash` and the **sandbox** is on and the call didn't set `"sandbox": false` → Allow.
 8. `bash` and the command is on the **safe list** (`ls`, exact `git status`, exact `git diff`, …) with no shell operators → Allow.
@@ -161,14 +163,14 @@ Rules are `tool` or `tool(pattern)`. The pattern matches a *subject* taken from 
 |---|---|---|---|
 | `bash` | the command | `*` wildcard | `bash(go test*)` |
 | `read`, `write`, `edit`, `multi_edit`, … | the path, relative to cwd when inside it | doublestar glob | `edit(docs/**)` |
-| `web_fetch` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
+| `web_fetch`, `browser_navigate` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
 | `mcp__server__tool` | none | whole-tool or whole-server | `mcp__github` |
 
 Bash patterns are prefixes, so Larik checks every command in a command line. An allow rule covers a chained or piped command (`;`, `&&`, `||`, `|`, `&`, subshells) only when each command in it matches an allow rule. A command substitution (`$(…)`, backticks) or a redirection to a file always asks; `2>&1` and redirections to `/dev/null` don't count. A deny rule applies to each command too, so `bash(rm*)` also stops `true; rm -rf x` and `echo $(rm x)`. Quoting isn't parsed: an operator inside quotes splits the line as well, which only makes Larik ask. The bare rule `bash` still allows everything. Deny rules match the command as written, so `/bin/rm` or `command rm` isn't `rm*`; rely on the sandbox, not deny patterns, to contain commands.
 
 `read(...)` deny rules apply to the `read` tool and to `@` mentions. They don't reach `grep` or `glob` searches over a directory that contains the file, or sandboxed `bash` (the sandbox can read everything, and `cat`, `head` and `tail` are auto-allowed outside it). Treat them as a guard against the model reading a file by accident, not as a boundary; keep secrets out of the project.
 
-"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
+"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch` and `browser_navigate`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
 
 `Checker.WithCwd` gives a worktree subagent a checker that shares the parent's mode and rules (one `state` pointer) but resolves paths against the worktree. Switching mode with shift+tab applies to running subagents too.
 

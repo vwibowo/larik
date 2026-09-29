@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"larik/internal/agent"
+	"larik/internal/browsercdp"
 	"larik/internal/checkpoint"
 	"larik/internal/config"
 	"larik/internal/hooks"
@@ -39,6 +40,8 @@ type App struct {
 	MCP       *mcp.Manager
 	LSP       *lsp.Manager
 	Sandbox   *sandbox.Sandbox // nil when unavailable or disabled
+	// Browser drives Chrome for the browser_* tools; nil unless enabled.
+	Browser *browsercdp.Session
 
 	// Debug traces every session opened (debug setting, --debug or
 	// LARIK_DEBUG); /debug turns it on or off for one session.
@@ -87,6 +90,15 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	if searchErr != nil {
 		a.SearchNote = searchErr.Error()
+	}
+	if cfg.Browser.Enabled {
+		// Chrome starts on the first browser_* call, not here.
+		a.Browser = browsercdp.New(browsercdp.Options{
+			Headless:   cfg.Browser.Headless,
+			ChromePath: cfg.Browser.ChromePath,
+			ProfileDir: filepath.Join(cfg.DataDir, "browser-profile"),
+		})
+		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))
@@ -167,6 +179,7 @@ func (a *App) loadTools(ctx context.Context, notify func(string)) *tools.Registr
 func (a *App) Close() {
 	a.MCP.Close()
 	a.LSP.Close()
+	a.Browser.Close()
 	a.Sandbox.Close()
 }
 

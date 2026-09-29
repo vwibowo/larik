@@ -115,14 +115,19 @@ func checkedProxy(next func(*http.Request) (*url.URL, error)) func(*http.Request
 }
 
 func checkTarget(req *http.Request) error {
-	host := req.URL.Hostname()
+	return CheckHost(req.Context(), req.URL.Hostname())
+}
+
+// CheckHost returns ErrBlockedAddress when host is, or resolves to, an
+// address that must never be fetched. A name that doesn't resolve passes.
+func CheckHost(ctx context.Context, host string) error {
 	if ip := net.ParseIP(host); ip != nil {
 		if blockedIP(ip) {
 			return fmt.Errorf("%w: %s", ErrBlockedAddress, host)
 		}
 		return nil
 	}
-	if ips, err := net.DefaultResolver.LookupIPAddr(req.Context(), host); err == nil {
+	if ips, err := net.DefaultResolver.LookupIPAddr(ctx, host); err == nil {
 		for _, ip := range ips {
 			if blockedIP(ip.IP) {
 				return fmt.Errorf("%w: %s resolves to %s", ErrBlockedAddress, host, ip.IP)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -665,6 +666,14 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Fetch this page?"
 	case "web_search":
 		return "Search the web?"
+	case "browser_navigate":
+		return "Open this page in the browser?"
+	case "browser_click":
+		return "Click this in the browser?"
+	case "browser_type":
+		return "Type this in the browser?"
+	case "browser_eval":
+		return "Run this script in the page?"
 	case permission.ExitPlanTool:
 		return "Ready to start on this plan?"
 	}
@@ -712,6 +721,12 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
 		return bold.Render(str(in["query"])) + "\n" + m.st.dim.Render("the query goes to the configured search provider")
+	case "browser_navigate":
+		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("opens in larik's Chrome window, with its saved sign-ins")
+	case "browser_type":
+		return bold.Render(str(in["text"])) + "\n" + m.st.dim.Render("into "+str(in["ref"])+" on the current page")
+	case "browser_eval":
+		return bold.Render(str(in["expression"]))
 	case "apply_code_action":
 		line, _ := in["line"].(float64)
 		return bold.Render(str(in["title"])) + "\n" + m.st.dim.Render(fmt.Sprintf("from the language server, at %s:%d; it may change other files too", m.shortPaths(str(in["path"])), int(line)))
@@ -1072,8 +1087,20 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		if todos, err := tools.ParseTodos(input); err == nil {
 			arg = todoProgress(todos)
 		}
-	case "web_fetch":
+	case "web_fetch", "browser_navigate":
 		arg = str(in["url"])
+	case "browser_click", "browser_select":
+		arg = str(in["ref"])
+	case "browser_type":
+		arg = str(in["ref"]) + " " + strconv.Quote(str(in["text"]))
+	case "browser_press_key":
+		arg = str(in["key"])
+	case "browser_eval":
+		arg = str(in["expression"])
+	case "browser_history":
+		arg = str(in["direction"])
+	case "browser_tabs":
+		arg = str(in["action"])
 	case "web_search":
 		arg = str(in["query"])
 		if s := str(in["site"]); s != "" {

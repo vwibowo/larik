@@ -1,0 +1,206 @@
+package browsercdp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"larik/internal/web"
+)
+
+const testPage = `<!doctype html>
+<title>Test form</title>
+<h1>Sign up</h1>
+<p>Fill in the form below.</p>
+<form action="/done" method="get">
+  <label for="name">Name</label><input id="name" name="name">
+  <select name="plan"><option value="free">Free</option><option value="pro">Pro</option></select>
+  <button type="submit">Send</button>
+</form>
+<a href="/other">Other page</a>
+<button onclick="console.log('clicked', 42); document.title = 'Clicked'">Log</button>
+<div style="display:none"><button>Hidden</button></div>
+<div id="host"></div>
+<script>
+  const root = document.getElementById('host').attachShadow({mode: 'open'});
+  root.innerHTML = '<button onclick="document.title = \'Shadow\'">In shadow</button>';
+</script>`
+
+func chrome(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("starts Chrome")
+	}
+	for _, p := range []string{
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Chromium.app/Contents/MacOS/Chromium",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	t.Skip("no Chrome or Chromium installed")
+	return ""
+}
+
+func newSession(t *testing.T) (*Session, *httptest.Server) {
+	path := chrome(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Path {
+		case "/":
+			_, _ = w.Write([]byte(testPage))
+		case "/done":
+			_, _ = w.Write([]byte("<title>Done</title><p>Thanks, " + r.URL.Query().Get("name") + " (" + r.URL.Query().Get("plan") + ")</p>"))
+		default:
+			_, _ = w.Write([]byte("<title>Other</title><p>Another page</p>"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	// Not t.TempDir: Chrome's helpers can still be writing the profile
+	// when the test ends, which fails its cleanup.
+	profile, err := os.MkdirTemp("", "larik-browser-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(profile) })
+	s := New(Options{Headless: true, ChromePath: path, ProfileDir: profile})
+	t.Cleanup(s.Close)
+	return s, srv
+}
+
+// refOf finds the ref of the snapshot line containing needle.
+func refOf(t *testing.T, snap, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(snap, "\n") {
+		if strings.Contains(line, needle) {
+			if m := regexp.MustCompile(`\[ref=(e\d+)\]`).FindStringSubmatch(line); m != nil {
+				return m[1]
+			}
+		}
+	}
+	t.Fatalf("no ref for %q in snapshot:\n%s", needle, snap)
+	return ""
+}
+
+func TestFormFlow(t *testing.T) {
+	s, srv := newSession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	res := NavigateTool{s}.Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+`"}`))
+	if res.IsError {
+		t.Fatal(res.Content)
+	}
+	for _, want := range []string{`heading[1] "Sign up"`, `text "Fill in the form below."`, `textbox "Name"`, `combobox`, `*Free`, `button "Send"`, `link "Other page" -> ` + srv.URL + `/other`, `button "In shadow"`, "<web_content"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("snapshot lacks %q:\n%s", want, res.Content)
+		}
+	}
+	if strings.Contains(res.Content, "Hidden") {
+		t.Errorf("snapshot shows a hidden element:\n%s", res.Content)
+	}
+
+	name := refOf(t, res.Content, `textbox "Name"`)
+	if r := (TypeTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+name+`","text":"stale"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	// Typing again replaces the text.
+	if r := (TypeTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+name+`","text":"Ada"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	sel := refOf(t, res.Content, "combobox")
+	if r := (SelectTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+sel+`","values":["Pro"]}`)); r.IsError || !strings.Contains(r.Content, "*Pro") {
+		t.Fatalf("select: %s", r.Content)
+	}
+	res = ClickTool{s}.Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, res.Content, `button "Send"`)+`"}`))
+	if res.IsError || !strings.Contains(res.Content, "Thanks, Ada (pro)") {
+		t.Fatalf("after submit: %s", res.Content)
+	}
+
+	res = HistoryTool{s}.Run(ctx, nil, json.RawMessage(`{"direction":"back"}`))
+	if !strings.Contains(res.Content, "Title: Test form") {
+		t.Fatalf("after back: %s", res.Content)
+	}
+}
+
+func TestClickShadowAndConsole(t *testing.T) {
+	s, srv := newSession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	res := NavigateTool{s}.Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+`"}`))
+	if res.IsError {
+		t.Fatal(res.Content)
+	}
+	if r := (ClickTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, res.Content, `button "Log"`)+`"}`)); !strings.Contains(r.Content, "Title: Clicked") {
+		t.Fatalf("after click: %s", r.Content)
+	}
+	if r := (ConsoleTool{s}).Run(ctx, nil, nil); !strings.Contains(r.Content, "[log] clicked 42") {
+		t.Errorf("console: %s", r.Content)
+	}
+	if r := (ConsoleTool{s}).Run(ctx, nil, nil); r.Content != "No console messages." {
+		t.Errorf("console isn't cleared: %s", r.Content)
+	}
+	if r := (ClickTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, res.Content, `button "In shadow"`)+`"}`)); !strings.Contains(r.Content, "Title: Shadow") {
+		t.Fatalf("shadow click: %s", r.Content)
+	}
+	if r := (ClickTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"e999"}`)); !r.IsError || !strings.Contains(r.Content, "browser_snapshot") {
+		t.Errorf("unknown ref: %+v", r)
+	}
+	if r := (EvalTool{s}).Run(ctx, nil, json.RawMessage(`{"expression":"Promise.resolve({a: 1 + 1})"}`)); !strings.Contains(r.Content, `{"a":2}`) {
+		t.Errorf("eval: %s", r.Content)
+	}
+}
+
+func TestTabs(t *testing.T) {
+	s, srv := newSession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if r := (NavigateTool{s}).Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+`"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	if r := (TabsTool{s}).Run(ctx, nil, json.RawMessage(`{"action":"new"}`)); !strings.Contains(r.Content, "* 1.") {
+		t.Fatalf("new tab isn't active: %s", r.Content)
+	}
+	if r := (NavigateTool{s}).Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+`/other"}`)); !strings.Contains(r.Content, "Another page") {
+		t.Fatal(r.Content)
+	}
+	// Closing the first tab (the browser's own) keeps the others working.
+	r := TabsTool{s}.Run(ctx, nil, json.RawMessage(`{"action":"close","index":0}`))
+	if r.IsError || strings.Contains(r.Content, "Test form") || !strings.Contains(r.Content, "* 0. Other") {
+		t.Fatalf("after close: %s", r.Content)
+	}
+	if r := (SnapshotTool{s}).Run(ctx, nil, nil); !strings.Contains(r.Content, "Another page") {
+		t.Fatalf("snapshot after close: %s", r.Content)
+	}
+}
+
+func TestCheckURL(t *testing.T) {
+	ctx := context.Background()
+	for _, bad := range []string{"file:///etc/passwd", "javascript:alert(1)", "/relative", "chrome://settings"} {
+		if _, err := CheckURL(ctx, bad); err == nil {
+			t.Errorf("CheckURL(%q) allowed", bad)
+		}
+	}
+	if _, err := CheckURL(ctx, "http://169.254.169.254/latest/meta-data"); !errors.Is(err, web.ErrBlockedAddress) {
+		t.Errorf("metadata address: %v", err)
+	}
+	if _, err := CheckURL(ctx, "http://127.0.0.1:8080/"); err != nil {
+		t.Errorf("local dev server: %v", err)
+	}
+}

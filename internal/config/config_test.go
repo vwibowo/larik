@@ -340,6 +340,34 @@ func TestProjectCannotRedirectSearch(t *testing.T) {
 	}
 }
 
+func TestBrowserOnlyFromPersonalSettings(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"enabled":true,"chrome_path":"/tmp/evil"}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Browser != (BrowserConfig{}) {
+		t.Errorf("shared settings must not enable the browser or pick its binary: %+v", cfg.Browser)
+	}
+
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"browser":{"enabled":true,"headless":true}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"enabled":false}}`)
+	cfg, _ = Load(cwd)
+	if cfg.Browser.Enabled || !cfg.Browser.Headless {
+		t.Errorf("shared settings may switch the browser off: %+v", cfg.Browser)
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{}`)
+	write(t, LocalSettingsPath(cwd), `{"browser":{"headless":false}}`)
+	cfg, _ = Load(cwd)
+	if !cfg.Browser.Enabled || cfg.Browser.Headless {
+		t.Errorf("a later personal file overrides single fields: %+v", cfg.Browser)
+	}
+}
+
 func TestSharedSettingsCannotWidenTrust(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()

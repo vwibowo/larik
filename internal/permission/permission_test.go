@@ -186,6 +186,28 @@ func TestWebRules(t *testing.T) {
 	}
 }
 
+func TestBrowserRules(t *testing.T) {
+	c := NewChecker(ModeDefault, Rules{Allow: []string{"browser_navigate(domain:go.dev)"}}, "/w")
+	for in, want := range map[string]Decision{
+		`{"url":"https://pkg.go.dev/"}`: Allow,
+		`{"url":"https://example.com"}`: Ask,
+	} {
+		if got, _ := c.Decide(call("browser_navigate", false, in)); got != want {
+			t.Errorf("%s: got %v want %v", in, got, want)
+		}
+	}
+	if r := SuggestRule("browser_navigate", json.RawMessage(`{"url":"https://GitHub.com/x"}`)); r != "browser_navigate(domain:github.com)" {
+		t.Errorf("suggest = %s", r)
+	}
+	plan := NewChecker(ModePlan, Rules{}, "/w")
+	if got, _ := plan.Decide(call("browser_navigate", false, `{"url":"https://a.b"}`)); got != Ask {
+		t.Error("plan mode should ask to open a page")
+	}
+	if got, _ := plan.Decide(call("browser_click", false, `{"ref":"e1"}`)); got != Deny {
+		t.Error("plan mode must not click: a click can change things on the site")
+	}
+}
+
 func TestBashRulesAndChains(t *testing.T) {
 	c := NewChecker(ModeDefault, Rules{
 		Allow: []string{"bash(git status*)", "bash(go test*)", "bash(grep*)"},

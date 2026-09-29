@@ -299,6 +299,36 @@ You can also set it explicitly:
 - Plan mode asks for them rather than blocking them, because research is part of planning.
 - Web content is marked as untrusted data for the model.
 
+### Browser
+
+For pages that need JavaScript, a sign-in or clicking through, Larik can drive a real Chrome window. It's off by default; turn it on in your personal config:
+
+```json
+{ "browser": { "enabled": true } }
+```
+
+Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. Chrome starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions.
+
+The model gets these tools:
+
+| Tool | Does |
+| --- | --- |
+| `browser_navigate` | Opens a URL and returns a snapshot of the page |
+| `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12` |
+| `browser_click` | Clicks (or hovers) an element by ref with a real mouse event |
+| `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
+| `browser_select` | Picks options in a `<select>` |
+| `browser_press_key` | Presses Enter, Escape, Tab, arrow keys, PageDown… |
+| `browser_history` | Back and forward |
+| `browser_tabs` | Lists, opens, selects and closes tabs; tabs a page opens become active |
+| `browser_eval` | Runs a JavaScript expression in the page |
+| `browser_console` | Console messages, exceptions and dialogs since the last call |
+
+- `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`), only opens http(s), and refuses link-local and cloud-metadata addresses. Clicks and typing ask per call unless you allow the tool.
+- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot` and `browser_console` only read, so they never ask.
+- Only personal files can enable the browser or choose its binary; a shared `.larik/settings.json` can only switch it off.
+- Alerts are accepted and confirm or prompt dialogs dismissed automatically, and noted in `browser_console`.
+
 ## Sandbox
 
 `bash` commands run in the operating system's sandbox: Seatbelt (`sandbox-exec`) on macOS, and [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux when installed.
@@ -729,6 +759,7 @@ internal/worktree   git worktrees for isolated subagents
 internal/lsp        language server client, edit diagnostics, lsp tool
 internal/sandbox    Seatbelt / bubblewrap confinement for bash
 internal/web        web_fetch (HTML to Markdown) and web_search backends
+internal/browsercdp browser_* tools driving Chrome over the DevTools Protocol
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo
