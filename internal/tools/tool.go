@@ -244,3 +244,40 @@ func Parallel(t Tool) bool {
 	c, ok := t.(ConcurrencySafe)
 	return ok && c.ConcurrencySafe()
 }
+
+// RewriteFile changes an existing file through the same checks as edit:
+// the project boundary and protected paths, an undo snapshot and an
+// atomic replace. fn gets the current content and returns the new. It
+// skips edit's read-before-write check, so callers must derive the
+// change from the content fn is given (a language server's code action,
+// computed on the file as it is now).
+func (e *Env) RewriteFile(path string, fn func(old []byte) ([]byte, error)) error {
+	path = e.Abs(path)
+	root, rel, err := e.writeRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	data, err := root.ReadFile(rel)
+	if err != nil {
+		return err
+	}
+	updated, err := fn(data)
+	if err != nil {
+		return err
+	}
+	if string(updated) == string(data) {
+		return nil
+	}
+	if _, err := pathpolicy.WritePath(e.Cwd, path); err != nil {
+		return err
+	}
+	if err := e.beforeWrite(path); err != nil {
+		return fmt.Errorf("cannot checkpoint %s: %w", path, err)
+	}
+	if err := replaceFile(root, rel, updated); err != nil {
+		return err
+	}
+	e.markRead(path)
+	return nil
+}

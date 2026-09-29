@@ -515,7 +515,9 @@ You are a meticulous code reviewer. ...
 Larik runs language servers so the model gets compiler feedback on its own edits and can navigate code semantically.
 
 - **Diagnostics after edits:** when `edit`, `multi_edit` or `write` changes a file, Larik syncs it to the file's language server and appends new errors and warnings to the tool result, for example `ERROR 5:19 undefined: gret (compiler)`. Errors the change caused in other files are summarized. Reading a file warms up the server in the background.
-- **The `lsp` tool** (read-only) offers `definition`, `references`, `hover`, `symbols`, `workspace_symbols` and `diagnostics`, using the 1-based line and column that `read` shows.
+- **The `lsp` tool** (read-only) offers `definition`, `references`, `hover`, `symbols`, `workspace_symbols`, `diagnostics` and `code_actions`, using the 1-based line and column that `read` shows.
+- **Code actions:** `code_actions` lists a server's quick fixes and refactorings for a line, such as adding a missing import or organizing imports. The model applies one with `apply_code_action` and the action's title. That writes files, so it asks like `edit` (accept-edits mode allows it inside the project), each changed file gets an undo snapshot, and the result shows new diagnostics. Actions that create, rename or delete files aren't applied. A server can only change files through `workspace/applyEdit` while an action you approved is running.
+- **Pull diagnostics:** servers that answer `textDocument/diagnostic` (LSP 3.17) are asked for diagnostics directly after an edit instead of Larik waiting for them to publish.
 - **Built-in servers** are enabled automatically when their binary is on your `PATH`: gopls, typescript-language-server, pyright-langserver, rust-analyzer and clangd. Each starts on the first matching file, once per project root (found from markers like `go.mod`, `package.json` or `Cargo.toml`). Servers shut down when Larik exits, and their logs go to `~/.local/share/larik/logs/lsp-<name>.log`.
 - **Configuration:**
 

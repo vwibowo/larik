@@ -60,7 +60,8 @@ classDiagram
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
-| `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics |
+| `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics, code_actions (listing) |
+| `apply_code_action` | lsp | no | Applies a listed code action by title; treated like `edit` by rules and modes, each changed file checked against the project boundary and snapshotted for `/undo`; not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
 | `list_mcp_resources`, `read_mcp_resource` | mcp | yes | Offered when a connected server has resources; reads go to already-approved servers |

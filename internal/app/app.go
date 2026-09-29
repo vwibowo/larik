@@ -83,7 +83,7 @@ func Setup(cwd, version string) (*App, error) {
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))
 	if a.LSP.Enabled() {
-		baseTools = append(baseTools, lsp.Tool{M: a.LSP})
+		baseTools = append(baseTools, lsp.Tool{M: a.LSP}, lsp.ApplyTool{M: a.LSP})
 	}
 
 	a.AgentDefs = subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, gitRoot))

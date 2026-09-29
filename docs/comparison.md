@@ -14,7 +14,7 @@ The comparisons describe publicly documented behavior at a high level. These pro
 | OS sandbox for shell | Seatbelt / bubblewrap, on by default | Available (Seatbelt / bubblewrap) | Seatbelt / Landlock, central to its design | Optional containers / Seatbelt | No | No |
 | Hooks, skills, custom commands, subagents, `.mcp.json` format | Claude Code–compatible | Native | Own formats | Own formats | Own formats | — |
 | Subagents in git worktrees | Built in, per task | Available | — | — | — | — |
-| LSP diagnostics fed back after edits | Built in | Via plugins | — | — | Built in | Lint/test commands |
+| LSP diagnostics fed back after edits | Built in (push and pull), plus code actions | Via plugins | — | — | Built in | Lint/test commands |
 | Branchable sessions | Append-only JSONL, fork and rewind | Resume, rewind | Resume | Checkpoints | Sessions, share | Git commits per change |
 | Headless and API | `-p` (text / JSON events), HTTP + SSE server | `-p`, SDK | `exec` mode | Non-interactive mode | Server + clients | Scripting |
 
@@ -78,4 +78,4 @@ Choices that cost something:
 - **Prompt changes wait for a fresh context.** Edits to `AGENTS.md`/`CLAUDE.md` and new skills take effect after `/clear` or in a new session, not mid-conversation.
 - **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. The summary names the transcript file so the model can grep it for exact details, but it has to think to look.
 - **Unix only.** Larik builds for macOS and Linux, not Windows. On Linux without `bwrap` the sandbox is off and every command asks.
-- **Not yet supported:** LSP pull diagnostics and code actions, MCP sign-in for `sse` servers.
+- **Not yet supported:** MCP sign-in for `sse` servers.

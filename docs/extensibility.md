@@ -161,7 +161,9 @@ Inside the agent ([agent/hooks.go](../internal/agent/hooks.go)), hook output ent
 
 The key integration is in `tools.Env`: after `edit`, `multi_edit` or `write` succeeds, `Env.Diagnostics` syncs the file to its server and waits (up to 3 s; 15 s while the server is loading) for fresh diagnostics, then appends new errors and warnings to the tool result. The model sees `ERROR 5:19 undefined: gret` in the same response that confirmed its edit, without running a build. `read` calls `Env.Touch` to warm up the server in the background.
 
-The read-only `lsp` tool offers definition, references, hover, symbols, workspace symbols and diagnostics.
+Servers that support **pull diagnostics** (a `diagnosticProvider` in `initialize`, or a dynamic registration for `textDocument/diagnostic`) are asked with `textDocument/diagnostic` after the sync; a failed or unsupported pull falls back to waiting for `publishDiagnostics`.
+
+The read-only `lsp` tool offers definition, references, hover, symbols, workspace symbols, diagnostics and **code actions** ([actions.go](../internal/lsp/actions.go)). `code_actions` refreshes the file's diagnostics and passes those overlapping the line, so quick fixes come back. `apply_code_action` (not read-only; rules and modes treat it like `edit`) re-requests the actions on the current text, picks one by title, resolves it with `codeAction/resolve` if the edit is deferred, applies its `WorkspaceEdit` (`changes` or `documentChanges`; file creates, renames and deletes are refused) through `tools.Env.RewriteFile` (project boundary, protected paths, undo snapshot, atomic replace), then runs its command. The client answers the server's `workspace/applyEdit` only while that command runs; any other time it refuses, so a server can't change files on its own.
 
 ## Web
 

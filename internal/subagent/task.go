@@ -415,7 +415,7 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || spec.Name == permission.ExitPlanTool || !def.toolAllowed(spec.Name) {
 			continue
 		}
-		if inWorktree && spec.Name == "lsp" {
+		if inWorktree && (spec.Name == "lsp" || spec.Name == "apply_code_action") {
 			continue
 		}
 		if tl, ok := parent.Get(spec.Name); ok {

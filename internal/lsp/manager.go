@@ -259,7 +259,9 @@ func (m *Manager) Diagnostics(ctx context.Context, path string) string {
 		timeout = 2 * DiagnosticsTimeout
 	}
 	uri := pathToURI(path)
-	got := c.waitFor(ctx, uri, after, timeout)
+	// A server that supports pull answers directly; otherwise wait for it
+	// to publish.
+	got := c.pullDiagnostics(ctx, uri, timeout) || c.waitFor(ctx, uri, after, timeout)
 	c.mu.Lock()
 	if got {
 		c.misses = 0

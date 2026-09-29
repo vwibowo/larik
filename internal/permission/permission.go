@@ -160,7 +160,7 @@ func urlHost(raw string) string {
 const ExitPlanTool = "exit_plan_mode"
 
 // fileWriteTools write one file named by their path argument.
-var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true}
+var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "apply_code_action": true}
 
 // networkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
@@ -208,7 +208,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		if safeCommand(subject) {
 			return Allow, ""
 		}
-	case "write", "edit", "multi_edit":
+	case "write", "edit", "multi_edit", "apply_code_action":
 		if c.mode == ModeAcceptEdits && c.insideCwd(subject) {
 			return Allow, ""
 		}

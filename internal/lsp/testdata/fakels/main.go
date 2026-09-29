@@ -1,7 +1,11 @@
 // Command fakels is a tiny language server for tests. Files use the .fake
 // extension. Every line containing BAD gets an error; a file containing
 // BREAKOTHER also produces an error in other.fake. "def NAME" lines are
-// definitions for definition/references/symbols.
+// definitions for definition/references/symbols. With FAKELS_PULL=1 it
+// serves diagnostics by pull (textDocument/diagnostic) instead of push.
+// Code actions on a BAD line: a direct edit, one that needs resolving,
+// and a command that edits back through workspace/applyEdit. A file
+// containing SNEAKY makes it send an unrequested workspace/applyEdit.
 package main
 
 import (
@@ -28,6 +32,9 @@ var (
 	outMu sync.Mutex
 	docs  = map[string]string{}
 	root  string
+	pull  = os.Getenv("FAKELS_PULL") == "1"
+	// pendingExec is the executeCommand waiting for its applyEdit reply.
+	pendingExec *json.RawMessage
 )
 
 func send(m msg) {
@@ -69,6 +76,18 @@ func rng(line, char, n int) map[string]any {
 }
 
 func publish(uri string) {
+	if pull {
+		return
+	}
+	send(msg{Method: "textDocument/publishDiagnostics", Params: mustJSON(map[string]any{"uri": uri, "diagnostics": diagsFor(uri)})})
+	if strings.Contains(docs[uri], "BREAKOTHER") {
+		other := "file://" + root + "/other.fake"
+		send(msg{Method: "textDocument/publishDiagnostics", Params: mustJSON(map[string]any{"uri": other, "diagnostics": []any{
+			map[string]any{"range": rng(0, 0, 1), "severity": 1, "message": "broken by change"}}})})
+	}
+}
+
+func diagsFor(uri string) []any {
 	var diags []any
 	for i, l := range strings.Split(docs[uri], "\n") {
 		if c := strings.Index(l, "BAD"); c >= 0 {
@@ -81,11 +100,39 @@ func publish(uri string) {
 	if diags == nil {
 		diags = []any{}
 	}
-	send(msg{Method: "textDocument/publishDiagnostics", Params: mustJSON(map[string]any{"uri": uri, "diagnostics": diags})})
-	if strings.Contains(docs[uri], "BREAKOTHER") {
-		other := "file://" + root + "/other.fake"
-		send(msg{Method: "textDocument/publishDiagnostics", Params: mustJSON(map[string]any{"uri": other, "diagnostics": []any{
-			map[string]any{"range": rng(0, 0, 1), "severity": 1, "message": "broken by change"}}})})
+	return diags
+}
+
+// replaceAll edits every BAD in uri to with.
+func replaceAll(uri, with string) []any {
+	var edits []any
+	for i, l := range strings.Split(docs[uri], "\n") {
+		for c := strings.Index(l, "BAD"); c >= 0; {
+			edits = append(edits, map[string]any{"range": rng(i, c, 3), "newText": with})
+			next := strings.Index(l[c+3:], "BAD")
+			if next < 0 {
+				break
+			}
+			c += 3 + next
+		}
+	}
+	return edits
+}
+
+func codeActions(uri string, line int) []any {
+	lines := strings.Split(docs[uri], "\n")
+	if line >= len(lines) {
+		return []any{}
+	}
+	c := strings.Index(lines[line], "BAD")
+	if c < 0 {
+		return []any{}
+	}
+	return []any{
+		map[string]any{"title": "Replace BAD with GOOD", "kind": "quickfix", "isPreferred": true,
+			"edit": map[string]any{"changes": map[string]any{uri: []any{map[string]any{"range": rng(line, c, 3), "newText": "GOOD"}}}}},
+		map[string]any{"title": "Fix every BAD in the file", "kind": "source.fixAll", "data": map[string]any{"uri": uri}},
+		map[string]any{"title": "Fix with a command", "command": "fakels.fix", "arguments": []any{uri, line, c}},
 	}
 }
 
@@ -139,19 +186,60 @@ func main() {
 			} `json:"textDocument"`
 			ContentChanges []struct{ Text string } `json:"contentChanges"`
 			Position       struct{ Line, Character int }
-			Query          string `json:"query"`
+			Range          struct{ Start struct{ Line int } }
+			Query          string               `json:"query"`
+			Data           struct{ URI string } `json:"data"`
+			Command        string               `json:"command"`
+			Arguments      []json.RawMessage    `json:"arguments"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
 		switch m.Method {
 		case "initialize":
 			root = strings.TrimPrefix(p.RootURI, "file://")
-			send(msg{ID: m.ID, Result: map[string]any{"capabilities": map[string]any{"textDocumentSync": 1}}})
+			caps := map[string]any{"textDocumentSync": 1, "codeActionProvider": map[string]any{"resolveProvider": true},
+				"executeCommandProvider": map[string]any{"commands": []string{"fakels.fix"}}}
+			if pull {
+				caps["diagnosticProvider"] = map[string]any{"interFileDependencies": false, "workspaceDiagnostics": false}
+			}
+			send(msg{ID: m.ID, Result: map[string]any{"capabilities": caps}})
 		case "initialized":
 			id := json.RawMessage(`"cfg-1"`)
 			send(msg{ID: &id, Method: "workspace/configuration", Params: mustJSON(map[string]any{"items": []any{map[string]any{"section": "fake"}}})})
 		case "textDocument/didOpen":
 			docs[p.TextDocument.URI] = p.TextDocument.Text
 			publish(p.TextDocument.URI)
+			if strings.Contains(p.TextDocument.Text, "SNEAKY") {
+				id := json.RawMessage(`"sneaky-1"`)
+				send(msg{ID: &id, Method: "workspace/applyEdit", Params: mustJSON(map[string]any{"edit": map[string]any{
+					"changes": map[string]any{p.TextDocument.URI: []any{map[string]any{"range": rng(0, 0, 0), "newText": "PWNED "}}}}})})
+			}
+		case "textDocument/diagnostic":
+			send(msg{ID: m.ID, Result: map[string]any{"kind": "full", "items": diagsFor(p.TextDocument.URI)}})
+		case "textDocument/codeAction":
+			send(msg{ID: m.ID, Result: codeActions(p.TextDocument.URI, p.Range.Start.Line)})
+		case "codeAction/resolve":
+			uri := p.Data.URI
+			var action map[string]any
+			_ = json.Unmarshal(m.Params, &action)
+			action["edit"] = map[string]any{"documentChanges": []any{map[string]any{
+				"textDocument": map[string]any{"uri": uri, "version": 1}, "edits": replaceAll(uri, "GOOD")}}}
+			send(msg{ID: m.ID, Result: action})
+		case "workspace/executeCommand":
+			var uri string
+			var line, c int
+			_ = json.Unmarshal(p.Arguments[0], &uri)
+			_ = json.Unmarshal(p.Arguments[1], &line)
+			_ = json.Unmarshal(p.Arguments[2], &c)
+			pendingExec = m.ID
+			id := json.RawMessage(`"apply-1"`)
+			send(msg{ID: &id, Method: "workspace/applyEdit", Params: mustJSON(map[string]any{"edit": map[string]any{
+				"changes": map[string]any{uri: []any{map[string]any{"range": rng(line, c, 3), "newText": "FIXED"}}}}})})
+		case "":
+			// A reply to our applyEdit: finish the command it was for.
+			if m.ID != nil && string(*m.ID) == `"apply-1"` && pendingExec != nil {
+				send(msg{ID: pendingExec, Result: nil})
+				pendingExec = nil
+			}
 		case "textDocument/didChange":
 			docs[p.TextDocument.URI] = p.ContentChanges[len(p.ContentChanges)-1].Text
 			publish(p.TextDocument.URI)

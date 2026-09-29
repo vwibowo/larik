@@ -33,6 +33,14 @@ type client struct {
 	changed chan struct{} // closed and replaced on every publish
 	started time.Time
 	misses  int // consecutive edits that got no publish before the deadline
+	// pull: the server answers textDocument/diagnostic (LSP 3.17), so
+	// diagnostics are asked for rather than waited for. actions: it
+	// offers code actions. Both come from initialize or a later
+	// client/registerCapability.
+	pull, actions bool
+	// applier applies a workspace/applyEdit the server sends while a code
+	// action the user approved runs; nil refuses them.
+	applier func(WorkspaceEdit) error
 }
 
 func startClient(ctx context.Context, name, root string, cfg ServerConfig, logPath string) (*client, error) {
@@ -90,11 +98,25 @@ func (c *client) initialize(ctx context.Context) error {
 				"references":         map[string]any{},
 				"hover":              map[string]any{"contentFormat": []string{"plaintext", "markdown"}},
 				"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
+				"diagnostic":         map[string]any{"dynamicRegistration": true, "relatedDocumentSupport": false},
+				"codeAction": map[string]any{
+					"dynamicRegistration": true,
+					"isPreferredSupport":  true,
+					"disabledSupport":     true,
+					"dataSupport":         true,
+					"resolveSupport":      map[string]any{"properties": []string{"edit"}},
+					"codeActionLiteralSupport": map[string]any{"codeActionKind": map[string]any{"valueSet": []string{
+						"quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
+						"source", "source.organizeImports", "source.fixAll"}}},
+				},
 			},
 			"workspace": map[string]any{
 				"workspaceFolders": true,
 				"configuration":    true,
 				"symbol":           map[string]any{},
+				"applyEdit":        true,
+				"workspaceEdit":    map[string]any{"documentChanges": true},
+				"executeCommand":   map[string]any{},
 			},
 			"window": map[string]any{"workDoneProgress": false},
 		},
@@ -104,10 +126,26 @@ func (c *client) initialize(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := c.conn.call(ctx, "initialize", params, nil); err != nil {
+	var res struct {
+		Capabilities struct {
+			DiagnosticProvider json.RawMessage `json:"diagnosticProvider"`
+			CodeActionProvider json.RawMessage `json:"codeActionProvider"`
+		} `json:"capabilities"`
+	}
+	if err := c.conn.call(ctx, "initialize", params, &res); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	c.pull = offered(res.Capabilities.DiagnosticProvider)
+	c.actions = offered(res.Capabilities.CodeActionProvider)
+	c.mu.Unlock()
 	return c.conn.notify("initialized", map[string]any{})
+}
+
+// offered reads a server capability that is a bool or an options object.
+func offered(raw json.RawMessage) bool {
+	s := string(raw)
+	return s != "" && s != "null" && s != "false"
 }
 
 func (c *client) handleNotify(method string, params json.RawMessage) {
@@ -136,7 +174,43 @@ func (c *client) handleRequest(method string, params json.RawMessage) (any, erro
 		}
 		_ = json.Unmarshal(params, &p)
 		return make([]any, len(p.Items)), nil // null for every item: server defaults
-	case "window/workDoneProgress/create", "client/registerCapability", "client/unregisterCapability":
+	case "client/registerCapability":
+		var p struct {
+			Registrations []struct {
+				Method string `json:"method"`
+			} `json:"registrations"`
+		}
+		_ = json.Unmarshal(params, &p)
+		c.mu.Lock()
+		for _, r := range p.Registrations {
+			switch r.Method {
+			case "textDocument/diagnostic":
+				c.pull = true
+			case "textDocument/codeAction":
+				c.actions = true
+			}
+		}
+		c.mu.Unlock()
+		return nil, nil
+	case "workspace/applyEdit":
+		var p struct {
+			Edit WorkspaceEdit `json:"edit"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return map[string]any{"applied": false, "failureReason": "bad edit"}, nil
+		}
+		c.mu.Lock()
+		apply := c.applier
+		c.mu.Unlock()
+		if apply == nil {
+			// Only an approved code action may change files.
+			return map[string]any{"applied": false, "failureReason": "larik applies edits only for a code action the user approved"}, nil
+		}
+		if err := apply(p.Edit); err != nil {
+			return map[string]any{"applied": false, "failureReason": err.Error()}, nil
+		}
+		return map[string]any{"applied": true}, nil
+	case "window/workDoneProgress/create", "client/unregisterCapability":
 		return nil, nil
 	case "workspace/workspaceFolders":
 		return []map[string]any{{"uri": pathToURI(c.root), "name": c.root}}, nil
@@ -177,6 +251,38 @@ func (c *client) sync(path, languageID string) (int64, bool, error) {
 		}
 	}
 	return before, !open, err
+}
+
+// pullDiagnostics asks the server for uri's diagnostics (LSP 3.17 pull)
+// and records them as if published. It reports false when the server
+// doesn't pull, or the request failed, so the caller can wait for a push.
+func (c *client) pullDiagnostics(ctx context.Context, uri string, timeout time.Duration) bool {
+	c.mu.Lock()
+	pull := c.pull
+	c.mu.Unlock()
+	if !pull {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var report struct {
+		Kind  string       `json:"kind"`
+		Items []Diagnostic `json:"items"`
+	}
+	if err := c.conn.call(ctx, "textDocument/diagnostic", map[string]any{"textDocument": map[string]any{"uri": uri}}, &report); err != nil {
+		return false
+	}
+	if report.Kind != "full" { // "unchanged" needs a previousResultId, which we never send
+		return false
+	}
+	c.mu.Lock()
+	c.diags[uri] = report.Items
+	c.counter++
+	c.seq[uri] = c.counter
+	close(c.changed)
+	c.changed = make(chan struct{})
+	c.mu.Unlock()
+	return true
 }
 
 // waitFor waits until diagnostics for uri are published after `after`,

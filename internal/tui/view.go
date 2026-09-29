@@ -463,6 +463,8 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Make this edit?"
 	case tools.MultiEditToolName:
 		return "Make these edits?"
+	case "apply_code_action":
+		return "Apply this code action?"
 	case "web_fetch":
 		return "Fetch this page?"
 	case "web_search":
@@ -514,6 +516,9 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
 		return bold.Render(str(in["query"])) + "\n" + m.st.dim.Render("the query goes to the configured search provider")
+	case "apply_code_action":
+		line, _ := in["line"].(float64)
+		return bold.Render(str(in["title"])) + "\n" + m.st.dim.Render(fmt.Sprintf("from the language server, at %s:%d; it may change other files too", m.shortPaths(str(in["path"])), int(line)))
 	case permission.ExitPlanTool:
 		plan := agent.PlanOf(e.Input)
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", plural(strings.Count(plan, "\n")+1, "line")))
@@ -779,6 +784,9 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		}
 	case "read", "write", "edit":
 		arg = str(in["path"])
+	case "apply_code_action":
+		name = "lsp › apply"
+		arg = str(in["title"])
 	case tools.MultiEditToolName:
 		arg = str(in["path"])
 		if edits, ok := in["edits"].([]any); ok {

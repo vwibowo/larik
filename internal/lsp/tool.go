@@ -28,13 +28,14 @@ func (t Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "lsp",
 		Description: "Semantic code navigation via language servers (" + strings.Join(langs, " ") + "). " +
-			"Operations: definition, references, hover (type/docs), symbols (outline of a file), workspace_symbols (search by name), diagnostics (errors in a file). " +
+			"Operations: definition, references, hover (type/docs), symbols (outline of a file), workspace_symbols (search by name), diagnostics (errors in a file), " +
+			"code_actions (the server's fixes and refactorings for a line, e.g. add a missing import; apply one with apply_code_action). " +
 			"Positions are 1-based line and column, as shown by the read tool. Prefer this over grep for finding where a symbol is defined or used.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
-			"operation":{"type":"string","enum":["definition","references","hover","symbols","workspace_symbols","diagnostics"]},
+			"operation":{"type":"string","enum":["definition","references","hover","symbols","workspace_symbols","diagnostics","code_actions"]},
 			"path":{"type":"string","description":"File path (required except for workspace_symbols, where it selects the language)"},
-			"line":{"type":"integer","description":"1-based line (definition, references, hover)"},
-			"column":{"type":"integer","description":"1-based column of the symbol (definition, references, hover)"},
+			"line":{"type":"integer","description":"1-based line (definition, references, hover, code_actions)"},
+			"column":{"type":"integer","description":"1-based column of the symbol (definition, references, hover; optional for code_actions, which otherwise covers the whole line)"},
 			"query":{"type":"string","description":"Symbol name to search for (workspace_symbols)"}},
 			"required":["operation"]}`),
 	}
@@ -65,6 +66,16 @@ func (t Tool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) to
 		if path == "" {
 			return errorf("workspace_symbols needs a path to pick the language server (any file of that language)")
 		}
+	}
+	if in.Operation == "code_actions" {
+		if in.Line < 1 {
+			return errorf("code_actions needs a 1-based line")
+		}
+		actions, err := t.M.Actions(ctx, path, in.Line, in.Column)
+		if err != nil {
+			return errorf("code_actions: %v", err)
+		}
+		return tools.Result{Content: FormatActions(t.M.rel(path), in.Line, actions)}
 	}
 	c, lang, _, err := t.M.clientFor(ctx, path)
 	if err != nil {
@@ -237,4 +248,82 @@ func (t Tool) anyOpenPath() string {
 
 func errorf(format string, args ...any) tools.Result {
 	return tools.Result{Content: fmt.Sprintf(format, args...), IsError: true}
+}
+
+// ApplyTool applies one of a language server's code actions. It writes
+// files, so unlike the lsp tool it goes through the permission check.
+type ApplyTool struct{ M *Manager }
+
+// ApplyToolName is the name of the code-action tool.
+const ApplyToolName = "apply_code_action"
+
+func (ApplyTool) ReadOnly() bool { return false }
+
+func (ApplyTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
+		Name: ApplyToolName,
+		Description: "Apply a language server's code action: a quick fix or refactoring listed by lsp code_actions for the same path and line. " +
+			"Pass the action's exact title. It may change other files too (e.g. a rename); the result lists what changed and any new diagnostics.",
+		Schema: json.RawMessage(`{"type":"object","properties":{
+			"path":{"type":"string"},
+			"line":{"type":"integer","description":"1-based line, as given to code_actions"},
+			"column":{"type":"integer","description":"1-based column, if code_actions was given one"},
+			"title":{"type":"string","description":"The action's exact title"}},
+			"required":["path","line","title"]}`),
+	}
+}
+
+func (t ApplyTool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		Path   string `json:"path"`
+		Line   int    `json:"line"`
+		Column int    `json:"column"`
+		Title  string `json:"title"`
+	}
+	if len(input) == 0 || json.Unmarshal(input, &in) != nil || in.Path == "" || in.Line < 1 || strings.TrimSpace(in.Title) == "" {
+		return errorf("INVALID_JSON: expected path, line and title")
+	}
+	path := env.Abs(in.Path)
+	applied, err := t.M.ApplyAction(ctx, path, in.Line, in.Column, in.Title, env.RewriteFile)
+	if err != nil {
+		msg := "apply_code_action: " + err.Error()
+		if len(applied.Files) > 0 {
+			msg += " (some files were already changed: " + t.fileList(applied.Files) + "; /undo restores them)"
+		}
+		return errorf("%s", msg)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Applied %q: %s.", applied.Title, t.fileList(applied.Files))
+	for _, p := range sortedFiles(applied.Files) {
+		if env.Diagnostics != nil {
+			if d := env.Diagnostics(ctx, p); d != "" {
+				b.WriteString("\n\n" + d)
+			}
+		}
+	}
+	return tools.Result{Content: b.String(), Display: strings.Join(applied.Preview, "\n")}
+}
+
+func (t ApplyTool) fileList(files map[string]int) string {
+	var parts []string
+	for _, p := range sortedFiles(files) {
+		parts = append(parts, fmt.Sprintf("%s (%s)", t.M.rel(p), plural(files[p], "edit")))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func sortedFiles(files map[string]int) []string {
+	out := make([]string, 0, len(files))
+	for p := range files {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
