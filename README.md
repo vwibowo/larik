@@ -193,7 +193,7 @@ Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command,
 
 Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
 
-`write` and `edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
+`write`, `edit` and `multi_edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
 
 ## Web
 
@@ -507,7 +507,7 @@ You are a meticulous code reviewer. ...
 
 Larik runs language servers so the model gets compiler feedback on its own edits and can navigate code semantically.
 
-- **Diagnostics after edits:** when `edit` or `write` changes a file, Larik syncs it to the file's language server and appends new errors and warnings to the tool result, for example `ERROR 5:19 undefined: gret (compiler)`. Errors the change caused in other files are summarized. Reading a file warms up the server in the background.
+- **Diagnostics after edits:** when `edit`, `multi_edit` or `write` changes a file, Larik syncs it to the file's language server and appends new errors and warnings to the tool result, for example `ERROR 5:19 undefined: gret (compiler)`. Errors the change caused in other files are summarized. Reading a file warms up the server in the background.
 - **The `lsp` tool** (read-only) offers `definition`, `references`, `hover`, `symbols`, `workspace_symbols` and `diagnostics`, using the 1-based line and column that `read` shows.
 - **Built-in servers** are enabled automatically when their binary is on your `PATH`: gopls, typescript-language-server, pyright-langserver, rust-analyzer and clangd. Each starts on the first matching file, once per project root (found from markers like `go.mod`, `package.json` or `Cargo.toml`). Servers shut down when Larik exits, and their logs go to `~/.local/share/larik/logs/lsp-<name>.log`.
 - **Configuration:**

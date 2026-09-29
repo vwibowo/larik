@@ -282,3 +282,45 @@ func TestGlobIntoNamedHiddenDir(t *testing.T) {
 		t.Errorf("an unnamed hidden dir should still be skipped: %q", r.Content)
 	}
 }
+
+func TestMultiEdit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.go")
+	os.WriteFile(path, []byte("func old() {}\nfunc caller() { old() }\nvar x = 1\nvar y = 1\n"), 0o644)
+	env := NewEnv(dir)
+	if r := run(t, MultiEdit{}, env, `{"path":"a.go","edits":[{"old_string":"x","new_string":"z"}]}`); !r.IsError || !strings.Contains(r.Content, "not been read") {
+		t.Fatalf("must read first: %+v", r)
+	}
+	run(t, Read{}, env, `{"path":"a.go"}`)
+
+	// The second edit fails, so the first must not be written either.
+	r := run(t, MultiEdit{}, env, `{"path":"a.go","edits":[{"old_string":"var x","new_string":"var z"},{"old_string":"missing","new_string":"m"}]}`)
+	if !r.IsError || !strings.Contains(r.Content, "edit 2 of 2") || !strings.Contains(r.Content, "nothing was changed") {
+		t.Fatalf("failing edit: %+v", r)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "var z") {
+		t.Fatal("a failed multi_edit must leave the file unchanged")
+	}
+
+	// Edits apply in order, each to the result of the ones before.
+	r = run(t, MultiEdit{}, env, `{"path":"a.go","edits":[
+		{"old_string":"old","new_string":"renamed","replace_all":true},
+		{"old_string":"func renamed() {}","new_string":"func renamed() { println() }"},
+		{"old_string":"= 1","new_string":"= 2","replace_all":true}]}`)
+	if r.IsError || !strings.Contains(r.Content, "3 edits, 5 replacement(s)") || !strings.Contains(r.Display, "⋯") {
+		t.Fatalf("multi_edit: %+v", r)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "func renamed() { println() }\nfunc caller() { renamed() }\nvar x = 2\nvar y = 2\n"; string(data) != want {
+		t.Fatalf("file = %q", data)
+	}
+	for input, want := range map[string]string{
+		`{"path":"a.go","edits":[]}`:                                        "edits is empty",
+		`{"path":"a.go","edits":[{"old_string":"var","new_string":"let"}]}`: "appears 2 times",
+		`{"path":"a.go","edits":[{"old_string":"x","new_string":"x"}]}`:     "identical",
+	} {
+		if r := run(t, MultiEdit{}, env, input); !r.IsError || !strings.Contains(r.Content, want) {
+			t.Errorf("%s: %+v, want %q", input, r, want)
+		}
+	}
+}

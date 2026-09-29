@@ -455,6 +455,8 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Create this file?"
 	case "edit":
 		return "Make this edit?"
+	case tools.MultiEditToolName:
+		return "Make these edits?"
 	case "web_fetch":
 		return "Fetch this page?"
 	case "web_search":
@@ -511,6 +513,15 @@ func (m *model) permDetail(e *agent.Event) string {
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
 		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
+	case tools.MultiEditToolName:
+		edits, _ := in["edits"].([]any)
+		var parts []string
+		for _, e := range edits {
+			ed, _ := e.(map[string]any)
+			parts = append(parts, prefixLines(str(ed["old_string"]), "- ")+"\n"+prefixLines(str(ed["new_string"]), "+ "))
+		}
+		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+plural(len(edits), "edit")) + "\n" +
+			m.highlightDiff(str(in["path"]), strings.Join(parts, "\n  ⋯\n"), 24)
 	}
 	if len(in) == 0 {
 		return m.st.dim.Render("no arguments")
@@ -686,7 +697,7 @@ func (m *model) renderToolCard(e agent.Event) string {
 		} else {
 			body = m.highlightDiff(in.Path, prefixLines(strings.TrimSuffix(in.Content, "\n"), "+ "), m.lines(12))
 		}
-	case e.ToolName == "edit" && e.Display != "":
+	case (e.ToolName == "edit" || e.ToolName == tools.MultiEditToolName) && e.Display != "":
 		var in struct{ Path string }
 		_ = json.Unmarshal(e.Input, &in)
 		body = m.highlightDiff(in.Path, e.Display, m.lines(20))
@@ -762,6 +773,11 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		}
 	case "read", "write", "edit":
 		arg = str(in["path"])
+	case tools.MultiEditToolName:
+		arg = str(in["path"])
+		if edits, ok := in["edits"].([]any); ok {
+			arg += ", " + plural(len(edits), "edit")
+		}
 	case "grep":
 		arg = str(in["pattern"])
 		if p := str(in["path"]); p != "" {

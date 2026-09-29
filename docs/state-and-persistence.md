@@ -105,7 +105,7 @@ stateDiagram-v2
 
 **Retention.** At startup `app.Setup` calls `checkpoint.Prune`, which deletes turns whose snapshots are older than `checkpoint_retention_days` (default 7; negative keeps them forever), and session directories left empty. The cleanup covers every project, so the setting is honored only from personal files.
 
-Scope: the store covers `write` and `edit` (and subagents sharing the store). A `bash` call can list project files in `checkpoint_paths` to snapshot them before execution; changes to unlisted files, and changes made by MCP tools, are not captured. Worktree subagents skip checkpoints entirely; their branch is the undo. A failed capture stops the command, and a failed restore keeps the snapshot so `/undo` can be retried.
+Scope: the store covers `write`, `edit` and `multi_edit` (and subagents sharing the store). A `bash` call can list project files in `checkpoint_paths` to snapshot them before execution; changes to unlisted files, and changes made by MCP tools, are not captured. Worktree subagents skip checkpoints entirely; their branch is the undo. A failed capture stops the command, and a failed restore keeps the snapshot so `/undo` can be retried.
 
 ## Configuration layers
 

@@ -183,8 +183,105 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if err != nil {
 		return errorf("%v", err)
 	}
-	if in.Old == in.New {
-		return errorf("old_string and new_string are identical")
+	path := env.Abs(in.Path)
+	root, rel, err := env.writeRoot(path)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	defer root.Close()
+	data, err := root.ReadFile(rel)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	if err := env.checkFresh(path); err != nil {
+		return errorf("%v", err)
+	}
+	updated, n, err := applyEdit(string(data), in.Old, in.New, in.ReplaceAll)
+	if err != nil {
+		return errorf("%v in %s", err, path)
+	}
+	if err := env.beforeWrite(path); err != nil {
+		return errorf("cannot checkpoint %s: %v", path, err)
+	}
+	if _, err := pathpolicy.WritePath(env.Cwd, path); err != nil {
+		return errorf("%v", err)
+	}
+	if err := replaceFile(root, rel, []byte(updated)); err != nil {
+		return errorf("%v", err)
+	}
+	env.markRead(path)
+	return env.afterWrite(ctx, path, Result{
+		Content: fmt.Sprintf("Edited %s (%d replacement(s))", path, n),
+		Display: miniDiff(in.Old, in.New),
+	})
+}
+
+// applyEdit replaces old with new in content: once, where old must be
+// unique, or everywhere with all. It returns the replacements made.
+func applyEdit(content, old, new string, all bool) (string, int, error) {
+	if old == "" {
+		return "", 0, fmt.Errorf("old_string is empty; use write to create files")
+	}
+	if old == new {
+		return "", 0, fmt.Errorf("old_string and new_string are identical")
+	}
+	n := strings.Count(content, old)
+	switch {
+	case n == 0:
+		return "", 0, fmt.Errorf("old_string not found")
+	case n > 1 && !all:
+		return "", 0, fmt.Errorf("old_string appears %d times; add surrounding context to make it unique or set replace_all", n)
+	case !all:
+		n = 1
+	}
+	return strings.Replace(content, old, new, n), n, nil
+}
+
+const maxEdits = 100
+
+// MultiEdit makes several replacements in one file, in order and all or
+// nothing, so a change in many places is one call, one undo step and one
+// round of diagnostics.
+type MultiEdit struct{}
+
+func (MultiEdit) ReadOnly() bool { return false }
+func (MultiEdit) Spec() llm.ToolSpec {
+	return llm.ToolSpec{
+		Name: MultiEditToolName,
+		Description: "Make several exact-string replacements in one file in a single call. Edits apply in order, each to the result of " +
+			"the ones before, and either all succeed or the file is left unchanged. Each old_string follows the edit tool's rules: an " +
+			"exact match (including whitespace), unique unless replace_all is true. Prefer it over repeated edit calls on the same file. Read the file first.",
+		Schema: schema(`{"type":"object","properties":{
+			"path":{"type":"string"},
+			"edits":{"type":"array","minItems":1,"description":"Replacements, applied in order","items":{"type":"object","properties":{
+				"old_string":{"type":"string","description":"Exact text to replace"},
+				"new_string":{"type":"string","description":"Replacement text"},
+				"replace_all":{"type":"boolean","description":"Replace every occurrence"}},
+				"required":["old_string","new_string"]}}},
+			"required":["path","edits"]}`),
+	}
+}
+
+// MultiEditToolName is the name of the multi-edit tool.
+const MultiEditToolName = "multi_edit"
+
+func (MultiEdit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
+	in, err := decode[struct {
+		Path  string `json:"path"`
+		Edits []struct {
+			Old        string `json:"old_string"`
+			New        string `json:"new_string"`
+			ReplaceAll bool   `json:"replace_all"`
+		} `json:"edits"`
+	}](input)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	switch {
+	case len(in.Edits) == 0:
+		return errorf("edits is empty")
+	case len(in.Edits) > maxEdits:
+		return errorf("at most %d edits per call", maxEdits)
 	}
 	path := env.Abs(in.Path)
 	root, rel, err := env.writeRoot(path)
@@ -199,31 +296,29 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if err := env.checkFresh(path); err != nil {
 		return errorf("%v", err)
 	}
-	content := string(data)
-	if in.Old == "" {
-		return errorf("old_string is empty; use write to create files")
+	content, total := string(data), 0
+	var diffs []string
+	for i, e := range in.Edits {
+		var n int
+		if content, n, err = applyEdit(content, e.Old, e.New, e.ReplaceAll); err != nil {
+			return errorf("edit %d of %d: %v in %s (earlier edits count; nothing was changed)", i+1, len(in.Edits), err, path)
+		}
+		total += n
+		diffs = append(diffs, miniDiff(e.Old, e.New))
 	}
-	n := strings.Count(content, in.Old)
-	switch {
-	case n == 0:
-		return errorf("old_string not found in %s", path)
-	case n > 1 && !in.ReplaceAll:
-		return errorf("old_string appears %d times in %s; add surrounding context to make it unique or set replace_all", n, path)
-	}
-	updated := strings.Replace(content, in.Old, in.New, map[bool]int{true: -1, false: 1}[in.ReplaceAll])
 	if err := env.beforeWrite(path); err != nil {
 		return errorf("cannot checkpoint %s: %v", path, err)
 	}
 	if _, err := pathpolicy.WritePath(env.Cwd, path); err != nil {
 		return errorf("%v", err)
 	}
-	if err := replaceFile(root, rel, []byte(updated)); err != nil {
+	if err := replaceFile(root, rel, []byte(content)); err != nil {
 		return errorf("%v", err)
 	}
 	env.markRead(path)
 	return env.afterWrite(ctx, path, Result{
-		Content: fmt.Sprintf("Edited %s (%d replacement(s))", path, map[bool]int{true: n, false: 1}[in.ReplaceAll]),
-		Display: miniDiff(in.Old, in.New),
+		Content: fmt.Sprintf("Edited %s (%d edits, %d replacement(s))", path, len(in.Edits), total),
+		Display: strings.Join(diffs, "\n  ⋯\n"),
 	})
 }
 

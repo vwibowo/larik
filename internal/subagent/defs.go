@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"larik/internal/skills"
+	"larik/internal/tools"
 )
 
 type Definition struct {
@@ -179,9 +180,14 @@ func (d Definition) toolAllowed(name string) bool {
 	if d.Tools == nil {
 		return true
 	}
+	// Claude Code names tools like MultiEdit; multi_edit is a way of
+	// editing, so a definition allowing edit allows it too.
+	flat := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
 	for _, t := range d.Tools {
 		switch {
-		case t == "*", strings.EqualFold(t, name):
+		case t == "*", flat(t) == flat(name):
+			return true
+		case name == tools.MultiEditToolName && strings.EqualFold(t, "edit"):
 			return true
 		case strings.HasPrefix(t, "mcp__") && !strings.Contains(t[len("mcp__"):], "__") && strings.HasPrefix(name, t+"__"):
 			return true

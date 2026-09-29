@@ -34,6 +34,8 @@ func TestDecide(t *testing.T) {
 		{"accept-edits inside", ModeAcceptEdits, call("write", false, `{"path":"x/y.go"}`), Allow},
 		{"accept-edits outside", ModeAcceptEdits, call("write", false, `{"path":"/etc/hosts"}`), Deny},
 		{"accept-edits dotdot", ModeAcceptEdits, call("write", false, `{"path":"../other/y.go"}`), Deny},
+		{"accept-edits multi_edit inside", ModeAcceptEdits, call("multi_edit", false, `{"path":"x/y.go","edits":[]}`), Allow},
+		{"multi_edit protected path", ModeYolo, call("multi_edit", false, `{"path":".git/config","edits":[]}`), Deny},
 		{"plan denies writes", ModePlan, call("edit", false, `{"path":"main.go"}`), Deny},
 		{"plan allows reads", ModePlan, call("grep", true, `{"pattern":"x"}`), Allow},
 		{"yolo", ModeYolo, call("bash", false, `{"command":"make deploy"}`), Allow},

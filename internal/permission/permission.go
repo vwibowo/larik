@@ -159,6 +159,9 @@ func urlHost(raw string) string {
 // approval; elsewhere it has nothing to do and is allowed.
 const ExitPlanTool = "exit_plan_mode"
 
+// fileWriteTools write one file named by their path argument.
+var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true}
+
 // networkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
 var networkTools = map[string]bool{"web_fetch": true, "web_search": true}
@@ -168,7 +171,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	subject := Subject(call.Tool, call.Input)
-	if call.Tool == "write" || call.Tool == "edit" {
+	if fileWriteTools[call.Tool] {
 		if _, err := pathpolicy.WritePath(c.cwd, subject); err != nil {
 			return Deny, err.Error()
 		}
@@ -205,7 +208,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		if safeCommand(subject) {
 			return Allow, ""
 		}
-	case "write", "edit":
+	case "write", "edit", "multi_edit":
 		if c.mode == ModeAcceptEdits && c.insideCwd(subject) {
 			return Allow, ""
 		}

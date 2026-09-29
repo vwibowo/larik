@@ -54,6 +54,7 @@ classDiagram
 |---|---|---|---|
 | `read` | tools | yes | Line-numbered; records the file's mtime; warms up the language server |
 | `write`, `edit` | tools | no | Confined to the project, with protected paths and symlinks rejected; refuse stale overwrites; require an undo snapshot; append LSP diagnostics |
+| `multi_edit` | tools | no | Several `edit`-style replacements in one file, applied in order, all or nothing; one permission prompt, one undo snapshot, one round of diagnostics. Treated like `edit` by rules and modes, and allowed by any agent definition that allows `edit` (or names `MultiEdit`) |
 | `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel; optional `checkpoint_paths` snapshots named project files for `/undo` |
 | `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
@@ -157,7 +158,7 @@ Rules are `tool` or `tool(pattern)`. The pattern matches a *subject* taken from 
 | Tool | Subject | Pattern style | Example |
 |---|---|---|---|
 | `bash` | the command | `*` wildcard | `bash(go test*)` |
-| `read`, `write`, `edit`, … | the path, relative to cwd when inside it | doublestar glob | `edit(docs/**)` |
+| `read`, `write`, `edit`, `multi_edit`, … | the path, relative to cwd when inside it | doublestar glob | `edit(docs/**)` |
 | `web_fetch` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
 | `mcp__server__tool` | none | whole-tool or whole-server | `mcp__github` |
 

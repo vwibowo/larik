@@ -287,6 +287,11 @@ func TestDefinitions(t *testing.T) {
 			t.Errorf("toolAllowed(%s)=%v", tool, got)
 		}
 	}
+	editor := Definition{Tools: []string{"Read", "Edit"}}
+	claude := Definition{Tools: []string{"MultiEdit"}}
+	if !editor.toolAllowed("multi_edit") || !claude.toolAllowed("multi_edit") || claude.toolAllowed("edit") {
+		t.Error("Edit should allow multi_edit, and MultiEdit should name it")
+	}
 	if e, _ := set.Get("explore"); e.Description != "My explore override" || strings.Join(e.Tools, ",") != "read" {
 		t.Errorf("user definition should override builtin: %+v", e)
 	}

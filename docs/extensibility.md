@@ -154,7 +154,7 @@ Inside the agent ([agent/hooks.go](../internal/agent/hooks.go)), hook output ent
 
 [lsp/manager.go](../internal/lsp/manager.go) starts built-in servers (gopls, typescript-language-server, pyright, rust-analyzer, clangd) when their binary is on `PATH`, lazily on the first matching file, once per project root.
 
-The key integration is in `tools.Env`: after `edit` or `write` succeeds, `Env.Diagnostics` syncs the file to its server and waits (up to 3 s; 15 s while the server is loading) for fresh diagnostics, then appends new errors and warnings to the tool result. The model sees `ERROR 5:19 undefined: gret` in the same response that confirmed its edit, without running a build. `read` calls `Env.Touch` to warm up the server in the background.
+The key integration is in `tools.Env`: after `edit`, `multi_edit` or `write` succeeds, `Env.Diagnostics` syncs the file to its server and waits (up to 3 s; 15 s while the server is loading) for fresh diagnostics, then appends new errors and warnings to the tool result. The model sees `ERROR 5:19 undefined: gret` in the same response that confirmed its edit, without running a build. `read` calls `Env.Touch` to warm up the server in the background.
 
 The read-only `lsp` tool offers definition, references, hover, symbols, workspace symbols and diagnostics.
 
