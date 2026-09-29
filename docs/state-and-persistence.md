@@ -131,6 +131,7 @@ Each layer is marked **trusted** (personal: only you write it) or not (shared: a
 | Sandbox | may disable, enable network, add writable paths | may only switch it on |
 | LSP servers | may add commands | may only disable |
 | Web search backend | honored | ignored (it would receive every query); may only disable web tools |
+| Status line command and key bindings | honored | ignored (one runs a command, the other could hide keys) |
 | Approvals themselves | read from private project settings only | ignored |
 
 The approvals are pinned to a content hash (`MCPServer.Hash`, `hooks.Config.Hash`), so a later commit that changes the command or URL silently loses its approval instead of inheriting it. See [security](security.md#trust-boundaries).

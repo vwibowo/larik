@@ -14,7 +14,7 @@ type shortcutGroup struct {
 var shortcutGroups = []shortcutGroup{
 	{"typing", [][2]string{
 		{"enter", "send"},
-		{"shift+enter", "new line (also alt+enter, ctrl+j)"},
+		{"shift+enter", "new line"},
 		{"@", "mention a file or folder (@path#L10-20 for lines)"},
 		{"!", "run a shell command; output goes with the next prompt"},
 		{"↑ ↓", "previous and next prompts"},
@@ -28,6 +28,12 @@ var shortcutGroups = []shortcutGroup{
 		{"esc", "interrupt"},
 		{"enter", "queue a follow-up"},
 		{"ctrl+o", "show or hide thinking"},
+	}},
+	{"scrolling", [][2]string{
+		{"pgup", "page up"},
+		{"pgdown", "page down"},
+		{"ctrl+home", "top, when the input is empty"},
+		{"ctrl+end", "bottom, when the input is empty"},
 	}},
 	{"model and mode", [][2]string{
 		{"alt+p", "switch model and effort"},
@@ -62,7 +68,11 @@ func (m *model) shortcutsView() string {
 			}
 			lines = append(lines, m.st.dim.Render(strings.ToUpper(g.title)))
 			for _, kv := range g.keys {
-				lines = append(lines, pad(m.st.user.Render(kv[0]), 14)+m.st.dim.Render(kv[1]))
+				k := kv[0]
+				if a, ok := defaultAction(k); ok && g.title != "permission prompt" {
+					k = m.keys.all(a) // as the keybindings setting has it
+				}
+				lines = append(lines, pad(m.st.user.Render(k)+"  ", 14)+m.st.dim.Render(kv[1]))
 			}
 		}
 		return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))

@@ -72,6 +72,12 @@ type Config struct {
 	// mouse to the terminal, so text can be selected without a modifier.
 	// Nil means on.
 	Mouse *bool `json:"mouse,omitempty"`
+	// StatusLine runs a command whose output becomes the TUI footer.
+	// Honored only from personal files, since it runs a command.
+	StatusLine *StatusLine `json:"status_line,omitempty"`
+	// Keybindings rebind TUI actions: action name to one key or a list;
+	// an empty list unbinds. Honored only from personal files.
+	Keybindings map[string]KeyList `json:"keybindings,omitempty"`
 
 	// Roles name models by job, so subagents and compaction can run on a
 	// cheaper model than the main agent: "worker", "explore", "smart",
@@ -119,6 +125,35 @@ type Config struct {
 	ConfigDir string `json:"-"`
 	DataDir   string `json:"-"`
 	Cwd       string `json:"-"`
+}
+
+// StatusLine is a command whose output replaces the footer's model,
+// context and cost. It gets the session's state as JSON on stdin, in
+// Claude Code's statusLine form, so the same scripts work.
+type StatusLine struct {
+	// Type is "command", the only kind, and may be left out.
+	Type    string `json:"type,omitempty"`
+	Command string `json:"command"`
+}
+
+// KeyList is one key ("ctrl+e") or several.
+type KeyList []string
+
+func (k *KeyList) UnmarshalJSON(data []byte) error {
+	var one string
+	if err := json.Unmarshal(data, &one); err == nil {
+		*k = KeyList{one}
+		if one == "" {
+			*k = KeyList{}
+		}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return errors.New("a key binding is a key or a list of keys")
+	}
+	*k = append(KeyList{}, many...)
+	return nil
 }
 
 // RoleOption applies to subagents that run on a role.
@@ -223,6 +258,7 @@ func (c *Config) merge(path string, trusted bool) error {
 	var o struct {
 		Config
 		MCPServersCompat map[string]MCPServer `json:"mcpServers"` // .mcp.json / Claude Code format
+		StatusLineCompat *StatusLine          `json:"statusLine"` // Claude Code format
 	}
 	if err := json.Unmarshal(data, &o); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
@@ -325,6 +361,27 @@ func (c *Config) merge(path string, trusted bool) error {
 		if *b.src != nil {
 			*b.dst = *b.src
 		}
+	}
+	for _, sl := range []*StatusLine{o.StatusLineCompat, o.StatusLine} {
+		if sl == nil || !trusted {
+			continue // a shared file can't make Larik run a command
+		}
+		if sl.Type != "" && sl.Type != "command" {
+			return fmt.Errorf("%s: status_line.type must be \"command\"", path)
+		}
+		c.StatusLine = sl
+		if strings.TrimSpace(sl.Command) == "" {
+			c.StatusLine = nil // a later file can switch it off
+		}
+	}
+	for action, keys := range o.Keybindings {
+		if !trusted {
+			continue // nor rebind your keys
+		}
+		if c.Keybindings == nil {
+			c.Keybindings = map[string]KeyList{}
+		}
+		c.Keybindings[action] = keys
 	}
 	if trusted && o.TokenSaver != nil {
 		c.TokenSaver = o.TokenSaver

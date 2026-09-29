@@ -52,7 +52,7 @@ func (m *model) command(line string) tea.Cmd {
 			case m.shellCancel != nil:
 				what = "a ! command is running"
 			}
-			return fail(name + " is unavailable while " + what + " (esc to interrupt)")
+			return fail(name + " is unavailable while " + what + m.interruptHint())
 		}
 	}
 
@@ -144,7 +144,7 @@ func (m *model) command(line string) tea.Cmd {
 	case "/compact":
 		ctx, cancel := context.WithCancel(context.Background())
 		m.compactCancel = cancel
-		m.busyLabel = "Compacting conversation… (esc to cancel)"
+		m.busyLabel = "Compacting conversation…" + paren(m.keyHint(actInterrupt, "to cancel"))
 		a := m.agent
 		return tea.Batch(m.spin.Tick, func() tea.Msg {
 			summary, err := a.Compact(ctx, nil)

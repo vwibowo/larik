@@ -484,7 +484,7 @@ func (m *model) editSetting(key string) tea.Cmd {
 	case kindAction:
 		m.settings = nil
 		if m.running && spec.key == "model" {
-			return m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))
+			return m.println(m.st.err.Render("the model can't change while a turn is running" + m.interruptHint()))
 		}
 		return spec.open(m)
 	case kindToggle:

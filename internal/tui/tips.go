@@ -1,6 +1,9 @@
 package tui
 
-import "math/rand/v2"
+import (
+	"math/rand/v2"
+	"strings"
+)
 
 // tips rotate under the spinner while a turn runs (spinner_tips setting).
 var tips = []string{
@@ -18,4 +21,19 @@ var tips = []string{
 	"? on an empty prompt lists every shortcut",
 }
 
-func nextTip() string { return tips[rand.IntN(len(tips))] }
+// nextTip picks a tip, naming keys as km binds them and skipping tips
+// about unbound actions.
+func nextTip(km keymap) string {
+	for {
+		tip := tips[rand.IntN(len(tips))]
+		first, rest, _ := strings.Cut(tip, " ")
+		switch k := km.remap(first); k {
+		case first:
+			return tip
+		case "":
+			continue
+		default:
+			return k + " " + rest
+		}
+	}
+}

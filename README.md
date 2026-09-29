@@ -127,6 +127,39 @@ The input row fills the terminal width, stays at the bottom, and grows up to ten
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
+### Rebinding keys
+
+`keybindings` in `~/.config/larik/config.json` (or private project settings) maps an action to a key or a list of keys, replacing that action's defaults. An empty list unbinds it:
+
+```json
+{
+  "keybindings": {
+    "external_editor": "ctrl+e",
+    "toggle_thinking": ["ctrl+t", "ctrl+o"],
+    "paste_image": []
+  }
+}
+```
+
+Actions and their defaults: `submit` (enter), `newline` (shift+enter, alt+enter, ctrl+j), `interrupt` (esc), `quit` (ctrl+d on an empty input), `history_search` (ctrl+r), `external_editor` (ctrl+g), `paste_image` (ctrl+v), `cycle_mode` (shift+tab), `toggle_thinking` (ctrl+o), `model_picker` (alt+p), `shortcuts` (?), `scroll_up` (pgup), `scroll_down` (pgdown), `scroll_top` (ctrl+home), `scroll_bottom` (ctrl+end). Keys are written as Bubble Tea names them: `ctrl+`, `alt+`, `shift+` and `super+` in front of a character or `enter`, `tab`, `esc`, `space`, `up`, `pgup`, `f5` and so on. A key you give one action is taken from whichever action had it by default. `ctrl+c` can't be rebound, and a plain character can't be bound (it would stop you typing it) except to `shortcuts`. Keys inside pickers and permission prompts stay as they are. The banner lists entries that couldn't apply, and `?` and the hints across the interface show the keys as bound. Shared `.larik/settings.json` files can't rebind keys.
+
+### Status line
+
+`status_line` replaces the footer's model, context and cost with a command's output. The permission mode stays on the left:
+
+```json
+{ "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
+```
+
+The command gets the session's state as JSON on stdin, in the form Claude Code gives its `statusLine` command, so the same scripts work: `session_id`, `transcript_path`, `cwd`, `model.id`, `model.display_name`, `workspace.current_dir`, `version`, `cost.total_cost_usd`, and `context_window` (`context_window_size`, `used_tokens`, `used_percentage`). Larik's own fields are under `larik`: `provider`, `effort`, `permission_mode`, `background_tasks` and `turn_running`. Claude Code's `statusLine` key is read too. Up to three lines of output are shown, with their ANSI colors. The command runs in the project directory when that state changes, at most every 300 ms, and is stopped after 5 seconds. If it fails, the default footer stays and the error is shown once. It runs a command, so it's honored only from personal settings. For example:
+
+```sh
+#!/bin/sh
+in=$(cat)
+branch=$(git branch --show-current 2>/dev/null)
+echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq -r .context_window.used_percentage)% ctx"
+```
+
 ### Composer
 
 - **`@` mentions.** Typing `@` opens a file picker over the project (it follows `.gitignore` in a git repository). `↑/↓` chooses, `tab` or `enter` inserts, and picking a folder lets you go into it. When you send the prompt, each `@path` is attached. A file is attached with line numbers and counts as read, so the model can edit it straight away. `@path#L10-40` attaches only those lines, `@folder/` attaches a listing, and `@image.png` (also `.jpg`, `.gif`, `.webp`, up to 5 MB) attaches the image for vision models. Quote paths with spaces: `@"my notes.md"`. A mention that isn't a real path stays as text, deny rules for `read` still apply, and `/rewind` and the session list show the prompt as you typed it. Mentions also work in `larik -p` and `larik serve` prompts.
@@ -368,6 +401,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`.
 - `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
+- `keybindings` and `status_line` (not in `/config`): see [Rebinding keys](#rebinding-keys) and [Status line](#status-line).
 - `mouse`: wheel scrolling in the TUI (default on). Off leaves the mouse to the terminal, so text can be selected without a modifier.
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
 - `token_saver`: opt-in command-output filtering (`/config token_saver=true`). Recognized Git, search/listing, Go, Cargo, Node package-manager, and pytest output is shortened before entering model context. Unrecognized output and failures pass through. A `bash` call can set `raw_output: true`; `raw_output` retrieves the exact captured stdout/stderr by tool-call ID without rerunning the command. Raw output stays in private session files. The displayed byte savings are estimates for command output; use `/cost` to inspect actual session token usage and cost.

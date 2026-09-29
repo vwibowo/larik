@@ -234,10 +234,10 @@ func (m *model) liveView() string {
 			meta = append(meta, fmt.Sprintf("↓ ~%d tokens", m.turnChars/4)) // a rough count while streaming
 		}
 		if thinkingNow && !m.showThinking {
-			meta = append(meta, "ctrl+o to show thinking")
+			meta = appendHint(meta, m.keyHint(actToggleThinking, "to show thinking"))
 		}
 		if m.perm == nil { // with a prompt open, esc denies instead
-			meta = append(meta, "esc to interrupt")
+			meta = appendHint(meta, m.keyHint(actInterrupt, "to interrupt"))
 		}
 	}
 	line := m.st.accent.Render("✻ ") + label
@@ -554,6 +554,9 @@ func (m *model) statusLine() string {
 		chip = m.st.chipWarn
 	}
 	modeChip := chip.Render(modeLabels[mode])
+	if m.status != nil && len(m.status.lines) > 0 && !m.quitArmed {
+		return m.customStatus(modeChip)
+	}
 
 	model := m.st.accent.Render("◆ ") + m.st.user.Render(m.agent.Model())
 	provider := m.st.dim.Render(" " + m.agent.ProviderName())
@@ -590,8 +593,8 @@ func (m *model) statusLine() string {
 	sep := m.st.dim.Render(" · ")
 	build := func(hint, withProvider, withBar bool) string {
 		left := modeChip
-		if hint {
-			left += m.st.dim.Render(" shift+tab")
+		if k := m.keys.hint(actCycleMode); hint && k != "" {
+			left += m.st.dim.Render(" " + k)
 		}
 		parts := []string{model}
 		if withProvider {
@@ -638,9 +641,9 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 			case m.showThinking:
 				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, m.width-4), 20)))
 			case thought >= time.Second:
-				out = append(out, m.st.thinking.Render("✻ Thought for "+elapsed(thought))+m.st.dim.Render(" · ctrl+o to show"))
+				out = append(out, m.st.thinking.Render("✻ Thought for "+elapsed(thought))+m.thinkingHint())
 			default:
-				out = append(out, m.st.thinking.Render("✻ Thought")+m.st.dim.Render(" · ctrl+o to show"))
+				out = append(out, m.st.thinking.Render("✻ Thought")+m.thinkingHint())
 			}
 		case llm.BlockText:
 			if t := strings.TrimSpace(b.Text); t != "" {
@@ -886,7 +889,11 @@ func (m *model) printBanner() tea.Cmd {
 	}
 	lines := []string{
 		head,
-		m.st.dim.Render("  / commands · ? shortcuts · alt+p model · shift+tab mode"),
+		m.st.dim.Render("  " + strings.Join(appendHint(appendHint([]string{"/ commands", "? shortcuts"},
+			m.keyHint(actModelPicker, "model")), m.keyHint(actCycleMode, "mode")), " · ")),
+	}
+	for _, w := range m.keyWarn {
+		lines = append(lines, m.st.warn.Render("  ! "+w))
 	}
 	warn := func(s string) { lines = append(lines, m.st.warn.Render("  ! "+s)) }
 	if m.opts.Sandbox == nil && m.opts.SandboxNote != "" {

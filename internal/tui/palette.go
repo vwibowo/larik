@@ -107,7 +107,7 @@ func (m *model) syncPalette() {
 		}
 	}
 	for _, c := range commands {
-		add(c.name, c.args, c.desc, c.section, c.key)
+		add(c.name, c.args, c.desc, c.section, m.keys.remap(c.key))
 	}
 	if m.opts.Skills != nil {
 		for _, sk := range m.opts.Skills.List() {

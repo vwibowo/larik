@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -93,6 +92,9 @@ type model struct {
 	height   int
 
 	input     textarea.Model
+	keys      keymap   // the keybindings setting applied to the defaults
+	keyWarn   []string // keybindings that couldn't apply, for the banner
+	status    *statusCmd
 	spin      spinner.Model
 	view      viewport.Model // the conversation, pre-wrapped to width
 	panelView viewport.Model
@@ -217,7 +219,6 @@ func newModel(opts Options) *model {
 	ta.DynamicHeight = true
 	ta.MinHeight = 1
 	ta.MaxHeight = 10
-	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
 	ta.Focus()
 
 	m := &model{
@@ -239,12 +240,19 @@ func newModel(opts Options) *model {
 		notify:   "off",
 		histIdx:  -1,
 	}
+	var bindings map[string]config.KeyList
 	if c := opts.Config; c != nil {
 		m.verbose, m.tips, m.notify, m.mouse = c.VerboseOn(), c.TipsOn(), c.Notifications, c.MouseOn()
 		if m.notify == "" {
 			m.notify = "off"
 		}
+		bindings = c.Keybindings
+		if c.StatusLine != nil {
+			m.status = &statusCmd{command: c.StatusLine.Command}
+		}
 	}
+	m.keys, m.keyWarn = newKeymap(bindings)
+	m.input.KeyMap.InsertNewline = m.keys.binding(actNewline)
 	m.showThinking = m.verbose
 	m.todos, _ = tools.LatestTodos(opts.History)
 	m.lastReply = lastReply(opts.History)
@@ -321,7 +329,19 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	md, cmd := m.update(msg)
+	// Whatever changed may be something the status line shows.
+	if st := m.refreshStatus(); st != nil {
+		cmd = tea.Batch(cmd, st)
+	}
+	return md, cmd
+}
+
+func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case statusDoneMsg:
+		return m, m.statusDone(msg)
+
 	case outputMsg:
 		m.appendOutput(string(msg))
 		return m, nil
@@ -551,17 +571,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-		switch msg.String() {
-		case "pgup":
+		switch m.keys.action[msg.String()] {
+		case actScrollUp:
 			m.view.PageUp()
 			return m, nil
-		case "pgdown":
+		case actScrollDown:
 			m.view.PageDown()
 			return m, nil
-		case "ctrl+home", "ctrl+end":
+		case actScrollTop, actScrollBottom:
 			// With text in the input these jump within it instead.
 			if m.input.Value() == "" {
-				if msg.String() == "ctrl+home" {
+				if m.keys.is(msg.String(), actScrollTop) {
 					m.view.GotoTop()
 				} else {
 					m.view.GotoBottom()
@@ -638,8 +658,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if k != "ctrl+c" {
 		m.quitArmed = false
 	}
-	switch k {
-	case "ctrl+c":
+	if k == "ctrl+c" {
 		switch {
 		case m.running:
 			m.interrupt()
@@ -658,11 +677,23 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.quitArmed = true
 		return m, nil
-	case "ctrl+d":
+	}
+	switch k {
+	case "up":
+		if m.input.Line() == 0 && m.recallHistory(-1) {
+			return m, nil
+		}
+	case "down":
+		if m.histIdx >= 0 && m.input.Line() == m.input.LineCount()-1 && m.recallHistory(1) {
+			return m, nil
+		}
+	}
+	switch m.keys.action[k] {
+	case actQuit:
 		if m.input.Value() == "" {
 			return m, tea.Quit
 		}
-	case "esc":
+	case actInterrupt:
 		if m.running {
 			m.interrupt()
 			return m, nil
@@ -675,36 +706,28 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.compactCancel()
 			return m, nil
 		}
-	case "up":
-		if m.input.Line() == 0 && m.recallHistory(-1) {
-			return m, nil
-		}
-	case "down":
-		if m.histIdx >= 0 && m.input.Line() == m.input.LineCount()-1 && m.recallHistory(1) {
-			return m, nil
-		}
-	case "ctrl+r":
+	case actHistorySearch:
 		m.openHistoryPicker()
 		return m, nil
-	case "ctrl+g":
+	case actExternalEditor:
 		return m, m.openEditor()
-	case "ctrl+v":
+	case actPasteImage:
 		return m, m.pasteImage()
-	case "shift+tab":
+	case actCycleMode:
 		return m, m.cycleMode()
-	case "ctrl+o":
+	case actToggleThinking:
 		return m, m.toggleThinking()
-	case "?":
+	case actShortcuts:
 		if m.input.Value() == "" {
 			m.showKeys = true
 			return m, nil
 		}
-	case "alt+p":
+	case actModelPicker:
 		if m.running {
-			return m, m.println(m.st.err.Render("the model can't change while a turn is running (esc to interrupt)"))
+			return m, m.println(m.st.err.Render("the model can't change while a turn is running" + m.interruptHint()))
 		}
 		return m, m.openModelPicker()
-	case "enter":
+	case actSubmit:
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
@@ -716,7 +739,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.HasPrefix(text, "!") {
 			if !m.idle() {
-				return m, m.println(m.st.err.Render("wait for the current turn or command to finish (esc to interrupt)"))
+				return m, m.println(m.st.err.Render("wait for the current turn or command to finish" + m.interruptHint()))
 			}
 			return m, m.runShell(text[1:])
 		}
@@ -763,7 +786,7 @@ func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
-	m.tip = nextTip()
+	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
 		m.println("\n"+m.st.user.Render("› "+indentAfterFirst(text, "  "))),
@@ -806,12 +829,12 @@ func (m *model) doneThinking() {
 func (m *model) toggleThinking() tea.Cmd {
 	m.showThinking = !m.showThinking
 	if !m.showThinking {
-		return m.println(m.st.dim.Render("thinking collapsed (ctrl+o to show)"))
+		return m.println(m.st.dim.Render("thinking collapsed" + paren(m.keyHint(actToggleThinking, "to show"))))
 	}
 	if !m.running && m.lastThinking != "" {
 		return m.println(m.st.thinking.Render("✻ " + truncateLines(wrap(m.lastThinking, m.width-4), 40)))
 	}
-	return m.println(m.st.dim.Render("thinking shown (ctrl+o to collapse)"))
+	return m.println(m.st.dim.Render("thinking shown" + paren(m.keyHint(actToggleThinking, "to collapse"))))
 }
 
 func (m *model) handleEvent(e agent.Event) tea.Cmd {
