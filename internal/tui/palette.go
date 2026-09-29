@@ -52,7 +52,7 @@ var commands = []command{
 	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},
 	{"/theme", "[auto|dark|light]", "pick the color theme, or follow the terminal (auto)", "other", ""},
 	{"/keys", "", "keyboard shortcuts", "other", "?"},
-	{"/info", "", "show session tools, skills and language servers", "other", "f2"},
+	{"/info", "", "session sidebar: tasks, active MCP servers, language servers, skills used", "other", "f2"},
 	{"/help", "", "commands and keys", "other", ""},
 	{"/quit", "", "exit", "other", "ctrl+d"},
 }

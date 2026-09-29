@@ -8,13 +8,13 @@ Dependencies point one way: from the entry point, through `app`, into `agent`, a
 
 ```mermaid
 flowchart TD
-    main["cmd/larik"] --> tui & headless & server & app
-    tui["tui"] --> app & agent
+    main["cmd/larik"] --> tui & headless & server & app & trace
+    tui["tui"] --> app & agent & trace & clipboard
     headless["headless"] --> agent
     server["server"] --> app & agent
-    app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks
+    app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks & trace
     subagent["subagent"] --> agent & worktree
-    agent["agent"] --> llm & tools & permission & hooks & session & checkpoint & skills & lsp
+    agent["agent"] --> llm & tools & permission & hooks & session & checkpoint & skills & lsp & trace
     providers["providers"] --> anthropic & openai & gemini & ollama & openaicompat & chatgpt
     anthropic["llm/anthropic"] --> llm
     openai["llm/openai"] --> llm
@@ -27,8 +27,14 @@ flowchart TD
     web["web"] --> tools
     tools["tools"] --> llm
     session["session"] --> llm
+    trace["trace"] --> llm
     config["config"] --> permission & hooks & sandbox & lsp & web
 ```
+
+Two leaf packages sit beside the loop rather than in it:
+
+- `trace` records debug-mode events (requests as sent, raw HTTP, responses, tool calls, permission answers, hooks) to `<session>.trace/events.jsonl`. The agent writes to it only when a tracer is set, and `trace/viewer` serves `larik trace`. See [debug mode](../README.md#debug-mode-and-traces).
+- `clipboard` reads images from and writes text to the system clipboard, for `ctrl+v` image paste and `/copy`. Only the TUI uses it.
 
 Two packages close cycles that Go would otherwise forbid, through small interfaces:
 

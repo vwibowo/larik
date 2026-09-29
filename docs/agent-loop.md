@@ -83,6 +83,15 @@ Each iteration:
 4. **Tool calls → run them.** `runTools` returns one `tool_result` block per call, in the original order, and they're appended as a single user message. See [tools](tools-and-permissions.md).
 5. **Halt check.** A hook that returned `continue: false` during the tool round ends the turn now.
 
+Two tools change the loop's state rather than the project:
+
+- **`exit_plan_mode`** is read-only, so plan mode lets the model call it, but it always goes to the permission prompt. The prompt is the plan approval: a yes switches to the mode the user picked and the tool result tells the model to carry out the plan; a no keeps plan mode and returns the user's feedback ([runtools.go](../internal/agent/runtools.go), [plan.go](../internal/agent/plan.go)).
+- **`todo_write`** keeps the task list in the transcript itself, so nothing else stores it. Compaction carries over the unfinished items, since the summary replaces the messages that held them ([agent.go](../internal/agent/agent.go)).
+
+### Debug traces
+
+With debug mode on, the agent has a `trace.Tracer`. It wraps the event stream, so tool starts and ends, notices and errors are recorded as they are emitted, and it records each request as sent, the response with its timing, usage and cost, and each permission answer ([trace.go](../internal/agent/trace.go)). Subagents get a child tracer that names its parent, so the viewer can nest their requests. With no tracer, every call is a no-op. See [debug mode](../README.md#debug-mode-and-traces).
+
 ## How a turn ends
 
 `runWith` returns a stop reason, which becomes `EvDone.StopReason`:

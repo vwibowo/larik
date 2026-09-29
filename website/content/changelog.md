@@ -29,6 +29,7 @@
 
 - The conversation scrolls above a fixed input row (Page Up/Down or the mouse wheel), and pickers and settings open just above the input with recent messages still visible.
 - Edit and file-write previews use syntax highlighting, and diffs show their changed lines as one highlighted block.
+- `F2` and `/info` toggle a session sidebar that stays open while you type and while a turn runs. It is split into sections and shows only what is active: the task list, connected or failing MCP servers, running language servers and the skills used this session. See [Keys and commands](/docs/commands/).
 - `/model`, `/effort`, `/mode` and `shift+tab` save your choice as the default for future launches. `--model`, `--effort` and `--mode` still override it for one launch.
 
 ### Fixed

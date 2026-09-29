@@ -26,6 +26,7 @@
         <p class="t-line"><i>  / commands · ? shortcuts · alt+p model · shift+tab mode</i></p>
         <p class="t-line t-gap"><b class="c-user">› fix the failing auth tests and tell me what broke</b></p>
         <p class="t-line t-gap"><i class="c-think">✻ Thought for 6s</i><i> · ctrl+o to show</i></p>
+        <p class="t-line"><b class="c-ok">●</b> <b>todos(0/3 done)</b></p>
         <p class="t-line"><b class="c-ok">●</b> <b>task › explore(find where session tokens are validated)</b></p>
         <p class="t-line t-sub"><i>  └ gemini/gemini-3.8-flash · 9 tool calls · $0.002</i></p>
         <p class="t-line"><b class="c-ok">●</b> <b>read(internal/auth/token.go)</b></p>
@@ -117,17 +118,17 @@
       <a class="feature" href="{{url "/docs/hooks/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/><path d="M12 16v5"/></svg>
         <h3>Claude Code–compatible</h3>
-        <p>Your existing hooks, Agent Skills, subagent definitions, <code>CLAUDE.md</code> and <code>.mcp.json</code> work unchanged. Bring your setup; switch models.</p>
+        <p>Your existing hooks, Agent Skills, custom commands, subagent definitions, <code>CLAUDE.md</code>, <code>.mcp.json</code> and <code>statusLine</code> scripts work unchanged. Bring your setup; switch models.</p>
       </a>
       <a class="feature" href="{{url "/docs/mcp/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
         <h3>MCP, with approval</h3>
-        <p>Connect Model Context Protocol servers over stdio, HTTP or SSE. Servers from shared project files wait for your approval, pinned to a hash of their config.</p>
+        <p>Connect Model Context Protocol servers over stdio, HTTP or SSE, with OAuth sign-in. Attach their resources with <code>@</code> and run their prompts as commands. Servers from shared project files wait for your approval.</p>
       </a>
       <a class="feature" href="{{url "/docs/lsp/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/><path d="m13.5 5-3 14"/></svg>
         <h3>Language servers</h3>
-        <p>Diagnostics come back after every edit, so the model sees the type error it just introduced. An <code>lsp</code> tool jumps to definitions and references.</p>
+        <p>Diagnostics come back after every edit, so the model sees the type error it just introduced. An <code>lsp</code> tool jumps to definitions and references and applies code actions, like adding a missing import.</p>
       </a>
       <a class="feature" href="{{url "/docs/web/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/></svg>
@@ -138,6 +139,26 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         <h3>Permissions you control</h3>
         <p>Four modes, from plan (read-only) to yolo, cycled with <code>shift+tab</code>. Allow and deny rules with globs; deny always wins, in every mode.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/permissions/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/></svg>
+        <h3>Plan, then approve</h3>
+        <p>In plan mode the model reads, then puts its plan to you. Approve it and pick how much to trust the edits. Longer work runs from a checklist you can watch in the sidebar.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/commands/#composer"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>
+        <h3>A project-aware prompt</h3>
+        <p><code>@</code> attaches files, ranges, folders and images; <code>!</code> runs a shell command; <code>ctrl+v</code> pastes a screenshot. History per project, with <code>ctrl+r</code> search.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/debug-mode-and-traces/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+        <h3>Debug traces</h3>
+        <p><code>--debug</code> records every request as sent, with timing, tokens and cost. <code>larik trace</code> opens a timeline in the browser that diffs each prompt against the last.</p>
+      </a>
+      <a class="feature" href="{{url "/docs/commands/#status-line"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+        <h3>Make it yours</h3>
+        <p>Your own status line, rebindable keys, vim mode for the prompt and light or dark themes. <code>/model</code>, <code>/effort</code> and <code>/mode</code> remember your choice.</p>
       </a>
     </div>
   </div>
@@ -153,7 +174,7 @@
     <div class="fronts">
       <div class="front">
         <h3>Terminal UI</h3>
-        <p>A fast Bubble Tea interface: command palette, model picker, collapsible thinking, nested subagent activity and per-model cost.</p>
+        <p>A fast Bubble Tea interface: command palette, model picker, <code>@</code> mentions, collapsible thinking, nested subagent activity, a session sidebar on <code>F2</code> and per-model cost.</p>
         {{code "bash" "larik\nlarik -c            # continue here\nlarik -c --fork     # branch it"}}
       </div>
       <div class="front">
