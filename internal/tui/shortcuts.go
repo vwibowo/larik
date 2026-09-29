@@ -20,6 +20,7 @@ var shortcutGroups = []shortcutGroup{
 		{"↑ ↓", "previous and next prompts"},
 		{"ctrl+r", "search prompt history"},
 		{"ctrl+g", "edit the prompt in $EDITOR"},
+		{"ctrl+v", "paste an image from the clipboard"},
 		{"ctrl+c", "clear the input"},
 		{"ctrl+d", "quit when the input is empty"},
 	}},

@@ -329,6 +329,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellDoneMsg:
 		return m, m.shellDone(msg)
 
+	case imagePastedMsg:
+		return m, m.imagePasted(msg)
+
 	case editorDoneMsg:
 		if msg.err != nil {
 			return m, m.println(m.st.err.Render("editor: " + msg.err.Error()))
@@ -663,6 +666,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+g":
 		return m, m.openEditor()
+	case "ctrl+v":
+		return m, m.pasteImage()
 	case "shift+tab":
 		return m, m.cycleMode()
 	case "ctrl+o":

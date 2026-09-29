@@ -60,7 +60,7 @@ var helpText = func() string {
 	b.WriteString(`
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  @path attach a file · !cmd run a shell command · ↑/↓ history · ctrl+r search history · ctrl+g $EDITOR
+  @path attach a file · !cmd run a shell command · ↑/↓ history · ctrl+r search history · ctrl+g $EDITOR · ctrl+v paste image
   / command palette · ? shortcuts · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
   ctrl+c clear input / interrupt / quit`)
 	return b.String()

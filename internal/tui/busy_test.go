@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"larik/internal/agent"
+	"larik/internal/clipboard"
 )
 
 // printed runs cmd and returns the output it prints, if any.
@@ -108,5 +109,17 @@ func TestEndedBackgroundTaskClosesItsPrompt(t *testing.T) {
 	m.Update(bgEventMsg{agent.Event{Kind: agent.EvTaskDone, ToolID: "bg1", Agent: "worker: build", StopReason: "stopped"}, m.agent})
 	if m.perm == nil || m.perm.Agent != "explore: docs" || len(m.permQueue) != 0 {
 		t.Fatalf("the ended task's prompt should close and the next one show: %+v queue %d", m.perm, len(m.permQueue))
+	}
+}
+
+func TestImagePasteInsertsMention(t *testing.T) {
+	m := testModel(t)
+	typeText(m, "what is this")
+	m.Update(imagePastedMsg{path: "/tmp/pastes/paste-1.png"})
+	if got := m.input.Value(); got != "what is this @/tmp/pastes/paste-1.png " {
+		t.Fatalf("composer = %q", got)
+	}
+	if out := plain(printed(m.imagePasted(imagePastedMsg{err: clipboard.ErrNoImage}))); !strings.Contains(out, "no image on the clipboard") {
+		t.Fatalf("no image: %q", out)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -17,6 +18,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/agent"
+	"larik/internal/clipboard"
 	"larik/internal/session"
 	"larik/internal/tools"
 )
@@ -551,4 +554,50 @@ func (m *model) pasteMention(p string) {
 		}
 	}
 	m.input.InsertString(lead + "@" + p + " ")
+}
+
+// Image paste.
+
+type imagePastedMsg struct {
+	path string
+	err  error
+}
+
+// pastedImageAge is how long pasted images are kept. The prompt carries
+// the image itself once sent, so the file only has to outlive the draft.
+const pastedImageAge = 7 * 24 * time.Hour
+
+// pasteImage reads an image from the system clipboard (ctrl+v), saves it
+// under the data directory and mentions it in the prompt, so it is
+// attached like any @image.
+func (m *model) pasteImage() tea.Cmd {
+	if m.opts.Config == nil || m.opts.Config.DataDir == "" {
+		return m.println(m.st.err.Render("can't paste images: no data directory"))
+	}
+	dir := filepath.Join(m.opts.Config.DataDir, "pastes")
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		data, err := clipboard.ReadImage(ctx)
+		if err != nil {
+			return imagePastedMsg{err: err}
+		}
+		data, ext, err := clipboard.Fit(data, agent.MaxImageBytes)
+		if err != nil {
+			return imagePastedMsg{err: err}
+		}
+		path, err := clipboard.Save(dir, data, ext, func(fi os.FileInfo) bool { return time.Since(fi.ModTime()) < pastedImageAge })
+		return imagePastedMsg{path: path, err: err}
+	}
+}
+
+func (m *model) imagePasted(msg imagePastedMsg) tea.Cmd {
+	if msg.err != nil {
+		if errors.Is(msg.err, clipboard.ErrNoImage) {
+			return m.println(m.st.dim.Render("no image on the clipboard (ctrl+v pastes images; paste text as usual)"))
+		}
+		return m.println(m.st.err.Render("couldn't paste the image: " + msg.err.Error()))
+	}
+	m.pasteMention(tildePath(msg.path))
+	return m.syncComposer()
 }

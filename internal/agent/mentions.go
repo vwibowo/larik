@@ -77,7 +77,8 @@ func findMentions(text string) []mention {
 var imageTypes = map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 
 const (
-	maxImageBytes = 5 << 20
+	// MaxImageBytes is the largest image a prompt may attach.
+	MaxImageBytes = 5 << 20
 	maxDirEntries = 200
 )
 
@@ -113,8 +114,8 @@ func (a *Agent) resolveMentions(ctx context.Context, text string, emit func(Even
 			blocks = append(blocks, b)
 			notice("attached @%s (%d entries)", name, n)
 		case imageTypes[strings.ToLower(filepath.Ext(abs))] != "":
-			if fi.Size() > maxImageBytes {
-				notice("not attaching @%s: images are limited to %d MB", name, maxImageBytes>>20)
+			if fi.Size() > MaxImageBytes {
+				notice("not attaching @%s: images are limited to %d MB", name, MaxImageBytes>>20)
 				continue
 			}
 			data, err := os.ReadFile(abs)
