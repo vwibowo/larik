@@ -553,7 +553,7 @@ func (m *model) statusLine() string {
 	case permission.ModeYolo:
 		chip = m.st.chipWarn
 	}
-	modeChip := chip.Render(modeLabels[mode])
+	modeChip := chip.Render(modeLabels[mode]) + m.vimTag()
 	if m.status != nil && len(m.status.lines) > 0 && !m.quitArmed {
 		return m.customStatus(modeChip)
 	}

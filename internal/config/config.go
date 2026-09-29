@@ -78,6 +78,9 @@ type Config struct {
 	// Keybindings rebind TUI actions: action name to one key or a list;
 	// an empty list unbinds. Honored only from personal files.
 	Keybindings map[string]KeyList `json:"keybindings,omitempty"`
+	// EditorMode is how the prompt is edited: "normal" (the default) or
+	// "vim". Honored only from personal files.
+	EditorMode string `json:"editor_mode,omitempty"`
 
 	// Roles name models by job, so subagents and compaction can run on a
 	// cheaper model than the main agent: "worker", "explore", "smart",
@@ -373,6 +376,12 @@ func (c *Config) merge(path string, trusted bool) error {
 		if strings.TrimSpace(sl.Command) == "" {
 			c.StatusLine = nil // a later file can switch it off
 		}
+	}
+	if trusted && o.EditorMode != "" {
+		if o.EditorMode != "normal" && o.EditorMode != "vim" {
+			return fmt.Errorf("%s: editor_mode must be \"normal\" or \"vim\"", path)
+		}
+		c.EditorMode = o.EditorMode
 	}
 	for action, keys := range o.Keybindings {
 		if !trusted {

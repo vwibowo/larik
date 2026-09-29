@@ -95,6 +95,7 @@ type model struct {
 	keys      keymap   // the keybindings setting applied to the defaults
 	keyWarn   []string // keybindings that couldn't apply, for the banner
 	status    *statusCmd
+	vim       *vimEditor // nil unless editor_mode is vim
 	spin      spinner.Model
 	view      viewport.Model // the conversation, pre-wrapped to width
 	panelView viewport.Model
@@ -247,6 +248,9 @@ func newModel(opts Options) *model {
 			m.notify = "off"
 		}
 		bindings = c.Keybindings
+		if c.EditorMode == "vim" {
+			m.vim = newVim()
+		}
 		if c.StatusLine != nil {
 			m.status = &statusCmd{command: c.StatusLine.Command}
 		}
@@ -678,6 +682,11 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.quitArmed = true
 		return m, nil
 	}
+	if m.vim != nil {
+		if cmd, ok := m.vimKey(msg); ok {
+			return m, cmd
+		}
+	}
 	switch k {
 	case "up":
 		if m.input.Line() == 0 && m.recallHistory(-1) {
@@ -733,6 +742,9 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		if m.vim != nil {
+			m.vim.reset()
+		}
 		m.recordHistory(text)
 		if strings.HasPrefix(text, "/") {
 			return m, m.command(text)

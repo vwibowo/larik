@@ -51,6 +51,11 @@ var shortcutGroups = []shortcutGroup{
 		{"1 2 3  ↑/↓", "select"},
 		{"esc", "deny"},
 	}},
+	{"vim mode (/vim)", [][2]string{
+		{"esc  i a o", "normal mode · back to insert"},
+		{"hjkl w b e", "move; 0 ^ $ gg G f t ; ,"},
+		{"d c y  p u .", "delete change yank · put undo repeat"},
+	}},
 	{"leave", [][2]string{
 		{"ctrl+c ×2", "quit"},
 	}},

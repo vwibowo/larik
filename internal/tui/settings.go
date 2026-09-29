@@ -128,6 +128,29 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.Mouse = &on
 			m.mouse = on
 		}),
+	{
+		key: "editor_mode", title: "Editor mode", section: "appearance", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "normal", label: "Normal", desc: "type and edit as usual"},
+			{value: "vim", label: "Vim", desc: "esc for normal mode: hjkl, w b e, d c y, p, u, ."},
+		},
+		get: func(m *model) string {
+			if m.vim != nil {
+				return "vim"
+			}
+			return "normal"
+		},
+		store: orEmpty("normal"),
+		set: func(m *model, v string) {
+			m.opts.Config.EditorMode = v
+			switch {
+			case v == "vim" && m.vim == nil:
+				m.vim = newVim()
+			case v != "vim":
+				m.vim = nil
+			}
+		},
+	},
 	toggle("auto_compact", "Auto-compact", "behavior",
 		(*config.Config).AutoCompactOn,
 		func(m *model, on bool) {

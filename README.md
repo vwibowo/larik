@@ -127,6 +127,19 @@ The input row fills the terminal width, stays at the bottom, and grows up to ten
 
 `enter` sends. `shift+enter`, `alt+enter` or `ctrl+j` adds a newline. `esc` interrupts the current turn. `shift+tab` cycles and saves the permission mode. `alt+p` opens the model picker. `ctrl+o` switches thinking between a one-line summary ("Thought for 14s") and the full text. `?` on an empty prompt shows every shortcut. Typing `/` opens the command palette: keep typing to filter, `↑/↓` to choose, `tab` to complete, `enter` to run, `esc` to close. `ctrl+c` clears the input, interrupts, or (pressed twice) quits.
 
+### Vim mode
+
+`/vim` (or **Editor mode** in `/config`, saved as `"editor_mode": "vim"`) edits the prompt vim-style. Each prompt starts in insert mode, where typing works as usual; `esc` switches to normal mode, and the footer shows which one you're in. While a turn runs, `esc` on an empty prompt still interrupts.
+
+Normal mode supports:
+
+- **Moving:** `h j k l`, `w b e` and `W B E`, `0 ^ $`, `gg G` (with a count, a line number), `f F t T` with `;` and `,`. `k` on the first line and `j` on the last recall prompt history, like the arrow keys.
+- **Operators:** `d`, `c` and `y` with any motion, doubled for whole lines (`dd`, `cc`, `yy`), or with a text object: `iw aw`, `iW aW`, quotes (`i" a" i' a'`) and brackets (`i( a( ib`, `i[`, `i{ iB`, `i<`).
+- **Editing:** `x X D C s S r ~ J`, `p P` to put what was deleted or yanked, `u` to undo, `.` to repeat the last change, including text typed after it. Counts work: `3w`, `2dd`, `d2w`.
+- **Entering insert mode:** `i a I A o O`.
+
+`enter` sends the prompt from either mode, and `ctrl+` shortcuts keep working. Searching (`/`, `?`), visual mode, marks, macros and named registers aren't supported.
+
 ### Rebinding keys
 
 `keybindings` in `~/.config/larik/config.json` (or private project settings) maps an action to a key or a list of keys, replacing that action's defaults. An empty list unbinds it:
@@ -401,6 +414,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`.
 - `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
+- `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).
 - `keybindings` and `status_line` (not in `/config`): see [Rebinding keys](#rebinding-keys) and [Status line](#status-line).
 - `mouse`: wheel scrolling in the TUI (default on). Off leaves the mouse to the terminal, so text can be selected without a modifier.
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.

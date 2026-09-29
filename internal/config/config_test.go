@@ -591,3 +591,25 @@ func TestStatusLineAndKeybindingsArePersonal(t *testing.T) {
 		t.Error("an unknown status_line type should be an error")
 	}
 }
+
+func TestEditorModeIsPersonal(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"editor_mode":"vim"}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EditorMode != "" {
+		t.Error("shared project settings must not change the editor mode")
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"editor_mode":"vim"}`)
+	if cfg, err = Load(cwd); err != nil || cfg.EditorMode != "vim" {
+		t.Errorf("editor_mode = %q, %v", cfg.EditorMode, err)
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"editor_mode":"emacs"}`)
+	if _, err := Load(cwd); err == nil {
+		t.Error("an unknown editor_mode should be an error")
+	}
+}
