@@ -55,6 +55,16 @@ Design choices worth knowing:
 
 - **`Block` is a flat union.** One struct with optional fields instead of an interface per kind, so a message round-trips through JSONL with the standard encoder and no custom codecs.
 - **Only two roles.** Tool results are blocks inside a user message, as in the Anthropic API. Adapters for APIs with a separate `tool` role split them out.
+- **Tool results can carry images** (`Block.Images`, from `tools.Result.Images`), such as `browser_screenshot`'s capture or an MCP tool's image. Each adapter sends them where its API allows:
+
+  | Adapter | Where the images go |
+  |---|---|
+  | anthropic | Inside the `tool_result` content |
+  | openai | Inside `function_call_output` as `input_image` items |
+  | gemini | As inline-data parts right after the function response (`FunctionResponse.Parts` needs Gemini 3) |
+  | openaicompat, ollama | In the user message after the tool messages (whose content can only be text), introduced by `llm.ToolImagesNote` |
+
+  A model that can't read images rejects them, as it would an `@image` mention.
 - **`Message.Model` and `Block.Provider` record who produced a block.** That's what makes provider switching safe (see below).
 - **`Signature` and `Raw`** carry vendor data the other side needs back: Anthropic thinking signatures, Gemini thought signatures, OpenAI encrypted reasoning items (as `BlockOpaque` with the item in `Raw`).
 - **`Effort`** (`low` … `max`, empty for the provider default) is mapped per adapter: adaptive thinking effort for Anthropic, `reasoning.effort` for OpenAI, a thinking level for Gemini, a fixed thinking budget for older Claude models, `think` for Ollama.

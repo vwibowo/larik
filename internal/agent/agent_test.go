@@ -264,6 +264,35 @@ func TestConcurrencySafeToolsRunInParallel(t *testing.T) {
 	}
 }
 
+// shotTool returns an image, like browser_screenshot.
+type shotTool struct{}
+
+func (shotTool) ReadOnly() bool { return true }
+func (shotTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: "shot", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (shotTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result {
+	return tools.Result{Content: "a screenshot", Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}}
+}
+
+func TestToolImagesReachTheModel(t *testing.T) {
+	fp := &fakeProvider{script: []llm.Message{
+		assistant(toolUse("a", "shot", `{}`)),
+		assistant(llm.TextBlock("I see it")),
+	}}
+	a := New(Options{Provider: fp, Model: "m", Cwd: t.TempDir(), Tools: tools.NewRegistry(shotTool{}),
+		Perms: permission.NewChecker(permission.ModeDefault, permission.Rules{}, t.TempDir())})
+	drain(a.Run(context.Background(), "look"), PermissionReply{})
+	if len(fp.requests) != 2 {
+		t.Fatalf("got %d requests", len(fp.requests))
+	}
+	msgs := fp.requests[1].Messages
+	res := msgs[len(msgs)-1].Blocks[0]
+	if res.Type != llm.BlockToolResult || res.Content != "a screenshot" || len(res.Images) != 1 || res.Images[0].Data != "AAAA" {
+		t.Errorf("tool result sent to the model: %+v", res)
+	}
+}
+
 // thinkingProvider thinks for a moment before answering.
 type thinkingProvider struct{}
 

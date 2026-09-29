@@ -124,3 +124,22 @@ func TestWholeCallsAtOneIndex(t *testing.T) {
 		t.Fatalf("tool uses = %+v", uses)
 	}
 }
+
+func TestToolResultImagesFollowAsUserMessage(t *testing.T) {
+	p := New("x", "key", "http://x")
+	msgs := p.messages(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{
+			{Type: llm.BlockToolResult, ID: "call_1", Name: "browser_screenshot", Content: "Screenshot.", Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}},
+			{Type: llm.BlockToolResult, ID: "call_2", Name: "read", Content: "text"},
+		}},
+	}})
+	if len(msgs) != 3 || msgs[0]["role"] != "tool" || msgs[1]["role"] != "tool" || msgs[2]["role"] != "user" {
+		t.Fatalf("want two tool messages, then the images: %v", msgs)
+	}
+	got, _ := json.Marshal(msgs[2]["content"])
+	for _, want := range []string{`call=\"call_1\"`, `"url":"data:image/png;base64,AAAA"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("user message lacks %s: %s", want, got)
+		}
+	}
+}

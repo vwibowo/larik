@@ -2,6 +2,7 @@ package browsercdp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -16,7 +17,7 @@ const maxSnapshot = 20_000
 // Tools returns the browser_* tools, all sharing s.
 func Tools(s *Session) []tools.Tool {
 	return []tools.Tool{
-		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ClickTool{s}, TypeTool{s},
+		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ScreenshotTool{s}, ClickTool{s}, TypeTool{s},
 		SelectTool{s}, PressKeyTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s},
 	}
 }
@@ -242,6 +243,54 @@ func (t PressKeyTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessa
 		return fail(err)
 	}
 	return withSnapshot(ctx, t.S, "Pressed "+in.Key+".")
+}
+
+// ScreenshotTool is browser_screenshot. It only reads the page (labels are
+// drawn on it and removed again).
+type ScreenshotTool struct{ S *Session }
+
+func (ScreenshotTool) ReadOnly() bool { return true }
+func (ScreenshotTool) Spec() llm.ToolSpec {
+	return spec("browser_screenshot",
+		"Take a screenshot of the active tab and see it as an image: the visible viewport by default, the whole page (cut at 5000px), or one element by ref. "+
+			"Use it to check layout, styling, charts, canvases or images, which the text snapshot can't show. Set labels to draw each element's ref on the image, to match what you see with what you can click. "+
+			"Only call it if you can see images. "+untrusted,
+		`{"type":"object","properties":{
+			"ref":{"type":"string","description":"Capture just this element"},
+			"full_page":{"type":"boolean","description":"Capture the whole page, not just the viewport"},
+			"labels":{"type":"boolean","description":"Draw element refs on the screenshot"}}}`)
+}
+func (t ScreenshotTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		Ref      string `json:"ref"`
+		FullPage bool   `json:"full_page"`
+		Labels   bool   `json:"labels"`
+	}
+	if len(input) > 0 {
+		if r := parse(input, &in, `{"ref"?, "full_page"?, "labels"?}`); r != nil {
+			return *r
+		}
+	}
+	shot, err := t.S.Screenshot(ctx, ShotOptions{Ref: in.Ref, FullPage: in.FullPage, Labels: in.Labels})
+	if err != nil {
+		return fail(err)
+	}
+	what := "the viewport"
+	switch {
+	case in.Ref != "":
+		what = "element " + in.Ref
+	case in.FullPage:
+		what = "the full page"
+	}
+	content := fmt.Sprintf("Screenshot of %s of %s (%d×%d).", what, shot.URL, shot.Width, shot.Height)
+	if shot.Cut {
+		content += fmt.Sprintf(" The page is taller than %dpx; the rest is cut off: scroll with browser_eval and take a viewport screenshot to see it.", maxShotHeight)
+	}
+	return tools.Result{
+		Content: content,
+		Display: fmt.Sprintf("%s · %d×%d · %d KB", what, shot.Width, shot.Height, (len(shot.JPEG)+512)/1024),
+		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(shot.JPEG)}},
+	}
 }
 
 // EvalTool is browser_eval.

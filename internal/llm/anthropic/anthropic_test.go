@@ -168,3 +168,17 @@ func TestCutOffToolCallIsInvalid(t *testing.T) {
 		t.Fatalf("a cut-off call must be marked invalid (nil input), got %+v", uses)
 	}
 }
+
+func TestToolResultImages(t *testing.T) {
+	p, ok := toParam(llm.Block{Type: llm.BlockToolResult, ID: "toolu_1", Content: "Screenshot.",
+		Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/jpeg", Data: "AAAA"}}})
+	if !ok {
+		t.Fatal("not converted")
+	}
+	got, _ := json.Marshal(p)
+	for _, want := range []string{`"tool_use_id":"toolu_1"`, `{"text":"Screenshot.","type":"text"}`, `"media_type":"image/jpeg"`, `"data":"AAAA"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("tool_result lacks %s: %s", want, got)
+		}
+	}
+}

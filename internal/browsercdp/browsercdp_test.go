@@ -1,9 +1,13 @@
 package browsercdp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
+
+	"larik/internal/tools"
 	"larik/internal/web"
 )
 
@@ -33,6 +40,13 @@ const testPage = `<!doctype html>
   const root = document.getElementById('host').attachShadow({mode: 'open'});
   root.innerHTML = '<button onclick="document.title = \'Shadow\'">In shadow</button>';
 </script>`
+
+// visualPage is tall, with a red box to find in screenshots.
+const visualPage = `<!doctype html><title>Visual</title>
+<style>body{margin:0;background:#fff} #box{position:absolute;left:100px;top:1500px;width:120px;height:80px;background:#f00}</style>
+<button style="margin:20px">Go</button>
+<div id="box" role="button" tabindex="0" aria-label="Red box"></div>
+<div style="height:9000px"></div>`
 
 func chrome(t *testing.T) string {
 	t.Helper()
@@ -65,6 +79,8 @@ func newSession(t *testing.T) (*Session, *httptest.Server) {
 			_, _ = w.Write([]byte(testPage))
 		case "/done":
 			_, _ = w.Write([]byte("<title>Done</title><p>Thanks, " + r.URL.Query().Get("name") + " (" + r.URL.Query().Get("plan") + ")</p>"))
+		case "/visual":
+			_, _ = w.Write([]byte(visualPage))
 		default:
 			_, _ = w.Write([]byte("<title>Other</title><p>Another page</p>"))
 		}
@@ -187,6 +203,82 @@ func TestTabs(t *testing.T) {
 	}
 	if r := (SnapshotTool{s}).Run(ctx, nil, nil); !strings.Contains(r.Content, "Another page") {
 		t.Fatalf("snapshot after close: %s", r.Content)
+	}
+}
+
+func decode(t *testing.T, r tools.Result) image.Image {
+	t.Helper()
+	if r.IsError || len(r.Images) != 1 || r.Images[0].MediaType != "image/jpeg" {
+		t.Fatalf("want one JPEG: %+v", r.Content)
+	}
+	data, err := base64.StdEncoding.DecodeString(r.Images[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+func TestScreenshot(t *testing.T) {
+	s, srv := newSession(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	res := NavigateTool{s}.Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+`/visual"}`))
+	if res.IsError {
+		t.Fatal(res.Content)
+	}
+
+	// The viewport, in CSS pixels.
+	r := ScreenshotTool{s}.Run(ctx, nil, nil)
+	if b := decode(t, r).Bounds(); b.Dx() < 1000 || b.Dx() > 1300 || b.Dy() < 500 || b.Dy() > 1000 {
+		t.Errorf("viewport screenshot is %v", b)
+	}
+	if !strings.Contains(r.Content, "the viewport of "+srv.URL+"/visual") {
+		t.Errorf("content: %s", r.Content)
+	}
+
+	// One element: the red box, below the fold, with padding around it.
+	box := refOf(t, res.Content, `button "Red box"`)
+	img := decode(t, ScreenshotTool{s}.Run(ctx, nil, json.RawMessage(`{"ref":"`+box+`"}`)))
+	if b := img.Bounds(); b.Dx() != 136 || b.Dy() != 96 {
+		t.Errorf("element screenshot is %v, want 136×96", b)
+	}
+	if red, g, b, _ := img.At(68, 48).RGBA(); red>>8 < 200 || g>>8 > 60 || b>>8 > 60 {
+		t.Errorf("element screenshot center isn't red: %d %d %d", red>>8, g>>8, b>>8)
+	}
+
+	// The full page is cut at maxShotHeight.
+	r = ScreenshotTool{s}.Run(ctx, nil, json.RawMessage(`{"full_page":true}`))
+	if b := decode(t, r).Bounds(); b.Dy() != maxShotHeight {
+		t.Errorf("full page is %v", b)
+	}
+	if !strings.Contains(r.Content, "cut off") {
+		t.Errorf("content should say the page was cut: %s", r.Content)
+	}
+
+	// Labels are drawn for the capture and removed afterwards.
+	decode(t, ScreenshotTool{s}.Run(ctx, nil, json.RawMessage(`{"labels":true}`)))
+	if out, _ := s.Eval(ctx, `!!document.getElementById('__larik_labels')`); out != "false" {
+		t.Errorf("label overlay left on the page: %s", out)
+	}
+
+	if r := (ScreenshotTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"e999"}`)); !r.IsError {
+		t.Error("unknown ref should fail")
+	}
+
+	// On a 2x (Retina) display images stay at one pixel per CSS pixel.
+	if err := s.run(ctx, emulation.SetDeviceMetricsOverride(1280, 900, 2, false)); err != nil {
+		t.Fatal(err)
+	}
+	if b := decode(t, ScreenshotTool{s}.Run(ctx, nil, json.RawMessage(`{"ref":"`+box+`"}`))).Bounds(); b.Dx() != 136 || b.Dy() != 96 {
+		t.Errorf("2x element screenshot is %v, want 136×96", b)
+	}
+	if b := decode(t, ScreenshotTool{s}.Run(ctx, nil, nil)).Bounds(); b.Dx() != 1280 || b.Dy() != 900 {
+		t.Errorf("2x viewport screenshot is %v, want 1280×900", b)
 	}
 }
 

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -72,17 +73,28 @@ func (t *tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if err != nil {
 		return tools.Result{Content: "MCP call failed: " + err.Error(), IsError: true}
 	}
-	return tools.Result{Content: tools.Truncate(renderContent(res), tools.MaxOutputBytes), IsError: res.IsError}
+	text, images := renderContent(res)
+	return tools.Result{Content: tools.Truncate(text, tools.MaxOutputBytes), IsError: res.IsError, Images: images}
 }
 
-// renderContent flattens an MCP result into text for the model.
-func renderContent(res *sdk.CallToolResult) string {
+// maxToolImages bounds how many images one call may add to the context.
+const maxToolImages = 4
+
+// renderContent flattens an MCP result into text for the model, passing
+// images through (up to maxToolImages of a supported type and size).
+func renderContent(res *sdk.CallToolResult) (string, []llm.Block) {
 	var parts []string
+	var images []llm.Block
 	for _, c := range res.Content {
 		switch c := c.(type) {
 		case *sdk.TextContent:
 			parts = append(parts, c.Text)
 		case *sdk.ImageContent:
+			if imageMIME[c.MIMEType] && len(c.Data) <= maxResourceImage && len(images) < maxToolImages {
+				images = append(images, llm.Block{Type: llm.BlockImage, MediaType: c.MIMEType, Data: base64.StdEncoding.EncodeToString(c.Data)})
+				parts = append(parts, fmt.Sprintf("[image %d attached]", len(images)))
+				continue
+			}
 			parts = append(parts, fmt.Sprintf("[image %s, %d bytes, not shown]", c.MIMEType, len(c.Data)))
 		case *sdk.AudioContent:
 			parts = append(parts, fmt.Sprintf("[audio %s, not shown]", c.MIMEType))
@@ -104,9 +116,9 @@ func renderContent(res *sdk.CallToolResult) string {
 		}
 	}
 	if len(parts) == 0 {
-		return "(no output)"
+		return "(no output)", nil
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), images
 }
 
 func schemaJSON(s any) json.RawMessage {

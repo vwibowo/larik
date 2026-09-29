@@ -25,6 +25,8 @@ type Result struct {
 	Content string
 	IsError bool
 	Display string
+	// Images go to the model with Content (image blocks, base64).
+	Images []llm.Block
 }
 
 type Tool interface {

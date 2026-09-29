@@ -206,6 +206,13 @@ func contents(req llm.Request) []*genai.Content {
 				part = &genai.Part{FunctionResponse: &genai.FunctionResponse{
 					ID: geminiID(b.ID), Name: b.Name, Response: map[string]any{key: b.Content},
 				}}
+				// Images as sibling parts, not FunctionResponse.Parts, which
+				// only Gemini 3 models accept.
+				if imgs := inlineImages(b.Images); len(imgs) > 0 {
+					c.Parts = append(c.Parts, part)
+					c.Parts = append(c.Parts, imgs...)
+					continue
+				}
 			case llm.BlockImage:
 				data, err := base64.StdEncoding.DecodeString(b.Data)
 				if err != nil {
@@ -225,6 +232,18 @@ func contents(req llm.Request) []*genai.Content {
 		}
 	}
 	return out
+}
+
+// inlineImages converts image blocks to inline data parts, skipping any
+// that don't decode.
+func inlineImages(blocks []llm.Block) []*genai.Part {
+	var parts []*genai.Part
+	for _, b := range blocks {
+		if data, err := base64.StdEncoding.DecodeString(b.Data); err == nil {
+			parts = append(parts, &genai.Part{InlineData: &genai.Blob{MIMEType: b.MediaType, Data: data}})
+		}
+	}
+	return parts
 }
 
 // geminiID drops ids we synthesized; Gemini matches those by name and order.

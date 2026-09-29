@@ -220,7 +220,15 @@ func inputItems(req llm.Request, name string) []any {
 			for _, b := range blocks {
 				switch b.Type {
 				case llm.BlockToolResult:
-					items = append(items, map[string]any{"type": "function_call_output", "call_id": b.ID, "output": b.Content})
+					var output any = b.Content
+					if len(b.Images) > 0 {
+						parts := []map[string]any{{"type": "input_text", "text": b.Content}}
+						for _, img := range b.Images {
+							parts = append(parts, map[string]any{"type": "input_image", "image_url": "data:" + img.MediaType + ";base64," + img.Data})
+						}
+						output = parts
+					}
+					items = append(items, map[string]any{"type": "function_call_output", "call_id": b.ID, "output": output})
 				case llm.BlockText:
 					content = append(content, map[string]any{"type": "input_text", "text": b.Text})
 				case llm.BlockImage:

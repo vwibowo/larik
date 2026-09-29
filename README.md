@@ -315,6 +315,7 @@ The model gets these tools:
 | --- | --- |
 | `browser_navigate` | Opens a URL and returns a snapshot of the page |
 | `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12` |
+| `browser_screenshot` | An image of the viewport, the full page or one element; `labels` draws each ref on it |
 | `browser_click` | Clicks (or hovers) an element by ref with a real mouse event |
 | `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
 | `browser_select` | Picks options in a `<select>` |
@@ -325,7 +326,8 @@ The model gets these tools:
 | `browser_console` | Console messages, exceptions and dialogs since the last call |
 
 - `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`), only opens http(s), and refuses link-local and cloud-metadata addresses. Clicks and typing ask per call unless you allow the tool.
-- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot` and `browser_console` only read, so they never ask.
+- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot` and `browser_console` only read, so they never ask.
+- Screenshots need a model that can see images. They're JPEGs at one pixel per CSS pixel (a 1280×900 viewport is about 1,500 tokens on Claude) and stay in the conversation until it's compacted.
 - Only personal files can enable the browser or choose its binary; a shared `.larik/settings.json` can only switch it off.
 - Alerts are accepted and confirm or prompt dialogs dismissed automatically, and noted in `browser_console`.
 
@@ -521,7 +523,7 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 - **Stable tool set:** servers start in the background at launch, and their tools are loaded before the first request. The tool set then stays fixed for that context so prompt caches stay valid. Newly approved or restarted servers join after `/clear` or in a new session.
 - Stdio server stderr is written to `~/.local/share/larik/logs/mcp-<name>.log`.
 - Text results are passed to the model. Images and binary resources are summarized, not sent.
-- **Resources:** when a server offers resources, the model gets `list_mcp_resources` and `read_mcp_resource`. You can attach one yourself as `@<server>:<uri>`; the `@` picker lists them under "MCP resources". Text is attached as text and images as images.
+- **Resources:** when a server offers resources, the model gets `list_mcp_resources` and `read_mcp_resource`. You can attach one yourself as `@<server>:<uri>`; the `@` picker lists them under "MCP resources". Text is attached as text and images as images. Images a server's tool returns, such as a screenshot, go to the model too.
 - **Prompts:** a server's prompts are slash commands named `/mcp__<server>__<prompt>`, listed in the `/` palette with their arguments. Arguments go in order, split on spaces, and the last one takes the rest of the line. They work with `-p` too.
 - **OAuth:** an `http` or `sse` server that asks for sign-in shows as "needs sign-in" instead of opening a browser at startup. Run `/mcp login <name>`: Larik opens the server's sign-in page, catches the redirect on `127.0.0.1`, and keeps the tokens in `~/.config/larik/mcp-auth/` (owner-only), refreshing them as needed, so `-p` and `larik serve` use the sign-in too. `/mcp logout <name>` forgets it. By default Larik registers itself with the server's authorization server; for a server that needs a pre-registered client, set `"oauth": {"client_id": "…", "client_secret": "${SECRET}", "callback_port": 8765}`, and `"scopes"` to choose scopes. For token-based servers, use `headers` instead.
 

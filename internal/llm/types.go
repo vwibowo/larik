@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 )
 
 // NewCallID makes an id for a tool call whose provider sent none. It must
@@ -59,6 +60,9 @@ type Block struct {
 	Input   json.RawMessage `json:"input,omitempty"`
 	Content string          `json:"content,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
+	// Images a tool returned (image blocks), e.g. a screenshot. Adapters
+	// send them with the result, or right after it where the API can't.
+	Images []Block `json:"images,omitempty"`
 
 	// image
 	MediaType string `json:"media_type,omitempty"`
@@ -83,6 +87,12 @@ type Message struct {
 }
 
 func TextBlock(s string) Block { return Block{Type: BlockText, Text: s} }
+
+// ToolImagesNote introduces a tool result's images for APIs that can't put
+// them in the result itself and send them in a user message after it.
+func ToolImagesNote(b Block) string {
+	return fmt.Sprintf("<tool-images call=%q tool=%q>The %s result above returned %d image(s), attached here.</tool-images>", b.ID, b.Name, b.Name, len(b.Images))
+}
 
 func UserText(s string) Message {
 	return Message{Role: RoleUser, Blocks: []Block{TextBlock(s)}}

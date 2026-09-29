@@ -66,3 +66,16 @@ func TestStream(t *testing.T) {
 		t.Error("synthesized call ids leaked to the API")
 	}
 }
+
+func TestToolResultImagesAreSiblingParts(t *testing.T) {
+	cs := contents(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "c", Name: "browser_screenshot", Content: "Screenshot.",
+			Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}}}},
+	}})
+	if len(cs) != 1 || len(cs[0].Parts) != 2 {
+		t.Fatalf("want a function response and an image part: %+v", cs)
+	}
+	if cs[0].Parts[0].FunctionResponse == nil || cs[0].Parts[1].InlineData == nil || cs[0].Parts[1].InlineData.MIMEType != "image/png" || len(cs[0].Parts[1].InlineData.Data) != 3 {
+		t.Errorf("parts: %+v %+v", cs[0].Parts[0], cs[0].Parts[1])
+	}
+}

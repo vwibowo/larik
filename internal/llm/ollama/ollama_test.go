@@ -183,3 +183,17 @@ func TestSupportsTools(t *testing.T) {
 		t.Fatalf("SupportsTools = %v, %v", ok, known)
 	}
 }
+
+func TestToolResultImagesFollowAsUserMessage(t *testing.T) {
+	p := New("ollama", "http://x", 0)
+	msgs := p.messages(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "c", Name: "browser_screenshot", Content: "Screenshot.",
+			Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}}}},
+	}})
+	if len(msgs) != 2 || msgs[1]["role"] != "user" {
+		t.Fatalf("want the tool message, then a user message with the image: %v", msgs)
+	}
+	if imgs, _ := msgs[1]["images"].([]string); len(imgs) != 1 || imgs[0] != "AAAA" {
+		t.Errorf("images: %v", msgs[1])
+	}
+}

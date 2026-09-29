@@ -265,6 +265,130 @@ func (s *Session) PressKey(ctx context.Context, key string) error {
 	return s.act(ctx, chromedp.KeyEvent(k))
 }
 
+// maxShotHeight caps full-page screenshots (CSS pixels); longer pages are
+// cut, since models downscale tall images until text is unreadable.
+const maxShotHeight = 5000
+
+// ShotOptions choose what Screenshot captures: the viewport by default,
+// the whole page, or one element. Labels draws each ref on the page first.
+type ShotOptions struct {
+	Ref      string
+	FullPage bool
+	Labels   bool
+}
+
+// Shot is a captured screenshot.
+type Shot struct {
+	JPEG          []byte
+	Width, Height int // CSS pixels
+	URL           string
+	Cut           bool // a full page taller than maxShotHeight
+}
+
+// labelsJS draws a ref tag on every element with a ref in the viewport; the
+// overlay is removed again after the capture.
+const labelsJS = `(() => {
+	const layer = document.createElement('div');
+	layer.id = '__larik_labels';
+	layer.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:2147483647';
+	const seen = new Set();
+	const all = (root) => {
+		for (const el of root.querySelectorAll('[data-larik-ref]')) seen.add(el);
+		for (const el of root.querySelectorAll('*')) if (el.shadowRoot) all(el.shadowRoot);
+	};
+	all(document);
+	for (const el of seen) {
+		const r = el.getBoundingClientRect();
+		if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight) continue;
+		const tag = document.createElement('div');
+		tag.textContent = el.getAttribute('data-larik-ref');
+		tag.style.cssText = 'position:absolute;font:bold 11px/1.2 monospace;padding:0 2px;background:#e11d48;color:#fff;border-radius:2px;outline:1px solid #e11d48';
+		tag.style.left = (r.left + scrollX) + 'px';
+		tag.style.top = Math.max(0, r.top + scrollY - 13) + 'px';
+		layer.appendChild(tag);
+		const box = document.createElement('div');
+		box.style.cssText = 'position:absolute;outline:1px dashed #e11d48';
+		Object.assign(box.style, {left: (r.left + scrollX) + 'px', top: (r.top + scrollY) + 'px', width: r.width + 'px', height: r.height + 'px'});
+		layer.appendChild(box);
+	}
+	document.documentElement.appendChild(layer);
+	return seen.size;
+})()`
+
+// Screenshot captures the active tab as JPEG, at one image pixel per CSS
+// pixel whatever the display's scale.
+func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
+	if o.Labels {
+		// Labels need refs; a snapshot assigns them (and settles the page).
+		if _, err := s.Snapshot(ctx); err != nil {
+			return Shot{}, err
+		}
+		if err := s.run(ctx, chromedp.Evaluate(labelsJS, nil)); err != nil {
+			return Shot{}, err
+		}
+		defer func() {
+			_ = s.run(context.WithoutCancel(ctx), chromedp.Evaluate(`document.getElementById('__larik_labels')?.remove()`, nil))
+		}()
+	} else {
+		s.settle(ctx)
+	}
+
+	var m struct {
+		Found                bool
+		DPR, SX, SY, VW, VH  float64
+		PW, PH, X, Y, EW, EH float64
+		URL                  string
+	}
+	js := fmt.Sprintf(`(() => {
+		const d = document.documentElement;
+		const m = {Found: true, DPR: devicePixelRatio || 1, SX: scrollX, SY: scrollY, VW: d.clientWidth || innerWidth, VH: innerHeight,
+			PW: Math.max(d.scrollWidth, d.clientWidth), PH: Math.max(d.scrollHeight, document.body ? document.body.scrollHeight : 0), URL: location.href};
+		const ref = %q;
+		if (ref) {
+			const el = window.__larikFind && window.__larikFind(ref);
+			if (!el) return {Found: false};
+			el.scrollIntoView({block: 'center', inline: 'center'});
+			const r = el.getBoundingClientRect();
+			Object.assign(m, {X: r.left + scrollX, Y: r.top + scrollY, EW: r.width, EH: r.height});
+		}
+		return m;
+	})()`, o.Ref)
+	if err := s.run(ctx, chromedp.Evaluate(js, &m)); err != nil {
+		return Shot{}, err
+	}
+	if !m.Found {
+		return Shot{}, errNoRef(o.Ref)
+	}
+
+	clip := &page.Viewport{X: m.SX, Y: m.SY, Width: m.VW, Height: m.VH}
+	shot := Shot{URL: m.URL}
+	switch {
+	case o.Ref != "":
+		if m.EW < 1 || m.EH < 1 {
+			return Shot{}, fmt.Errorf("element %s has no visible area", o.Ref)
+		}
+		const pad = 8
+		x, y := max(m.X-pad, 0), max(m.Y-pad, 0)
+		clip = &page.Viewport{X: x, Y: y, Width: min(m.EW+2*pad, m.PW-x), Height: min(m.EH+2*pad, m.PH-y)}
+	case o.FullPage:
+		h := m.PH
+		if h > maxShotHeight {
+			h, shot.Cut = maxShotHeight, true
+		}
+		clip = &page.Viewport{X: 0, Y: 0, Width: m.PW, Height: h}
+	}
+	clip.Scale = 1 / m.DPR
+	err := s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+		shot.JPEG, err = page.CaptureScreenshot().
+			WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(80).
+			WithClip(clip).WithCaptureBeyondViewport(o.FullPage).
+			Do(ctx)
+		return err
+	}))
+	shot.Width, shot.Height = int(clip.Width), int(clip.Height)
+	return shot, err
+}
+
 // Eval runs a JavaScript expression in the page and returns its result as
 // JSON. Promises are awaited.
 func (s *Session) Eval(ctx context.Context, js string) (string, error) {

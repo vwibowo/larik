@@ -109,7 +109,7 @@ Files are `<name>.md` with YAML frontmatter (`name`, `description`, `tools`, `mo
 - `NewManager(cfg).Start()` in `app.Setup` connects every enabled, approved server **in the background**, so startup isn't blocked.
 - `Manager.Registry` is the agent's `LoadTools`: at the first prompt of a context it waits (bounded by the connect timeout) and returns built-in tools plus all connected servers' tools, sorted by name for a stable prompt prefix. Servers still starting, failed, or unapproved are reported as notices.
 - Each server tool becomes a `tools.Tool` named `mcp__<server>__<tool>` (sanitized, de-duplicated). It is read-only only if the server declares `readOnlyHint: true` **and** `openWorldHint: false`: an open-world tool could leak data through its inputs.
-- Text results pass through; images and binary resources are summarized.
+- Text results pass through. Images (PNG, JPEG, GIF or WebP, up to 5 MB and 4 per call) go to the model with the result; other images, audio and binary resources are summarized.
 - Project-scoped servers need `/mcp approve`, pinned to `MCPServer.Hash()`.
 - **Resources** ([content.go](../internal/mcp/content.go)): at connect, `open` notes whether a server has the resources capability; `Registry` then adds `list_mcp_resources` and `read_mcp_resource` (read-only). The agent attaches `@server:uri` mentions through the `agent.MCPContent` interface (`IsServer`, `ReadResource`), so the loop doesn't import the MCP package. A mention whose server isn't connected stays prose.
 - **Prompts:** listed at connect and run as `/mcp__<server>__<prompt>`, expanded in `runWith` by `MCPContent.ExpandPrompt` (arguments in order, the last takes the rest). A failing expansion ends the turn with an error before any request.
@@ -179,4 +179,4 @@ The `browser_*` tools ([browsercdp](../internal/browsercdp/)) drive Chrome over 
 - **History** goes through `Page.navigateToHistoryEntry` rather than `chromedp.NavigateBack`, which waits for a load event that back/forward-cached pages never fire.
 - **Dialogs** would block the page and every later call, so a listener answers them (alerts accepted, the rest dismissed) and logs them with console messages and exceptions in a 200-line buffer per tab.
 
-The tools' results are text. A `browser_screenshot` tool needs tool results that carry images, which `tools.Result` doesn't yet.
+- **Screenshots.** `browser_screenshot` captures the viewport, the full page (cut at 5000 CSS pixels, past which models shrink text beyond reading) or one element by ref (padded 8 px) as JPEG, and returns it in `tools.Result.Images`. The capture clip is in document coordinates with `scale = 1/devicePixelRatio`, so a Retina window gives the same image size as headless Chrome: one image pixel per CSS pixel. With `labels`, it takes a snapshot to assign refs, draws a tag and dashed outline for each ref in view, captures, and removes the overlay.

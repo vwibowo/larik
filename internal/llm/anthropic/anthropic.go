@@ -264,7 +264,13 @@ func toParam(b llm.Block) (sdk.ContentBlockParamUnion, bool) {
 		if content == "" {
 			content = "(no output)"
 		}
-		return sdk.NewToolResultBlock(b.ID, content, b.IsError), true
+		res := sdk.NewToolResultBlock(b.ID, content, b.IsError)
+		for _, img := range b.Images {
+			res.OfToolResult.Content = append(res.OfToolResult.Content, sdk.ToolResultBlockParamContentUnion{
+				OfImage: sdk.NewImageBlockBase64(img.MediaType, img.Data).OfImage,
+			})
+		}
+		return res, true
 	case llm.BlockImage:
 		return sdk.NewImageBlockBase64(b.MediaType, b.Data), true
 	}

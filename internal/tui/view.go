@@ -1099,6 +1099,17 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["expression"])
 	case "browser_history":
 		arg = str(in["direction"])
+	case "browser_screenshot":
+		arg = "viewport"
+		if full, _ := in["full_page"].(bool); full {
+			arg = "full page"
+		}
+		if ref := str(in["ref"]); ref != "" {
+			arg = ref
+		}
+		if labels, _ := in["labels"].(bool); labels {
+			arg += " with labels"
+		}
 	case "browser_tabs":
 		arg = str(in["action"])
 	case "web_search":
