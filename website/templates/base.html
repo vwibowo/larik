@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="{{url "/css/chroma.css"}}">
 <link rel="stylesheet" href="{{url "/css/site.css"}}">
+{{if eq .Page.Kind "landing"}}<link rel="stylesheet" href="{{url "/css/landing.css"}}">{{end}}
 </head>
 <body class="kind-{{.Page.Kind}}" data-base="{{.Base}}">
 <a class="skip" href="#main">Skip to content</a>
@@ -72,6 +73,7 @@
 </div>
 
 <script src="{{url "/js/site.js"}}" defer></script>
+{{if eq .Page.Kind "landing"}}<script type="module" src="{{url "/js/landing.js"}}"></script>{{end}}
 {{if .Page.Mermaid}}
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
@@ -81,25 +83,25 @@
     fontFamily: "Inter, system-ui, sans-serif",
     themeVariables: {
       darkMode: true,
-      background: "#0b0b0e",
-      primaryColor: "#15141c",
+      background: "#050506",
+      primaryColor: "#0e1113",
       primaryTextColor: "#ececf1",
-      primaryBorderColor: "#4a4466",
-      secondaryColor: "#101014",
-      tertiaryColor: "#0e0e12",
-      lineColor: "#7d7896",
+      primaryBorderColor: "#2a6f67",
+      secondaryColor: "#0b0d0e",
+      tertiaryColor: "#090a0b",
+      lineColor: "#6f8f8a",
       textColor: "#d6d6de",
-      clusterBkg: "#0d0d11",
-      clusterBorder: "#2a2833",
-      edgeLabelBackground: "#0b0b0e",
-      actorBkg: "#15141c",
-      actorBorder: "#4a4466",
+      clusterBkg: "#08090a",
+      clusterBorder: "#1f2a29",
+      edgeLabelBackground: "#050506",
+      actorBkg: "#0e1113",
+      actorBorder: "#2a6f67",
       actorTextColor: "#ececf1",
-      signalColor: "#b9b4d6",
+      signalColor: "#9fd9d0",
       signalTextColor: "#d6d6de",
-      noteBkgColor: "#1d1a2b",
+      noteBkgColor: "#0c2421",
       noteTextColor: "#ececf1",
-      noteBorderColor: "#4a4466"
+      noteBorderColor: "#2a6f67"
     }
   });
 </script>
