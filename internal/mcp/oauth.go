@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,7 +27,7 @@ import (
 	"larik/internal/config"
 )
 
-// OAuth for http servers. The SDK runs the flow (discovery, client
+// OAuth for http and sse servers. The SDK runs the flow (discovery, client
 // registration, PKCE, token exchange and refresh); Larik supplies the
 // browser step and keeps the tokens.
 //
@@ -132,7 +134,7 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 	return t, nil
 }
 
-// oauthHandler is the OAuth handler for an http server. interactive runs
+// oauthHandler is the OAuth handler for an http or sse server. interactive runs
 // the browser sign-in when the server asks for one; otherwise that ask
 // fails with errNeedsLogin.
 func (m *Manager) oauthHandler(s *server, interactive bool) (auth.OAuthHandler, error) {
@@ -303,7 +305,7 @@ func (m *Manager) SetSignInHook(fn func(server, url string)) {
 	m.mu.Unlock()
 }
 
-// Login connects to an http server again, running the browser sign-in if
+// Login connects to an http or sse server again, running the browser sign-in if
 // it asks for one. The returned channel closes when that attempt ends;
 // Statuses then says how it went.
 func (m *Manager) Login(name string) (<-chan struct{}, error) {
@@ -313,8 +315,8 @@ func (m *Manager) Login(name string) (<-chan struct{}, error) {
 	switch {
 	case !ok:
 		return nil, fmt.Errorf("no MCP server named %q", name)
-	case cfg.Transport() != "http":
-		return nil, fmt.Errorf("%s uses %s; sign-in is for http servers", name, cfg.Transport())
+	case cfg.Transport() != "http" && cfg.Transport() != "sse":
+		return nil, fmt.Errorf("%s uses %s; sign-in is for http and sse servers", name, cfg.Transport())
 	case cfg.Disabled:
 		return nil, fmt.Errorf("%s is disabled", name)
 	case !m.cfg.Approved(cfg):
@@ -361,4 +363,52 @@ func (m *Manager) Logout(name string) error {
 		}
 	}
 	return nil
+}
+
+// oauthTransport gives an sse server's requests what the SDK's streamable
+// transport does for http servers: the bearer token on each request, and
+// on 401 or 403 the handler's sign-in, after which the request is sent
+// once more.
+type oauthTransport struct {
+	handler auth.OAuthHandler
+	base    http.RoundTripper
+}
+
+func (t oauthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	var body []byte // kept to send again after a sign-in; messages are small
+	if r.Body != nil {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	send := func() (*http.Response, error) {
+		req := r.Clone(r.Context())
+		if r.Body != nil {
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			req.ContentLength = int64(len(body))
+		}
+		ts, err := t.handler.TokenSource(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		if ts != nil {
+			tok, err := ts.Token()
+			if err != nil {
+				return nil, err
+			}
+			tok.SetAuthHeader(req)
+		}
+		return t.base.RoundTrip(req)
+	}
+	resp, err := send()
+	if err != nil || resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		return resp, err
+	}
+	if err := t.handler.Authorize(r.Context(), r, resp); err != nil { // closes resp.Body
+		return nil, err
+	}
+	return send()
 }

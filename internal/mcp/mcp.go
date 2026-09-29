@@ -339,16 +339,18 @@ func (m *Manager) dial(ctx context.Context, s *server) (sdk.Transport, error) {
 		if cfg.URL == "" {
 			return nil, errors.New("remote server needs a url")
 		}
-		client := &http.Client{Transport: headerTransport{headers: expandMap(cfg.Headers), base: http.DefaultTransport}}
+		headers := headerTransport{headers: expandMap(cfg.Headers), base: http.DefaultTransport}
 		url := config.ExpandEnv(cfg.URL)
-		if cfg.Transport() == "sse" {
-			return &sdk.SSEClientTransport{Endpoint: url, HTTPClient: client}, nil
-		}
 		oauth, err := m.oauthHandler(s, s.interactive)
 		if err != nil {
 			return nil, fmt.Errorf("oauth: %w", err)
 		}
-		return &sdk.StreamableClientTransport{Endpoint: url, HTTPClient: client, OAuthHandler: oauth}, nil
+		if cfg.Transport() == "sse" {
+			// The SDK's SSE transport has no OAuth handler; the client adds it.
+			client := &http.Client{Transport: oauthTransport{handler: oauth, base: headers}}
+			return &sdk.SSEClientTransport{Endpoint: url, HTTPClient: client}, nil
+		}
+		return &sdk.StreamableClientTransport{Endpoint: url, HTTPClient: &http.Client{Transport: headers}, OAuthHandler: oauth}, nil
 	}
 	return nil, fmt.Errorf("unsupported MCP transport %q", cfg.Type)
 }

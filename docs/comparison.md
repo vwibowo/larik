@@ -78,4 +78,3 @@ Choices that cost something:
 - **Prompt changes wait for a fresh context.** Edits to `AGENTS.md`/`CLAUDE.md` and new skills take effect after `/clear` or in a new session, not mid-conversation.
 - **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. The summary names the transcript file so the model can grep it for exact details, but it has to think to look.
 - **Unix only.** Larik builds for macOS and Linux, not Windows. On Linux without `bwrap` the sandbox is off and every command asks.
-- **Not yet supported:** MCP sign-in for `sse` servers.

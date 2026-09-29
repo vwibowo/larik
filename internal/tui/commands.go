@@ -578,7 +578,7 @@ type (
 	mcpLoginDoneMsg struct{ server string }
 )
 
-// mcpLogin signs in to an http MCP server: Larik opens the sign-in page
+// mcpLogin signs in to an http or sse MCP server: Larik opens the sign-in page
 // in the browser and prints its URL, in case none opens.
 func (m *model) mcpLogin(name string) tea.Cmd {
 	mgr := m.opts.MCP

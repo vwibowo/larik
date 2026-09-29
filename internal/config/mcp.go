@@ -21,7 +21,7 @@ type MCPServer struct {
 	URL      string            `json:"url,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
 	Disabled bool              `json:"disabled,omitempty"`
-	// OAuth configures sign-in for an http server that asks for it. It is
+	// OAuth configures sign-in for an http or sse server that asks for it. It is
 	// optional: without it Larik registers itself with the server's
 	// authorization server (dynamic client registration).
 	OAuth *MCPOAuth `json:"oauth,omitempty"`

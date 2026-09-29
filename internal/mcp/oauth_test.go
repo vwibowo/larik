@@ -20,14 +20,17 @@ import (
 // fakeOAuthServer is an MCP server that requires a bearer token, and the
 // authorization server that hands one out: metadata discovery, dynamic
 // client registration, and a token endpoint.
-func fakeOAuthServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+func fakeOAuthServer(t *testing.T, sse bool) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var tokens atomic.Int32
 	srv := sdk.NewServer(&sdk.Implementation{Name: "secured", Version: "1"}, nil)
 	sdk.AddTool(srv, &sdk.Tool{Name: "whoami", Description: "who"}, func(ctx context.Context, req *sdk.CallToolRequest, in struct{}) (*sdk.CallToolResult, any, error) {
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "you"}}}, nil, nil
 	})
-	mcpHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv }, nil)
+	var mcpHandler http.Handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv }, nil)
+	if sse {
+		mcpHandler = sdk.NewSSEHandler(func(*http.Request) *sdk.Server { return srv }, nil)
+	}
 	var ts *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -112,8 +115,18 @@ func waitState(t *testing.T, m *Manager, want State) Status {
 }
 
 func TestOAuthSignIn(t *testing.T) {
-	ts, tokens := fakeOAuthServer(t)
-	cfg := newCfg(t, map[string]config.MCPServer{"secured": {Type: "http", URL: ts.URL + "/mcp", Trusted: true}})
+	testOAuthSignIn(t, "http")
+}
+
+// sse servers get the same sign-in through the HTTP client, since the
+// SDK's SSE transport has no OAuth handler of its own.
+func TestOAuthSignInSSE(t *testing.T) {
+	testOAuthSignIn(t, "sse")
+}
+
+func testOAuthSignIn(t *testing.T, transport string) {
+	ts, tokens := fakeOAuthServer(t, transport == "sse")
+	cfg := newCfg(t, map[string]config.MCPServer{"secured": {Type: transport, URL: ts.URL + "/mcp", Trusted: true}})
 	cfg.ConfigDir = t.TempDir()
 
 	m := NewManager(cfg, "test")
