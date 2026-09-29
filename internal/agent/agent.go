@@ -334,7 +334,10 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	if !quiet { // mentions in the prompt as typed, not in a skill's body
 		attached = a.resolveMentions(ctx, prompt, emit)
 	}
-	if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
+	if rest, ok := strings.CutPrefix(prompt, InitCommand); ok && !quiet && (rest == "" || rest[0] == ' ') {
+		emit(Event{Kind: EvNotice, Text: "running /init"})
+		prompt = a.initPrompt(rest)
+	} else if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running /" + name})
 		prompt = a.runInline(ctx, name, expanded, emit)

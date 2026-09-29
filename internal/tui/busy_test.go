@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -121,5 +123,25 @@ func TestImagePasteInsertsMention(t *testing.T) {
 	}
 	if out := plain(printed(m.imagePasted(imagePastedMsg{err: clipboard.ErrNoImage}))); !strings.Contains(out, "no image on the clipboard") {
 		t.Fatalf("no image: %q", out)
+	}
+}
+
+func TestExportWritesMarkdown(t *testing.T) {
+	m := testModel(t)
+	if out := plain(printed(m.command("/export"))); !strings.Contains(out, "nothing to export") {
+		t.Fatalf("empty session: %q", out)
+	}
+	sess := m.agent.SessionPath()
+	f, _ := os.OpenFile(sess, os.O_WRONLY|os.O_APPEND, 0o600)
+	f.WriteString(`{"type":"message","message":{"role":"user","blocks":[{"type":"text","text":"hello there"}]}}` + "\n")
+	f.Close()
+
+	out := plain(printed(m.command("/export notes.md")))
+	data, err := os.ReadFile(filepath.Join(m.agent.Cwd(), "notes.md"))
+	if err != nil || !strings.Contains(string(data), "hello there") || !strings.Contains(out, "exported 1 message") {
+		t.Fatalf("export: %q %v\n%s", out, err, data)
+	}
+	if out := plain(printed(m.command("/export notes.md"))); !strings.Contains(out, "exists") {
+		t.Fatalf("overwrite: %q", out)
 	}
 }

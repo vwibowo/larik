@@ -2,7 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -254,4 +258,46 @@ func (m *model) worktreesCommand(args []string, info, fail func(string) tea.Cmd)
 	}
 	b.WriteString("merge with: git merge <branch> · remove with: /worktrees remove <branch|all>")
 	return info(b.String())
+}
+
+// exportSession writes the session's full history as Markdown to path,
+// or to larik-<id>.md in the working directory. It won't overwrite a file.
+func (m *model) exportSession(path string, info, fail func(string) tea.Cmd) tea.Cmd {
+	src := m.agent.SessionPath()
+	if src == "" {
+		return fail("this session isn't saved, so there is nothing to export")
+	}
+	st, err := session.Load(src)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if len(st.All) == 0 {
+		return info("nothing to export yet")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "larik-" + m.agent.SessionID() + ".md"
+	}
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(homeDir(), path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(m.agent.Cwd(), path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		return fail(tildePath(path) + " exists; give another file name (/export <file>)")
+	}
+	if err != nil {
+		return fail(err.Error())
+	}
+	_, err = f.WriteString(session.Markdown(st, m.agent.SessionID()))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+		return fail(err.Error())
+	}
+	return info("✓ exported " + plural(len(st.All), "message") + " to " + m.shortPaths(path))
 }

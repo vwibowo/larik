@@ -30,6 +30,8 @@ var commands = []command{
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
 	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it", "conversation", ""},
 	{"/todos", "", "the model's task list for this work", "conversation", ""},
+	{"/init", "[focus]", "study the project and write AGENTS.md, or improve the existing one", "conversation", ""},
+	{"/export", "[file]", "save this session as Markdown (default: larik-<session>.md here)", "sessions", ""},
 	{"/cost", "", "token usage and cost for this session", "conversation", ""},
 	{"/sessions", "", "choose a session from this directory", "sessions", ""},
 	{"/resume", "[id]", "choose a session, or switch by ID", "sessions", ""},

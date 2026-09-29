@@ -160,6 +160,16 @@ func (m *model) command(line string) tea.Cmd {
 		m.todos = nil // the model no longer sees it
 		return info("context cleared")
 
+	case "/init":
+		if !m.idle() {
+			m.queue = append(m.queue, line)
+			return info("/init will run when this turn ends")
+		}
+		return m.submit(line) // the agent expands it
+
+	case "/export":
+		return m.exportSession(arg, info, fail)
+
 	case "/todos":
 		return m.println(m.todosCommand())
 
