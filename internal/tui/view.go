@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -167,97 +168,140 @@ func (m *model) panel() (kind, text string) {
 	return "", ""
 }
 
-func (m *model) sessionInfoBody() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Session info  ·  F2 or any key to close\n\nModel: %s/%s\nPermission mode: %s",
-		m.agent.ProviderName(), m.agent.Model(), m.agent.Perms().Mode())
-	if m.opts.Sandbox != nil {
-		b.WriteString("\nSandbox: " + m.opts.Sandbox.Summary())
-	} else if m.opts.SandboxNote != "" {
-		b.WriteString("\nSandbox: unavailable (" + m.opts.SandboxNote + ")")
-	} else {
-		b.WriteString("\nSandbox: disabled")
+// sessionSections renders the session panel as rows exactly width columns
+// wide: what is active now, split into sections. Details that the footer or
+// banner already show (model, mode, sandbox kind) are left out.
+func (m *model) sessionSections(width, taskLimit int) [][]string {
+	fit := func(s string) string { return ansi.Truncate(s, width, "…") }
+	head := func(title, summary string) string {
+		return fit(spread(m.st.accent.Render(title), m.st.dim.Render(summary), width))
+	}
+	row := func(left, right string) string {
+		left = ansi.Truncate(left, max(width-lipgloss.Width(right)-1, 1), "…")
+		return fit(spread(left, right, width))
+	}
+	var sections [][]string
+
+	if m.opts.Sandbox == nil {
+		note := "! sandbox off"
+		if m.opts.SandboxNote != "" {
+			note = "! no sandbox: " + m.opts.SandboxNote
+		}
+		sections = append(sections, []string{m.st.warn.Render(fit(note))})
 	}
 
-	b.WriteString("\n\nMCP servers")
-	if m.opts.MCP == nil || len(m.opts.MCP.Statuses()) == 0 {
-		b.WriteString("\n  none configured")
-	} else {
-		for _, server := range m.opts.MCP.Statuses() {
-			fmt.Fprintf(&b, "\n  %s · %s · %s", server.Name, server.State, server.Transport)
-			if len(server.Tools) > 0 {
-				available := make(map[string]bool)
-				for _, spec := range m.agent.Tools().Specs() {
-					available[spec.Name] = true
-				}
-				enabled := 0
-				for _, tool := range server.Tools {
-					if available[tool] {
-						enabled++
-					}
-				}
-				fmt.Fprintf(&b, " · %d/%d tools in current context", enabled, len(server.Tools))
-				for _, tool := range server.Tools {
-					state := "not in current context"
-					if available[tool] {
-						state = "enabled"
-					}
-					fmt.Fprintf(&b, "\n    %s · %s", tool, state)
-				}
+	if m.openTodos() {
+		sec := []string{head("Tasks", todoProgress(m.todos))}
+		for _, l := range m.todoLinesWidth(m.todos, taskLimit, max(width-2, 4)) {
+			sec = append(sec, fit(l))
+		}
+		sections = append(sections, sec)
+	}
+
+	var mcpRows []string
+	if m.opts.MCP != nil {
+		statuses := m.opts.MCP.Statuses()
+		sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
+		for _, s := range statuses {
+			switch s.State {
+			case mcp.StateConnected:
+				mcpRows = append(mcpRows, row(m.st.ok.Render("● ")+s.Name, m.st.dim.Render(plural(len(s.Tools), "tool"))))
+			case mcp.StateConnecting:
+				mcpRows = append(mcpRows, row(m.st.dim.Render("◐ ")+s.Name, m.st.dim.Render("connecting")))
+			case mcp.StateNeedsApproval:
+				mcpRows = append(mcpRows, row(m.st.warn.Render("! ")+s.Name, m.st.warn.Render("needs approval")))
+			case mcp.StateFailed:
+				mcpRows = append(mcpRows, row(m.st.err.Render("✕ ")+s.Name, m.st.err.Render("failed")))
 			}
 		}
 	}
+	summary := "none"
+	if len(mcpRows) > 0 {
+		summary = fmt.Sprintf("%d active", len(mcpRows))
+	}
+	sections = append(sections, append([]string{head("MCP", summary)}, mcpRows...))
 
-	b.WriteString("\n\nSkills")
-	if m.opts.Skills == nil || len(m.opts.Skills.List()) == 0 {
-		b.WriteString("\n  none available")
-	} else {
-		for _, skill := range m.opts.Skills.List() {
-			state := "available"
-			if m.usedSkills[skill.Name] {
-				state = "used this session"
+	var lspRows []string
+	if m.opts.LSP != nil {
+		statuses := m.opts.LSP.Statuses()
+		sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
+		for _, s := range statuses {
+			switch {
+			case len(s.Failed) > 0:
+				lspRows = append(lspRows, row(m.st.err.Render("✕ ")+s.Name, m.st.err.Render("failed")))
+			case len(s.Running) > 0:
+				lspRows = append(lspRows, row(m.st.ok.Render("● ")+s.Name, m.st.dim.Render("running")))
 			}
-			fmt.Fprintf(&b, "\n  /%-20s %s", skill.Name, state)
 		}
 	}
-
-	b.WriteString("\n\nLanguage servers")
-	if m.opts.LSP == nil || len(m.opts.LSP.Statuses()) == 0 {
-		b.WriteString("\n  none detected")
-	} else {
-		for _, server := range m.opts.LSP.Statuses() {
-			state := "idle"
-			if len(server.Running) > 0 {
-				state = "running: " + strings.Join(server.Running, ", ")
-			}
-			if len(server.Failed) > 0 {
-				state = "failed: " + strings.Join(server.Failed, "; ")
-			}
-			fmt.Fprintf(&b, "\n  %s · %s · %s", server.Name, server.Languages, state)
-		}
+	summary = "none active"
+	if len(lspRows) > 0 {
+		summary = fmt.Sprintf("%d active", len(lspRows))
 	}
-	return b.String()
+	sections = append(sections, append([]string{head("LSP", summary)}, lspRows...))
+
+	var used []string
+	for name := range m.usedSkills {
+		used = append(used, name)
+	}
+	sort.Strings(used)
+	sec := []string{head("Skills", fmt.Sprintf("%d used · %d", len(used), len(m.opts.Skills.List())))}
+	for _, name := range used {
+		sec = append(sec, fit(m.st.ok.Render("✓ ")+"/"+name))
+	}
+	if len(used) == 0 {
+		sec = append(sec, m.st.dim.Render(fit("none used yet · / to browse")))
+	}
+	return append(sections, sec)
+}
+
+// joinSections puts a rule between sections.
+func (m *model) joinSections(sections [][]string, width int) []string {
+	var out []string
+	for i, sec := range sections {
+		if i > 0 {
+			out = append(out, m.st.dim.Render(strings.Repeat("─", width)))
+		}
+		out = append(out, sec...)
+	}
+	return out
 }
 
 func (m *model) sessionInfoView() string {
-	return m.st.modal.Width(max(m.width-2, 10)).Render(m.sessionInfoBody())
+	inner := max(m.width-6, 10)
+	rows := []string{m.st.accent.Render("Session") + m.st.dim.Render("  ·  F2 or any key to close"), ""}
+	rows = append(rows, m.joinSections(m.sessionSections(inner, 0), inner)...)
+	return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(rows, "\n"))
 }
 
+// sessionSidebar renders the session panel as a bordered column width
+// columns wide and height rows tall.
 func (m *model) sessionSidebar(width, height int) string {
-	var b strings.Builder
-	if m.openTodos() {
-		b.WriteString(m.st.accent.Render("Tasks · " + todoProgress(m.todos)))
-		b.WriteString("\n")
-		limit := max(height/3, 3)
-		b.WriteString(strings.Join(m.todoLinesWidth(m.todos, limit, max(width-4, 8)), "\n"))
-		b.WriteString("\n\n")
+	inner := max(width-5, 8) // border, padding, and the gap before the panel
+	room := max(height-2, 1) // inside the border
+	hint := m.st.dim.Render(fitRight("F2 to hide", inner))
+	taskLimit := max(height/3, 3)
+	rows := m.joinSections(m.sessionSections(inner, taskLimit), inner)
+	if len(rows)+1 > room && m.openTodos() {
+		// Shrink the task list before cutting the rest.
+		taskLimit = max(taskLimit-(len(rows)+1-room), 2)
+		rows = m.joinSections(m.sessionSections(inner, taskLimit), inner)
 	}
-	b.WriteString(m.st.accent.Render("Session · F2 to hide"))
-	b.WriteString("\n")
-	b.WriteString(m.sessionInfoBody())
-	innerWidth := max(width-4, 1)
-	content := lipgloss.NewStyle().Width(innerWidth).Render(b.String())
-	return m.st.modal.Width(innerWidth).Render(content)
+	if len(rows)+1 > room {
+		keep := max(room-2, 0)
+		more := m.st.dim.Render(fmt.Sprintf("+%d more", len(rows)-keep))
+		rows = append(rows[:keep], more)
+	}
+	for len(rows)+1 < room {
+		rows = append(rows, "")
+	}
+	rows = append(rows, hint)
+	return m.st.modal.Width(inner + 4).Render(strings.Join(rows[:min(len(rows), room)], "\n"))
+}
+
+// fitRight right-aligns s in width columns.
+func fitRight(s string, width int) string {
+	return strings.Repeat(" ", max(width-lipgloss.Width(s), 0)) + s
 }
 
 // floatTodos overlays a compact checklist card over the top-right of the

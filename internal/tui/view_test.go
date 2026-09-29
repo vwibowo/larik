@@ -14,6 +14,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/tools"
 )
 
 func plain(s string) string { return ansi.Strip(s) }
@@ -24,7 +25,7 @@ func TestSessionInfoSidebarTogglePersistsWhileTypingAndResponding(t *testing.T) 
 	m.height = 30
 	m.Update(outputMsg("conversation remains visible"))
 	panel := plain(m.sessionInfoView())
-	for _, want := range []string{"Session info", "MCP servers", "Skills", "Language servers", "Permission mode"} {
+	for _, want := range []string{"Session", "MCP", "Skills", "LSP"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("session info panel lacks %q: %q", want, panel)
 		}
@@ -36,18 +37,51 @@ func TestSessionInfoSidebarTogglePersistsWhileTypingAndResponding(t *testing.T) 
 		t.Fatalf("F2 should show the sidebar without changing the draft: showInfo=%v input=%q", m.showInfo, m.input.Value())
 	}
 	view := plain(m.View().Content)
-	if !strings.Contains(view, "Session · F2 to hide") || !strings.Contains(view, "conversation remains visible") || !strings.Contains(view, "draft stays intact") {
+	if !strings.Contains(view, "F2 to hide") || !strings.Contains(view, "conversation remains visible") || !strings.Contains(view, "draft stays intact") {
 		t.Fatalf("sidebar, conversation, and composer should all remain visible: %q", view)
 	}
 
 	m.running = true
 	m.stream.WriteString("streaming response")
-	if view = plain(m.View().Content); !strings.Contains(view, "Session · F2 to hide") || !strings.Contains(view, "streaming response") {
+	if view = plain(m.View().Content); !strings.Contains(view, "F2 to hide") || !strings.Contains(view, "streaming response") {
 		t.Fatalf("sidebar should remain visible during a response: %q", view)
 	}
 	m.Update(press(tea.KeyF2))
 	if m.showInfo {
 		t.Fatal("F2 should hide the sidebar during a response")
+	}
+}
+
+func TestSessionSidebarShowsOnlyActiveItemsAndFitsItsColumn(t *testing.T) {
+	m := testModel(t)
+	m.usedSkills = map[string]bool{"graphify": true}
+	m.todos = []tools.Todo{
+		{Content: "Make F2 and /info toggle a persistent sidebar with a long description", Status: tools.TodoCompleted},
+		{Content: "Run formatting and focused validation", Status: tools.TodoInProgress},
+	}
+	for _, width := range []int{100, 160} {
+		sidebarWidth := min(max(width/3, 30), 44)
+		out := m.sessionSidebar(sidebarWidth, 24)
+		lines := strings.Split(out, "\n")
+		if len(lines) != 24 {
+			t.Errorf("width %d: sidebar has %d rows, want 24", width, len(lines))
+		}
+		for _, l := range lines {
+			if w := lipgloss.Width(l); w != sidebarWidth-1 {
+				t.Errorf("width %d: row is %d columns, want %d: %q", width, w, sidebarWidth-1, plain(l))
+			}
+		}
+		text := plain(out)
+		for _, want := range []string{"Tasks", "MCP", "LSP", "Skills", "/graphify", "F2 to hide"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("width %d: sidebar lacks %q: %s", width, want, text)
+			}
+		}
+		for _, unwanted := range []string{"Permission mode", "Model:", "available"} {
+			if strings.Contains(text, unwanted) {
+				t.Errorf("width %d: sidebar still shows %q: %s", width, unwanted, text)
+			}
+		}
 	}
 }
 

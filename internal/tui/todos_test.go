@@ -74,7 +74,7 @@ func TestTodosMoveIntoInfoSidebar(t *testing.T) {
 	m.showInfo = true
 	m.width, m.height = 120, 32
 	view := plain(m.View().Content)
-	if !strings.Contains(view, "Tasks · 1/3 done") || !strings.Contains(view, "Session · F2 to hide") {
+	if !strings.Contains(view, "1/3 done") || !strings.Contains(view, "F2 to hide") {
 		t.Fatalf("wide info sidebar should include tasks and session details:\n%s", view)
 	}
 	if m.view.Width() >= m.width {
