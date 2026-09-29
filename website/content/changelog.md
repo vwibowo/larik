@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Task list.** The model keeps a checklist with `todo_write` for work with several steps. The open items are pinned under the conversation during a turn, and `/todos` shows the list. See [Commands and keys](/docs/commands/).
+- **Leaving plan mode.** In plan mode the model presents its plan with `exit_plan_mode`; approving it switches to the mode you pick and continues. See [Permissions](/docs/permissions/).
+- **Custom commands** from `.claude/commands/*.md` and `~/.claude/commands/`, with `$ARGUMENTS`, `$1`… and `` !`cmd` ``. See [Skills](/docs/skills/#custom-commands).
+- **`multi_edit`** makes several replacements in one file in a single call, all or none.
+- **Image paste.** `ctrl+v` attaches an image from the system clipboard, such as a screenshot.
+- **`/init`** writes an `AGENTS.md` for the project; **`/export`** saves the session as Markdown; **`/copy`** copies the last reply.
+- **MCP resources, prompts and sign-in.** Servers' resources can be attached with `@server:uri` and read by the model, prompts run as `/mcp__server__prompt` commands, and `http` and `sse` servers that need OAuth sign in with `/mcp login`. See [MCP](/docs/mcp/).
+- **Prompt hooks** (`"type": "prompt"`) ask a model to decide instead of running a command. See [Hooks](/docs/hooks/).
+- **LSP pull diagnostics and code actions.** Servers that offer `textDocument/diagnostic` are asked for diagnostics after an edit, and the model can list and apply code actions, such as adding a missing import. See [LSP](/docs/lsp/).
+- **A custom status line** from a command of your own, compatible with Claude Code's `statusLine` scripts. See [Status line](/docs/commands/#status-line).
+- **Rebindable keys** with the `keybindings` setting. See [Rebinding keys](/docs/commands/#rebinding-keys).
+- **Vim mode** for the prompt: `/vim`, or **Editor mode** in `/config`. See [Vim mode](/docs/commands/#vim-mode).
+- **Mouse scrolling** can be switched off in `/config`, so text can be selected without a modifier.
+
+### Fixed
+
+- Interrupting a turn at the wrong moment could leave a tool call without a result, which made every later request fail. Sessions already left that way are repaired on the next prompt.
+- An "always allow" rule for a command no longer matches the same command chained with others (`git status; curl … | sh`).
+- Sandboxed commands can no longer redirect the project's git metadata to run code the next time `git` runs outside the sandbox.
+- MCP servers using `sse` no longer disconnect right after connecting.
+- `/compact` can be canceled with `esc`, and prompts typed while it runs are queued instead of racing it. `ctrl+c` stops a running `!` command.
+- Pasting into a picker filter or a `/config` text field no longer lands in the hidden prompt.
+- Changing routing mid-session no longer changes the tool definitions and invalidates the prompt cache.
+- Tool-call IDs from OpenAI-compatible, Ollama and Gemini models no longer repeat between turns.
+- ChatGPT plan sign-ins refresh reliably when several sessions share them.
+- Custom providers with `type: "openai"` or `"anthropic"` keep their own names for fallbacks and reasoning replay.
+- A shell command that leaves a background process running no longer hangs the turn.
+- Shared project settings can no longer re-enable a language server you disabled.
+- Notifications fire on terminals that don't report focus, and several smaller issues in the TUI, sessions and server were fixed.
+
 ## v0.2.0
 
 <p class="release-meta"><time datetime="2026-09-28">September 28, 2026</time></p>
