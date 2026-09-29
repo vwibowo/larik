@@ -170,6 +170,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/export":
 		return m.exportSession(arg, info, fail)
 
+	case "/copy":
+		return m.copyReply()
+
 	case "/todos":
 		return m.println(m.todosCommand())
 

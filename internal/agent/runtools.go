@@ -140,7 +140,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)
-	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Reply: reply})
+	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, Reply: reply})
 	select {
 	case <-ctx.Done():
 		return false, "interrupted by user", input

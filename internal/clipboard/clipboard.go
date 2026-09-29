@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // ErrNoImage means the clipboard holds no image (or nothing at all).
@@ -176,4 +177,21 @@ func Save(dir string, data []byte, ext string, keep func(os.FileInfo) bool) (str
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// WriteText puts text on the system clipboard with the platform's tool.
+func WriteText(ctx context.Context, text string) error {
+	var cmd *exec.Cmd
+	switch {
+	case runtime.GOOS == "darwin":
+		cmd = exec.CommandContext(ctx, "pbcopy")
+	case runtime.GOOS == "linux" && os.Getenv("WAYLAND_DISPLAY") != "" && has("wl-copy"):
+		cmd = exec.CommandContext(ctx, "wl-copy")
+	case runtime.GOOS == "linux" && has("xclip"):
+		cmd = exec.CommandContext(ctx, "xclip", "-selection", "clipboard", "-in")
+	default:
+		return ErrUnsupported
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }

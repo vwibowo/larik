@@ -74,7 +74,15 @@ func (b *bus) subscribe(after int64) (replay []Event, ch chan Event, gap bool) {
 		return nil, ch, false
 	}
 	oldest := max(b.seq-ringSize+1, 1)
-	if after < oldest-1 {
+	switch {
+	case after < oldest-1: // older than the ring keeps
+		gap, after = true, oldest-1
+	case after > b.seq:
+		// Ahead of this bus: the client saw a previous run of it (the
+		// server restarted or the session was reloaded, and numbering
+		// began again). Its seq means nothing here, so send everything
+		// retained and flag the gap; otherwise the client would take the
+		// new, lower numbers for events it already has.
 		gap, after = true, oldest-1
 	}
 	for s := after + 1; s <= b.seq; s++ {

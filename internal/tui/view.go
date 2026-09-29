@@ -93,7 +93,9 @@ func (m *model) View() tea.View {
 
 	v := tea.NewView(strings.Join(rows, "\n"))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	if m.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	v.WindowTitle = "larik"
 	v.ReportFocus = m.notify != "off"
 	return v
@@ -446,8 +448,12 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Run this command?"
 	case "write":
 		path := str(in["path"])
-		if !filepath.IsAbs(path) && m.opts.Config != nil {
-			path = filepath.Join(m.opts.Config.Cwd, path)
+		if !filepath.IsAbs(path) {
+			base := e.Cwd // a worktree subagent's own directory
+			if base == "" && m.opts.Config != nil {
+				base = m.opts.Config.Cwd
+			}
+			path = filepath.Join(base, path)
 		}
 		if _, err := os.Stat(path); err == nil {
 			return "Overwrite this file?"

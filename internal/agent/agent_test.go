@@ -432,3 +432,25 @@ func TestCompactionKeepsOpenTodos(t *testing.T) {
 		t.Fatalf("the open task list should survive compaction: %q", summary)
 	}
 }
+
+func TestTranscriptWriteFailureIsReportedOnce(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeYolo, assistant(llm.TextBlock("one")), assistant(llm.TextBlock("two")))
+	a.opts.Session.Close() // every later write fails
+	count := func(evs []Event) int {
+		n := 0
+		for _, e := range evs {
+			if e.Kind == EvNotice && strings.Contains(e.Text, "couldn't save to the session transcript") {
+				n++
+			}
+		}
+		return n
+	}
+	first := drain(a.Run(context.Background(), "hi"), PermissionReply{})
+	second := drain(a.Run(context.Background(), "again"), PermissionReply{})
+	if count(first) != 1 || count(second) != 0 {
+		t.Fatalf("reports: first turn %d, second %d", count(first), count(second))
+	}
+	if last := first[len(first)-1]; last.Kind != EvDone {
+		t.Fatalf("the turn should still finish: %+v", last)
+	}
+}

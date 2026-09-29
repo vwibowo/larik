@@ -90,7 +90,7 @@ With `{"wait": true}`, the handler subscribes before starting the run, reads eve
 
 **Events are the agent's own.** The SSE `data` is the `agent.Event` JSON (the same schema as `-p --output json`) plus `seq`, `session`, and `request_id` for permission requests. The server adds four kinds: `status`, `user_message`, `permission_resolved`, `session_closed`.
 
-**Reconnects replay.** A client reconnecting with `Last-Event-ID` (or `?after=`) gets every retained event after that sequence, then live ones. If the gap is older than the ring, the stream starts with a `: gap` comment telling the client to refetch `/messages`. Without either header, a stream starts with new events only.
+**Reconnects replay.** A client reconnecting with `Last-Event-ID` (or `?after=`) gets every retained event after that sequence, then live ones. If the gap is older than the ring, or the client's sequence is ahead of the session's (the server restarted or the session was reloaded, so numbering began again), the stream starts with a `: gap` comment telling the client to refetch `/messages`, followed by every retained event. Without either header, a stream starts with new events only.
 
 **Slow clients don't slow the agent.** Each subscriber has a 1024-event buffer. `publish` never blocks: a subscriber that falls behind is disconnected and can reconnect and replay. Writes coalesce whatever is queued into one flush, and a keepalive comment goes out every 15 s.
 

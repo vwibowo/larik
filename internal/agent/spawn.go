@@ -97,7 +97,7 @@ func (a *Agent) AddUsage(model string, u llm.Usage) {
 	a.addModelUsageLocked(model, u)
 	a.mu.Unlock()
 	if a.opts.Session != nil {
-		_ = a.opts.Session.AppendUsage(model, u)
+		a.saveFailed(a.opts.Session.AppendUsage(model, u))
 	}
 }
 

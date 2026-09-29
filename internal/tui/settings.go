@@ -122,6 +122,12 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.SpinnerTips = &on
 			m.tips = on
 		}),
+	toggle("mouse", "Mouse scrolling", "appearance",
+		(*config.Config).MouseOn,
+		func(m *model, on bool) {
+			m.opts.Config.Mouse = &on
+			m.mouse = on
+		}),
 	toggle("auto_compact", "Auto-compact", "behavior",
 		(*config.Config).AutoCompactOn,
 		func(m *model, on bool) {

@@ -50,8 +50,11 @@ type Event struct {
 	IsError  bool            `json:"is_error,omitempty"`
 
 	// EvPermission: the front end must send exactly one reply.
-	SuggestedRule string                 `json:"suggested_rule,omitempty"`
-	Reply         chan<- PermissionReply `json:"-"`
+	SuggestedRule string `json:"suggested_rule,omitempty"`
+	// Cwd is the directory relative paths in Input are relative to: a
+	// worktree subagent's, not the project's.
+	Cwd   string                 `json:"cwd,omitempty"`
+	Reply chan<- PermissionReply `json:"-"`
 
 	// EvUsage.
 	Usage   *UsageInfo `json:"usage,omitempty"`

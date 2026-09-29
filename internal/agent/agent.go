@@ -95,10 +95,14 @@ type Agent struct {
 	usage       llm.Usage
 	cost        float64
 	lastContext int
-	notes       []string    // prepended to the next user message
-	planNoted   bool        // the model was last told plan mode is on
-	pending     []llm.Block // attached to the next user message, e.g. "!" output
-	toolsLoaded bool
+	notes       []string // prepended to the next user message
+	planNoted   bool     // the model was last told plan mode is on
+	// saveErr is the first failure to write the session transcript, and
+	// saveReported whether the user has been told about it.
+	saveErr      error
+	saveReported bool
+	pending      []llm.Block // attached to the next user message, e.g. "!" output
+	toolsLoaded  bool
 
 	sessionStarted bool
 	startSource    string // SessionStart source: startup, resume, clear
@@ -301,7 +305,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 	ch := make(chan Event, 64)
 	go func() {
 		defer close(ch)
-		reason := a.runWith(ctx, prompt, false, func(e Event) { ch <- e })
+		send := func(e Event) { ch <- e }
+		reason := a.runWith(ctx, prompt, false, send)
+		a.reportSaveError(send) // a write at the very end of the turn
 		ch <- Event{Kind: EvDone, StopReason: reason}
 	}()
 	return ch
@@ -310,6 +316,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 // runWith runs one turn. system marks Larik-generated prompts (background
 // notifications), which skip prompt hooks and skill expansion.
 func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit func(Event)) string {
+	emit = a.reportingSaveErrors(emit)
 	a.loadTools(ctx, emit)
 	sub := a.opts.Subagent != ""
 	quiet := sub || system // no session/prompt hooks or skill expansion
@@ -584,7 +591,7 @@ func (a *Agent) appendMessage(m llm.Message, usage *llm.Usage) {
 	a.messages = llm.Append(a.messages, m)
 	a.mu.Unlock()
 	if a.opts.Session != nil {
-		_ = a.opts.Session.AppendMessage(m, usage)
+		a.saveFailed(a.opts.Session.AppendMessage(m, usage))
 	}
 }
 
@@ -664,7 +671,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 			// joining it, so its spend is recorded on its own.
 			a.recordUsage(model, ev.Usage, emit)
 			if a.opts.Session != nil {
-				_ = a.opts.Session.AppendUsage(model, ev.Usage)
+				a.saveFailed(a.opts.Session.AppendUsage(model, ev.Usage))
 			}
 		}
 	}
@@ -686,7 +693,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	a.lastContext = 0
 	a.mu.Unlock()
 	if a.opts.Session != nil {
-		_ = a.opts.Session.AppendCompaction(summary)
+		a.saveFailed(a.opts.Session.AppendCompaction(summary))
 	}
 	emit(Event{Kind: EvCompacted, Summary: summary})
 	return nil

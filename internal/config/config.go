@@ -68,6 +68,10 @@ type Config struct {
 	Language string `json:"language,omitempty"`
 	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
 	SpinnerTips *bool `json:"spinner_tips,omitempty"`
+	// Mouse lets the TUI take the mouse for wheel scrolling. Off leaves the
+	// mouse to the terminal, so text can be selected without a modifier.
+	// Nil means on.
+	Mouse *bool `json:"mouse,omitempty"`
 
 	// Roles name models by job, so subagents and compaction can run on a
 	// cheaper model than the main agent: "worker", "explore", "smart",
@@ -317,7 +321,7 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.Language != "" {
 		c.Language = o.Language
 	}
-	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.SpinnerTips, &o.SpinnerTips}} {
+	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
 		if *b.src != nil {
 			*b.dst = *b.src
 		}
@@ -568,6 +572,8 @@ func (c *Config) VerboseOn() bool { return on(c.Verbose, false) }
 
 // TipsOn reports whether spinner tips are shown (default on).
 func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
+
+func (c *Config) MouseOn() bool { return on(c.Mouse, true) }
 
 // SetUserSetting writes a top-level setting to the user config, or removes
 // it when value is nil or "", so the built-in default applies again. It

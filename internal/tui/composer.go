@@ -20,6 +20,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/clipboard"
+	"larik/internal/llm"
 	"larik/internal/session"
 	"larik/internal/tools"
 )
@@ -600,4 +601,38 @@ func (m *model) imagePasted(msg imagePastedMsg) tea.Cmd {
 	}
 	m.pasteMention(tildePath(msg.path))
 	return m.syncComposer()
+}
+
+// Copying replies.
+
+// lastReply is the text of the last assistant message in history.
+func lastReply(history []llm.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == llm.RoleAssistant {
+			if t := strings.TrimSpace(history[i].Text()); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+// copyReply puts the last reply, as Markdown, on the clipboard: with the
+// platform's tool, and through the terminal (OSC 52), which also reaches
+// a local clipboard over SSH.
+func (m *model) copyReply() tea.Cmd {
+	text := m.lastReply
+	if text == "" {
+		return m.println(m.st.dim.Render("no reply to copy yet"))
+	}
+	what := plural(strings.Count(text, "\n")+1, "line")
+	native := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := clipboard.WriteText(ctx, text); err != nil {
+			return outputMsg(m.st.dim.Render("sent the last reply (" + what + ") to the terminal's clipboard; if nothing was copied, the terminal doesn't allow it (OSC 52)"))
+		}
+		return outputMsg(m.st.dim.Render("✓ copied the last reply (" + what + ")"))
+	}
+	return tea.Batch(tea.SetClipboard(text), native)
 }

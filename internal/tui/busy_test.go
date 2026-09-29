@@ -12,6 +12,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/clipboard"
+	"larik/internal/llm"
 )
 
 // printed runs cmd and returns the output it prints, if any.
@@ -143,5 +144,47 @@ func TestExportWritesMarkdown(t *testing.T) {
 	}
 	if out := plain(printed(m.command("/export notes.md"))); !strings.Contains(out, "exists") {
 		t.Fatalf("overwrite: %q", out)
+	}
+}
+
+func TestCopyTracksLastReply(t *testing.T) {
+	m := testModel(t)
+	if out := plain(printed(m.copyReply())); !strings.Contains(out, "no reply to copy") {
+		t.Fatalf("empty: %q", out)
+	}
+	m.handleEvent(agent.Event{Kind: agent.EvAssistant, Message: &llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.TextBlock("the answer")}}})
+	m.handleEvent(agent.Event{Kind: agent.EvAssistant, Agent: "worker: x", Message: &llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.TextBlock("a subagent's")}}})
+	if m.lastReply != "the answer" {
+		t.Fatalf("lastReply = %q", m.lastReply)
+	}
+	if lastReply([]llm.Message{llm.UserText("q"), {Role: llm.RoleAssistant, Blocks: []llm.Block{llm.TextBlock("resumed answer")}}}) != "resumed answer" {
+		t.Fatal("a resumed session's last reply should be copyable")
+	}
+}
+
+func TestPermissionQuestionUsesSubagentCwd(t *testing.T) {
+	m := testModel(t)
+	worktree := t.TempDir()
+	os.WriteFile(filepath.Join(worktree, "only-here.go"), []byte("x"), 0o644)
+	e := permEvent("write", map[string]any{"path": "only-here.go", "content": "y"})
+	if got := m.permQuestion(e); got != "Create this file?" {
+		t.Fatalf("project: %q", got)
+	}
+	e.Cwd = worktree
+	if got := m.permQuestion(e); got != "Overwrite this file?" {
+		t.Fatalf("in the subagent's worktree the file exists: %q", got)
+	}
+}
+
+func TestMouseSettingReleasesTheMouse(t *testing.T) {
+	m := testModel(t)
+	if v := m.View(); v.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("mouse scrolling should be on by default: %v", v.MouseMode)
+	}
+	if _, err := m.saveSetting("mouse", "off"); err != nil {
+		t.Fatal(err)
+	}
+	if v := m.View(); v.MouseMode != tea.MouseModeNone {
+		t.Fatalf("with mouse scrolling off the terminal should get the mouse: %v", v.MouseMode)
 	}
 }

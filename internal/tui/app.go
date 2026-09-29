@@ -135,6 +135,7 @@ type model struct {
 	thinkDur     time.Duration
 	showThinking bool   // ctrl+o: show thinking in full instead of one line
 	lastThinking string // thinking of the last finished message, for ctrl+o
+	lastReply    string // text of the last reply, for /copy
 	busyLabel    string // non-agent background work, e.g. compaction
 	quitArmed    bool
 
@@ -153,6 +154,7 @@ type model struct {
 	// Settings from /config.
 	verbose bool   // tool output in full
 	tips    bool   // a tip under the spinner
+	mouse   bool   // wheel scrolling; off leaves text selection to the terminal
 	tip     string // the tip for the running turn
 	notify  string // off, bell or desktop
 	focused bool   // terminal has focus; notifications only go out without it
@@ -229,17 +231,19 @@ func newModel(opts Options) *model {
 		termDark: termDark,
 		focused:  true,
 		tips:     true,
+		mouse:    true,
 		notify:   "off",
 		histIdx:  -1,
 	}
 	if c := opts.Config; c != nil {
-		m.verbose, m.tips, m.notify = c.VerboseOn(), c.TipsOn(), c.Notifications
+		m.verbose, m.tips, m.notify, m.mouse = c.VerboseOn(), c.TipsOn(), c.Notifications, c.MouseOn()
 		if m.notify == "" {
 			m.notify = "off"
 		}
 	}
 	m.showThinking = m.verbose
 	m.todos, _ = tools.LatestTodos(opts.History)
+	m.lastReply = lastReply(opts.History)
 	m.loadHistory()
 	m.panelView.SoftWrap = false
 	m.applyTheme(m.wantDark())
@@ -813,6 +817,11 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		for _, b := range e.Message.Blocks {
 			if b.Type == llm.BlockThinking && strings.TrimSpace(b.Text) != "" {
 				m.lastThinking = strings.TrimSpace(b.Text)
+			}
+		}
+		if e.Agent == "" {
+			if t := strings.TrimSpace(e.Message.Text()); t != "" {
+				m.lastReply = t
 			}
 		}
 		m.stream.Reset()

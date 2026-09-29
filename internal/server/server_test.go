@@ -596,3 +596,20 @@ func TestEndedTaskExpiresItsPermissionRequests(t *testing.T) {
 		t.Fatal("an expired request is answered with a denial")
 	}
 }
+
+// TestBusGapWhenClientIsAhead: a client that saw seq 50 from a previous
+// run of the bus reconnects to a fresh one; it must be told, and get
+// everything retained, rather than taking seq 1..3 for old events.
+func TestBusGapWhenClientIsAhead(t *testing.T) {
+	b := newBus()
+	for range 3 {
+		b.publish(Event{})
+	}
+	replay, _, gap := b.subscribe(50)
+	if !gap || len(replay) != 3 || replay[0].Seq != 1 {
+		t.Fatalf("gap=%v replay=%d", gap, len(replay))
+	}
+	if replay, _, gap := b.subscribe(3); gap || len(replay) != 0 {
+		t.Fatalf("a caught-up client: gap=%v replay=%d", gap, len(replay))
+	}
+}

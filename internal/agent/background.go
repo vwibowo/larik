@@ -308,7 +308,9 @@ func (a *Agent) RunNotifications(ctx context.Context) (<-chan Event, bool) {
 	go func() {
 		defer close(ch)
 		prompt := note + "\n\nBackground task results arrived. Continue with them as appropriate; if nothing needs doing, reply briefly."
-		reason := a.runWith(ctx, prompt, true, func(e Event) { ch <- e })
+		send := func(e Event) { ch <- e }
+		reason := a.runWith(ctx, prompt, true, send)
+		a.reportSaveError(send)
 		ch <- Event{Kind: EvDone, StopReason: reason}
 	}()
 	return ch, true
