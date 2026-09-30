@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.5.0
+
+<p class="release-meta"><time datetime="2026-10-01">October 1, 2026</time></p>
 
 ### Added
 
