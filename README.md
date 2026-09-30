@@ -624,6 +624,41 @@ Fix issue #$1 with priority $2. Current branch: !`git branch --show-current`
 - They work with `larik -p "/review"` too, for a script or a CI job.
 - **To change one,** put your own `review.md` or `security-review.md` in a commands directory; it replaces the built-in. `/skills` shows which is in use.
 
+**On pull requests, in CI.** The repository is also a GitHub Action that runs a review on each pull request and posts it as one comment, updated on every push:
+
+```yaml
+name: Review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write   # to post the comment
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vwibowo/larik@v0.4.0
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # or OPENAI_API_KEY, GEMINI_API_KEY
+        with:
+          command: review          # or security-review
+```
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `command` | `review` | `review` or `security-review` |
+| `target` | the pull request | A PR number, a branch, or a range such as `origin/main...HEAD` |
+| `focus` | | What the review should concentrate on |
+| `model` | from the API key | `provider/model` |
+| `version` | `latest` | The Larik release to download; its checksum is verified |
+| `comment` | `true` | Post (and later update) a pull request comment. The review is always in the job summary and the `review` output |
+| `github-token` | the workflow's token | Used to read the pull request and to comment |
+
+- The model runs in `plan` mode: it reads the checked-out code and nothing more. It can't run commands, edit files or reach the token, and a repository's own hooks and MCP servers don't start without an approval that CI doesn't have.
+- Pull requests from forks don't get your secrets under `pull_request`, so the review fails there for lack of an API key. Don't switch to `pull_request_target` to work around that: it would hand secrets to a job that reads untrusted code.
+- Pass only text you wrote as `focus`; a pull request's title or body doesn't belong there.
+- Outside GitHub, the two scripts work by themselves: `scripts/ci-install.sh` downloads and verifies a release, and `scripts/ci-review.sh` runs the review (`REVIEW_TARGET`, `REVIEW_COMMAND`, `POST_COMMENT=false`).
+
 ## Memory
 
 Larik remembers things between sessions as short notes: who you are and how you like to work, corrections you've given it, decisions and constraints of the project, and where things live outside the repository. It saves a note when it learns something a later session will need, or when you ask it to ("remember that we deploy on Tuesdays").

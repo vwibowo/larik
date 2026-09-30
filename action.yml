@@ -1,0 +1,55 @@
+name: Larik review
+description: Review a pull request's changes with Larik and post the findings as a comment.
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  command:
+    description: "review (bugs) or security-review (vulnerabilities)"
+    default: review
+  target:
+    description: "What to review: a pull request number, a branch, or a range such as origin/main...HEAD. Defaults to the pull request that triggered the workflow."
+    default: ""
+  focus:
+    description: "Optional: what the review should concentrate on"
+    default: ""
+  model:
+    description: "provider/model, e.g. anthropic/claude-sonnet-5. Defaults to Larik's choice for the API key that is set."
+    default: ""
+  version:
+    description: "Larik release to use: latest, or a tag such as v0.4.0"
+    default: latest
+  comment:
+    description: "Post the review as a pull request comment (updated on later runs)"
+    default: "true"
+  github-token:
+    description: "Token used to read the pull request and to comment. Needs pull-requests: write to comment."
+    default: ${{ github.token }}
+
+outputs:
+  review:
+    description: "The review text"
+    value: ${{ steps.review.outputs.review }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Larik
+      shell: bash
+      env:
+        LARIK_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/ci-install.sh"
+
+    - name: Review
+      id: review
+      shell: bash
+      env:
+        REVIEW_COMMAND: ${{ inputs.command }}
+        REVIEW_TARGET: ${{ inputs.target }}
+        REVIEW_FOCUS: ${{ inputs.focus }}
+        LARIK_MODEL: ${{ inputs.model }}
+        POST_COMMENT: ${{ inputs.comment }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/ci-review.sh"
