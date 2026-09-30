@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Claude Code CLI provider.** Use a Claude subscription through the official `claude` CLI with `/connect claude-code-cli` or `claude-code-cli/<model>`. Claude Code runs the whole agent turn while Larik keeps tool permissions, hooks and execution in its own pipeline. Rolling model aliases and effort levels are offered in the picker; full model IDs are accepted too. See [Providers](/docs/providers/#claude-code-cli-runtime).
+
 ## v0.4.0
 
 <p class="release-meta"><time datetime="2026-09-30">September 30, 2026</time></p>
