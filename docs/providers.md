@@ -102,9 +102,11 @@ classDiagram
     Provider <|.. ollama_Provider : native /api/chat
     Provider <|.. openaicompat_Provider : Chat Completions
     Provider <|.. retrying : decorator
+    Provider <|.. stallGuard : decorator
     ModelProber <|.. ollama_Provider
     ModelProber <|.. openaicompat_Provider
     retrying o-- Provider : wraps
+    stallGuard o-- Provider : wraps
 ```
 
 ## The adapters

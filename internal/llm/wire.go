@@ -13,9 +13,10 @@ import (
 
 // HTTPClient is the client every adapter sends model requests with. Its
 // transport records the exchange when the request's context carries a
-// WireRecorder (debug mode), and otherwise passes requests straight
-// through.
-var HTTPClient = &http.Client{Transport: wireTap{base: http.DefaultTransport}}
+// WireRecorder (debug mode), and stops a request that has gone quiet when
+// the context carries a stall timeout (WithStallTimeout). Otherwise
+// requests pass straight through.
+var HTTPClient = &http.Client{Transport: wireTap{base: stallTransport{base: http.DefaultTransport}}}
 
 // WireRecorder receives the HTTP exchanges of a model request.
 type WireRecorder interface {

@@ -41,6 +41,8 @@ type ProviderConfig struct {
 	// ContextLength is the context window Ollama loads models with
 	// (num_ctx). Zero uses 32768, capped at the model's maximum.
 	ContextLength int `json:"context_length,omitempty"`
+	// StallTimeout overrides the top-level stall_timeout for this provider.
+	StallTimeout int `json:"stall_timeout,omitempty"`
 }
 
 type Config struct {
@@ -52,6 +54,12 @@ type Config struct {
 	// means the default (7), a negative value keeps them forever. The
 	// cleanup covers every project, so only personal files may set it.
 	CheckpointRetentionDays int `json:"checkpoint_retention_days,omitempty"`
+	// StallTimeout is how many seconds a model server may send nothing
+	// before the request is stopped, and a fallback model tried if there
+	// is one. Zero means the default (300, or 900 for local servers, which
+	// may be loading a model); a negative value waits forever. Providers
+	// are a personal setting, so this is honored only from personal files.
+	StallTimeout int `json:"stall_timeout,omitempty"`
 	// Debug records every session's requests, responses and tool calls
 	// for `larik trace`. Honored only from personal files: traces hold
 	// prompts and file contents.
@@ -395,6 +403,9 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.CheckpointRetentionDays != 0 {
 		c.CheckpointRetentionDays = o.CheckpointRetentionDays
+	}
+	if trusted && o.StallTimeout != 0 {
+		c.StallTimeout = o.StallTimeout
 	}
 	if trusted && o.Debug != nil {
 		c.Debug = o.Debug

@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **A model server that never answers no longer hangs the session.** If a provider sends nothing for 5 minutes (15 for local servers), Larik stops the request, says so, and switches to the fallback model when one is configured. Before, `larik -p` could wait forever, which would hang a CI job. Change the time with `stall_timeout`, globally or per provider.
 - **`/undo` covers shell commands.** In a git repository, files a `bash` command modified, deleted or created are restored by `/undo`, along with the file tools' edits. A file you had already changed goes back to how you had it. Files git ignores aren't covered. See [Undo](/docs/commands/#undo).
 - **Subagents browse in their own tabs.** Each agent has its own browser tabs in the one window, so subagents can use the browser at the same time without navigating each other's pages; their tabs close when they finish. Subagents get the browser tools by default again.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"larik/internal/chatgpt"
 	"larik/internal/config"
@@ -65,7 +66,41 @@ func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
-	return Resolved{Provider: p, Model: model}, nil
+	return Resolved{Provider: llm.WithStallTimeout(p, stallTimeout(cfg, name)), Model: model}, nil
+}
+
+// Default stall timeouts. A local server gets longer: before its first
+// byte it may be loading the model and reading a long prompt on slow
+// hardware.
+const (
+	stallTimeoutHosted = 5 * time.Minute
+	stallTimeoutLocal  = 15 * time.Minute
+)
+
+// stallTimeout is how long provider name may send nothing before a request
+// to it is stopped, or 0 to wait forever: the provider's stall_timeout,
+// else the top-level one, else a default.
+func stallTimeout(cfg *config.Config, name string) time.Duration {
+	pc := cfg.Providers[name]
+	seconds := pc.StallTimeout
+	if seconds == 0 {
+		seconds = cfg.StallTimeout
+	}
+	switch {
+	case seconds < 0:
+		return 0
+	case seconds > 0:
+		return time.Duration(seconds) * time.Second
+	}
+	kind := pc.Type
+	if kind == "" {
+		kind = name
+	}
+	switch kind {
+	case ollama.Name, "lmstudio", "openai-compatible":
+		return stallTimeoutLocal
+	}
+	return stallTimeoutHosted
 }
 
 func defaultSpec() (string, error) {

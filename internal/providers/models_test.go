@@ -102,14 +102,18 @@ func TestOllamaUsesTheNativeAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := r.Provider
-	if w, ok := p.(interface{ Unwrap() llm.Provider }); ok {
-		p = w.Unwrap() // retries wrap it
+	for { // the stall timeout and retries wrap it
+		w, ok := p.(interface{ Unwrap() llm.Provider })
+		if !ok {
+			break
+		}
+		p = w.Unwrap()
 	}
 	if _, ok := p.(*ollama.Provider); !ok || r.Model != "qwen3:4b" {
 		t.Fatalf("ollama should use the native adapter, got %T %q", p, r.Model)
 	}
 	if _, ok := r.Provider.(llm.ModelProber); !ok {
-		t.Fatal("the retry wrapper must keep ollama's context-window and tool probes")
+		t.Fatal("the wrappers must keep ollama's context-window and tool probes")
 	}
 }
 
