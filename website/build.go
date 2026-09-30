@@ -31,6 +31,8 @@ type Site struct {
 	Description string     `json:"description"`
 	Version     string     `json:"version"`
 	GoVersion   string     `json:"go_version"`
+	InstallURL  string     `json:"install_url"`          // where /install.sh is served
+	InstallRaw  string     `json:"install_fallback_url"` // the same script on GitHub
 	Downloads   []Download `json:"downloads"`
 }
 
@@ -393,7 +395,15 @@ func (b *builder) write() error {
 	if err := os.WriteFile(filepath.Join(b.out, "css", "chroma.css"), []byte(css), 0o644); err != nil {
 		return err
 	}
-	return copyDir(filepath.Join(b.dir, "static"), b.out)
+	if err := copyDir(filepath.Join(b.dir, "static"), b.out); err != nil {
+		return err
+	}
+	// The installer has one source, scripts/get-larik.sh, served as /install.sh.
+	script, err := os.ReadFile(filepath.Join(b.root, "scripts", "get-larik.sh"))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(b.out, "install.sh"), script, 0o644)
 }
 
 func copyDir(src, dst string) error {

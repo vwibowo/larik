@@ -6,6 +6,15 @@
     <p class="lead">One binary, no runtime to install. Pick your platform, or build it from source in a few seconds with Go {{.Site.GoVersion}} or newer.</p>
   </section>
 
+  <section class="prose narrow" id="install-script">
+    <h2>Install with one command</h2>
+    <p>macOS and Linux. Downloads the right build for your machine, checks it against the release's checksums and puts <code>larik</code> in <code>~/.local/bin</code>.</p>
+    {{code "bash" (printf "curl -fsSL %s | sh" .Site.InstallURL)}}
+    <p>The same script is on GitHub if you'd rather fetch it from there:</p>
+    {{code "bash" (printf "curl -fsSL %s | sh" .Site.InstallRaw)}}
+    <p>Set <code>LARIK_VERSION</code> (for example <code>v0.3.1</code>) to pin a release, or <code>LARIK_INSTALL_DIR</code> to install elsewhere. <a href="{{.Site.InstallRaw}}">Read the script</a> before you run it. On Windows, download the zip below.</p>
+  </section>
+
   <section class="dl-grid" aria-label="Prebuilt binaries">
     {{range .Site.Downloads}}
     {{if .URL}}

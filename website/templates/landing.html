@@ -17,8 +17,8 @@
       </div>
       <div class="lx-install">
         <span aria-hidden="true">$</span>
-        <code>go build -o larik ./cmd/larik &amp;&amp; ./larik</code>
-        <button class="copy" type="button" data-copy="go build -o larik ./cmd/larik && ./larik">Copy</button>
+        <code>curl -fsSL {{.Site.InstallURL}} | sh</code>
+        <button class="copy" type="button" data-copy="curl -fsSL {{.Site.InstallURL}} | sh">Copy</button>
       </div>
     </div>
     <ul class="lx-pills" aria-hidden="true">

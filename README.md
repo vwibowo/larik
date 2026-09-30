@@ -4,7 +4,15 @@ A terminal coding agent written in Go with a [Bubble Tea](https://github.com/cha
 
 ## Quick start
 
-To build and install `larik` into `/usr/local/bin`:
+On macOS or Linux, download a release, verify its checksum and install `larik` into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vwibowo/larik/main/scripts/get-larik.sh | sh
+```
+
+Set `LARIK_VERSION` (for example `v0.4.0`) to pin a release, or `LARIK_INSTALL_DIR` to install elsewhere. On Windows, download the zip from the releases page.
+
+To build from a checkout and install `larik` into `/usr/local/bin`:
 
 ```bash
 ./scripts/install.sh
