@@ -55,7 +55,7 @@ classDiagram
 | `read` | tools | yes | Line-numbered; records the file's mtime; warms up the language server |
 | `write`, `edit` | tools | no | Confined to the project, with protected paths and symlinks rejected; refuse stale overwrites; require an undo snapshot; append LSP diagnostics |
 | `multi_edit` | tools | no | Several `edit`-style replacements in one file, applied in order, all or nothing; one permission prompt, one undo snapshot, one round of diagnostics. Treated like `edit` by rules and modes, and allowed by any agent definition that allows `edit` (or names `MultiEdit`) |
-| `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel; optional `checkpoint_paths` snapshots named project files for `/undo` |
+| `bash` | tools | no | 120 s default, 600 s max; runs in the sandbox unless `"sandbox": false`; kills the whole process group on cancel. In a git repository the files a command changes are recorded for `/undo` by comparing `git status` before and after ([state](state-and-persistence.md#checkpoints-and-undo)); optional `checkpoint_paths` snapshots named files first, for ones git ignores |
 | `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |

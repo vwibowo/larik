@@ -214,7 +214,7 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 | `/theme [auto\|dark\|light]`                     | Color theme; `auto` follows the terminal's background. Moving through the list previews each one                                                                                                                                                                         |
 | `/effort [low…max\|default]`                     | Set and save the default reasoning effort                                                                                                                                                                                                                                |
 | `/mode [default\|accept-edits\|plan\|auto\|yolo]` | Pick and save the default permission mode from a list (`1`–`5`), or set it directly                                                                                                                                                                                     |
-| `/undo`                                          | Revert checkpointed file changes from the last turn; `bash` changes need explicit `checkpoint_paths`, and MCP side effects are not covered                                                                                                                               |
+| `/undo`                                          | Revert the file changes of the last turn that made any: edits by the file tools, and in a git repository what `bash` commands changed (files git ignores aren't covered, nor are MCP side effects). See [Undo](#undo)                                                  |
 | `/compact`                                       | Summarize the conversation to free context                                                                                                                                                                                                                               |
 | `/clear`                                         | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers                                                                                                                                                                               |
 | `/todos`                                         | The model's task list, in full                                                                                                                                                                                                                                           |
@@ -252,6 +252,16 @@ CLI flags such as `--model`, `--effort`, and `--mode` override saved defaults fo
 A branch is a new session file that starts with a copy of another session's messages and records which session it came from (`fork_of`). The original is never modified, so you can go back to it with `/resume`. Branches can only start before a prompt or at the end, never in the middle of a tool call. Each branch reports only its own token spend. `/rewind` changes only the conversation; use `/undo` to revert files.
 
 From the command line, `larik -c --fork` or `larik --resume <id> --fork` continues in a new branch instead of appending to the old session.
+
+### Undo
+
+`/undo` puts files back as they were before the last turn that changed any, and tells the model to re-read them.
+
+- **File tools:** every file `write`, `edit` and `multi_edit` touched.
+- **Shell commands, in a git repository:** files a `bash` command modified, deleted or created, whether tracked or untracked. A file you had already changed goes back to how you had it, not to the last commit. Larik compares git's view of the working tree before and after each command; it doesn't commit, stash or stage anything.
+- **Not covered:** files git ignores (build output, `node_modules`), changes a command makes by moving `HEAD` (`git checkout`, `reset`, `pull`; undo those with git), files over 2 MB, anything outside a repository, and what MCP tools change. For an ignored file the model can name it in the command's `checkpoint_paths`.
+- Edits you make yourself in an editor while a command runs count as that command's, so an `/undo` right after would revert them too.
+- Snapshots are kept for 7 days by default (`checkpoint_retention_days`), so `/undo` still works after resuming a session.
 
 ## Permissions
 

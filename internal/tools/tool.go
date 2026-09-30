@@ -44,6 +44,9 @@ type Env struct {
 	// BeforeWrite is called with the absolute path before a file is modified,
 	// so checkpoints can snapshot it.
 	BeforeWrite func(path string) error
+	// RecordOriginal, if set, keeps a file's original state for undo when a
+	// change is found only afterwards (a shell command's; see shelltrack.go).
+	RecordOriginal func(path string, existed bool, data []byte, mode os.FileMode) error
 
 	// Diagnostics, if set, returns compiler/linter feedback for a file just
 	// written (from language servers); it's appended to edit/write results.

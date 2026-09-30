@@ -157,6 +157,7 @@ func New(opts Options) *Agent {
 	a.opts.System = WithLanguage(opts.System, opts.Language)
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = opts.Checkpoints.Capture
+		a.env.RecordOriginal = opts.Checkpoints.Record
 	}
 	a.env.Sandbox = opts.Sandbox
 	if opts.LSP.Enabled() {

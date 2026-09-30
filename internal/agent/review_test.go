@@ -173,3 +173,54 @@ func TestReviewNeverRunsWhatTheDiffQuotes(t *testing.T) {
 		t.Errorf("notices: %s", got)
 	}
 }
+
+// A turn's shell command is undone by /undo like the file tools' edits.
+func TestUndoRevertsAShellCommand(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git needed")
+	}
+	a, _, dir := setup(t, permission.ModeYolo,
+		assistant(toolUse("1", "bash", `{"command":"echo broken > a.go && rm keep.txt && echo junk > new.txt"}`)),
+		assistant(llm.TextBlock("done")),
+		assistant(llm.TextBlock("ok")))
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// setup keeps the session and checkpoints under dir; leave them out of git.
+	write(t, dir, ".gitignore", "sessions/\nckpt/\n")
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "keep.txt", "keep me\n")
+	git("init", "-q", "-b", "main")
+	git("add", "-A")
+	git("commit", "-q", "-m", "first")
+
+	drain(a.Run(context.Background(), "break things"), PermissionReply{})
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.go")); string(data) != "broken\n" {
+		t.Fatalf("the command should have run: %q", data)
+	}
+	paths, err := a.Undo()
+	if err != nil || len(paths) != 3 {
+		t.Fatalf("undo: %v %v", paths, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.go")); string(data) != "package a\n" {
+		t.Errorf("a.go after undo: %q", data)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "keep.txt")); string(data) != "keep me\n" {
+		t.Errorf("keep.txt after undo: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new.txt")); err == nil {
+		t.Error("new.txt should be gone after undo")
+	}
+	// The model is told, with its next prompt.
+	fp := a.opts.Provider.(*fakeProvider)
+	drain(a.Run(context.Background(), "continue"), PermissionReply{})
+	last := fp.requests[len(fp.requests)-1].Messages
+	if text := last[len(last)-1].Text(); !strings.Contains(text, "The user reverted your most recent file changes") || !strings.Contains(text, "a.go") {
+		t.Errorf("the next prompt should say what was reverted: %s", text)
+	}
+}

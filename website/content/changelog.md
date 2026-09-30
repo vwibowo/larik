@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **`/undo` covers shell commands.** In a git repository, files a `bash` command modified, deleted or created are restored by `/undo`, along with the file tools' edits. A file you had already changed goes back to how you had it. Files git ignores aren't covered. See [Undo](/docs/commands/#undo).
 - **Subagents browse in their own tabs.** Each agent has its own browser tabs in the one window, so subagents can use the browser at the same time without navigating each other's pages; their tabs close when they finish. Subagents get the browser tools by default again.
 
 ## v0.3.1

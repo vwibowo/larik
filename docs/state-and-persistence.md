@@ -109,7 +109,15 @@ stateDiagram-v2
 
 **Retention.** At startup `app.Setup` calls `checkpoint.Prune`, which deletes turns whose snapshots are older than `checkpoint_retention_days` (default 7; negative keeps them forever), and session directories left empty. The cleanup covers every project, so the setting is honored only from personal files.
 
-Scope: the store covers `write`, `edit` and `multi_edit` (and subagents sharing the store). A `bash` call can list project files in `checkpoint_paths` to snapshot them before execution; changes to unlisted files, and changes made by MCP tools, are not captured. Worktree subagents skip checkpoints entirely; their branch is the undo. A failed capture stops the command, and a failed restore keeps the snapshot so `/undo` can be retried.
+Scope: the store covers `write`, `edit` and `multi_edit` (and subagents sharing the store) through `Capture`, and shell commands in a git repository through `Record` (below). Files git ignores can be listed in a `bash` call's `checkpoint_paths` to snapshot them before execution; other changes to ignored files, and changes made by MCP tools, are not captured. Worktree subagents skip checkpoints entirely; their branch is the undo. A failed capture stops the command, and a failed restore keeps the snapshot for another try.
+
+**Shell commands** ([shelltrack.go](../internal/tools/shelltrack.go)). A command doesn't say which files it will change, so they can't be captured before the write. Instead the bash tool asks git before and after:
+
+- Before: `git status --porcelain -z --untracked-files=all` lists every file that differs from `HEAD` or is untracked. Those have no copy in git, so their bytes are read now (up to 2 MB each, 64 MB in all; with more than 2,000 such files tracking is skipped). `HEAD` is noted.
+- After: the same listing. A file from the first list whose bytes or existence changed is recorded with the copy taken. A file only in the second list was clean before: if it is untracked it was created (recorded as "didn't exist"), otherwise its original is `git cat-file blob <HEAD before>:<path>`, with the mode from `ls-tree`.
+- `Store.Record` takes that original the way `Capture` would have, keeping the first state seen for a path in the turn, so a file the edit tool changed earlier keeps its older original. `restoreFile` recreates a directory the command removed.
+- The git commands run directly (no shell) with `GIT_OPTIONAL_LOCKS=0` and `core.fsmonitor=false`: they take no locks, write nothing, and run no program the repository configures. Nothing is staged, stashed or committed.
+- Not seen: ignored files; clean files changed by moving `HEAD` (they are clean relative to the new commit); and changes by anything else during the command, which are attributed to it.
 
 ## Configuration layers
 

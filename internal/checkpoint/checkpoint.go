@@ -94,44 +94,74 @@ func (s *Store) Capture(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(s.turns) == 0 || s.seen == nil { // no BeginTurn in this run yet
-		s.turns = append(s.turns, &turn{N: s.nextN()})
-		s.seen = map[string]bool{}
-	}
-	if s.seen[path] {
+	if s.captured(path) {
 		return nil
 	}
-	t := s.turns[len(s.turns)-1]
-	snap := snapshot{Path: path}
 	root, err := os.OpenRoot(s.root)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
 	f, err := root.Open(rel)
-	if err == nil {
-		fi, statErr := f.Stat()
-		if statErr != nil {
-			f.Close()
-			return statErr
-		}
-		data, err := io.ReadAll(f)
+	if os.IsNotExist(err) {
+		return s.add(path, false, nil, 0)
+	}
+	if err != nil {
+		return err
+	}
+	fi, err := f.Stat()
+	if err != nil {
 		f.Close()
-		if err != nil {
-			return err
-		}
+		return err
+	}
+	data, err := io.ReadAll(f)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	return s.add(path, true, data, fi.Mode().Perm())
+}
+
+// Record stores a file's original state as the caller found it, for a
+// change noticed only after it happened (a shell command's). Like Capture,
+// it keeps the first state recorded for a path in a turn.
+func (s *Store) Record(path string, existed bool, data []byte, mode os.FileMode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := pathpolicy.WritePath(s.root, path); err != nil {
+		return err
+	}
+	if s.captured(path) {
+		return nil
+	}
+	return s.add(path, existed, data, mode.Perm())
+}
+
+// captured reports whether path already has a snapshot in the current
+// turn, starting one if this run has none yet. The caller holds s.mu.
+func (s *Store) captured(path string) bool {
+	if len(s.turns) == 0 || s.seen == nil { // no BeginTurn in this run yet
+		s.turns = append(s.turns, &turn{N: s.nextN()})
+		s.seen = map[string]bool{}
+	}
+	return s.seen[path]
+}
+
+// add saves one snapshot in the current turn. The caller holds s.mu.
+func (s *Store) add(path string, existed bool, data []byte, mode os.FileMode) error {
+	t := s.turns[len(s.turns)-1]
+	snap := snapshot{Path: path}
+	if existed {
 		tdir := filepath.Join(s.dir, fmt.Sprint(t.N))
 		if err := os.MkdirAll(tdir, 0o700); err != nil {
 			return err
 		}
 		snap.Existed = true
-		snap.Mode = uint32(fi.Mode().Perm())
+		snap.Mode = uint32(mode)
 		snap.Blob = filepath.Join(tdir, fmt.Sprintf("%d.bin", len(t.Files)))
 		if err := os.WriteFile(snap.Blob, data, 0o600); err != nil {
 			return err
 		}
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	t.Files = append(t.Files, snap)
 	if err := s.saveManifest(t); err != nil {
@@ -226,6 +256,12 @@ func restoreFile(root *os.Root, rel string, data []byte, mode os.FileMode) error
 	var nonce [12]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
+	}
+	// A shell command may have removed the directory along with the file.
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	tmp := filepath.Join(filepath.Dir(rel), ".larik-undo-"+hex.EncodeToString(nonce[:]))
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)

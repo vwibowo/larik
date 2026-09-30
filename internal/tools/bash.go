@@ -38,7 +38,8 @@ func (Bash) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "bash",
 		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
-			"List project files the command may change in checkpoint_paths to let /undo restore their original contents; unlisted changes cannot be undone. " +
+			"In a git repository, files the command changes (tracked, or untracked and not ignored) are recorded so /undo can restore them. " +
+			"For files git ignores, or outside a repository, list the ones the command may change in checkpoint_paths; other changes there can't be undone. " +
 			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost (or, if the environment section lists allowed domains, only those, through a proxy). " +
 			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
 		Schema: schema(`{"type":"object","properties":{
@@ -125,6 +126,8 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		cmd = exec.Command("bash", "-c", in.Command)
 		cmd.Dir = env.Cwd
 	}
+	// Note the repository's state, to make what the command changes undoable.
+	track := env.trackShell(ctx)
 	// Own process group so cancellation kills children too.
 	procgroup.Configure(cmd)
 	var buffer bytes.Buffer
@@ -180,6 +183,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		runErr = nil // the command itself succeeded
 	}
 	finished(leftRunning)
+	track.finish(ctx)
 	if out.err != nil && captureErr == nil {
 		captureErr = out.err
 	}
