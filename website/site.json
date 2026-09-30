@@ -2,7 +2,7 @@
   "name": "Larik",
   "tagline": "the terminal coding agent for every model",
   "description": "Larik is an open terminal coding agent written in Go. Plan on a strong model, let cheap and local models do the volume work, and run shell commands in an OS sandbox by default.",
-  "version": "v0.3.0",
+  "version": "v0.3.1",
   "go_version": "1.27",
   "downloads": [
     {
@@ -11,7 +11,7 @@
       "label": "macOS",
       "detail": "Apple silicon",
       "file": "larik_darwin_arm64.tar.gz",
-      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.0/larik_darwin_arm64.tar.gz"
+      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.1/larik_darwin_arm64.tar.gz"
     },
     {
       "os": "macos",
@@ -19,7 +19,7 @@
       "label": "macOS",
       "detail": "Intel",
       "file": "larik_darwin_amd64.tar.gz",
-      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.0/larik_darwin_amd64.tar.gz"
+      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.1/larik_darwin_amd64.tar.gz"
     },
     {
       "os": "linux",
@@ -27,7 +27,7 @@
       "label": "Linux",
       "detail": "x86-64",
       "file": "larik_linux_amd64.tar.gz",
-      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.0/larik_linux_amd64.tar.gz"
+      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.1/larik_linux_amd64.tar.gz"
     },
     {
       "os": "linux",
@@ -35,7 +35,7 @@
       "label": "Linux",
       "detail": "ARM64",
       "file": "larik_linux_arm64.tar.gz",
-      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.0/larik_linux_arm64.tar.gz"
+      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.1/larik_linux_arm64.tar.gz"
     },
     {
       "os": "windows",
@@ -43,7 +43,7 @@
       "label": "Windows",
       "detail": "x86-64",
       "file": "larik_windows_amd64.zip",
-      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.0/larik_windows_amd64.zip"
+      "url": "https://github.com/vwibowo/larik/releases/download/v0.3.1/larik_windows_amd64.zip"
     }
   ]
 }
