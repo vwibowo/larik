@@ -37,7 +37,7 @@ var shortcutGroups = []shortcutGroup{
 	}},
 	{"model and mode", [][2]string{
 		{"alt+p", "switch model and effort"},
-		{"shift+tab", "cycle default → accept edits → plan"},
+		{"shift+tab", "cycle default → accept edits → auto → plan"},
 		{"/mode", "all modes, including yolo"},
 	}},
 	{"find things", [][2]string{

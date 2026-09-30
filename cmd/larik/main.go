@@ -54,7 +54,7 @@ func run() error {
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")
 		model   = flag.String("model", "", "provider/model, e.g. anthropic/claude-opus-5, openai/gpt-5.5, gemini/gemini-3.8-flash, ollama/qwen3-coder")
 		effort  = flag.String("effort", "", "reasoning effort: low, medium, high, xhigh, max")
-		mode    = flag.String("mode", "", "permission mode: default, accept-edits, plan, yolo")
+		mode    = flag.String("mode", "", "permission mode: default, accept-edits, plan, auto, yolo")
 		resume  = flag.String("resume", "", "resume a session by id (or unique prefix)")
 		cont    = flag.Bool("c", false, "continue the most recent session in this directory")
 		fork    = flag.Bool("fork", false, "with -c or --resume: branch into a new session, leaving the original untouched")

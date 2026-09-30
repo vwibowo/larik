@@ -39,6 +39,8 @@ type Options struct {
 	Session     *session.Session        // optional
 	Checkpoints *checkpoint.Store       // optional
 	OnAllowRule func(rule string) error // persists "always allow" answers
+	// AutoApprove judges calls in auto mode; nil sends them all to the user.
+	AutoApprove AutoApprover
 
 	// LoadTools, if set, supplies the tool set at the start of each fresh
 	// context (first prompt, and after Clear). The set then stays fixed so
@@ -119,7 +121,10 @@ type Agent struct {
 
 	bg *background // lazily created; see background.go
 
-	parent       *Agent // set for subagents; spend counts against its budget
+	parent *Agent // set for subagents; spend counts against its budget
+	// autoAllowed remembers the calls auto mode approved (tool and input),
+	// kept on the root agent for its subagents too.
+	autoAllowed  map[string]bool
 	budgetWarned bool
 	byModel      map[string]llm.Usage // spend per model, subagents included
 

@@ -200,6 +200,7 @@ var modeLabels = map[permission.Mode]string{
 	permission.ModeDefault:     "default",
 	permission.ModeAcceptEdits: "⏵⏵ accept edits",
 	permission.ModePlan:        "⏸ plan mode",
+	permission.ModeAuto:        "✦ auto",
 	permission.ModeYolo:        "⚠ yolo",
 }
 
@@ -210,6 +211,7 @@ var modeChoices = []struct {
 	{permission.ModeDefault, "Ask before edits and commands"},
 	{permission.ModeAcceptEdits, "Edit files in this project freely, ask before commands"},
 	{permission.ModePlan, "Read-only: explore and propose, change nothing"},
+	{permission.ModeAuto, "Edit freely; a model approves safe actions and asks you about risky ones"},
 	{permission.ModeYolo, "Run everything without asking"},
 }
 

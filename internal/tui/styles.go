@@ -17,8 +17,8 @@ type styles struct {
 	chip, chipWarn, chipPlain lipgloss.Style
 	// One color per permission mode (default stays plain) and a magenta ramp
 	// for effort, brighter as it rises, so both read at a glance.
-	modePlan, modeAccept, modeYolo lipgloss.Style
-	effort                         [5]lipgloss.Style
+	modePlan, modeAccept, modeAuto, modeYolo lipgloss.Style
+	effort                                   [5]lipgloss.Style
 }
 
 // modeStyle is the footer chip style for a permission mode.
@@ -28,6 +28,8 @@ func (s styles) modeStyle(mode permission.Mode) lipgloss.Style {
 		return s.modePlan
 	case permission.ModeAcceptEdits:
 		return s.modeAccept
+	case permission.ModeAuto:
+		return s.modeAuto
 	case permission.ModeYolo:
 		return s.modeYolo
 	}
@@ -77,6 +79,7 @@ func newStyles(isDark bool) styles {
 		chipPlain:  lipgloss.NewStyle().Foreground(pick("#1F1F24", "#ECECF0")).Padding(0, 1),
 		modePlan:   chipFg(pick("#2563EB", "#60A5FA")),
 		modeAccept: chipFg(pick("#7C3AED", "#A78BFA")),
+		modeAuto:   chipFg(pick("#15803D", "#4ADE80")),
 		modeYolo:   chipFg(pick("#C0352B", "#FF7A70")),
 		effort: [5]lipgloss.Style{
 			ramp("#8A4B82", "#9D6B99", false), ramp("#A8399A", "#C56FBE", false), ramp("#C026A3", "#E879D9", false),

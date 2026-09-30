@@ -145,11 +145,30 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 	if exitPlan && PlanOf(input) == "" {
 		return false, "exit_plan_mode needs the plan: pass it as plan, in Markdown.", input
 	}
+	// Auto mode: a model judges the call first, and only what it doesn't
+	// approve reaches the user. A hook that said "ask" wants the user, and
+	// a plan is always the user's to approve.
+	autoReason := ""
+	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan {
+		started := time.Now()
+		verdict, err := a.autoApprove(ctx, use.Name, input)
+		switch {
+		case ctx.Err() != nil:
+			return false, "interrupted by user", input
+		case err != nil:
+			autoReason = "the automatic check failed (" + err.Error() + ")"
+		case verdict.Allow:
+			record("allow (auto)", verdict.Reason, started)
+			return true, "", input
+		default:
+			autoReason = verdict.Reason
+		}
+	}
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)
 	asked := time.Now()
-	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, Reply: reply})
+	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, AutoReason: autoReason, Reply: reply})
 	select {
 	case <-ctx.Done():
 		record("interrupted", "", asked)

@@ -152,8 +152,21 @@ flowchart TD
 6. Any **allow rule** matches → Allow.
 7. `bash` and the **sandbox** is on and the call didn't set `"sandbox": false` → Allow.
 8. `bash` and the command is on the **safe list** (`ls`, exact `git status`, exact `git diff`, …) with no shell operators → Allow.
-9. `write`/`edit` in **accept-edits** mode inside the working directory → Allow.
+9. `write`/`edit` in **accept-edits** or **auto** mode inside the working directory → Allow.
 10. Otherwise → **Ask**.
+
+### Auto mode
+
+In `auto` mode an Ask from `Decide` doesn't go straight to the user. `authorize` first calls `Agent.autoApprove` ([auto.go](../internal/agent/auto.go)), which puts the call to a model through the `AutoApprover` set by the app ([automode.go](../internal/app/automode.go)):
+
+- **Input.** `AutoCall` carries the tool name and input, the working directory, whether the sandbox is on, and the last three prompts the *user* typed (`session.IsPrompt` messages of the root agent). Tool results and assistant text are left out on purpose: an instruction injected into a web page or a file must not read as the user's wish. A subagent's call also carries its task, labeled as written by the main agent, not the user. Inputs over 12 KB are cut and marked, which the policy treats as a reason to ask.
+- **Verdict.** The model replies `{"decision": "allow"|"ask", "reason": "…"}`. Allow runs the call. Ask, an unreadable reply, an error or a 30 s timeout all fall through to the normal permission prompt, with the reason in the event's `auto_reason` (shown in the TUI prompt, and in the JSON events of `-p` and the server).
+- **Skipped.** A PreToolUse hook that answered `ask` wants the user, and `exit_plan_mode` is always the user's to approve; neither is checked. Everything `Decide` allows or denies by itself (deny and allow rules, sandboxed bash, the safe list, in-project edits) never reaches the check.
+- **Memory.** An approved call (same tool, same input) is approved again for the rest of the session without another request, up to 200 entries, kept on the root agent so subagents share it.
+- **Model and cost.** `auto_mode.model` (personal files only), else the session's model, at low reasoning effort, with no tools. The spend counts toward the session's cost and budget, through the same `askModel` prompt hooks use.
+- **Trust.** Shared settings can neither select `auto` (mode is a personal setting) nor set `auto_mode.model`.
+
+The policy is the system prompt `autoSystem`. It allows ordinary project-local work and sends the user anything destructive, outward-facing, outside the project, touching secrets, fetching and running code, or gaining privileges, unless the user's own prompt explicitly asked for that action.
 
 ### Rules
 
@@ -199,6 +212,7 @@ The agent goroutine blocks until someone answers or the turn is cancelled. Headl
 | `default` | run | ask | run | ask (safe list runs) | ask | enforced |
 | `accept-edits` | run | run | run | ask (safe list runs) | ask | enforced |
 | `plan` | run | denied | denied | denied | ask | enforced |
+| `auto` | run | run | run | model check, then ask (safe list runs) | model check, then ask | enforced |
+| `yolo` | run | run | run | run | run | enforced |
 
 In plan mode each prompt carries a short `<system-note>` saying so (in the user message, not the system prompt, so the cached prefix doesn't change), and the first prompt after plan mode ends says it has ended.
-| `yolo` | run | run | run | run | run | enforced |

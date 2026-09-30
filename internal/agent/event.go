@@ -53,8 +53,11 @@ type Event struct {
 	SuggestedRule string `json:"suggested_rule,omitempty"`
 	// Cwd is the directory relative paths in Input are relative to: a
 	// worktree subagent's, not the project's.
-	Cwd   string                 `json:"cwd,omitempty"`
-	Reply chan<- PermissionReply `json:"-"`
+	Cwd string `json:"cwd,omitempty"`
+	// AutoReason, in auto mode, is why the call is put to the user: the
+	// classifier's reason for not approving it, or that it failed.
+	AutoReason string                 `json:"auto_reason,omitempty"`
+	Reply      chan<- PermissionReply `json:"-"`
 
 	// EvUsage.
 	Usage   *UsageInfo `json:"usage,omitempty"`

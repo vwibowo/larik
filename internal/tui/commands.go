@@ -16,7 +16,7 @@ import (
 	"larik/internal/providers"
 )
 
-var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModePlan}
+var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModeAuto, permission.ModePlan}
 
 func (m *model) cycleMode() tea.Cmd {
 	perms := m.agent.Perms()

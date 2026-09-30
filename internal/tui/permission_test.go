@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"larik/internal/agent"
+	"larik/internal/permission"
 )
 
 func permEvent(tool string, input any) *agent.Event {
@@ -94,5 +97,21 @@ func TestPermissionDenialSendsFeedback(t *testing.T) {
 	m.handlePermissionKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := <-replies; got.Allow || got.Reason != "Run tests first" {
 		t.Fatalf("denial reply = %+v", got)
+	}
+}
+
+func TestPermissionPromptShowsWhyAutoModeAsks(t *testing.T) {
+	m := testModel(t)
+	m.perm = permEvent("bash", map[string]any{"command": "git push origin main", "sandbox": false})
+	if v := ansi.Strip(m.permissionView()); strings.Contains(v, "auto mode asks") {
+		t.Errorf("no reason to show outside auto mode:\n%s", v)
+	}
+	m.perm.AutoReason = "this pushes to a remote, which the prompt didn't ask for"
+	if v := ansi.Strip(m.permissionView()); !strings.Contains(v, "✦ auto mode asks: this pushes to a remote") {
+		t.Errorf("the check's reason should be in the prompt:\n%s", v)
+	}
+	// The mode is in the picker and the shift+tab cycle, and has a label.
+	if modeLabels[permission.ModeAuto] == "" || !slices.Contains(modeCycle, permission.ModeAuto) {
+		t.Error("auto mode is missing from the labels or the cycle")
 	}
 }

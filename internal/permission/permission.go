@@ -27,17 +27,21 @@ const (
 	ModeDefault     Mode = "default"      // ask before edits and commands
 	ModeAcceptEdits Mode = "accept-edits" // edits inside cwd run freely; commands ask
 	ModePlan        Mode = "plan"         // read-only tools only
-	ModeYolo        Mode = "yolo"         // everything runs
+	// ModeAuto lets edits inside cwd run freely, like accept-edits, and
+	// has a model judge every other call that would ask: what it finds
+	// safe runs, the rest is put to the user (see agent.AutoApprover).
+	ModeAuto Mode = "auto"
+	ModeYolo Mode = "yolo" // everything runs
 )
 
 func ParseMode(s string) (Mode, error) {
 	switch m := Mode(s); m {
-	case ModeDefault, ModeAcceptEdits, ModePlan, ModeYolo:
+	case ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeYolo:
 		return m, nil
 	case "":
 		return ModeDefault, nil
 	}
-	return "", fmt.Errorf("unknown mode %q (default, accept-edits, plan, yolo)", s)
+	return "", fmt.Errorf("unknown mode %q (default, accept-edits, plan, auto, yolo)", s)
 }
 
 type Decision int
@@ -213,7 +217,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 			return Allow, ""
 		}
 	case "write", "edit", "multi_edit", "apply_code_action":
-		if c.mode == ModeAcceptEdits && c.insideCwd(subject) {
+		if (c.mode == ModeAcceptEdits || c.mode == ModeAuto) && c.insideCwd(subject) {
 			return Allow, ""
 		}
 	}

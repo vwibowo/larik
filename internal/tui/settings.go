@@ -244,6 +244,7 @@ var settingSpecs = []settingSpec{
 			{value: "default", label: modeLabels[permission.ModeDefault], desc: "ask before edits and commands"},
 			{value: "accept-edits", label: modeLabels[permission.ModeAcceptEdits], desc: "edit project files freely, ask before commands"},
 			{value: "plan", label: modeLabels[permission.ModePlan], desc: "read-only: explore and propose"},
+			{value: "auto", label: modeLabels[permission.ModeAuto], desc: "edit freely; a model approves safe actions, risky ones ask"},
 			{value: "yolo", label: modeLabels[permission.ModeYolo], desc: "run everything without asking", warn: true},
 		},
 		get: func(m *model) string {

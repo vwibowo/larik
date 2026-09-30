@@ -112,8 +112,8 @@ func TestPaletteEscHidesUntilInputChanges(t *testing.T) {
 func TestModePickerListsYolo(t *testing.T) {
 	m := testModel(t)
 	m.openModePicker()
-	if n := len(m.modePick.items); n != 4 {
-		t.Fatalf("want all 4 modes, got %d", n)
+	if n := len(m.modePick.items); n != 5 {
+		t.Fatalf("want all 5 modes, got %d", n)
 	}
 	if it, _ := m.modePick.selected(); it.value != permission.ModeDefault {
 		t.Fatalf("cursor should start on the current mode, got %v", it.value)

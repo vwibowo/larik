@@ -598,6 +598,10 @@ func (m *model) permissionView() string {
 		prefixLines(m.permDetail(e), "  "),
 		"",
 	}
+	if e.AutoReason != "" {
+		// Auto mode didn't approve this one; say why it's being asked.
+		lines = append(lines, m.st.warn.Render(wrap("✦ auto mode asks: "+e.AutoReason, w)), "")
+	}
 	if m.permFeedback != nil {
 		lines = append(lines, "Tell larik what to do instead:", m.permFeedback.View(), "", m.st.dim.Render("enter send denial · esc deny without feedback · ctrl+c deny and stop"))
 		return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(lines, "\n"))

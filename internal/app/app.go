@@ -364,6 +364,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		},
 	})
 	hookRunner.SetEvaluator(a.hookEvaluator(ag))
+	ag.SetAutoApprover(a.autoApprover(ag))
 	s := &Session{ID: sess.ID, Path: sess.Path, Agent: ag, Hooks: hookRunner, sess: sess}
 	if state != nil {
 		ag.Restore(state)

@@ -120,6 +120,11 @@ type Config struct {
 	// receives every query) is honored only from personal files.
 	Web WebConfig `json:"web,omitempty"`
 
+	// AutoMode configures auto mode's safety check. Only personal files
+	// may set it: a shared file choosing the model that approves its own
+	// repository's commands would defeat the check.
+	AutoMode AutoModeConfig `json:"auto_mode,omitempty"`
+
 	// Browser configures the browser_* tools. It launches a program, so
 	// only personal files may enable it; shared files may only disable it.
 	Browser BrowserConfig `json:"browser,omitempty"`
@@ -304,6 +309,9 @@ func (c *Config) merge(path string, trusted bool) error {
 		if o.Web.Search.Disabled {
 			c.Web.Search.Disabled = true
 		}
+	}
+	if trusted && o.AutoMode.Model != "" {
+		c.AutoMode.Model = o.AutoMode.Model
 	}
 	if b := browserSection(data); b != nil {
 		if trusted {
@@ -934,6 +942,13 @@ func (c *Config) ApproveProjectHooks() error {
 	}
 	c.ApprovedHooks = hash
 	return nil
+}
+
+// AutoModeConfig is the "auto_mode" settings section.
+type AutoModeConfig struct {
+	// Model is the provider/model or routing role that judges calls in
+	// auto mode; empty uses the session's model.
+	Model string `json:"model,omitempty"`
 }
 
 // BrowserConfig is the "browser" settings section: the browser_* tools,

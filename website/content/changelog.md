@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Auto mode.** A new permission mode between `accept-edits` and `yolo`: project edits run freely, and every other call that would ask is first checked by a model against your recent prompts. Routine work (builds, tests, package installs, local git) runs; destructive or outward-facing actions (`git push`, deleting data, publishing, `sudo`, handling secrets) still ask, with the reason shown, unless your prompt explicitly asked for them. Pick it with `/mode`, `shift+tab` or `--mode auto`. See [Permissions](/docs/permissions/).
+
 ## v0.3.1
 
 <p class="release-meta"><time datetime="2026-09-30">September 30, 2026</time></p>

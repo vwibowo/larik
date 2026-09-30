@@ -25,34 +25,42 @@ func (a *App) hookEvaluator(ag *agent.Agent) hooks.Evaluator {
 				spec = ag.ProviderName() + "/" + ag.Model()
 			}
 		}
-		r, err := a.Resolve(a.Cfg, spec)
+		return a.askModel(ctx, ag, spec, llm.EffortDefault, system, prompt)
+	}
+}
+
+// askModel sends one system and user prompt to the model spec names (a
+// provider/model or a routing role), at the given reasoning effort, and
+// returns its reply. The spend counts toward ag's session.
+func (a *App) askModel(ctx context.Context, ag *agent.Agent, spec string, effort llm.Effort, system, prompt string) (string, error) {
+	r, err := a.Resolve(a.Cfg, spec)
+	if err != nil {
+		return "", err
+	}
+	// A verdict is short, but reasoning models think before it.
+	maxOut := llm.Lookup(r.Model).MaxOutput
+	if maxOut <= 0 || maxOut > 4096 {
+		maxOut = 4096
+	}
+	req := llm.Request{
+		Model:     r.Model,
+		System:    system,
+		Messages:  []llm.Message{llm.UserText(prompt)},
+		MaxTokens: maxOut,
+		Effort:    effort,
+	}
+	for ev, err := range r.Provider.Stream(ctx, req) {
 		if err != nil {
 			return "", err
 		}
-		// A verdict is short, but reasoning models think before it.
-		maxOut := llm.Lookup(r.Model).MaxOutput
-		if maxOut <= 0 || maxOut > 4096 {
-			maxOut = 4096
-		}
-		req := llm.Request{
-			Model:     r.Model,
-			System:    system,
-			Messages:  []llm.Message{llm.UserText(prompt)},
-			MaxTokens: maxOut,
-		}
-		for ev, err := range r.Provider.Stream(ctx, req) {
-			if err != nil {
-				return "", err
+		if ev.Type == llm.EventDone {
+			used := ev.Message.Model
+			if used == "" {
+				used = r.Model
 			}
-			if ev.Type == llm.EventDone {
-				used := ev.Message.Model
-				if used == "" {
-					used = r.Model
-				}
-				ag.AddUsage(used, ev.Usage)
-				return ev.Message.Text(), nil
-			}
+			ag.AddUsage(used, ev.Usage)
+			return ev.Message.Text(), nil
 		}
-		return "", errors.New("the model sent no answer")
 	}
+	return "", errors.New("the model sent no answer")
 }

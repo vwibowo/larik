@@ -75,6 +75,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		Session:       o.Session,
 		Checkpoints:   a.opts.Checkpoints,
 		OnAllowRule:   a.opts.OnAllowRule,
+		AutoApprove:   a.autoApprover(),
 		Hooks:         a.opts.Hooks,
 		LSP:           a.opts.LSP,
 		Sandbox:       a.opts.Sandbox,
