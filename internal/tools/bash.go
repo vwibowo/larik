@@ -149,7 +149,15 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	// A process left running in the background ("server &", a daemon)
 	// keeps the output pipe open; don't wait for it past the command.
 	cmd.WaitDelay = PipeWaitDelay
+	// The Linux sandbox leaves placeholder files in the project while a
+	// command runs; tell it when the command is over.
+	finished := func(leftRunning bool) {
+		if f, ok := env.Sandbox.(interface{ Finished(*exec.Cmd, bool) }); ok && sandboxed {
+			f.Finished(cmd, leftRunning)
+		}
+	}
 	if err := cmd.Start(); err != nil {
+		finished(false)
 		if rawFile != nil {
 			rawFile.Close()
 			os.Remove(rawFile.Name())
@@ -171,6 +179,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if leftRunning {
 		runErr = nil // the command itself succeeded
 	}
+	finished(leftRunning)
 	if out.err != nil && captureErr == nil {
 		captureErr = out.err
 	}

@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- **Linux sandbox:** a sandboxed command could create protected project files that didn't exist yet (`.mcp.json`, `.claude/`, `.larik/`, `.git/commondir`, `.git/config.worktree`, `.git/modules`), which on macOS was already blocked. A planted `.git/commondir` could point git at another directory's hooks. These paths are now read-only in the sandbox whether or not they exist.
 - A click on an element covered by a cookie banner or dialog now fails and names what's in the way, instead of clicking the banner.
 - Clicks on pages with smooth scrolling landed in the wrong place.
 - Leaving a page that asks "leave this page?" hung until the timeout.

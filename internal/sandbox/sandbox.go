@@ -56,6 +56,9 @@ type Sandbox struct {
 	// exe is the larik binary, which runs the network bridge on Linux.
 	proxy *proxy
 	exe   string
+	// holders keeps missing protected paths from being created under
+	// bubblewrap (see holders.go); nil with Seatbelt, which denies by path.
+	holders *holders
 }
 
 // protectedNames are project paths that must stay read-only even though
@@ -95,6 +98,9 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 		return nil, "could not create a private temp directory (" + err.Error() + "); bash commands run unsandboxed and ask for approval"
 	}
 	s.tmpDir = real(tmpDir)
+	if s.kind == "bubblewrap" {
+		s.holders = newHolders()
+	}
 
 	s.writable = uniq(append(append([]string{s.root, s.tmpDir}, defaultWritable(home)...), expand(cfg.Writable, home)...))
 	for _, name := range protectedNames {
@@ -158,6 +164,9 @@ func (s *Sandbox) Close() error {
 	}
 	if s.proxy != nil {
 		s.proxy.Close()
+	}
+	if s.holders != nil {
+		s.holders.close()
 	}
 	return os.RemoveAll(s.tmpDir)
 }
@@ -300,7 +309,15 @@ func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 	if s.kind == "seatbelt" {
 		cmd = exec.Command("sandbox-exec", "-p", s.profile, "bash", "-c", script)
 	} else {
-		cmd = exec.Command("bwrap", s.bwrapArgs(script, dir)...)
+		// Placeholders first: bwrapArgs binds the protected paths that exist.
+		var held []string
+		if s.holders != nil {
+			held = s.holders.hold(s.protected, s.writable)
+		}
+		cmd = exec.Command("bwrap", s.bwrapArgs(script, dir, held...)...)
+		if s.holders != nil {
+			s.holders.started(cmd, held)
+		}
 	}
 	cmd.Dir = dir
 	cmd.Env = tmpEnv(s.tmpDir)
@@ -328,6 +345,15 @@ func proxyEnv(env []string, url string) []string {
 		out = append(out, n+"="+url)
 	}
 	return append(out, "NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1", "NODE_USE_ENV_PROXY=1")
+}
+
+// Finished must be called once a command from Command has ended (or
+// failed to start), with whether it left a process running: it removes the
+// placeholders the Linux sandbox put in the project for the command.
+func (s *Sandbox) Finished(cmd *exec.Cmd, leftRunning bool) {
+	if s != nil && s.holders != nil {
+		s.holders.finished(cmd, leftRunning)
+	}
 }
 
 // tmpEnv is the current environment with TMPDIR, TMP and TEMP replaced by
@@ -424,7 +450,9 @@ func (s *Sandbox) seatbeltProfile() string {
 	return b.String()
 }
 
-func (s *Sandbox) bwrapArgs(script, dir string) []string {
+// bwrapArgs builds the bubblewrap command line; held are the placeholders
+// standing in for protected paths that don't exist (see holders.go).
+func (s *Sandbox) bwrapArgs(script, dir string, held ...string) []string {
 	args := []string{"--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
 	for _, p := range s.writable {
 		if _, err := os.Stat(p); err == nil {
@@ -438,8 +466,10 @@ func (s *Sandbox) bwrapArgs(script, dir string) []string {
 			args = append(args, "--bind", p, p)
 		}
 	}
-	for _, p := range s.protected {
-		if _, err := os.Stat(p); err == nil {
+	bound := map[string]bool{}
+	for _, p := range append(append([]string(nil), s.protected...), held...) {
+		if _, err := os.Stat(p); err == nil && !bound[p] {
+			bound[p] = true
 			args = append(args, "--ro-bind", p, p)
 		}
 	}

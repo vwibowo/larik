@@ -340,6 +340,21 @@ func TestProjectCannotRedirectSearch(t *testing.T) {
 	}
 }
 
+func TestEmptySettingsFilesAreIgnored(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// The Linux sandbox leaves an empty-ish .mcp.json while a command runs.
+	write(t, filepath.Join(cwd, ".mcp.json"), "")
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), "  \n")
+	if _, err := Load(cwd); err != nil {
+		t.Errorf("empty settings files should load as no settings: %v", err)
+	}
+	write(t, filepath.Join(cwd, ".mcp.json"), "{}\n")
+	if cfg, err := Load(cwd); err != nil || len(cfg.MCPServers) != 0 {
+		t.Errorf("the sandbox's .mcp.json placeholder: %v", err)
+	}
+}
+
 func TestBrowserOnlyFromPersonalSettings(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()

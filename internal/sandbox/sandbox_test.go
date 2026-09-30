@@ -25,7 +25,9 @@ func newTest(t *testing.T, cfg Config) (*Sandbox, string, string) {
 
 func run(t *testing.T, sb *Sandbox, dir, script string) (string, error) {
 	t.Helper()
-	out, err := sb.Command(script, dir).CombinedOutput()
+	cmd := sb.Command(script, dir)
+	out, err := cmd.CombinedOutput()
+	sb.Finished(cmd, false)
 	return string(out), err
 }
 

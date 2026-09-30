@@ -82,6 +82,17 @@ Worktree subagents get a derived sandbox (`ForWorktree`) where the worktree repl
 
 **The literal `/tmp` is never writable.** Earlier, `defaultWritable` granted write access to `/tmp` and `os.TempDir()` outright, on the theory that scripts need somewhere to put scratch files. In testing, a subagent running a small local model executed `cd /tmp && rm -rf <name>` as a "clean up after myself" step and deleted another program's files that happened to live under `/tmp` -- on most systems that directory is shared by every program any user on the machine runs, not scoped to the project or even to Larik. Each `Sandbox` now creates its own private directory (`New`'s `tmpDir`, removed by `Close`) and exposes it to sandboxed commands as `$TMPDIR`/`$TMP`/`$TEMP` ([sandbox.go](../internal/sandbox/sandbox.go)), so `mktemp`, `go build`, `npm` and friends still have somewhere safe to write, without exposing the shared system directory. On macOS, `os.TempDir()` (the per-user temp root under `/var/folders/...`) stays writable as before: it's scoped to one OS user rather than the whole machine, and several macOS tools -- notably bare `mktemp` with no template -- resolve to it via `confstr(_CS_DARWIN_USER_TEMP_DIR)` regardless of `$TMPDIR`.
 
+### Protected paths that don't exist yet (Linux)
+
+Seatbelt denies writes by path, whether or not the path exists. bubblewrap makes a path read-only by binding it onto itself, which needs it to exist, so a missing protected path (`.mcp.json`, `.claude/`, `.git/commondir`, `.git/config.worktree`, `.git/modules`…) would be creatable inside the writable project, and a planted `.git/commondir` points git at someone else's config and hooks.
+
+[holders.go](../internal/sandbox/holders.go) closes that: before each command it puts a placeholder at the first missing component of every such path and binds it read-only with the rest.
+
+- The placeholders are in the real project for as long as the command runs, where other programs see them, so each is valid for its readers: directories are empty directories (a concurrent `git worktree add` can still use `.git/worktrees`), `.git/commondir` contains `.` (the git directory itself, as if the file weren't there; an empty one makes git fail), `.mcp.json` contains `{}`, and the rest are empty files (an empty git config is valid). Larik itself treats an empty settings file as none.
+- They are counted per running command and removed when the last one using them ends, only if still what Larik made (an empty directory, or a file with the placeholder's content); anything real that replaced one is kept.
+- A command that leaves a background process running keeps its placeholders until Larik exits, since removing a mount point would unmount it inside that sandbox.
+- The bash tool reports the end of each command through the sandbox's `Finished` method. If Larik is killed, placeholders can stay behind; they are harmless and can be deleted.
+
 ### Network allowlist
 
 With `sandbox.allowed_domains` (personal files only) and `network` off, [proxy.go](../internal/sandbox/proxy.go) listens on `127.0.0.1` and is the only way out of the sandbox:

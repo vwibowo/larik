@@ -9,6 +9,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -268,6 +269,11 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if err != nil {
 		return err
+	}
+	// An empty file is no settings: the Linux sandbox leaves empty
+	// placeholders (.mcp.json) in the project while a command runs.
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
 	}
 	var o struct {
 		Config

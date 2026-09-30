@@ -249,6 +249,28 @@ func TestBashReportsHostsTheProxyRefused(t *testing.T) {
 	}
 }
 
+// trackingSandbox records which commands it was told have finished.
+type trackingSandbox struct {
+	fakeSandbox
+	finished []bool
+}
+
+func (s *trackingSandbox) Finished(_ *exec.Cmd, leftRunning bool) {
+	s.finished = append(s.finished, leftRunning)
+}
+
+func TestBashTellsTheSandboxWhenACommandEnds(t *testing.T) {
+	env := NewEnv(t.TempDir())
+	sb := &trackingSandbox{}
+	env.Sandbox = sb
+	run(t, Bash{}, env, `{"command":"echo one"}`)
+	run(t, Bash{}, env, `{"command":"exit 3"}`)
+	run(t, Bash{}, env, `{"command":"echo unsandboxed","sandbox":false}`)
+	if len(sb.finished) != 2 || sb.finished[0] || sb.finished[1] {
+		t.Errorf("want two sandboxed commands reported finished, none left running: %v", sb.finished)
+	}
+}
+
 // changingTool describes itself differently each time, like the task tool
 // after a routing change.
 type changingTool struct{ n *int }

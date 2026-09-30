@@ -12,12 +12,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestMain lets the test binary stand in for larik inside a Linux sandbox,
+// where bubblewrap runs the binary's bridge command before the script.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == BridgeCommand {
+		os.Exit(BridgeMain(os.Args[2:]))
+	}
+	os.Exit(m.Run())
+}
 
 func TestProxyAllows(t *testing.T) {
 	p := &proxy{}
@@ -150,9 +158,6 @@ func TestBridge(t *testing.T) {
 func TestSandboxAllowlist(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl needed")
-	}
-	if runtime.GOOS != "darwin" {
-		t.Skip("the Linux sandbox runs the bridge from the larik binary; covered by TestBridge")
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "allowed ok") }))
 	defer upstream.Close()
