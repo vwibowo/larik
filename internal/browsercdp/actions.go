@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -34,6 +36,8 @@ type Snapshot struct {
 func (s *Session) Snapshot(ctx context.Context) (Snapshot, error) {
 	var snap Snapshot
 	var err error
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
 	// A click can start a navigation that destroys the page mid-evaluation;
 	// retry until the new document is there.
 	for attempt := 0; attempt < 20; attempt++ {
@@ -46,33 +50,49 @@ func (s *Session) Snapshot(ctx context.Context) (Snapshot, error) {
 	return snap, err
 }
 
-// settle waits (up to 10s) for the document to finish loading.
+const snapshotTimeout = 20 * time.Second
+
+// settle waits for the document to finish loading: until it's complete,
+// or usable ("interactive") for a moment, since pages that keep a request
+// open never complete; 10s at most.
 func (s *Session) settle(ctx context.Context) {
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && ctx.Err() == nil {
+	start := time.Now()
+	for time.Since(start) < 10*time.Second && ctx.Err() == nil {
 		var state string
-		if s.run(ctx, chromedp.Evaluate(`document.readyState`, &state)) == nil && state == "complete" {
-			return
+		if s.run(ctx, chromedp.Evaluate(`document.readyState`, &state)) == nil {
+			if state == "complete" || (state == "interactive" && time.Since(start) > 1500*time.Millisecond) {
+				return
+			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
+// quietJS resolves once the DOM has gone 300ms without changing (3s at
+// most), or the page unloads: scripts reacting to an input, and single-page
+// apps changing route, fire no navigation event to wait for.
+const quietJS = `new Promise((resolve) => {
+	let timer;
+	const done = () => { obs.disconnect(); resolve(true); };
+	const obs = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, 300); });
+	obs.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+	timer = setTimeout(done, 300);
+	setTimeout(done, 3000);
+	addEventListener('pagehide', done, {once: true});
+})`
+
 // act runs an input action on the active tab and, if it starts a
 // navigation (a submitted form, a followed link), gives that a moment to
 // begin, so the snapshot that follows shows the new page, not the old one.
 func (s *Session) act(ctx context.Context, actions ...chromedp.Action) error {
-	t, err := s.Tab()
-	if err != nil {
-		return err
-	}
-	before := t.navs.Load()
 	if err := s.run(ctx, actions...); err != nil {
 		return err
 	}
-	for i := 0; i < 5 && t.navs.Load() == before && ctx.Err() == nil; i++ {
-		time.Sleep(60 * time.Millisecond) // also lets scripts react and re-render
-	}
+	// If the action started a navigation, the page goes away mid-wait and
+	// the evaluation fails; Snapshot then waits for the new document.
+	_ = s.run(ctx, chromedp.Evaluate(quietJS, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	}))
 	return nil
 }
 
@@ -92,13 +112,47 @@ func CheckURL(ctx context.Context, raw string) (string, error) {
 	return u.String(), nil
 }
 
-// Navigate opens rawURL in the active tab.
-func (s *Session) Navigate(ctx context.Context, rawURL string) error {
+// Navigate opens rawURL in the active tab and waits (up to 15s) for the
+// new document to be parsed. It doesn't wait for the load event, which pages
+// with a hanging request never fire: loading reports such a page, still
+// usable, instead of an error.
+func (s *Session) Navigate(ctx context.Context, rawURL string) (loading bool, err error) {
 	u, err := CheckURL(ctx, rawURL)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.run(ctx, chromedp.Navigate(u))
+	t, err := s.Tab()
+	if err != nil {
+		return false, err
+	}
+	before := t.parsed.Load()
+	var loader cdp.LoaderID
+	var errText string
+	var download bool
+	if err := s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+		_, loader, errText, download, err = page.Navigate(u).Do(ctx)
+		return err
+	})); err != nil {
+		return false, err
+	}
+	if errText != "" && !download {
+		return false, fmt.Errorf("could not open %s: %s", u, errText)
+	}
+	if loader == "" || download {
+		// A same-document navigation (a #fragment) loads nothing, and a
+		// download leaves the page as it was.
+		return false, nil
+	}
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+		if t.parsed.Load() != before {
+			return false, nil
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true, nil
 }
 
 // History goes back or forward in the active tab.
@@ -113,7 +167,7 @@ func (s *Session) History(ctx context.Context, forward bool) error {
 	})); err != nil {
 		return err
 	}
-	i := cur - 1
+	i := cur - 1 // back
 	if forward {
 		i = cur + 1
 	}
@@ -123,18 +177,34 @@ func (s *Session) History(ctx context.Context, forward bool) error {
 	return s.act(ctx, page.NavigateToHistoryEntry(entries[i].ID))
 }
 
-// point scrolls the element with ref into view and returns its center.
+// point scrolls the element with ref into view and returns its center,
+// failing if something else (a banner, a modal) is on top of it there: a
+// real click would hit that instead.
 func (s *Session) point(ctx context.Context, ref string) (x, y float64, err error) {
 	var r struct {
 		Found, Disabled bool
 		X, Y            float64
+		Covered         string
 	}
 	js := fmt.Sprintf(`(() => {
 		const el = window.__larikFind && window.__larikFind(%q);
 		if (!el) return {Found: false};
-		el.scrollIntoView({block: 'center', inline: 'center'});
+		el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
 		const b = el.getBoundingClientRect();
-		return {Found: true, Disabled: !!el.disabled, X: b.left + b.width / 2, Y: b.top + b.height / 2};
+		const x = b.left + b.width / 2, y = b.top + b.height / 2;
+		let hit = document.elementFromPoint(x, y);
+		while (hit && hit.shadowRoot) {
+			const inner = hit.shadowRoot.elementFromPoint(x, y);
+			if (!inner || inner === hit) break;
+			hit = inner;
+		}
+		let covered = '';
+		if (hit && hit !== el && !el.contains(hit) && hit.control !== el && !(el.labels && [...el.labels].includes(hit))) {
+			const owner = hit.closest('[data-larik-ref]');
+			const text = (hit.innerText || hit.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+			covered = hit.tagName.toLowerCase() + (text ? ' ' + JSON.stringify(text) : '') + (owner ? ' [ref=' + owner.getAttribute('data-larik-ref') + ']' : '');
+		}
+		return {Found: true, Disabled: !!el.disabled, X: x, Y: y, Covered: covered};
 	})()`, ref)
 	if err := s.run(ctx, chromedp.Evaluate(js, &r)); err != nil {
 		return 0, 0, err
@@ -144,6 +214,9 @@ func (s *Session) point(ctx context.Context, ref string) (x, y float64, err erro
 	}
 	if r.Disabled {
 		return 0, 0, fmt.Errorf("element %s is disabled", ref)
+	}
+	if r.Covered != "" {
+		return 0, 0, fmt.Errorf("element %s is covered by %s, which would get the click instead: close or dismiss it first (a cookie banner or dialog, say), or press Escape", ref, r.Covered)
 	}
 	return r.X, r.Y, nil
 }
@@ -181,7 +254,7 @@ func (s *Session) Type(ctx context.Context, ref, text string, appendText, submit
 	js := fmt.Sprintf(`(() => {
 		const el = window.__larikFind && window.__larikFind(%q);
 		if (!el) return false;
-		el.scrollIntoView({block: 'center'});
+		el.scrollIntoView({block: 'center', behavior: 'instant'});
 		el.focus();
 		if (!%t) {
 			if (el.isContentEditable) {
@@ -263,6 +336,104 @@ func (s *Session) PressKey(ctx context.Context, key string) error {
 		k = key
 	}
 	return s.act(ctx, chromedp.KeyEvent(k))
+}
+
+// WaitFor waits until text appears on the page, or textGone disappears
+// (timeout seconds, 30 by default), or with neither just waits seconds
+// (at most 10).
+func (s *Session) WaitFor(ctx context.Context, text, textGone string, seconds float64) error {
+	if text == "" && textGone == "" {
+		d := time.Duration(min(max(seconds, 0), 10) * float64(time.Second))
+		select {
+		case <-time.After(d):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	timeout := 30 * time.Second
+	if seconds > 0 {
+		timeout = time.Duration(min(seconds, 60) * float64(time.Second))
+	}
+	want, gone := text != "", textGone
+	if want {
+		gone = text
+	}
+	js := fmt.Sprintf(`(document.body ? document.body.innerText : '').includes(%q)`, gone)
+	for deadline := time.Now().Add(timeout); ; {
+		var present bool
+		if s.run(ctx, chromedp.Evaluate(js, &present)) == nil && present == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if want {
+				return fmt.Errorf("%q didn't appear within %s", text, timeout)
+			}
+			return fmt.Errorf("%q was still there after %s", textGone, timeout)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// Upload chooses files for the file input with ref, or for the file
+// chooser that clicking ref opens (a styled "Upload" button).
+func (s *Session) Upload(ctx context.Context, ref string, paths []string) error {
+	var obj *runtime.RemoteObject
+	js := fmt.Sprintf(`window.__larikFind && window.__larikFind(%q)`, ref)
+	if err := s.run(ctx, chromedp.Evaluate(js, &obj)); err != nil {
+		return err
+	}
+	if obj == nil || obj.ObjectID == "" {
+		return errNoRef(ref)
+	}
+	var info struct{ IsFile, Multiple bool }
+	check := `function() { return {IsFile: this.tagName === 'INPUT' && this.type === 'file', Multiple: !!this.multiple}; }`
+	if err := s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		res, exc, err := runtime.CallFunctionOn(check).WithObjectID(obj.ObjectID).WithReturnByValue(true).Do(ctx)
+		if err != nil {
+			return err
+		}
+		if exc != nil {
+			return exc
+		}
+		return json.Unmarshal(res.Value, &info)
+	})); err != nil {
+		return err
+	}
+	if info.IsFile {
+		if len(paths) > 1 && !info.Multiple {
+			return fmt.Errorf("the file input %s takes one file, not %d", ref, len(paths))
+		}
+		return s.act(ctx, dom.SetFileInputFiles(paths).WithObjectID(obj.ObjectID))
+	}
+
+	t, err := s.Tab()
+	if err != nil {
+		return err
+	}
+	select { // drop a chooser left from an earlier click
+	case <-t.chooser:
+	default:
+	}
+	t.uploading.Store(true)
+	defer t.uploading.Store(false)
+	if err := s.Click(ctx, ref, false); err != nil {
+		return err
+	}
+	select {
+	case ev := <-t.chooser:
+		if len(paths) > 1 && ev.Mode != page.FileChooserOpenedModeSelectMultiple {
+			return fmt.Errorf("the file chooser takes one file, not %d", len(paths))
+		}
+		return s.act(ctx, dom.SetFileInputFiles(paths).WithBackendNodeID(ev.BackendNodeID))
+	case <-time.After(3 * time.Second):
+		return fmt.Errorf("clicking %s didn't open a file chooser: pass the ref of the file input, or of the button that opens one", ref)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // maxShotHeight caps full-page screenshots (CSS pixels); longer pages are
@@ -347,7 +518,7 @@ func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
 		if (ref) {
 			const el = window.__larikFind && window.__larikFind(ref);
 			if (!el) return {Found: false};
-			el.scrollIntoView({block: 'center', inline: 'center'});
+			el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
 			const r = el.getBoundingClientRect();
 			Object.assign(m, {X: r.left + scrollX, Y: r.top + scrollY, EW: r.width, EH: r.height});
 		}

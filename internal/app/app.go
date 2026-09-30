@@ -94,9 +94,10 @@ func Setup(cwd, version string) (*App, error) {
 	if cfg.Browser.Enabled {
 		// Chrome starts on the first browser_* call, not here.
 		a.Browser = browsercdp.New(browsercdp.Options{
-			Headless:   cfg.Browser.Headless,
-			ChromePath: cfg.Browser.ChromePath,
-			ProfileDir: filepath.Join(cfg.DataDir, "browser-profile"),
+			Headless:    cfg.Browser.Headless,
+			ChromePath:  cfg.Browser.ChromePath,
+			ProfileDir:  filepath.Join(cfg.DataDir, "browser-profile"),
+			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
 		})
 		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
 	}

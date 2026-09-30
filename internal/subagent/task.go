@@ -407,8 +407,12 @@ func (t *Tool) offeredRoles() []Role {
 	return out
 }
 
+// browserPrefix starts the browser tools' names (browsercdp.Prefix).
+const browserPrefix = "browser_"
+
 // childTools is the parent's registry filtered by the definition, minus
-// the delegation tools (no nested or background delegation).
+// the delegation tools (no nested or background delegation) and, unless
+// named, the browser tools.
 // In a worktree the lsp tool is left out: the language servers index the
 // parent's tree, not the worktree.
 func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.Registry {
@@ -420,6 +424,11 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 			continue
 		}
 		if inWorktree && (spec.Name == "lsp" || spec.Name == "apply_code_action") {
+			continue
+		}
+		// All agents share one browser window, so a subagent gets the
+		// browser only when its definition names it.
+		if strings.HasPrefix(spec.Name, browserPrefix) && !def.namesBrowserTool(spec.Name) {
 			continue
 		}
 		if tl, ok := parent.Get(spec.Name); ok {

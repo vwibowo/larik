@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Browser uploads, downloads and waiting.** `browser_upload` chooses files for a file input or the chooser a button opens (file dialogs never open on screen); downloads are saved to `~/.local/share/larik/browser-downloads` and the model is told where; `browser_wait_for` waits for text to appear or disappear. See [Browser](/docs/web/#browser).
+
+### Changed
+
+- The browser checks every request a page makes, not just the URL it opens, so a redirect, an image or a clicked link can't reach a cloud metadata address.
+- After a click or keypress the browser waits for the page to stop changing before reading it, so results from single-page apps and slow scripts show up.
+- Subagents get the browser only when their definition lists `browser`, since all agents share one window.
+
+### Fixed
+
+- A click on an element covered by a cookie banner or dialog now fails and names what's in the way, instead of clicking the banner.
+- Clicks on pages with smooth scrolling landed in the wrong place.
+- Leaving a page that asks "leave this page?" hung until the timeout.
+- Pages that never finish loading (a hanging request) no longer make `browser_navigate` fail; it returns what has loaded.
+- A second larik session couldn't start the browser while the first had it open; it now uses a temporary profile and says so.
+- Console messages showed JSON escapes (`\n`, `\"`) instead of the text.
+
 ## v0.3.0
 
 <p class="release-meta"><time datetime="2026-09-30">September 30, 2026</time></p>

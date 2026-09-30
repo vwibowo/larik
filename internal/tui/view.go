@@ -674,6 +674,8 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Type this in the browser?"
 	case "browser_eval":
 		return "Run this script in the page?"
+	case "browser_upload":
+		return "Upload these files to the page?"
 	case permission.ExitPlanTool:
 		return "Ready to start on this plan?"
 	}
@@ -727,6 +729,13 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["text"])) + "\n" + m.st.dim.Render("into "+str(in["ref"])+" on the current page")
 	case "browser_eval":
 		return bold.Render(str(in["expression"]))
+	case "browser_upload":
+		paths, _ := in["paths"].([]any)
+		var names []string
+		for _, p := range paths {
+			names = append(names, m.shortPaths(str(p)))
+		}
+		return bold.Render(strings.Join(names, "\n")) + "\n" + m.st.dim.Render("sent to the website through "+str(in["ref"])+" on the current page")
 	case "apply_code_action":
 		line, _ := in["line"].(float64)
 		return bold.Render(str(in["title"])) + "\n" + m.st.dim.Render(fmt.Sprintf("from the language server, at %s:%d; it may change other files too", m.shortPaths(str(in["path"])), int(line)))
@@ -1099,6 +1108,19 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["expression"])
 	case "browser_history":
 		arg = str(in["direction"])
+	case "browser_upload":
+		paths, _ := in["paths"].([]any)
+		arg = str(in["ref"]) + " " + plural(len(paths), "file")
+	case "browser_wait_for":
+		switch {
+		case str(in["text"]) != "":
+			arg = strconv.Quote(str(in["text"]))
+		case str(in["text_gone"]) != "":
+			arg = "until " + strconv.Quote(str(in["text_gone"])) + " is gone"
+		default:
+			secs, _ := in["seconds"].(float64)
+			arg = fmt.Sprintf("%gs", secs)
+		}
 	case "browser_screenshot":
 		arg = "viewport"
 		if full, _ := in["full_page"].(bool); full {

@@ -60,8 +60,8 @@ classDiagram
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
-| `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_history`, `browser_tabs`, `browser_eval` | browsercdp | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
-| `browser_snapshot`, `browser_screenshot`, `browser_console` | browsercdp | yes | Read the active tab; `browser_screenshot` returns an image |
+| `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_upload`, `browser_history`, `browser_tabs`, `browser_eval` | browsercdp | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
+| `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console` | browsercdp | yes | Read the active tab; `browser_screenshot` returns an image |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics, code_actions (listing) |
 | `apply_code_action` | lsp | no | Applies a listed code action by title; treated like `edit` by rules and modes, each changed file checked against the project boundary and snapshotted for `/undo`; not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |

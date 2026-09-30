@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -300,5 +301,41 @@ func TestDefinitions(t *testing.T) {
 	}
 	if len(set.Warnings) != 1 || !strings.Contains(set.Warnings[0], "description is required") {
 		t.Errorf("warnings = %v", set.Warnings)
+	}
+}
+
+// namedTool is a do-nothing tool with a given name.
+type namedTool string
+
+func (n namedTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: string(n), Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (namedTool) ReadOnly() bool { return true }
+func (namedTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result {
+	return tools.Result{}
+}
+
+func TestChildToolsLeaveOutBrowserUnlessNamed(t *testing.T) {
+	parent := tools.NewRegistry(namedTool("read"), namedTool("browser_navigate"), namedTool("browser_click"))
+	names := func(def Definition) string {
+		var out []string
+		for _, s := range childTools(parent, def, false).Specs() {
+			out = append(out, s.Name)
+		}
+		slices.Sort(out)
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct {
+		tools []string
+		want  string
+	}{
+		{nil, "read"},
+		{[]string{"*"}, "read"},
+		{[]string{"read", "browser"}, "browser_click,browser_navigate,read"},
+		{[]string{"browser_navigate"}, "browser_navigate"},
+	} {
+		if got := names(Definition{Tools: c.tools}); got != c.want {
+			t.Errorf("tools %v: got %s, want %s", c.tools, got, c.want)
+		}
 	}
 }

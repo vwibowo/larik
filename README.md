@@ -307,7 +307,7 @@ For pages that need JavaScript, a sign-in or clicking through, Larik can drive a
 { "browser": { "enabled": true } }
 ```
 
-Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. Chrome starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions.
+Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. Chrome starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions. If another larik session already has that profile open, the browser starts with a temporary one instead, and the model is told its sign-ins aren't there.
 
 The model gets these tools:
 
@@ -320,16 +320,21 @@ The model gets these tools:
 | `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
 | `browser_select` | Picks options in a `<select>` |
 | `browser_press_key` | Presses Enter, Escape, Tab, arrow keys, PageDown… |
+| `browser_upload` | Chooses files (inside the working directory) for a file input, or for the chooser a button opens |
+| `browser_wait_for` | Waits for text to appear or disappear, or for a few seconds |
 | `browser_history` | Back and forward |
 | `browser_tabs` | Lists, opens, selects and closes tabs; tabs a page opens become active |
 | `browser_eval` | Runs a JavaScript expression in the page |
 | `browser_console` | Console messages, exceptions and dialogs since the last call |
 
-- `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`), only opens http(s), and refuses link-local and cloud-metadata addresses. Clicks and typing ask per call unless you allow the tool.
-- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot` and `browser_console` only read, so they never ask.
+- `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`) and only opens http(s). Every request the page makes (images, scripts, redirects, links clicked) is checked against link-local and cloud-metadata addresses and blocked, with a note in `browser_console`. Clicks and typing ask per call unless you allow the tool.
+- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot`, `browser_wait_for` and `browser_console` only read, so they never ask.
+- A click fails, naming what's in the way, when something such as a cookie banner covers the element, instead of clicking the banner.
+- Downloads are saved to `~/.local/share/larik/browser-downloads`, and the model is told each file's path. File inputs never open a system dialog; the model uses `browser_upload`.
+- Subagents get the browser only when their definition lists `browser` (or a `browser_*` tool), since all agents share one window.
 - Screenshots need a model that can see images. They're JPEGs at one pixel per CSS pixel (a 1280×900 viewport is about 1,500 tokens on Claude) and stay in the conversation until it's compacted.
 - Only personal files can enable the browser or choose its binary; a shared `.larik/settings.json` can only switch it off.
-- Alerts are accepted and confirm or prompt dialogs dismissed automatically, and noted in `browser_console`.
+- Alerts and "leave this page?" prompts are accepted, and confirm or prompt dialogs dismissed, automatically; each is noted in `browser_console`.
 
 ## Sandbox
 

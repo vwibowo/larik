@@ -77,4 +77,4 @@ Choices that cost something:
 - **Fixed tool set per context.** An MCP server approved mid-session needs `/clear` to appear, in exchange for cache stability.
 - **Prompt changes wait for a fresh context.** Edits to `AGENTS.md`/`CLAUDE.md` and new skills take effect after `/clear` or in a new session, not mid-conversation.
 - **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. The summary names the transcript file so the model can grep it for exact details, but it has to think to look.
-- **Unix only.** Larik builds for macOS and Linux, not Windows. On Linux without `bwrap` the sandbox is off and every command asks.
+- **No sandbox on Windows.** Larik runs on macOS, Linux and Windows, but the OS sandbox is macOS (Seatbelt) and Linux (bubblewrap) only. On Windows, and on Linux without `bwrap`, every shell command asks, and Windows needs Bash (for example Git Bash).

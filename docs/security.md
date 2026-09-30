@@ -89,7 +89,7 @@ Worktree subagents get a derived sandbox (`ForWorktree`) where the worktree repl
 - Responses are capped at 5 MB and 30 s.
 - The search backend receives every query, so it is honored only from personal files. A shared file can only disable web tools.
 - Plan mode asks for web tools instead of denying them.
-- `browser_navigate` applies the same address check before opening a URL, and only opens http(s). The check covers the URL the model asks for; Chrome follows redirects and loads subresources itself, so it is weaker than `web_fetch`'s. The browser is off unless a personal file enables it, and its profile keeps sign-ins, so treat allowing `browser_*` tools like handing over that Chrome profile. Plan mode allows only opening pages (after asking) and reading them.
+- `browser_navigate` applies the same address check before opening a URL, and only opens http(s). Every request a tab makes afterwards is intercepted (CDP `Fetch`) and checked too, host by host with the result cached, so a redirect, a subresource or a clicked link can't reach a metadata address either. Chrome resolves names itself, so a name that resolves differently for Chrome than for larik's check could still slip through; tabs a page opens are guarded from the moment larik adopts them. The browser is off unless a personal file enables it, and its profile keeps sign-ins, so treat allowing `browser_*` tools like handing over that Chrome profile. Plan mode allows only opening pages (after asking) and reading them.
 
 ## Server mode
 

@@ -6,17 +6,27 @@ package browsercdp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+
+	"larik/internal/web"
 )
 
 // Options configure the browser.
@@ -24,6 +34,9 @@ type Options struct {
 	Headless   bool
 	ChromePath string // empty: find Chrome or Chromium
 	ProfileDir string // persistent profile, so sign-ins survive restarts
+	// DownloadDir receives files the pages download; empty means a
+	// temporary directory.
+	DownloadDir string
 }
 
 const (
@@ -41,6 +54,36 @@ type Session struct {
 	cancelRoot  context.CancelFunc
 	tabs        []*tab
 	active      *tab
+
+	// tempProfile is a throwaway profile used when ProfileDir is taken by
+	// another Chrome; it's removed on shutdown.
+	tempProfile string
+	downloadDir string
+	downloads   map[string]string // download GUID -> suggested file name
+
+	// notes are told to the model with the next tool result: a fallback
+	// profile, finished downloads.
+	notesMu sync.Mutex
+	notes   []string
+
+	// hosts caches web.CheckHost per host for the request guard.
+	hostsMu sync.Mutex
+	hosts   map[string]error
+}
+
+func (s *Session) note(format string, args ...any) {
+	s.notesMu.Lock()
+	defer s.notesMu.Unlock()
+	s.notes = append(s.notes, fmt.Sprintf(format, args...))
+}
+
+// takeNotes returns and clears the pending notes.
+func (s *Session) takeNotes() []string {
+	s.notesMu.Lock()
+	defer s.notesMu.Unlock()
+	n := s.notes
+	s.notes = nil
+	return n
 }
 
 type tab struct {
@@ -51,6 +94,13 @@ type tab struct {
 	// navs counts navigations started, so an action can tell whether it
 	// set one off.
 	navs atomic.Int64
+	// parsed counts documents parsed (DOMContentLoaded), so Navigate can
+	// wait for the new page without waiting for its load event.
+	parsed atomic.Int64
+	// chooser receives file choosers the page opens while an upload waits
+	// (uploading); other choosers are noted and left unanswered.
+	chooser   chan *page.EventFileChooserOpened
+	uploading atomic.Bool
 
 	mu      sync.Mutex
 	console []string
@@ -84,6 +134,10 @@ func (s *Session) shutdown() {
 	}
 	s.root, s.cancelRoot, s.cancelAlloc = nil, nil, nil
 	s.tabs, s.active = nil, nil
+	if s.tempProfile != "" {
+		_ = os.RemoveAll(s.tempProfile)
+		s.tempProfile = ""
+	}
 }
 
 // start launches Chrome unless it's running. The contexts derive from
@@ -94,6 +148,35 @@ func (s *Session) start() error {
 	}
 	s.shutdown() // the window was closed; start over
 
+	profile := s.opts.ProfileDir
+	if profile != "" && profileInUse(profile) {
+		profile = ""
+	}
+	err := s.launch(profile)
+	if err != nil && s.opts.ProfileDir != "" && profile != "" {
+		// Chrome may have handed off to one already running on the
+		// profile (where the lock check can't tell, e.g. Windows).
+		profile = ""
+		err = s.launch("")
+	}
+	if err != nil {
+		return err
+	}
+	if s.opts.ProfileDir != "" && profile == "" {
+		s.note("The browser profile is in use by another Chrome (probably another larik session), so this browser uses a fresh temporary profile: sites you signed in to there aren't signed in here.")
+	}
+	return nil
+}
+
+// launch starts Chrome with profile, or a temporary profile when empty.
+func (s *Session) launch(profile string) error {
+	if profile == "" {
+		dir, err := os.MkdirTemp("", "larik-browser-")
+		if err != nil {
+			return err
+		}
+		s.tempProfile, profile = dir, dir
+	}
 	opts := []chromedp.ExecAllocatorOption{
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
@@ -109,35 +192,167 @@ func (s *Session) start() error {
 	if s.opts.ChromePath != "" {
 		opts = append(opts, chromedp.ExecPath(s.opts.ChromePath))
 	}
-	if s.opts.ProfileDir != "" {
-		opts = append(opts, chromedp.UserDataDir(s.opts.ProfileDir))
-	}
+	opts = append(opts, chromedp.UserDataDir(profile))
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	root, cancelRoot := chromedp.NewContext(allocCtx)
-	if err := chromedp.Run(root); err != nil {
+	t := &tab{ctx: root}
+	s.watch(t)
+	if err := chromedp.Run(root, s.guard()); err != nil {
 		cancelRoot()
 		cancelAlloc()
+		if s.tempProfile != "" {
+			_ = os.RemoveAll(s.tempProfile)
+			s.tempProfile = ""
+		}
 		return fmt.Errorf("starting Chrome: %w (install Google Chrome or Chromium, or set browser.chrome_path)", err)
 	}
 	s.root, s.cancelRoot, s.cancelAlloc = root, cancelRoot, cancelAlloc
-	t := &tab{id: chromedp.FromContext(root).Target.TargetID, ctx: root}
-	s.watch(t)
+	t.id = chromedp.FromContext(root).Target.TargetID
 	s.tabs, s.active = []*tab{t}, t
+	s.setupDownloads()
 	return nil
+}
+
+// profileInUse reports whether a running Chrome holds the profile. Chrome
+// marks it with a SingletonLock symlink to "host-pid" (macOS and Linux).
+func profileInUse(dir string) bool {
+	link, err := os.Readlink(filepath.Join(dir, "SingletonLock"))
+	if err != nil {
+		return false
+	}
+	i := strings.LastIndexByte(link, '-')
+	if i < 0 {
+		return false
+	}
+	var pid int
+	if _, err := fmt.Sscan(link[i+1:], &pid); err != nil || pid <= 0 {
+		return false
+	}
+	if host, _ := os.Hostname(); host != "" && link[:i] != host {
+		return false // locked from another machine (a shared home directory)
+	}
+	return processAlive(pid)
+}
+
+// guard turns on request interception for a tab, so every request (not
+// just the URL browser_navigate opens) passes the address check.
+// It also intercepts file choosers, which would otherwise open a native
+// dialog nobody can answer; browser_upload fills them instead.
+func (s *Session) guard() chromedp.Action {
+	return chromedp.Tasks{
+		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*", RequestStage: fetch.RequestStageRequest}}),
+		page.SetInterceptFileChooserDialog(true),
+	}
+}
+
+// checkRequest lets a paused request through unless its host is, or
+// resolves to, a blocked address. Results are cached per host.
+func (s *Session) checkRequest(t *tab, ev *fetch.EventRequestPaused) {
+	ctx := cdp.WithExecutor(t.ctx, chromedp.FromContext(t.ctx).Target)
+	u, err := url.Parse(ev.Request.URL)
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https" || u.Scheme == "ws" || u.Scheme == "wss") {
+		host := strings.ToLower(u.Hostname())
+		s.hostsMu.Lock()
+		if s.hosts == nil {
+			s.hosts = map[string]error{}
+		}
+		verdict, seen := s.hosts[host]
+		s.hostsMu.Unlock()
+		if !seen {
+			lookup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			verdict = web.CheckHost(lookup, host)
+			cancel()
+			s.hostsMu.Lock()
+			s.hosts[host] = verdict
+			s.hostsMu.Unlock()
+		}
+		if verdict != nil {
+			t.log(fmt.Sprintf("[blocked] %s (%v)", ev.Request.URL, verdict))
+			_ = fetch.FailRequest(ev.RequestID, network.ErrorReasonBlockedByClient).Do(ctx)
+			return
+		}
+	}
+	_ = fetch.ContinueRequest(ev.RequestID).Do(ctx)
+}
+
+// setupDownloads saves downloads into the download directory under their
+// own names and tells the model when each finishes.
+func (s *Session) setupDownloads() {
+	dir := s.opts.DownloadDir
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), fmt.Sprintf("larik-downloads-%d", os.Getpid()))
+	}
+	if os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	s.downloadDir, s.downloads = dir, map[string]string{}
+	var mu sync.Mutex
+	chromedp.ListenBrowser(s.root, func(ev any) {
+		switch ev := ev.(type) {
+		case *browser.EventDownloadWillBegin:
+			mu.Lock()
+			s.downloads[ev.GUID] = ev.SuggestedFilename
+			mu.Unlock()
+		case *browser.EventDownloadProgress:
+			if ev.State != browser.DownloadProgressStateCompleted && ev.State != browser.DownloadProgressStateCanceled {
+				return
+			}
+			mu.Lock()
+			name := s.downloads[ev.GUID]
+			delete(s.downloads, ev.GUID)
+			mu.Unlock()
+			if ev.State == browser.DownloadProgressStateCanceled {
+				s.note("A download (%s) was canceled.", name)
+				return
+			}
+			s.note("Downloaded %s to %s.", name, finishDownload(dir, ev.GUID, name))
+		}
+	})
+	ctx := cdp.WithExecutor(s.root, chromedp.FromContext(s.root).Browser)
+	_ = browser.SetDownloadBehavior(browser.SetDownloadBehaviorBehaviorAllowAndName).
+		WithDownloadPath(dir).WithEventsEnabled(true).Do(ctx)
+}
+
+// finishDownload renames a download (saved under its GUID) to its
+// suggested name, without overwriting an earlier file, and returns its path.
+func finishDownload(dir, guid, name string) string {
+	from := filepath.Join(dir, guid)
+	name = filepath.Base(name)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return from
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	to := filepath.Join(dir, name)
+	for i := 1; ; i++ {
+		if _, err := os.Lstat(to); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		to = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
+	}
+	if os.Rename(from, to) != nil {
+		return from
+	}
+	return to
 }
 
 // watch buffers a tab's console output and dismisses its dialogs, which
 // would otherwise block the page (and every later call) until answered.
 func (s *Session) watch(t *tab) {
+	t.chooser = make(chan *page.EventFileChooserOpened, 1)
 	chromedp.ListenTarget(t.ctx, func(ev any) {
 		switch ev := ev.(type) {
 		case *runtime.EventConsoleAPICalled:
 			var args []string
 			for _, a := range ev.Args {
-				if a.Value != nil {
-					args = append(args, strings.Trim(string(a.Value), `"`))
-				} else {
+				var str string
+				switch {
+				case a.Value == nil:
 					args = append(args, a.Description)
+				case json.Unmarshal(a.Value, &str) == nil:
+					args = append(args, str)
+				default:
+					args = append(args, string(a.Value))
 				}
 			}
 			t.log(fmt.Sprintf("[%s] %s", ev.Type, strings.Join(args, " ")))
@@ -149,9 +364,24 @@ func (s *Session) watch(t *tab) {
 			t.log("[exception] " + firstLine(msg))
 		case *page.EventFrameRequestedNavigation, *page.EventFrameStartedLoading:
 			t.navs.Add(1)
+		case *fetch.EventRequestPaused:
+			go s.checkRequest(t, ev)
+		case *page.EventDomContentEventFired:
+			t.parsed.Add(1)
+		case *page.EventFileChooserOpened:
+			if !t.uploading.Load() {
+				s.note("The page opened a file chooser. To choose files, call browser_upload with the ref you clicked.")
+				return
+			}
+			select {
+			case t.chooser <- ev:
+			default:
+			}
 		case *page.EventJavascriptDialogOpening:
-			// alerts are accepted; confirm/prompt/beforeunload are declined.
-			accept := ev.Type == page.DialogTypeAlert
+			// Alerts are accepted, and so is leaving a page (declining a
+			// beforeunload would cancel the navigation); confirm and prompt
+			// are declined.
+			accept := ev.Type == page.DialogTypeAlert || ev.Type == page.DialogTypeBeforeunload
 			t.log(fmt.Sprintf("[dialog %s] %s (%s automatically)", ev.Type, ev.Message, map[bool]string{true: "accepted", false: "dismissed"}[accept]))
 			go func() {
 				_ = chromedp.Run(t.ctx, page.HandleJavaScriptDialog(accept))
@@ -181,7 +411,7 @@ func (s *Session) newTab() (*tab, error) {
 	ctx, cancel := chromedp.NewContext(s.root)
 	t := &tab{ctx: ctx, cancel: cancel}
 	s.watch(t)
-	if err := chromedp.Run(ctx); err != nil {
+	if err := chromedp.Run(ctx, s.guard()); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -230,7 +460,7 @@ func (s *Session) syncTabs() {
 		ctx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
 		t := &tab{id: info.TargetID, ctx: ctx, cancel: cancel}
 		s.watch(t)
-		if chromedp.Run(ctx) != nil {
+		if chromedp.Run(ctx, s.guard()) != nil {
 			cancel()
 			continue
 		}
