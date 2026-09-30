@@ -183,6 +183,9 @@ type Registry struct {
 	// a tool whose description depends on config (the task tool's model
 	// roles) must not change it mid-context.
 	specs []llm.ToolSpec
+	// deferred tools are in byName but not in list or specs: the model
+	// reaches them through tool_search and call_tool (see deferred.go).
+	deferred []Tool
 }
 
 func NewRegistry(ts ...Tool) *Registry {
@@ -198,7 +201,12 @@ func NewRegistry(ts ...Tool) *Registry {
 
 // With returns a new registry with ts appended.
 func (r *Registry) With(ts ...Tool) *Registry {
-	return NewRegistry(append(append([]Tool(nil), r.list...), ts...)...)
+	nr := NewRegistry(append(append([]Tool(nil), r.list...), ts...)...)
+	nr.deferred = r.deferred
+	for _, t := range r.deferred {
+		nr.byName[t.Spec().Name] = t
+	}
+	return nr
 }
 
 // Builtin returns the built-in tools.

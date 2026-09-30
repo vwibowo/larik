@@ -432,11 +432,23 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 		if strings.HasPrefix(spec.Name, browserPrefix) && !def.namesBrowserTool(spec.Name) {
 			continue
 		}
+		// Added below, when the child may use any deferred tool.
+		if spec.Name == tools.ToolSearchName || spec.Name == tools.CallToolName {
+			continue
+		}
 		if tl, ok := parent.Get(spec.Name); ok {
 			out = append(out, tl)
 		}
 	}
-	return tools.NewRegistry(out...)
+	// Deferred tools (a large MCP set) follow the definition too; with any
+	// allowed, the child gets tool_search and call_tool over just those.
+	var deferred []tools.Tool
+	for _, tl := range parent.Deferred() {
+		if def.toolAllowed(tl.Spec().Name) {
+			deferred = append(deferred, tl)
+		}
+	}
+	return tools.NewRegistry(out...).Defer(deferred...)
 }
 
 // lastWords quotes a stopped subagent's last message, if it had one.

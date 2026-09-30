@@ -514,3 +514,13 @@ func TestFooterShowsSandboxEffortBarAndBudget(t *testing.T) {
 		t.Errorf("cost below the warn threshold should be plain: %q", low)
 	}
 }
+
+func TestToolTitleShowsTheToolBehindCallTool(t *testing.T) {
+	got := toolTitle(tools.CallToolName, []byte(`{"tool":"mcp__github__create_issue","arguments":{"title":"Bug"}}`), nil)
+	if !strings.Contains(got, "github › create_issue") || strings.Contains(got, "call_tool") {
+		t.Errorf("a deferred tool should be titled as itself: %s", got)
+	}
+	if got := toolTitle(tools.ToolSearchName, []byte(`{"query":"create issue"}`), nil); !strings.Contains(got, "create issue") {
+		t.Errorf("tool_search title: %s", got)
+	}
+}

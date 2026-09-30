@@ -1035,6 +1035,11 @@ func (m *model) diff(s string, maxLines int) string {
 func toolTitle(name string, input []byte, shorten func(string) string) string {
 	var in map[string]any
 	_ = json.Unmarshal(input, &in)
+	// A deferred tool run through call_tool is shown as that tool.
+	if inner := str(in["tool"]); name == tools.CallToolName && inner != "" {
+		args, _ := json.Marshal(in["arguments"])
+		return toolTitle(inner, args, shorten)
+	}
 	arg := ""
 	switch name {
 	case "bash":
@@ -1112,6 +1117,8 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["expression"])
 	case "memory":
 		arg = strings.TrimSpace(str(in["action"]) + " " + str(in["name"]))
+	case tools.ToolSearchName:
+		arg = str(in["query"])
 	case "browser_history":
 		arg = str(in["direction"])
 	case "browser_upload":

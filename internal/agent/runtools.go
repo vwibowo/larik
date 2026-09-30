@@ -17,6 +17,9 @@ type approved struct {
 	idx  int
 	use  llm.Block
 	tool tools.Tool
+	// name is the tool the model called, for the result block: it differs
+	// from use.Name when the call went through call_tool.
+	name string
 }
 
 // runTools checks permissions for every call (in order, since asking is
@@ -29,8 +32,22 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 	registry := a.Tools()
 
 	for i, use := range uses {
-		res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: use.Name}
+		// The result must carry the name the model called, which providers
+		// match it by, even when call_tool stands for another tool.
+		called := use.Name
+		res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: called}
 		tool, ok := registry.Get(use.Name)
+		// call_tool runs a deferred tool. From here on the call is that
+		// tool's: permission rules, hooks, auto mode and the events all
+		// see its name and arguments, not the wrapper's.
+		var unwrapErr error
+		if ok && use.Name == tools.CallToolName && use.Input != nil && ctx.Err() == nil {
+			var inner tools.Tool
+			var args json.RawMessage
+			if inner, args, unwrapErr = registry.ResolveCall(use.Input); unwrapErr == nil {
+				tool, use.Name, use.Input = inner, inner.Spec().Name, args
+			}
+		}
 		switch {
 		case ctx.Err() != nil:
 			res.Content, res.IsError = "interrupted by user", true
@@ -38,11 +55,13 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 			res.Content, res.IsError = "unknown tool: "+use.Name, true
 		case use.Input == nil:
 			res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
+		case unwrapErr != nil:
+			res.Content, res.IsError = unwrapErr.Error(), true
 		default:
 			allow, reason, input := a.authorize(ctx, use, tool, emit)
 			if allow {
 				use.Input = input
-				queue = append(queue, approved{i, use, tool})
+				queue = append(queue, approved{i, use, tool, called})
 				continue
 			}
 			res.Content, res.IsError = reason, true
@@ -63,7 +82,9 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 			wg.Add(1)
 			go func(job approved) {
 				defer wg.Done()
-				results[job.idx] = a.execute(ctx, job, emit)
+				res := a.execute(ctx, job, emit)
+				res.Name = job.name
+				results[job.idx] = res
 			}(job)
 		}
 		wg.Wait()

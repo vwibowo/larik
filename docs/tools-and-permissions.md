@@ -67,6 +67,7 @@ classDiagram
 | `apply_code_action` | lsp | no | Applies a listed code action by title; treated like `edit` by rules and modes, each changed file checked against the project boundary and snapshotted for `/undo`; not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
+| `tool_search`, `call_tool` | tools | `tool_search` yes; `call_tool` as the tool it runs | Present only when MCP tools are deferred (a large set). `call_tool` is unwrapped before the permission check, so rules name the tool it runs; see [extensibility](extensibility.md#mcp-servers) |
 | `list_mcp_resources`, `read_mcp_resource` | mcp | yes | Offered when a connected server has resources; reads go to already-approved servers |
 | `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
 | `exit_plan_mode` | agent | yes | Presents a plan. `Decide` always asks for it in plan mode (and allows it elsewhere); the prompt is the approval, and the reply's `Mode` (accept-edits or default) is applied by `authorize`. An empty plan is refused before asking. Not offered to subagents |

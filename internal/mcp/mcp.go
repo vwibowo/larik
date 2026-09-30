@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -417,6 +418,7 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 	for _, t := range all {
 		seen[t.Spec().Name] = true
 	}
+	var kept []tools.Tool
 	for _, t := range mcpTools {
 		name := t.Spec().Name
 		if seen[name] {
@@ -424,14 +426,49 @@ func (m *Manager) Registry(ctx context.Context, notify func(string)) *tools.Regi
 			continue
 		}
 		seen[name] = true
-		all = append(all, t)
+		kept = append(kept, t)
 	}
 	// Resources are read through two generic tools, offered only when a
 	// connected server has any.
+	var resources []tools.Tool
 	if m.anyResources() {
-		all = append(all, ListResourcesTool{m}, ReadResourceTool{m})
+		resources = []tools.Tool{ListResourcesTool{m}, ReadResourceTool{m}}
 	}
-	return tools.NewRegistry(all...)
+	// A large tool set is loaded on demand instead of being sent with
+	// every request (see tools.Registry.Defer).
+	if deferTools(m.cfg.ToolSearch, kept) {
+		notify(fmt.Sprintf("%d MCP tools are loaded on demand with tool_search, to keep the prompt small", len(kept)))
+		return tools.NewRegistry(append(all, resources...)...).Defer(kept...)
+	}
+	return tools.NewRegistry(append(append(all, kept...), resources...)...)
+}
+
+// In "auto", MCP tools are deferred past either of these: their count, or
+// the size of their definitions (names, descriptions and schemas; roughly
+// four characters to a token).
+const (
+	DeferCount = 30
+	DeferChars = 24_000
+)
+
+// deferTools reports whether the MCP tools should be loaded on demand:
+// always with "on", never with "off", and by size otherwise.
+func deferTools(setting string, ts []tools.Tool) bool {
+	switch strings.ToLower(strings.TrimSpace(setting)) {
+	case "on", "always", "true":
+		return len(ts) > 0
+	case "off", "never", "false":
+		return false
+	}
+	if len(ts) > DeferCount {
+		return true
+	}
+	size := 0
+	for _, t := range ts {
+		spec := t.Spec()
+		size += len(spec.Name) + len(spec.Description) + len(spec.Schema)
+	}
+	return size > DeferChars
 }
 
 func (m *Manager) anyResources() bool {

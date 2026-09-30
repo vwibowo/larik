@@ -120,6 +120,11 @@ type Config struct {
 	// receives every query) is honored only from personal files.
 	Web WebConfig `json:"web,omitempty"`
 
+	// ToolSearch decides whether MCP tools are loaded on demand through
+	// tool_search instead of being sent with every request: "auto" (the
+	// default: when there are many), "on" or "off".
+	ToolSearch string `json:"tool_search,omitempty"`
+
 	// Memory configures the notes Larik keeps across sessions. Shared
 	// files may only switch it off.
 	Memory MemoryConfig `json:"memory,omitempty"`
@@ -313,6 +318,9 @@ func (c *Config) merge(path string, trusted bool) error {
 		if o.Web.Search.Disabled {
 			c.Web.Search.Disabled = true
 		}
+	}
+	if trusted && o.ToolSearch != "" {
+		c.ToolSearch = o.ToolSearch
 	}
 	if o.Memory.Enabled != nil && (trusted || !*o.Memory.Enabled) {
 		c.Memory.Enabled = o.Memory.Enabled

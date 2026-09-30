@@ -407,6 +407,20 @@ func TestSharedSettingsCannotWidenTrust(t *testing.T) {
 	}
 }
 
+func TestToolSearchSetting(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"tool_search":"off"}`)
+	if cfg, _ := Load(cwd); cfg.ToolSearch != "" {
+		t.Errorf("shared settings set tool_search: %q", cfg.ToolSearch)
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"tool_search":"on"}`)
+	if cfg, _ := Load(cwd); cfg.ToolSearch != "on" {
+		t.Errorf("personal settings: %q", cfg.ToolSearch)
+	}
+}
+
 func TestMemorySetting(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()

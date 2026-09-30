@@ -340,3 +340,32 @@ func TestChildToolsLeaveOutBrowserUnlessNamed(t *testing.T) {
 		}
 	}
 }
+
+func TestChildToolsCarryAllowedDeferredTools(t *testing.T) {
+	parent := tools.NewRegistry(namedTool("read")).Defer(namedTool("mcp__github__create_issue"), namedTool("mcp__slack__send"))
+	specs := func(def Definition) (string, int) {
+		reg := childTools(parent, def, false)
+		var out []string
+		for _, s := range reg.Specs() {
+			out = append(out, s.Name)
+		}
+		slices.Sort(out)
+		return strings.Join(out, ","), len(reg.Deferred())
+	}
+	// No tool list: everything, still deferred.
+	if got, n := specs(Definition{}); got != "call_tool,read,tool_search" || n != 2 {
+		t.Errorf("default definition: %s, %d deferred", got, n)
+	}
+	// Only one server allowed: just its tools are searchable.
+	reg := childTools(parent, Definition{Tools: []string{"read", "mcp__github"}}, false)
+	if len(reg.Deferred()) != 1 || !reg.IsDeferred("mcp__github__create_issue") {
+		t.Errorf("a definition naming one server: %d deferred", len(reg.Deferred()))
+	}
+	if _, ok := reg.Get("mcp__slack__send"); ok {
+		t.Error("a tool the definition doesn't allow must not be reachable through call_tool")
+	}
+	// No MCP tools allowed: no search tools either.
+	if got, n := specs(Definition{Tools: []string{"read"}}); got != "read" || n != 0 {
+		t.Errorf("a definition without MCP tools: %s, %d deferred", got, n)
+	}
+}
