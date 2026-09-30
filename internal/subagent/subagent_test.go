@@ -315,7 +315,7 @@ func (namedTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result 
 	return tools.Result{}
 }
 
-func TestChildToolsLeaveOutBrowserUnlessNamed(t *testing.T) {
+func TestChildToolsAndTheBrowser(t *testing.T) {
 	// memory is the main agent's alone, whatever the definition lists.
 	parent := tools.NewRegistry(namedTool("read"), namedTool("browser_navigate"), namedTool("browser_click"), namedTool("memory"))
 	names := func(def Definition) string {
@@ -330,10 +330,13 @@ func TestChildToolsLeaveOutBrowserUnlessNamed(t *testing.T) {
 		tools []string
 		want  string
 	}{
-		{nil, "read"},
-		{[]string{"*"}, "read"},
+		// Each agent has its own browser tabs, so a subagent gets the
+		// browser like any other tool.
+		{nil, "browser_click,browser_navigate,read"},
+		{[]string{"*"}, "browser_click,browser_navigate,read"},
 		{[]string{"read", "browser"}, "browser_click,browser_navigate,read"},
 		{[]string{"browser_navigate"}, "browser_navigate"},
+		{[]string{"read"}, "read"},
 	} {
 		if got := names(Definition{Tools: c.tools}); got != c.want {
 			t.Errorf("tools %v: got %s, want %s", c.tools, got, c.want)
@@ -367,5 +370,36 @@ func TestChildToolsCarryAllowedDeferredTools(t *testing.T) {
 	// No MCP tools allowed: no search tools either.
 	if got, n := specs(Definition{Tools: []string{"read"}}); got != "read" || n != 0 {
 		t.Errorf("a definition without MCP tools: %s, %d deferred", got, n)
+	}
+}
+
+// A finished subagent is reported with its owner id, so what it held (its
+// browser tabs) can be released.
+func TestChildDoneIsReported(t *testing.T) {
+	fp := &funcProvider{}
+	fp.respond = func(req llm.Request) llm.Message {
+		if isChild(req) {
+			return text("child done")
+		}
+		if res := toolResults(req); len(res) > 0 {
+			return text("parent done")
+		}
+		return llm.Message{Blocks: []llm.Block{
+			use("p1", "task", `{"description":"one","prompt":"do one","subagent_type":"explore"}`),
+			use("p2", "task", `{"description":"two","prompt":"do two","subagent_type":"explore"}`),
+		}}
+	}
+	a, _, _ := newParent(t, fp, permission.ModeDefault)
+	task, _ := a.Tools().Get(ToolName)
+	var mu sync.Mutex
+	var done []string
+	task.(*Tool).OnChildDone = func(owner string) {
+		mu.Lock()
+		done = append(done, owner)
+		mu.Unlock()
+	}
+	drain(a.Run(context.Background(), "delegate"), true)
+	if len(done) != 2 || done[0] == "" || done[1] == "" || done[0] == done[1] {
+		t.Fatalf("each finished subagent should be reported once, with its own id: %q", done)
 	}
 }

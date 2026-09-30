@@ -92,6 +92,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	}
 	child := New(opts)
 	child.parent = a
+	child.owner = llm.NewCallID(label + "-")
 	child.tokenSaver = a.tokenSaver
 	child.env.TokenSaver = a.tokenSaver
 	child.env.RawOutputDir = a.env.RawOutputDir
@@ -145,3 +146,7 @@ func (a *Agent) SpendByModel() []ModelSpend {
 	})
 	return out
 }
+
+// Owner identifies this agent to tools that keep per-agent state: "" for
+// the main agent, a unique id for a subagent.
+func (a *Agent) Owner() string { return a.owner }

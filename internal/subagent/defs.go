@@ -173,17 +173,6 @@ func (s *Set) List() []Definition {
 	return out
 }
 
-// namesBrowserTool reports whether a definition's tool list names a browser
-// tool itself, or "browser" for all of them; "*" and no list don't count.
-func (d Definition) namesBrowserTool(name string) bool {
-	for _, t := range d.Tools {
-		if strings.EqualFold(t, "browser") || strings.EqualFold(t, name) {
-			return true
-		}
-	}
-	return false
-}
-
 // toolAllowed reports whether a definition's tool list permits name.
 // Matching is case-insensitive so Claude Code names (Read, Grep) work;
 // "mcp__server" allows all of a server's tools; "*" allows everything.

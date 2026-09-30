@@ -330,7 +330,7 @@ The model gets these tools:
 | Tool | Does |
 | --- | --- |
 | `browser_navigate` | Opens a URL and returns a snapshot of the page |
-| `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12` |
+| `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12`. A long page comes in parts (`start`), and `ref` reads just one form, table or frame |
 | `browser_screenshot` | An image of the viewport, the full page or one element; `labels` draws each ref on it |
 | `browser_click` | Clicks (or hovers) an element by ref with a real mouse event |
 | `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
@@ -342,12 +342,14 @@ The model gets these tools:
 | `browser_tabs` | Lists, opens, selects and closes tabs; tabs a page opens become active |
 | `browser_eval` | Runs a JavaScript expression in the page |
 | `browser_console` | Console messages, exceptions and dialogs since the last call |
+| `browser_network` | The requests the page made: method, URL, status and time, with failures marked; and a response's body |
 
 - `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`) and only opens http(s). Every request the page makes (images, scripts, redirects, links clicked) is checked against link-local and cloud-metadata addresses and blocked, with a note in `browser_console`. Clicks and typing ask per call unless you allow the tool.
-- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot`, `browser_wait_for` and `browser_console` only read, so they never ask.
+- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console` and `browser_network` only read, so they never ask.
 - A click fails, naming what's in the way, when something such as a cookie banner covers the element, instead of clicking the banner.
 - Downloads are saved to `~/.local/share/larik/browser-downloads`, and the model is told each file's path. File inputs never open a system dialog; the model uses `browser_upload`.
-- Subagents get the browser only when their definition lists `browser` (or a `browser_*` tool), since all agents share one window.
+- **Frames:** the contents of an iframe from the same site are part of the snapshot, and you can click and type inside it. A frame from another site is listed with its URL only; the browser doesn't let a page read it.
+- **Subagents** have their own tabs in the same window, so several can browse at once without navigating each other's pages. Their tabs close when they finish. To keep the browser from a subagent, list its tools without `browser`.
 - Screenshots need a model that can see images. They're JPEGs at one pixel per CSS pixel (a 1280×900 viewport is about 1,500 tokens on Claude) and stay in the conversation until it's compacted.
 - Only personal files can enable the browser or choose its binary; a shared `.larik/settings.json` can only switch it off.
 - Alerts and "leave this page?" prompts are accepted, and confirm or prompt dialogs dismissed, automatically; each is noted in `browser_console`.

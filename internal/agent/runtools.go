@@ -101,7 +101,7 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 		return res
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
-	out := job.tool.Run(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.env, use.Input)
+	out := job.tool.Run(tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner), a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: out.Content, Display: out.Display, IsError: out.IsError})
 

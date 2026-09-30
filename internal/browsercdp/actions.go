@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,23 +30,28 @@ type Snapshot struct {
 	Title string `json:"title"`
 	Text  string `json:"text"`
 	Refs  int    `json:"refs"`
+	Error string `json:"error"`
 }
 
-// Snapshot outlines the active tab, waiting for a navigation in progress
-// to finish first.
-func (s *Session) Snapshot(ctx context.Context) (Snapshot, error) {
+// Snapshot outlines the active tab, or with ref just that element's
+// subtree, waiting for a navigation in progress to finish first.
+func (s *Session) Snapshot(ctx context.Context, ref string) (Snapshot, error) {
 	var snap Snapshot
 	var err error
+	js := snapshotJS + "(" + strconv.Quote(ref) + ")"
 	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
 	defer cancel()
 	// A click can start a navigation that destroys the page mid-evaluation;
 	// retry until the new document is there.
 	for attempt := 0; attempt < 20; attempt++ {
 		s.settle(ctx)
-		if err = s.run(ctx, chromedp.Evaluate(snapshotJS, &snap)); err == nil || ctx.Err() != nil {
+		if err = s.run(ctx, chromedp.Evaluate(js, &snap)); err == nil || ctx.Err() != nil {
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+	if err == nil && snap.Error == "noref" {
+		return snap, errNoRef(ref)
 	}
 	return snap, err
 }
@@ -121,7 +127,7 @@ func (s *Session) Navigate(ctx context.Context, rawURL string) (loading bool, er
 	if err != nil {
 		return false, err
 	}
-	t, err := s.Tab()
+	t, err := s.Tab(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -191,10 +197,26 @@ func (s *Session) point(ctx context.Context, ref string) (x, y float64, err erro
 		if (!el) return {Found: false};
 		el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
 		const b = el.getBoundingClientRect();
-		const x = b.left + b.width / 2, y = b.top + b.height / 2;
-		let hit = document.elementFromPoint(x, y);
-		while (hit && hit.shadowRoot) {
-			const inner = hit.shadowRoot.elementFromPoint(x, y);
+		// An element in an iframe is placed relative to that frame.
+		const off = window.__larikOffset(el);
+		const x = b.left + b.width / 2 + off.x, y = b.top + b.height / 2 + off.y;
+		// What is on top at that point, looking into shadow roots and
+		// same-origin frames; lx, ly are the point in the current frame.
+		let hit = document.elementFromPoint(x, y), lx = x, ly = y;
+		for (let i = 0; hit && i < 20; i++) {
+			let inner = null;
+			if (hit.shadowRoot) {
+				inner = hit.shadowRoot.elementFromPoint(lx, ly);
+			} else if (hit.tagName === 'IFRAME' || hit.tagName === 'FRAME') {
+				let doc = null;
+				try { doc = hit.contentDocument; } catch (e) {}
+				if (doc) {
+					const r = hit.getBoundingClientRect();
+					lx -= r.left + hit.clientLeft;
+					ly -= r.top + hit.clientTop;
+					inner = doc.elementFromPoint(lx, ly);
+				}
+			}
 			if (!inner || inner === hit) break;
 			hit = inner;
 		}
@@ -255,11 +277,14 @@ func (s *Session) Type(ctx context.Context, ref, text string, appendText, submit
 		const el = window.__larikFind && window.__larikFind(%q);
 		if (!el) return false;
 		el.scrollIntoView({block: 'center', behavior: 'instant'});
+		// Keys go to the focused frame's focused element.
+		const doc = el.ownerDocument;
+		if (doc.defaultView !== window) doc.defaultView.focus();
 		el.focus();
 		if (!%t) {
 			if (el.isContentEditable) {
-				document.getSelection().selectAllChildren(el);
-				document.execCommand('delete');
+				doc.getSelection().selectAllChildren(el);
+				doc.execCommand('delete');
 			} else if ('value' in el) {
 				// The native setter, so frameworks that track value notice.
 				const proto = Object.getPrototypeOf(el);
@@ -410,7 +435,7 @@ func (s *Session) Upload(ctx context.Context, ref string, paths []string) error 
 		return s.act(ctx, dom.SetFileInputFiles(paths).WithObjectID(obj.ObjectID))
 	}
 
-	t, err := s.Tab()
+	t, err := s.Tab(ctx)
 	if err != nil {
 		return err
 	}
@@ -465,11 +490,17 @@ const labelsJS = `(() => {
 	const seen = new Set();
 	const all = (root) => {
 		for (const el of root.querySelectorAll('[data-larik-ref]')) seen.add(el);
-		for (const el of root.querySelectorAll('*')) if (el.shadowRoot) all(el.shadowRoot);
+		for (const el of root.querySelectorAll('*')) {
+			if (el.shadowRoot) all(el.shadowRoot);
+			if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+				try { if (el.contentDocument) all(el.contentDocument); } catch (e) {}
+			}
+		}
 	};
 	all(document);
 	for (const el of seen) {
-		const r = el.getBoundingClientRect();
+		const b = el.getBoundingClientRect(), off = window.__larikOffset(el);
+		const r = {left: b.left + off.x, top: b.top + off.y, width: b.width, height: b.height, bottom: b.bottom + off.y};
 		if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight) continue;
 		const tag = document.createElement('div');
 		tag.textContent = el.getAttribute('data-larik-ref');
@@ -491,7 +522,7 @@ const labelsJS = `(() => {
 func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
 	if o.Labels {
 		// Labels need refs; a snapshot assigns them (and settles the page).
-		if _, err := s.Snapshot(ctx); err != nil {
+		if _, err := s.Snapshot(ctx, ""); err != nil {
 			return Shot{}, err
 		}
 		if err := s.run(ctx, chromedp.Evaluate(labelsJS, nil)); err != nil {
@@ -520,7 +551,8 @@ func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
 			if (!el) return {Found: false};
 			el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
 			const r = el.getBoundingClientRect();
-			Object.assign(m, {X: r.left + scrollX, Y: r.top + scrollY, EW: r.width, EH: r.height});
+			const off = window.__larikOffset(el);
+			Object.assign(m, {X: r.left + off.x + scrollX, Y: r.top + off.y + scrollY, EW: r.width, EH: r.height});
 		}
 		return m;
 	})()`, o.Ref)
@@ -549,7 +581,9 @@ func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
 		clip = &page.Viewport{X: 0, Y: 0, Width: m.PW, Height: h}
 	}
 	clip.Scale = 1 / m.DPR
-	err := s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+	// A tab that isn't the visible one may never paint, and the capture
+	// would wait for it: bring this agent's tab to the front first.
+	err := s.run(ctx, page.BringToFront(), chromedp.ActionFunc(func(ctx context.Context) (err error) {
 		shot.JPEG, err = page.CaptureScreenshot().
 			WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(80).
 			WithClip(clip).WithCaptureBeyondViewport(o.FullPage).

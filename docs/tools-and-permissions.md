@@ -62,7 +62,7 @@ classDiagram
 | `memory` | memory | no | Saves, reads, lists and deletes notes kept across sessions; allowed in every mode (deny rules aside); see [state](state-and-persistence.md#memory). Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_upload`, `browser_history`, `browser_tabs`, `browser_eval` | browsercdp | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
-| `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console` | browsercdp | yes | Read the active tab; `browser_screenshot` returns an image |
+| `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console`, `browser_network` | browsercdp | yes | Read the active tab; `browser_screenshot` returns an image |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics, code_actions (listing) |
 | `apply_code_action` | lsp | no | Applies a listed code action by title; treated like `edit` by rules and modes, each changed file checked against the project boundary and snapshotted for `/undo`; not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |

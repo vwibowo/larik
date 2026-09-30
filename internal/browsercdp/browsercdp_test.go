@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,6 +73,19 @@ var extraPages = map[string]string{
 	"/upload": `<!doctype html><title>Upload</title>
 <label>Resume <input type="file" id="f" onchange="document.title = [...this.files].map(f => f.name).join(',')"></label>
 <button onclick="document.getElementById('f').click()">Choose resume</button>`,
+	// A link that opens a new tab.
+	"/popup": `<!doctype html><title>Opener</title><a href="/other" target="_blank">Open other</a>`,
+	// A long page with a form in the middle.
+	"/long": `<!doctype html><title>Long</title><script>
+for (let i = 0; i < 700; i++) document.write('<p>Paragraph number ' + i + ' has some words in it to take up room.</p>');
+</script><form><label for="q">Query</label><input id="q" name="q"><button>Find</button></form><table><tr><td>cell one</td><td>cell two</td></tr></table>`,
+	// The page inside the frames below.
+	"/inner": `<!doctype html><title>Inner</title><p>Inside the frame</p><input aria-label="Frame field">
+<button onclick="top.document.title = 'Inner clicked: ' + document.querySelector('input').value">Inner button</button>`,
+	"/api-page": `<!doctype html><title>API</title><p id="s">loading</p><script>
+Promise.allSettled([fetch('/data.json').then(r => r.json()), fetch('/missing'), fetch('http://169.254.169.254/x')])
+  .then(() => { document.getElementById('s').textContent = 'loaded'; });
+</script>`,
 	// Content that appears later, as after a slow search.
 	"/slow": `<!doctype html><title>Slow</title><h1 id="h">Searching</h1>
 <button onclick="setTimeout(() => { document.getElementById('h').textContent = 'Quick result' }, 150); setTimeout(() => { document.body.append('Results ready') }, 1200)">Search</button>`,
@@ -116,6 +130,11 @@ func newSession(t *testing.T) (*Session, *httptest.Server) {
 			case <-hang:
 			case <-r.Context().Done():
 			}
+		case "/missing":
+			http.Error(w, "nothing here", http.StatusNotFound)
+		case "/data.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"items":[1,2,3]}`))
 		case "/file":
 			w.Header().Set("Content-Type", "text/plain")
 			w.Header().Set("Content-Disposition", `attachment; filename="report.txt"`)
@@ -523,7 +542,7 @@ func TestProfileInUse(t *testing.T) {
 	_ = os.Symlink(host+"-"+strconv.Itoa(os.Getpid()), lock)
 	s := New(Options{Headless: true, ChromePath: path, ProfileDir: dir})
 	defer s.Close()
-	if _, err := s.Tab(); err != nil {
+	if _, err := s.Tab(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if notes := s.takeNotes(); len(notes) != 1 || !strings.Contains(notes[0], "temporary profile") {
@@ -531,5 +550,198 @@ func TestProfileInUse(t *testing.T) {
 	}
 	if s.tempProfile == "" {
 		t.Error("no temporary profile")
+	}
+}
+
+func as(owner string) context.Context { return tools.WithOwner(context.Background(), owner) }
+
+func TestAgentsHaveTheirOwnTabs(t *testing.T) {
+	s, srv := newSession(t)
+	main, a, b := context.Background(), as("worker-a"), as("worker-b")
+	nav := func(ctx context.Context, path string) string {
+		t.Helper()
+		r := NavigateTool{s}.Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+path+`"}`))
+		if r.IsError {
+			t.Fatal(r.Content)
+		}
+		return r.Content
+	}
+	nav(main, "/")
+	nav(a, "/popup")
+	nav(b, "/visual")
+	// Each agent still sees the page it opened.
+	for ctx, want := range map[context.Context]string{main: "Title: Test form", a: "Title: Opener", b: "Title: Visual"} {
+		if r := (SnapshotTool{s}).Run(ctx, nil, nil); !strings.Contains(r.Content, want) {
+			t.Errorf("an agent lost its page, want %q:\n%s", want, r.Content)
+		}
+	}
+	for ctx, want := range map[context.Context]string{main: "* 0. Test form", a: "* 0. Opener", b: "* 0. Visual"} {
+		if r := (TabsTool{s}).Run(ctx, nil, json.RawMessage(`{"action":"list"}`)); !strings.HasPrefix(r.Content, want) || strings.Contains(r.Content, "\n") {
+			t.Errorf("an agent should list only its own tab, want %q: %q", want, r.Content)
+		}
+	}
+
+	// Working at the same time doesn't mix them up.
+	var wg sync.WaitGroup
+	for ctx, path := range map[context.Context]string{a: "/other", b: "/slow", main: "/console"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 3; i++ {
+				NavigateTool{s}.Run(ctx, nil, json.RawMessage(`{"url":"`+srv.URL+path+`"}`))
+			}
+		}()
+	}
+	wg.Wait()
+	for ctx, want := range map[context.Context]string{main: "Title: Console", a: "Title: Other", b: "Title: Slow"} {
+		if r := (SnapshotTool{s}).Run(ctx, nil, nil); !strings.Contains(r.Content, want) {
+			t.Errorf("after parallel navigation, want %q:\n%s", want, r.Content)
+		}
+	}
+
+	// A tab a page opens belongs to the agent whose page opened it.
+	snap := nav(a, "/popup")
+	if r := (ClickTool{s}).Run(a, nil, json.RawMessage(`{"ref":"`+refOf(t, snap, `link "Open other"`)+`"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	var list string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if list = (TabsTool{s}).Run(a, nil, json.RawMessage(`{"action":"list"}`)).Content; strings.Contains(list, "* 1. Other") {
+			break
+		}
+	}
+	if !strings.Contains(list, "0. Opener") || strings.Contains(list, "* 0. Opener") || !strings.Contains(list, "* 1. Other") {
+		t.Errorf("the new tab should be the opening agent's, and active: %q", list)
+	}
+	if r := (TabsTool{s}).Run(main, nil, json.RawMessage(`{"action":"list"}`)); strings.Contains(r.Content, "Other") || strings.Count(r.Content, "\n") != 0 {
+		t.Errorf("the main agent got another agent's new tab: %q", r.Content)
+	}
+
+	// A finished subagent's tabs are closed; the others are untouched.
+	s.Release("worker-a")
+	s.mu.Lock()
+	left := len(s.tabs)
+	s.mu.Unlock()
+	if left != 2 {
+		t.Errorf("after releasing one agent: %d tabs, want 2", left)
+	}
+	if r := (SnapshotTool{s}).Run(b, nil, nil); !strings.Contains(r.Content, "Title: Slow") {
+		t.Errorf("another agent's tab was disturbed: %s", r.Content)
+	}
+	s.Release("") // the main agent's tabs are never released
+	if r := (SnapshotTool{s}).Run(main, nil, nil); !strings.Contains(r.Content, "Title: Console") {
+		t.Errorf("the main tab should remain: %s", r.Content)
+	}
+}
+
+func TestSnapshotPartsAndScope(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	first := open(t, s, srv, "/long")
+	m := regexp.MustCompile(`\[showing characters 0-(\d+) of (\d+); call browser_snapshot with start=(\d+)`).FindStringSubmatch(first)
+	if m == nil || m[1] != m[3] {
+		t.Fatalf("a long page should say how to continue:\n%s", first[len(first)-300:])
+	}
+	if strings.Contains(first, "Paragraph number 699") {
+		t.Error("the first part shouldn't reach the end of the page")
+	}
+	// Following the offsets reads the whole page, with no line cut in two.
+	all := first
+	for next, guard := m[3], 0; next != "" && guard < 20; guard++ {
+		part := SnapshotTool{s}.Run(ctx, nil, json.RawMessage(`{"start":`+next+`}`)).Content
+		body := part[strings.Index(part, ">\n")+2:]
+		if !strings.HasPrefix(body, "- ") && !strings.HasPrefix(body, "  - ") {
+			t.Fatalf("a part should begin at a line: %q", body[:60])
+		}
+		all += part
+		next = ""
+		if mm := regexp.MustCompile(`call browser_snapshot with start=(\d+)`).FindStringSubmatch(part); mm != nil {
+			next = mm[1]
+		}
+	}
+	for _, want := range []string{"Paragraph number 0 ", "Paragraph number 350 ", "Paragraph number 699 ", `textbox "Query"`, "cell two"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("reading all parts should include %q", want)
+		}
+	}
+
+	// A container's ref narrows the snapshot to it.
+	form := regexp.MustCompile(`form \[ref=(e\d+)\]:`).FindStringSubmatch(all)
+	if form == nil {
+		t.Fatalf("the form should have a ref")
+	}
+	scoped := SnapshotTool{s}.Run(ctx, nil, json.RawMessage(`{"ref":"`+form[1]+`"}`)).Content
+	if !strings.Contains(scoped, `textbox "Query"`) || !strings.Contains(scoped, `button "Find"`) || strings.Contains(scoped, "Paragraph number") || strings.Contains(scoped, "cell one") || strings.Contains(scoped, "showing characters") {
+		t.Errorf("a scoped snapshot should hold the form and nothing else:\n%s", scoped)
+	}
+	if r := (SnapshotTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"e99999"}`)); !r.IsError {
+		t.Error("an unknown ref should fail")
+	}
+}
+
+func TestIframes(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	// The same server under another host name is another origin.
+	other := strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
+	extraPages["/framed"] = `<!doctype html><title>Framed</title><h1>Outer</h1>
+<div style="height:300px"></div>
+<iframe src="/inner" title="Same site" style="margin-left:120px;border:7px solid #888;width:400px;height:120px"></iframe>
+<iframe src="` + other + `/inner" title="Other site" width="400" height="80"></iframe>`
+	defer delete(extraPages, "/framed")
+
+	snap := open(t, s, srv, "/framed")
+	for _, want := range []string{`iframe "Same site" [ref=`, `text "Inside the frame"`, `textbox "Frame field"`, `button "Inner button"`, `iframe "Other site" -> ` + other + `/inner (another site: contents not shown`} {
+		if !strings.Contains(snap, want) {
+			t.Errorf("snapshot lacks %q:\n%s", want, snap)
+		}
+	}
+	if strings.Count(snap, "Inside the frame") != 1 {
+		t.Errorf("only the same-site frame's contents should be shown:\n%s", snap)
+	}
+	// Typing and clicking inside the frame land there, despite its offset.
+	if r := (TypeTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, snap, `textbox "Frame field"`)+`","text":"typed"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	if r := (ClickTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, snap, `button "Inner button"`)+`"}`)); !strings.Contains(r.Content, "Title: Inner clicked: typed") {
+		t.Errorf("click inside the frame: %s", r.Content)
+	}
+	// A screenshot of an element in the frame captures that element.
+	img := decode(t, ScreenshotTool{s}.Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, snap, `button "Inner button"`)+`"}`)))
+	if b := img.Bounds(); b.Dx() < 40 || b.Dx() > 250 || b.Dy() < 20 || b.Dy() > 80 {
+		t.Errorf("screenshot of the frame's button is %v", b)
+	}
+}
+
+func TestNetworkLog(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	open(t, s, srv, "/api-page")
+	if r := (WaitForTool{s}).Run(ctx, nil, json.RawMessage(`{"text":"loaded"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	all := NetworkTool{s}.Run(ctx, nil, nil).Content
+	for _, want := range []string{" 200 GET " + srv.URL + "/api-page (document", " 200 GET " + srv.URL + "/data.json (fetch", " 404 GET " + srv.URL + "/missing (fetch", " FAILED GET http://169.254.169.254/x (fetch"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the log lacks %q:\n%s", want, all)
+		}
+	}
+	failed := NetworkTool{s}.Run(ctx, nil, json.RawMessage(`{"failed":true}`)).Content
+	if !strings.Contains(failed, "/missing") || !strings.Contains(failed, "169.254.169.254") || strings.Contains(failed, "data.json") {
+		t.Errorf("failed only: %s", failed)
+	}
+	one := NetworkTool{s}.Run(ctx, nil, json.RawMessage(`{"filter":"data.json"}`)).Content
+	n := regexp.MustCompile(`#(\d+) 200 GET`).FindStringSubmatch(one)
+	if n == nil || strings.Contains(one, "missing") {
+		t.Fatalf("filter: %s", one)
+	}
+	if body := (NetworkTool{s}).Run(ctx, nil, json.RawMessage(`{"request":`+n[1]+`}`)); body.IsError || !strings.Contains(body.Content, `{"ok":true,"items":[1,2,3]}`) {
+		t.Errorf("response body: %s", body.Content)
+	}
+	if r := (NetworkTool{s}).Run(ctx, nil, json.RawMessage(`{"request":9999}`)); !r.IsError {
+		t.Error("an unknown request number should fail")
+	}
+	if r := (NetworkTool{s}).Run(ctx, nil, json.RawMessage(`{"filter":"no-such-thing"}`)); r.Content != "No matching requests." {
+		t.Errorf("no matches: %s", r.Content)
 	}
 }

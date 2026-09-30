@@ -21,7 +21,7 @@ func Tools(s *Session) []tools.Tool {
 	var out []tools.Tool
 	for _, t := range []tools.Tool{
 		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ScreenshotTool{s}, ClickTool{s}, TypeTool{s},
-		SelectTool{s}, PressKeyTool{s}, UploadTool{s}, WaitForTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s},
+		SelectTool{s}, PressKeyTool{s}, UploadTool{s}, WaitForTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s}, NetworkTool{s},
 	} {
 		out = append(out, noted{t, s})
 	}
@@ -66,25 +66,45 @@ func parse(input json.RawMessage, v any, want string) *tools.Result {
 
 // withSnapshot reports what an action did followed by the page it left.
 func withSnapshot(ctx context.Context, s *Session, did string) tools.Result {
-	snap, err := s.Snapshot(ctx)
+	snap, err := s.Snapshot(ctx, "")
 	if err != nil {
 		return tools.Result{Content: did + "\n(could not read the page afterwards: " + err.Error() + ")"}
 	}
-	return render(snap, did)
+	return render(snap, did, 0)
 }
 
-func render(snap Snapshot, did string) tools.Result {
+// render formats a snapshot from character offset start. A long page comes
+// in parts; the note at the end says how to get the next.
+func render(snap Snapshot, did string, start int) tools.Result {
 	var b strings.Builder
 	if did != "" {
 		b.WriteString(did + "\n")
 	}
 	fmt.Fprintf(&b, "URL: %s\nTitle: %s\n<web_content url=%q>\n", snap.URL, snap.Title, snap.URL)
 	text := snap.Text
-	if len(text) > maxSnapshot {
-		cut := strings.LastIndexByte(text[:maxSnapshot], '\n')
-		text = text[:max(cut, 0)] + "\n[snapshot truncated: use browser_eval to read the rest of the page]"
+	total := len(text)
+	start = min(max(start, 0), total)
+	// Parts begin and end at line breaks, so no outline line is split.
+	if start > 0 && start < total && text[start-1] != '\n' {
+		if nl := strings.IndexByte(text[start:], '\n'); nl >= 0 {
+			start += nl + 1
+		}
 	}
-	b.WriteString(text + "\n</web_content>")
+	end := total
+	if end-start > maxSnapshot {
+		end = start + maxSnapshot
+		if cut := strings.LastIndexByte(text[start:end], '\n'); cut > 0 {
+			end = start + cut + 1
+		}
+	}
+	b.WriteString(strings.TrimRight(text[start:end], "\n") + "\n</web_content>")
+	if start > 0 || end < total {
+		fmt.Fprintf(&b, "\n[showing characters %d-%d of %d", start, end, total)
+		if end < total {
+			fmt.Fprintf(&b, "; call browser_snapshot with start=%d for more, or with ref to read one part of the page", end)
+		}
+		b.WriteString("]")
+	}
 	host := snap.URL
 	if u, err := url.Parse(snap.URL); err == nil && u.Host != "" {
 		host = u.Host
@@ -152,15 +172,28 @@ type SnapshotTool struct{ S *Session }
 func (SnapshotTool) ReadOnly() bool { return true }
 func (SnapshotTool) Spec() llm.ToolSpec {
 	return spec("browser_snapshot",
-		"Return a fresh snapshot of the active tab: its text, and its links, buttons and fields with refs. Refs from older snapshots may be stale after the page changes. "+untrusted,
-		`{"type":"object","properties":{}}`)
+		"Return a fresh snapshot of the active tab: its text, and its links, buttons and fields with refs, including what is inside same-site iframes. "+
+			"A long page comes in parts: pass start to continue where the last part ended, or ref to read just one element's contents (a form, a table, a dialog). "+
+			"Refs from older snapshots may be stale after the page changes. "+untrusted,
+		`{"type":"object","properties":{
+			"ref":{"type":"string","description":"Outline only this element and what is inside it"},
+			"start":{"type":"integer","description":"Character offset to continue from (default 0)"}}}`)
 }
-func (t SnapshotTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) tools.Result {
-	snap, err := t.S.Snapshot(ctx)
+func (t SnapshotTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		Ref   string `json:"ref"`
+		Start int    `json:"start"`
+	}
+	if len(input) > 0 {
+		if r := parse(input, &in, `{"ref"?, "start"?}`); r != nil {
+			return *r
+		}
+	}
+	snap, err := t.S.Snapshot(ctx, in.Ref)
 	if err != nil {
 		return fail(err)
 	}
-	return render(snap, "")
+	return render(snap, "", in.Start)
 }
 
 // ClickTool is browser_click.
@@ -456,13 +489,100 @@ func (t EvalTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) 
 	return tools.Result{Content: "<web_content>\n" + out + "\n</web_content>"}
 }
 
+// NetworkTool is browser_network. It only reads the tab's request log.
+type NetworkTool struct{ S *Session }
+
+func (NetworkTool) ReadOnly() bool { return true }
+func (NetworkTool) Spec() llm.ToolSpec {
+	return spec("browser_network",
+		"List the network requests the active tab has made (the last 300): method, URL, status, type and time, with failures marked. "+
+			"Narrow it with filter (text in the URL) or failed. Pass request to get one response's body, by its number in the list. "+
+			"Use it to see which API calls a page makes and why one fails. "+untrusted,
+		`{"type":"object","properties":{
+			"filter":{"type":"string","description":"Only requests whose URL contains this text"},
+			"failed":{"type":"boolean","description":"Only failed requests and HTTP errors (status 400 and up)"},
+			"limit":{"type":"integer","description":"How many of the latest matches to show (default 50)"},
+			"request":{"type":"integer","description":"Return the response body of this request number"}}}`)
+}
+func (t NetworkTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		Filter  string `json:"filter"`
+		Failed  bool   `json:"failed"`
+		Limit   int    `json:"limit"`
+		Request int    `json:"request"`
+	}
+	if len(input) > 0 {
+		if r := parse(input, &in, `{"filter"?, "failed"?, "limit"?, "request"?}`); r != nil {
+			return *r
+		}
+	}
+	if in.Request > 0 {
+		body, err := t.S.ResponseBody(ctx, in.Request)
+		if err != nil {
+			return fail(err)
+		}
+		if len(body) > maxSnapshot {
+			body = body[:maxSnapshot] + fmt.Sprintf("\n[truncated: %d of %d bytes shown]", maxSnapshot, len(body))
+		}
+		return tools.Result{Content: "<web_content>\n" + body + "\n</web_content>", Display: fmt.Sprintf("body of request %d", in.Request)}
+	}
+	reqs, err := t.S.Requests(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	var lines []string
+	for _, r := range reqs {
+		bad := r.Failed != "" || r.Status >= 400
+		if (in.Filter != "" && !strings.Contains(r.URL, in.Filter)) || (in.Failed && !bad) {
+			continue
+		}
+		status := "…" // still loading
+		switch {
+		case r.Failed != "":
+			status = "FAILED"
+		case r.Status > 0:
+			status = fmt.Sprint(r.Status)
+		}
+		line := fmt.Sprintf("#%d %s %s %s (%s", r.N, status, r.Method, clipURL(r.URL), firstNonEmpty(r.Type, "other"))
+		if r.Duration > 0 {
+			line += fmt.Sprintf(", %dms", r.Duration.Milliseconds())
+		}
+		line += ")"
+		if r.Failed != "" {
+			line += " " + r.Failed
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return tools.Result{Content: "No matching requests."}
+	}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	shown := lines
+	note := ""
+	if len(shown) > limit {
+		shown = shown[len(shown)-limit:]
+		note = fmt.Sprintf("\n[the latest %d of %d matching requests; narrow with filter, or raise limit]", limit, len(lines))
+	}
+	return tools.Result{Content: "<web_content>\n" + strings.Join(shown, "\n") + "\n</web_content>" + note, Display: fmt.Sprintf("%d requests", len(shown))}
+}
+
+func clipURL(u string) string {
+	if len(u) > 200 {
+		return u[:199] + "…"
+	}
+	return u
+}
+
 // TabsTool is browser_tabs.
 type TabsTool struct{ S *Session }
 
 func (TabsTool) ReadOnly() bool { return false }
 func (TabsTool) Spec() llm.ToolSpec {
 	return spec("browser_tabs",
-		"List the browser's tabs, open a new blank one, or select or close one by index. Tabs a page opens (links with target=_blank) become active automatically.",
+		"List your browser tabs, open a new blank one, or select or close one by index. Tabs a page opens (links with target=_blank) become active automatically. Each agent has its own tabs.",
 		`{"type":"object","properties":{
 			"action":{"type":"string","enum":["list","new","select","close"]},
 			"index":{"type":"integer","description":"Tab index, for select and close"}},
@@ -480,7 +600,7 @@ func (t TabsTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) 
 	switch in.Action {
 	case "list", "":
 	case "new":
-		err = t.S.NewTab()
+		err = t.S.NewTab(ctx)
 	case "select":
 		err = t.S.SelectTab(ctx, in.Index)
 	case "close":
@@ -519,7 +639,7 @@ func (ConsoleTool) Spec() llm.ToolSpec {
 		`{"type":"object","properties":{}}`)
 }
 func (t ConsoleTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) tools.Result {
-	lines, err := t.S.Console()
+	lines, err := t.S.Console(ctx)
 	if err != nil {
 		return fail(err)
 	}

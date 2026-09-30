@@ -4,11 +4,16 @@
 
 ### Added
 
+- **Browser: frames, long pages and the network.** Snapshots now include what is inside same-site iframes, and you can click and type there. A long page is read in parts, or one form, table or frame at a time. `browser_network` lists the requests a page made, with status and failures, and returns a response's body.
 - **A GitHub Action for reviews.** `uses: vwibowo/larik@v0.4.0` runs `/review` or `/security-review` on each pull request in plan mode and posts the findings as one comment, updated on every push. See [Reviewing changes](/docs/skills/#reviewing-changes).
 - **Tools on demand.** With many MCP tools connected (over 30, or about 6,000 tokens of definitions), Larik no longer sends every definition with every request. The model finds a tool with `tool_search` and runs it with `call_tool`; permission rules, prompts and hooks apply to the real tool. The request's tool list stays fixed, so prompt caching is unaffected. `"tool_search": "on"` or `"off"` overrides the automatic choice. See [MCP](/docs/mcp/).
 - **Memory.** Larik now remembers things between sessions as short notes: your preferences, corrections you've given, project decisions, and where things live. It saves one when it learns something a later session needs, or when you say "remember…". Notes are Markdown files outside your repository, per project or for every project; `/memory` lists, shows, adds and deletes them. Switch it off with `"memory": {"enabled": false}`. See [Memory](/docs/memory/).
 - **`/review` and `/security-review`.** Built-in commands that review your uncommitted changes, the current branch, a pull request (`/review 123`) or a range, and report findings with file, line, failure scenario and fix, without editing anything. Larik gathers the diff itself, so they work in every mode, including plan, and with `larik -p`. Your own `review.md` replaces the built-in. See [Reviewing changes](/docs/skills/#reviewing-changes).
 - **Auto mode.** A new permission mode between `accept-edits` and `yolo`: project edits run freely, and every other call that would ask is first checked by a model against your recent prompts. Routine work (builds, tests, package installs, local git) runs; destructive or outward-facing actions (`git push`, deleting data, publishing, `sudo`, handling secrets) still ask, with the reason shown, unless your prompt explicitly asked for them. Pick it with `/mode`, `shift+tab` or `--mode auto`. See [Permissions](/docs/permissions/).
+
+### Changed
+
+- **Subagents browse in their own tabs.** Each agent has its own browser tabs in the one window, so subagents can use the browser at the same time without navigating each other's pages; their tabs close when they finish. Subagents get the browser tools by default again.
 
 ## v0.3.1
 

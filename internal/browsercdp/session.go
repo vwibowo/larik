@@ -26,6 +26,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
+	"larik/internal/tools"
 	"larik/internal/web"
 )
 
@@ -42,9 +43,12 @@ type Options struct {
 const (
 	actionTimeout = 30 * time.Second
 	maxConsole    = 200
+	maxRequests   = 300
 )
 
-// Session is one Chrome process and its tabs.
+// Session is one Chrome process and its tabs. Each agent has its own tabs
+// and its own active tab (keyed by tools.Owner), so subagents browsing at
+// the same time don't navigate each other's pages.
 type Session struct {
 	opts Options
 
@@ -53,7 +57,7 @@ type Session struct {
 	root        context.Context // the browser's first tab; parent of the others
 	cancelRoot  context.CancelFunc
 	tabs        []*tab
-	active      *tab
+	active      map[string]*tab // owner -> its active tab
 
 	// tempProfile is a throwaway profile used when ProfileDir is taken by
 	// another Chrome; it's removed on shutdown.
@@ -88,6 +92,7 @@ func (s *Session) takeNotes() []string {
 
 type tab struct {
 	id     target.ID
+	owner  string // the agent it belongs to; "" is the main agent
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -102,8 +107,25 @@ type tab struct {
 	chooser   chan *page.EventFileChooserOpened
 	uploading atomic.Bool
 
-	mu      sync.Mutex
-	console []string
+	mu       sync.Mutex
+	console  []string
+	requests []*request // recent network requests, oldest first
+	nextReq  int
+}
+
+// request is one network request a tab made.
+type request struct {
+	N        int // number shown to the model
+	id       network.RequestID
+	Method   string
+	URL      string
+	Type     string // document, xhr, fetch, script, image…
+	Status   int64  // 0 until a response arrives
+	MIME     string
+	Failed   string // error text, e.g. net::ERR_NAME_NOT_RESOLVED
+	started  time.Time
+	Duration time.Duration
+	done     bool
 }
 
 func (t *tab) log(s string) {
@@ -184,6 +206,11 @@ func (s *Session) launch(profile string) error {
 		chromedp.Flag("disable-sync", true),
 		chromedp.Flag("disable-features", "Translate"),
 		chromedp.Flag("metrics-recording-only", true),
+		// Agents work in tabs that aren't in front; keep those running at
+		// full speed.
+		chromedp.Flag("disable-background-timer-throttling", true),
+		chromedp.Flag("disable-backgrounding-occluded-windows", true),
+		chromedp.Flag("disable-renderer-backgrounding", true),
 		chromedp.WindowSize(1280, 900),
 	}
 	if s.opts.Headless {
@@ -208,7 +235,7 @@ func (s *Session) launch(profile string) error {
 	}
 	s.root, s.cancelRoot, s.cancelAlloc = root, cancelRoot, cancelAlloc
 	t.id = chromedp.FromContext(root).Target.TargetID
-	s.tabs, s.active = []*tab{t}, t
+	s.tabs, s.active = []*tab{t}, map[string]*tab{"": t}
 	s.setupDownloads()
 	return nil
 }
@@ -242,6 +269,7 @@ func (s *Session) guard() chromedp.Action {
 	return chromedp.Tasks{
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*", RequestStage: fetch.RequestStageRequest}}),
 		page.SetInterceptFileChooserDialog(true),
+		network.Enable(), // for the request log
 	}
 }
 
@@ -364,6 +392,19 @@ func (s *Session) watch(t *tab) {
 			t.log("[exception] " + firstLine(msg))
 		case *page.EventFrameRequestedNavigation, *page.EventFrameStartedLoading:
 			t.navs.Add(1)
+		case *network.EventRequestWillBeSent:
+			t.requestSent(ev)
+		case *network.EventResponseReceived:
+			t.update(ev.RequestID, func(r *request) { r.Status, r.MIME = ev.Response.Status, ev.Response.MimeType })
+		case *network.EventLoadingFinished:
+			t.update(ev.RequestID, func(r *request) { r.done, r.Duration = true, time.Since(r.started) })
+		case *network.EventLoadingFailed:
+			t.update(ev.RequestID, func(r *request) {
+				r.done, r.Duration, r.Failed = true, time.Since(r.started), ev.ErrorText
+				if ev.BlockedReason != "" {
+					r.Failed += " (blocked: " + string(ev.BlockedReason) + ")"
+				}
+			})
 		case *fetch.EventRequestPaused:
 			go s.checkRequest(t, ev)
 		case *page.EventDomContentEventFired:
@@ -390,26 +431,54 @@ func (s *Session) watch(t *tab) {
 	})
 }
 
-// Tab returns the active tab, starting Chrome (and opening a tab) as needed.
-func (s *Session) Tab() (*tab, error) {
+// requestSent records a new request, or a redirect of one already logged.
+func (t *tab) requestSent(ev *network.EventRequestWillBeSent) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.nextReq++
+	t.requests = append(t.requests, &request{
+		N: t.nextReq, id: ev.RequestID, Method: ev.Request.Method, URL: ev.Request.URL,
+		Type: strings.ToLower(string(ev.Type)), started: time.Now(),
+	})
+	if len(t.requests) > maxRequests {
+		t.requests = t.requests[len(t.requests)-maxRequests:]
+	}
+}
+
+// update changes the latest logged request with id (a redirect reuses it).
+func (t *tab) update(id network.RequestID, fn func(*request)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := len(t.requests) - 1; i >= 0; i-- {
+		if t.requests[i].id == id {
+			fn(t.requests[i])
+			return
+		}
+	}
+}
+
+// Tab returns the calling agent's active tab, starting Chrome and opening
+// a tab for it as needed.
+func (s *Session) Tab(ctx context.Context) (*tab, error) {
+	owner := tools.Owner(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.start(); err != nil {
 		return nil, err
 	}
 	s.syncTabs()
-	if s.active == nil {
-		if _, err := s.newTab(); err != nil {
+	if s.active[owner] == nil {
+		if _, err := s.newTab(owner); err != nil {
 			return nil, err
 		}
 	}
-	return s.active, nil
+	return s.active[owner], nil
 }
 
-// newTab opens a blank tab and makes it active.
-func (s *Session) newTab() (*tab, error) {
+// newTab opens a blank tab for owner and makes it that agent's active one.
+func (s *Session) newTab(owner string) (*tab, error) {
 	ctx, cancel := chromedp.NewContext(s.root)
-	t := &tab{ctx: ctx, cancel: cancel}
+	t := &tab{ctx: ctx, cancel: cancel, owner: owner}
 	s.watch(t)
 	if err := chromedp.Run(ctx, s.guard()); err != nil {
 		cancel()
@@ -417,13 +486,25 @@ func (s *Session) newTab() (*tab, error) {
 	}
 	t.id = chromedp.FromContext(ctx).Target.TargetID
 	s.tabs = append(s.tabs, t)
-	s.active = t
+	s.active[owner] = t
 	return t, nil
 }
 
-// syncTabs drops tabs the user closed and adopts ones the page opened
-// (target=_blank links, window.open). A new tab becomes active, which is
-// what following a link that opens one should do.
+// own returns owner's tabs, in the order they were opened.
+func (s *Session) own(owner string) []*tab {
+	var out []*tab
+	for _, t := range s.tabs {
+		if t.owner == owner {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// syncTabs drops tabs the user closed and adopts ones a page opened
+// (target=_blank links, window.open). A new tab belongs to the agent whose
+// tab opened it (the main agent when nobody's did) and becomes that agent's
+// active tab, which is what following a link that opens one should do.
 func (s *Session) syncTabs() {
 	ctx, cancel := context.WithTimeout(s.root, 5*time.Second)
 	defer cancel()
@@ -438,37 +519,40 @@ func (s *Session) syncTabs() {
 		}
 	}
 	kept := s.tabs[:0]
-	known := map[target.ID]bool{}
+	owners := map[target.ID]string{}
 	for _, t := range s.tabs {
 		if live[t.id] {
 			kept = append(kept, t)
-			known[t.id] = true
-		} else {
-			if t.cancel != nil {
-				t.cancel()
-			}
-			if s.active == t {
-				s.active = nil
-			}
+			owners[t.id] = t.owner
+			continue
+		}
+		if t.cancel != nil {
+			t.cancel()
+		}
+		if s.active[t.owner] == t {
+			delete(s.active, t.owner)
 		}
 	}
 	s.tabs = kept
 	for _, info := range infos {
-		if info.Type != "page" || known[info.TargetID] || strings.HasPrefix(info.URL, "devtools://") {
+		if _, known := owners[info.TargetID]; known || info.Type != "page" || strings.HasPrefix(info.URL, "devtools://") {
 			continue
 		}
 		ctx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
-		t := &tab{id: info.TargetID, ctx: ctx, cancel: cancel}
+		t := &tab{id: info.TargetID, ctx: ctx, cancel: cancel, owner: owners[info.OpenerID]}
 		s.watch(t)
 		if chromedp.Run(ctx, s.guard()) != nil {
 			cancel()
 			continue
 		}
 		s.tabs = append(s.tabs, t)
-		s.active = t
+		s.active[t.owner] = t
 	}
-	if s.active == nil && len(s.tabs) > 0 {
-		s.active = s.tabs[len(s.tabs)-1]
+	// An agent whose active tab went away falls back to its latest one.
+	for i := len(s.tabs) - 1; i >= 0; i-- {
+		if t := s.tabs[i]; s.active[t.owner] == nil {
+			s.active[t.owner] = t
+		}
 	}
 }
 
@@ -480,8 +564,9 @@ type TabInfo struct {
 	Active bool
 }
 
-// Tabs lists the open tabs.
+// Tabs lists the calling agent's tabs.
 func (s *Session) Tabs(ctx context.Context) ([]TabInfo, error) {
+	owner := tools.Owner(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.start(); err != nil {
@@ -489,56 +574,70 @@ func (s *Session) Tabs(ctx context.Context) ([]TabInfo, error) {
 	}
 	s.syncTabs()
 	var out []TabInfo
-	for i, t := range s.tabs {
+	for i, t := range s.own(owner) {
 		var title, url string
 		rctx, cancel := runCtx(ctx, t.ctx, 5*time.Second)
 		_ = chromedp.Run(rctx, chromedp.Title(&title), chromedp.Location(&url))
 		cancel()
-		out = append(out, TabInfo{Index: i, Title: title, URL: url, Active: t == s.active})
+		out = append(out, TabInfo{Index: i, Title: title, URL: url, Active: t == s.active[owner]})
 	}
 	return out, nil
 }
 
-// NewTab opens a blank tab and makes it active.
-func (s *Session) NewTab() error {
+// NewTab opens a blank tab for the calling agent and makes it active.
+func (s *Session) NewTab(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.start(); err != nil {
 		return err
 	}
-	_, err := s.newTab()
+	_, err := s.newTab(tools.Owner(ctx))
 	return err
 }
 
-// SelectTab makes tab i active and brings it to the front.
-func (s *Session) SelectTab(ctx context.Context, i int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// ownTab returns the calling agent's tab i. The caller holds s.mu.
+func (s *Session) ownTab(owner string, i int) (*tab, error) {
 	if err := s.start(); err != nil {
-		return err
+		return nil, err
 	}
 	s.syncTabs()
-	if i < 0 || i >= len(s.tabs) {
-		return fmt.Errorf("no tab %d (there are %d)", i, len(s.tabs))
+	own := s.own(owner)
+	if i < 0 || i >= len(own) {
+		return nil, fmt.Errorf("no tab %d (there are %d)", i, len(own))
 	}
-	s.active = s.tabs[i]
-	rctx, cancel := runCtx(ctx, s.active.ctx, 5*time.Second)
+	return own[i], nil
+}
+
+// SelectTab makes the calling agent's tab i active and brings it to the front.
+func (s *Session) SelectTab(ctx context.Context, i int) error {
+	owner := tools.Owner(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.ownTab(owner, i)
+	if err != nil {
+		return err
+	}
+	s.active[owner] = t
+	rctx, cancel := runCtx(ctx, t.ctx, 5*time.Second)
 	defer cancel()
 	return chromedp.Run(rctx, page.BringToFront())
 }
 
-// CloseTab closes tab i.
+// CloseTab closes the calling agent's tab i.
 func (s *Session) CloseTab(ctx context.Context, i int) error {
+	owner := tools.Owner(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.start(); err != nil {
+	t, err := s.ownTab(owner, i)
+	if err != nil {
 		return err
 	}
-	s.syncTabs()
-	if i < 0 || i >= len(s.tabs) {
-		return fmt.Errorf("no tab %d (there are %d)", i, len(s.tabs))
-	}
-	t := s.tabs[i]
+	return s.closeTab(ctx, t)
+}
+
+// closeTab closes t and picks its owner another active tab. The caller
+// holds s.mu.
+func (s *Session) closeTab(ctx context.Context, t *tab) error {
 	if t.cancel != nil {
 		t.cancel() // cancelling a tab's context closes it
 	} else {
@@ -551,19 +650,41 @@ func (s *Session) CloseTab(ctx context.Context, i int) error {
 			return err
 		}
 	}
-	s.tabs = append(s.tabs[:i:i], s.tabs[i+1:]...)
-	if s.active == t {
-		s.active = nil
-		if len(s.tabs) > 0 {
-			s.active = s.tabs[len(s.tabs)-1]
+	for i, other := range s.tabs {
+		if other == t {
+			s.tabs = append(s.tabs[:i:i], s.tabs[i+1:]...)
+			break
+		}
+	}
+	if s.active[t.owner] == t {
+		delete(s.active, t.owner)
+		if own := s.own(t.owner); len(own) > 0 {
+			s.active[t.owner] = own[len(own)-1]
 		}
 	}
 	return nil
 }
 
+// Release closes the tabs of an agent that has finished. The main agent's
+// tabs stay: the user may want to look at them.
+func (s *Session) Release(owner string) {
+	if s == nil || owner == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root == nil || s.root.Err() != nil {
+		return
+	}
+	for _, t := range s.own(owner) {
+		_ = s.closeTab(context.Background(), t)
+	}
+	delete(s.active, owner)
+}
+
 // Console returns and clears the active tab's buffered console output.
-func (s *Session) Console() ([]string, error) {
-	t, err := s.Tab()
+func (s *Session) Console(ctx context.Context) ([]string, error) {
+	t, err := s.Tab(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -572,6 +693,45 @@ func (s *Session) Console() ([]string, error) {
 	out := t.console
 	t.console = nil
 	return out, nil
+}
+
+// Requests returns a copy of the active tab's logged network requests.
+func (s *Session) Requests(ctx context.Context) ([]request, error) {
+	t, err := s.Tab(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]request, len(t.requests))
+	for i, r := range t.requests {
+		out[i] = *r
+	}
+	return out, nil
+}
+
+// ResponseBody returns the body of logged request number n, as text. The
+// browser keeps bodies only for a while, and not across navigations.
+func (s *Session) ResponseBody(ctx context.Context, n int) (string, error) {
+	reqs, err := s.Requests(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range reqs {
+		if r.N != n {
+			continue
+		}
+		var body []byte
+		err := s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+			body, err = network.GetResponseBody(r.id).Do(ctx)
+			return err
+		}))
+		if err != nil {
+			return "", fmt.Errorf("the body of request %d is no longer available (%v)", n, err)
+		}
+		return string(body), nil
+	}
+	return "", fmt.Errorf("no request %d in the log", n)
 }
 
 // runCtx derives a context for one action on a tab: it ends with the tool
@@ -585,7 +745,7 @@ func runCtx(call, tabCtx context.Context, timeout time.Duration) (context.Contex
 
 // run executes actions on the active tab.
 func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
-	t, err := s.Tab()
+	t, err := s.Tab(ctx)
 	if err != nil {
 		return err
 	}

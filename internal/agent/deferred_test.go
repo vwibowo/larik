@@ -96,3 +96,35 @@ func TestCallToolFollowsTheToolsRules(t *testing.T) {
 		t.Errorf("unknown deferred tool: %+v", res)
 	}
 }
+
+// ownerTool reports which agent a call runs for.
+type ownerTool struct{ seen *[]string }
+
+func (ownerTool) ReadOnly() bool { return true }
+func (ownerTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: "whoami", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (o ownerTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) tools.Result {
+	*o.seen = append(*o.seen, tools.Owner(ctx))
+	return tools.Result{Content: "ok"}
+}
+
+func TestToolCallsCarryTheirAgent(t *testing.T) {
+	var seen []string
+	reg := tools.NewRegistry(ownerTool{&seen})
+	script := func() []llm.Message {
+		return []llm.Message{assistant(toolUse("1", "whoami", `{}`)), assistant(llm.TextBlock("done"))}
+	}
+	parent := New(Options{Provider: &fakeProvider{script: script()}, Model: "m", Cwd: t.TempDir(), Tools: reg})
+	drain(parent.Run(context.Background(), "go"), PermissionReply{})
+	a := parent.Spawn(SpawnOptions{Type: "worker", Provider: &fakeProvider{script: script()}, Model: "m", Tools: reg})
+	b := parent.Spawn(SpawnOptions{Type: "worker", Provider: &fakeProvider{script: script()}, Model: "m", Tools: reg})
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	drain(b.Run(context.Background(), "go"), PermissionReply{})
+	if len(seen) != 3 || seen[0] != "" || seen[1] == "" || seen[2] == "" || seen[1] == seen[2] {
+		t.Fatalf("the main agent is \"\", and each subagent has its own id: %q", seen)
+	}
+	if seen[1] != a.Owner() || !strings.HasPrefix(seen[1], "worker-") || parent.Owner() != "" {
+		t.Errorf("owners: %q vs %q", seen, a.Owner())
+	}
+}

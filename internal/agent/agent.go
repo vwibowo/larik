@@ -122,6 +122,9 @@ type Agent struct {
 	bg *background // lazily created; see background.go
 
 	parent *Agent // set for subagents; spend counts against its budget
+	// owner identifies a subagent to tools that keep per-agent state (the
+	// browser's tabs); "" for the main agent.
+	owner string
 	// autoAllowed remembers the calls auto mode approved (tool and input),
 	// kept on the root agent for its subagents too.
 	autoAllowed  map[string]bool

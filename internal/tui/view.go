@@ -1119,6 +1119,19 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = strings.TrimSpace(str(in["action"]) + " " + str(in["name"]))
 	case tools.ToolSearchName:
 		arg = str(in["query"])
+	case "browser_network":
+		switch {
+		case in["request"] != nil:
+			arg = fmt.Sprintf("body of #%v", in["request"])
+		case str(in["filter"]) != "":
+			arg = str(in["filter"])
+		default:
+			if failed, _ := in["failed"].(bool); failed {
+				arg = "failed"
+			}
+		}
+	case "browser_snapshot":
+		arg = str(in["ref"])
 	case "browser_history":
 		arg = str(in["direction"])
 	case "browser_upload":

@@ -126,6 +126,8 @@ func Setup(cwd, version string) (*App, error) {
 		Roles:        a.roles,
 		Repo:         gitRoot,
 		WorktreeRoot: filepath.Join(cfg.DataDir, "worktrees"),
+		// A finished subagent's browser tabs are closed.
+		OnChildDone: func(owner string) { a.Browser.Release(owner) },
 		SandboxFor: func(dir, gitDir string) tools.Sandbox {
 			if a.Sandbox == nil {
 				return nil // a nil interface, not a typed nil

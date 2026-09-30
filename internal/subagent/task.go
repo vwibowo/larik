@@ -72,6 +72,9 @@ type Tool struct {
 	// SandboxFor confines a worktree child's bash commands; nil (or a nil
 	// result) when there is no sandbox.
 	SandboxFor func(dir, gitDir string) tools.Sandbox
+	// OnChildDone, if set, is told when a subagent has finished, with its
+	// agent.Owner, so per-agent state (its browser tabs) can be released.
+	OnChildDone func(owner string)
 }
 
 func (t *Tool) ReadOnly() bool { return true }
@@ -286,6 +289,9 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 		}
 	}
 	child := parent.Spawn(spawn)
+	if t.OnChildDone != nil {
+		defer t.OnChildDone(child.Owner())
+	}
 
 	var final, failure, stop string
 	calls := 0
@@ -407,12 +413,12 @@ func (t *Tool) offeredRoles() []Role {
 	return out
 }
 
-// browserPrefix starts the browser tools' names (browsercdp.Prefix).
+// browserPrefix starts the browser tools' names (browsercdp.Prefix); a
+// definition can allow them all with "browser".
 const browserPrefix = "browser_"
 
 // childTools is the parent's registry filtered by the definition, minus
-// the delegation tools (no nested or background delegation) and, unless
-// named, the browser tools.
+// the delegation tools (no nested or background delegation).
 // In a worktree the lsp tool is left out: the language servers index the
 // parent's tree, not the worktree.
 func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.Registry {
@@ -425,11 +431,6 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 			continue
 		}
 		if inWorktree && (spec.Name == "lsp" || spec.Name == "apply_code_action") {
-			continue
-		}
-		// All agents share one browser window, so a subagent gets the
-		// browser only when its definition names it.
-		if strings.HasPrefix(spec.Name, browserPrefix) && !def.namesBrowserTool(spec.Name) {
 			continue
 		}
 		// Added below, when the child may use any deferred tool.
