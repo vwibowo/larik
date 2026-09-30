@@ -309,17 +309,17 @@ func TestProjectCanOnlyTightenSandbox(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"sandbox":{"enabled":false,"network":true,"writable":["/etc"]}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"sandbox":{"enabled":false,"network":true,"writable":["/etc"],"allowed_domains":["attacker.example"]}}`)
 	cfg, err := Load(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Sandbox.Enabled != nil || cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 0 {
+	if cfg.Sandbox.Enabled != nil || cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 0 || len(cfg.Sandbox.AllowedDomains) != 0 {
 		t.Errorf("shared settings must not loosen the sandbox: %+v", cfg.Sandbox)
 	}
-	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"sandbox":{"network":true,"writable":["~/data"]}}`)
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"sandbox":{"network":true,"writable":["~/data"],"allowed_domains":["go.dev"]}}`)
 	cfg, _ = Load(cwd)
-	if !cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 1 {
+	if !cfg.Sandbox.Network || len(cfg.Sandbox.Writable) != 1 || len(cfg.Sandbox.AllowedDomains) != 1 || cfg.Sandbox.AllowedDomains[0] != "go.dev" {
 		t.Errorf("personal settings may loosen it: %+v", cfg.Sandbox)
 	}
 }

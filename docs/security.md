@@ -82,6 +82,16 @@ Worktree subagents get a derived sandbox (`ForWorktree`) where the worktree repl
 
 **The literal `/tmp` is never writable.** Earlier, `defaultWritable` granted write access to `/tmp` and `os.TempDir()` outright, on the theory that scripts need somewhere to put scratch files. In testing, a subagent running a small local model executed `cd /tmp && rm -rf <name>` as a "clean up after myself" step and deleted another program's files that happened to live under `/tmp` -- on most systems that directory is shared by every program any user on the machine runs, not scoped to the project or even to Larik. Each `Sandbox` now creates its own private directory (`New`'s `tmpDir`, removed by `Close`) and exposes it to sandboxed commands as `$TMPDIR`/`$TMP`/`$TEMP` ([sandbox.go](../internal/sandbox/sandbox.go)), so `mktemp`, `go build`, `npm` and friends still have somewhere safe to write, without exposing the shared system directory. On macOS, `os.TempDir()` (the per-user temp root under `/var/folders/...`) stays writable as before: it's scoped to one OS user rather than the whole machine, and several macOS tools -- notably bare `mktemp` with no template -- resolve to it via `confstr(_CS_DARWIN_USER_TEMP_DIR)` regardless of `$TMPDIR`.
 
+### Network allowlist
+
+With `sandbox.allowed_domains` (personal files only) and `network` off, [proxy.go](../internal/sandbox/proxy.go) listens on `127.0.0.1` and is the only way out of the sandbox:
+
+- CONNECT is tunneled only to an allowed host (the domain or a subdomain; IP literals must be listed exactly), and plain `http` requests are forwarded only to one. The check runs on the name the client asked for, before any connection, so it needs no DNS inside the sandbox.
+- The proxy dials through `web.CheckHost`, so an allowed name that resolves to a link-local or metadata address is still refused.
+- Refused hosts are recorded with the time; the bash tool reports the ones refused during a command.
+- On macOS, Seatbelt already allows loopback, so commands reach the proxy directly. On Linux, `--unshare-net` leaves the namespace with its own loopback only, so bubblewrap runs `larik __sandbox-bridge` first: it listens on the proxy's port inside the namespace and forwards to the proxy's Unix socket in the sandbox's private temp directory, then runs the command.
+- Direct connections stay blocked by the OS sandbox itself; the proxy variables only make well-behaved tools use it.
+
 ## Web tools
 
 - `web_fetch` resolves DNS itself and refuses to connect if any resolved address is link-local (including `169.254.169.254`), multicast, unspecified, or a known cloud metadata address. Checking the resolved IP defeats DNS tricks. Loopback and private ranges stay reachable for local dev servers; the call still asks.

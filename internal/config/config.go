@@ -322,6 +322,7 @@ func (c *Config) merge(path string, trusted bool) error {
 			c.Sandbox.Network = true
 		}
 		c.Sandbox.Writable = append(c.Sandbox.Writable, o.Sandbox.Writable...)
+		c.Sandbox.AllowedDomains = append(c.Sandbox.AllowedDomains, o.Sandbox.AllowedDomains...)
 	} else if o.Sandbox.Enabled != nil && *o.Sandbox.Enabled {
 		c.Sandbox.Enabled = o.Sandbox.Enabled // a shared file may only switch it on
 	}

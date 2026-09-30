@@ -233,6 +233,22 @@ func TestBashSandboxRouting(t *testing.T) {
 	}
 }
 
+// proxiedSandbox is a fakeSandbox whose proxy refused a host.
+type proxiedSandbox struct{ fakeSandbox }
+
+func (*proxiedSandbox) NetworkBlocked(since time.Time) []string { return []string{"evil.example"} }
+
+func TestBashReportsHostsTheProxyRefused(t *testing.T) {
+	env := NewEnv(t.TempDir())
+	env.Sandbox = &proxiedSandbox{}
+	if r := run(t, Bash{}, env, `{"command":"echo fetched"}`); !strings.Contains(r.Content, "the network proxy refused evil.example") {
+		t.Errorf("sandboxed run: %s", r.Content)
+	}
+	if r := run(t, Bash{}, env, `{"command":"echo fetched","sandbox":false}`); strings.Contains(r.Content, "proxy refused") {
+		t.Errorf("an unsandboxed run has no proxy note: %s", r.Content)
+	}
+}
+
 // changingTool describes itself differently each time, like the task tool
 // after a routing change.
 type changingTool struct{ n *int }

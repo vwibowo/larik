@@ -347,7 +347,7 @@ On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik h
 - **Can** read everything.
 - **Can** write only to the project (the git root), its own private temp directory, and common build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root). The literal `/tmp`, shared by every program on the machine, is never writable.
 - **Can't** write to `.git/hooks`, `.git/config`, the other git files that point git at a config or hooks elsewhere (`commondir`, `config.worktree`, `info/`, `modules/`, `worktrees/`), `.larik/`, `.claude/` or `.mcp.json`, even inside the project, and can't move or replace `.git` itself, because any of these would let a later command or hook escape the sandbox. Commits still work.
-- **Has no network access** except localhost, so tests that start local servers still work.
+- **Has no network access** except localhost, so tests that start local servers still work, unless you allow some domains (below).
 - **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.
 
 **How it changes permissions:**
@@ -362,7 +362,19 @@ On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik h
 { "sandbox": { "enabled": false } }                               // turn it off
 ```
 
-Loosening the sandbox (enabling network, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and private project settings under `~/.config/larik/projects/`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
+**Allowing only some domains.** Between no network and all of it, list the domains sandboxed commands may reach:
+
+```json
+{ "sandbox": { "allowed_domains": ["golang.org", "npmjs.org", "pypi.org", "files.pythonhosted.org", "github.com"] } }
+```
+
+- Each entry allows that domain and its subdomains (`golang.org` covers `proxy.golang.org`); an IP address must be listed as is.
+- Larik runs a small proxy on localhost and sets `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (and `NODE_USE_ENV_PROXY=1`) for sandboxed commands. `go`, `git` over https, `curl`, `npm`, `pip` and `cargo` use it. HTTPS is tunneled end to end; the proxy only sees the host name.
+- Everything else is refused, including direct connections and tools that ignore the proxy variables (`git` over SSH, for example). When the proxy refuses a host, the command's result says which, so the model can ask you to add it or re-run the command outside the sandbox.
+- The proxy still refuses link-local and cloud-metadata addresses, whatever an allowed name resolves to.
+- It applies only while `network` is off. On Linux a helper (`larik __sandbox-bridge`) carries the connection into bubblewrap's network namespace.
+
+Loosening the sandbox (enabling network, allowing domains, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and private project settings under `~/.config/larik/projects/`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
 
 ## Server mode
 

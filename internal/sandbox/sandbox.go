@@ -4,7 +4,8 @@
 // Inside the sandbox commands can read everything, but write only to the
 // project, temp directories and common build caches; configuration that
 // could escalate privileges (git hooks and config, Larik/Claude settings,
-// .mcp.json) stays read-only; and the network is off except localhost.
+// .mcp.json) stays read-only; and the network is off except localhost,
+// or reaches only allowed domains through a proxy (see proxy.go).
 package sandbox
 
 import (
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"larik/internal/pathpolicy"
 )
@@ -26,6 +28,9 @@ type Config struct {
 	Network bool `json:"network,omitempty"`
 	// Writable adds paths commands may write to ("~/" is expanded).
 	Writable []string `json:"writable,omitempty"`
+	// AllowedDomains, with Network off, lets commands reach these domains
+	// (and their subdomains) through a proxy Larik runs; nothing else.
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
 }
 
 type Sandbox struct {
@@ -47,6 +52,10 @@ type Sandbox struct {
 	// (ForWorktree) shares its parent's tmpDir rather than getting its
 	// own, so only the top-level Sandbox should have Close called on it.
 	tmpDir string
+	// proxy, when domains are allowed, is shared with worktree sandboxes;
+	// exe is the larik binary, which runs the network bridge on Linux.
+	proxy *proxy
+	exe   string
 }
 
 // protectedNames are project paths that must stay read-only even though
@@ -102,10 +111,41 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 		// keep it from being created or pointed elsewhere.
 		s.protected = append(s.protected, gitDir)
 	}
+	if len(cfg.AllowedDomains) > 0 && !cfg.Network {
+		warning = s.startProxy(cfg.AllowedDomains)
+	}
 	if s.kind == "seatbelt" {
 		s.profile = s.seatbeltProfile()
 	}
-	return s, ""
+	return s, warning
+}
+
+// startProxy starts the allowlist proxy. On Linux the command reaches it
+// through the bridge, which needs the larik binary and a Unix socket.
+func (s *Sandbox) startProxy(domains []string) (warning string) {
+	sock := ""
+	if s.kind == "bubblewrap" {
+		exe, err := os.Executable()
+		if err != nil {
+			return "the sandbox network allowlist is off: " + err.Error()
+		}
+		s.exe = real(exe)
+		sock = filepath.Join(s.tmpDir, "proxy.sock")
+	}
+	p, err := startProxy(domains, sock)
+	if err != nil {
+		return "the sandbox network allowlist is off (its proxy didn't start: " + err.Error() + "); the network stays off"
+	}
+	s.proxy = p
+	return ""
+}
+
+// NetworkBlocked lists the hosts the allowlist proxy refused since t.
+func (s *Sandbox) NetworkBlocked(since time.Time) []string {
+	if s == nil || s.proxy == nil {
+		return nil
+	}
+	return s.proxy.blockedSince(since)
 }
 
 // Close removes this sandbox's private temp directory. Call it once, on
@@ -115,6 +155,9 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 func (s *Sandbox) Close() error {
 	if s == nil || s.tmpDir == "" {
 		return nil
+	}
+	if s.proxy != nil {
+		s.proxy.Close()
 	}
 	return os.RemoveAll(s.tmpDir)
 }
@@ -261,7 +304,30 @@ func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 	}
 	cmd.Dir = dir
 	cmd.Env = tmpEnv(s.tmpDir)
+	if s.proxy != nil {
+		cmd.Env = proxyEnv(cmd.Env, s.proxy.URL())
+	}
 	return cmd
+}
+
+// proxyEnv points the proxy variables tools read (curl, git, Go, npm, pip,
+// cargo; Node's fetch with NODE_USE_ENV_PROXY) at url, for everything but
+// localhost, which the sandbox reaches directly.
+func proxyEnv(env []string, url string) []string {
+	names := []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"}
+	out := make([]string, 0, len(env)+len(names)+3)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(k) {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY":
+			continue
+		}
+		out = append(out, kv)
+	}
+	for _, n := range names {
+		out = append(out, n+"="+url)
+	}
+	return append(out, "NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1", "NODE_USE_ENV_PROXY=1")
 }
 
 // tmpEnv is the current environment with TMPDIR, TMP and TEMP replaced by
@@ -286,8 +352,11 @@ func tmpEnv(dir string) []string {
 // Summary describes the sandbox for the system prompt and UI.
 func (s *Sandbox) Summary() string {
 	net := "off (localhost only)"
-	if s.network {
+	switch {
+	case s.network:
 		net = "on"
+	case s.proxy != nil:
+		net = "only to " + strings.Join(s.proxy.allowed, ", ") + " (and their subdomains), through a proxy set in HTTP_PROXY/HTTPS_PROXY; other hosts are refused, and tools that ignore those variables can't connect"
 	}
 	return fmt.Sprintf("bash commands run in a %s sandbox: writes allowed only in %s, its own private temp directory (%s) and build caches; network %s; "+
 		".git/hooks, .git/config, .larik, .claude and .mcp.json are read-only", s.kind, s.root, s.tmpDir, net)
@@ -377,5 +446,10 @@ func (s *Sandbox) bwrapArgs(script, dir string) []string {
 	if !s.network {
 		args = append(args, "--unshare-net") // leaves only loopback
 	}
-	return append(args, "--chdir", dir, "--", "bash", "-c", script)
+	args = append(args, "--chdir", dir, "--")
+	if s.proxy != nil {
+		// The bridge brings the proxy into the network namespace.
+		args = append(args, s.exe, BridgeCommand, filepath.Join(s.tmpDir, "proxy.sock"), s.proxy.Port(), "--")
+	}
+	return append(args, "bash", "-c", script)
 }

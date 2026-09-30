@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Sandbox network allowlist.** `"sandbox": {"allowed_domains": ["golang.org", "npmjs.org"]}` in your personal config lets sandboxed commands reach just those domains (and their subdomains) through a local proxy, so `go get`, `npm install` or `pip install` can run in the sandbox without opening the whole network. Refused hosts are named in the command's result. See [Sandbox](/docs/sandbox/).
 - **Browser uploads, downloads and waiting.** `browser_upload` chooses files for a file input or the chooser a button opens (file dialogs never open on screen); downloads are saved to `~/.local/share/larik/browser-downloads` and the model is told where; `browser_wait_for` waits for text to appear or disappear. See [Browser](/docs/web/#browser).
 
 ### Changed

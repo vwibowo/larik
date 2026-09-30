@@ -39,7 +39,7 @@ func (Bash) Spec() llm.ToolSpec {
 		Name: "bash",
 		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
 			"List project files the command may change in checkpoint_paths to let /undo restore their original contents; unlisted changes cannot be undone. " +
-			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost. " +
+			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost (or, if the environment section lists allowed domains, only those, through a proxy). " +
 			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
 		Schema: schema(`{"type":"object","properties":{
 			"command":{"type":"string"},
@@ -117,6 +117,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	defer cancel()
 
 	sandboxed := env.Sandbox != nil && (in.Sandbox == nil || *in.Sandbox)
+	started := time.Now()
 	var cmd *exec.Cmd
 	if sandboxed {
 		cmd = env.Sandbox.Command(in.Command, env.Cwd)
@@ -209,6 +210,13 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	}
 	if leftRunning {
 		output += "\n[a process the command started is still running in the background; its later output isn't captured]"
+	}
+	if sandboxed {
+		if nb, ok := env.Sandbox.(interface{ NetworkBlocked(time.Time) []string }); ok {
+			if hosts := nb.NetworkBlocked(started); len(hosts) > 0 {
+				output += "\n[sandbox: the network proxy refused " + strings.Join(hosts, ", ") + ": not in sandbox.allowed_domains. The user can add domains to that list in their personal config; or run the command again with \"sandbox\": false, which the user will be asked to approve.]"
+			}
+		}
 	}
 	var exitErr *exec.ExitError
 	switch {

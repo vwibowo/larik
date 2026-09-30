@@ -18,6 +18,7 @@ import (
 	"larik/internal/config"
 	"larik/internal/headless"
 	"larik/internal/providers"
+	"larik/internal/sandbox"
 	"larik/internal/session"
 	"larik/internal/tui"
 )
@@ -25,6 +26,10 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == sandbox.BridgeCommand {
+		// Runs inside a Linux sandbox, before the command; see sandbox.BridgeMain.
+		os.Exit(sandbox.BridgeMain(os.Args[2:]))
+	}
 	if err := run(); err != nil {
 		var reported headless.ErrReported
 		if !errors.As(err, &reported) {
