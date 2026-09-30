@@ -139,7 +139,7 @@ func (m *model) command(line string) tea.Cmd {
 		if err != nil {
 			return fail(err.Error())
 		}
-		return info("↶ restored " + strings.Join(paths, ", "))
+		return info("↶ restored " + m.shortPaths(strings.Join(paths, ", ")))
 
 	case "/compact":
 		ctx, cancel := context.WithCancel(context.Background())

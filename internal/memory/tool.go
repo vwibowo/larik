@@ -74,7 +74,7 @@ func (t Tool) Run(_ context.Context, _ *tools.Env, input json.RawMessage) tools.
 			return fail(fmt.Errorf("no note named %q", in.Name))
 		}
 		return tools.Result{
-			Content: fmt.Sprintf("<memory-note name=%q type=%q scope=%q saved=%q>\n%s\n</memory-note>\nThis is background from an earlier session and may be out of date; verify what it names before relying on it.",
+			Content: fmt.Sprintf("<memory-note name=%q type=%q scope=%q saved=%q>\n%s\n</memory-note>\nThis is background from an earlier session and may be out of date; verify what it names before relying on it, and if it no longer matches what you find, say so to the user.",
 				n.Name, n.Type, n.Scope, n.Modified.Format("2006-01-02"), n.Body),
 			Display: n.Name + " · " + n.Description,
 		}

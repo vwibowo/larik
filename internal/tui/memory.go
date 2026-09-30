@@ -81,6 +81,10 @@ func (m *model) memoryCommand(args []string, info, fail func(string) tea.Cmd) te
 func (m *model) memoryList(store *memory.Store) string {
 	project, user := store.Dirs()
 	notes := store.List()
+	width := 0 // of the name column
+	for _, note := range notes {
+		width = max(width, len(note.Name))
+	}
 	var b strings.Builder
 	for _, group := range []struct{ scope, title, dir string }{
 		{memory.ScopeProject, "this project", project},
@@ -93,7 +97,7 @@ func (m *model) memoryList(store *memory.Store) string {
 				continue
 			}
 			n++
-			fmt.Fprintf(&b, "  %-28s %-9s %s\n", note.Name, note.Type, oneLine(note.Description, 90))
+			fmt.Fprintf(&b, "  %-*s  %-9s %s\n", width, note.Name, note.Type, oneLine(note.Description, 90))
 		}
 		if n == 0 {
 			b.WriteString("  (none)\n")
