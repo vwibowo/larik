@@ -300,18 +300,35 @@ function boxScene(THREE, scene, camera, canvas) {
   };
 }
 
+// glowTexture: a white radial falloff. Built as raw RGBA rather than drawn on
+// a 2D canvas: canvases store premultiplied alpha, and unpremultiplying the
+// faint tail on upload leaves noisy colour in it (dark, blue and yellow specks
+// once the sprite is added to the scene).
 function glowTexture(THREE) {
-  const c = document.createElement("canvas");
-  c.width = c.height = 64;
-  const g = c.getContext("2d");
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.18, "rgba(255,255,255,.8)");
-  grad.addColorStop(0.45, "rgba(255,255,255,.18)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 64, 64);
-  const tex = new THREE.CanvasTexture(c);
+  const N = 128;
+  const stops = [
+    [0, 1],
+    [0.18, 0.8],
+    [0.45, 0.18],
+    [1, 0],
+  ];
+  const data = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const r = Math.min(Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2), 1);
+      let i = 1;
+      while (stops[i][0] < r) i++;
+      const [r0, a0] = stops[i - 1];
+      const [r1, a1] = stops[i];
+      const k = (y * N + x) * 4;
+      data[k] = data[k + 1] = data[k + 2] = 255;
+      data[k + 3] = Math.round((a0 + ((a1 - a0) * (r - r0)) / (r1 - r0)) * 255);
+    }
+  }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
   return tex;
 }
