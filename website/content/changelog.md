@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`/review` and `/security-review`.** Built-in commands that review your uncommitted changes, the current branch, a pull request (`/review 123`) or a range, and report findings with file, line, failure scenario and fix, without editing anything. Larik gathers the diff itself, so they work in every mode, including plan, and with `larik -p`. Your own `review.md` replaces the built-in. See [Reviewing changes](/docs/skills/#reviewing-changes).
 - **Auto mode.** A new permission mode between `accept-edits` and `yolo`: project edits run freely, and every other call that would ask is first checked by a model against your recent prompts. Routine work (builds, tests, package installs, local git) runs; destructive or outward-facing actions (`git push`, deleting data, publishing, `sudo`, handling secrets) still ask, with the reason shown, unless your prompt explicitly asked for them. Pick it with `/mode`, `shift+tab` or `--mode auto`. See [Permissions](/docs/permissions/).
 
 ## v0.3.1

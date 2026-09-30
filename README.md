@@ -221,6 +221,8 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 | `/init [focus]`                                  | Study the project and write `AGENTS.md`, or improve the `AGENTS.md` or `CLAUDE.md` it has; works with `-p` too. Applies from the next fresh context                                                                                                                      |
 | `/export [file]`                                 | Save the whole session as Markdown (prompts, replies, tool calls and capped results; no thinking or attached file contents). Default `larik-<session>.md` here; never overwrites                                                                                         |
 | `/copy`                                          | Copy the last reply, as Markdown, to the clipboard (natively and through the terminal, so it works over SSH)                                                                                                                                                             |
+| `/review [PR\|branch\|range] [focus]`             | Review code changes for bugs and report findings, without editing. With no argument: your uncommitted changes, or this branch's commits when the tree is clean. See [Reviewing changes](#reviewing-changes)                                                              |
+| `/security-review [PR\|branch\|range] [focus]`    | The same, looking for security vulnerabilities the changes introduce                                                                                                                                                                                                     |
 | `/vim`                                           | Switch vim editing of the prompt on or off; see [Vim mode](#vim-mode)                                                                                                                                                                                                    |
 | `/debug [on\|off]`                               | Record this session for review: requests as sent, responses, raw HTTP, tools and timing; see [Debug mode and traces](#debug-mode-and-traces)                                                                                                                             |
 | `/trace`                                         | Open the recorded trace in the browser: a timeline, every request as sent, and the raw HTTP exchanges                                                                                                                                                                    |
@@ -597,9 +599,28 @@ Fix issue #$1 with priority $2. Current branch: !`git branch --show-current`
 - **Where:** `~/.claude/commands` and `~/.config/larik/commands` for yours; `.claude/commands` and `.larik/commands` from the repo root down to the working directory for the project's. A file in a subdirectory still takes its own name (`frontend/review.md` is `/review`).
 - **Running one:** type `/<name> [args]`. The palette lists commands with their `argument-hint`, and `/skills` lists them with the skills. Arguments work as for skills.
 - **Frontmatter is optional.** Without a `description`, the first line of the file describes the command in the palette. Only a command with a `description` goes in the model's index, where it can load it with the `skill` tool; `disable-model-invocation: true` keeps a described one out.
-- **Skills win:** a skill and a command with the same name resolve to the skill, and built-in commands such as `/model` always win.
+- **Skills win:** a skill and a command with the same name resolve to the skill, and built-in commands such as `/model` always win. The two commands Larik ships as command files, `/review` and `/security-review`, are the exception: yours replace them.
 - **`` !`command` ``** runs the command when you invoke the command file and puts its output in its place, in the sandbox when there is one. It runs only when your permission rules would allow it without asking (sandboxed commands, the safe list, allow rules); otherwise it is left out with a note, since a command file can come from a repository. Claude Code's `allowed-tools` frontmatter is ignored for the same reason. `model` is ignored too.
 - New or edited commands appear after `/clear` or in a new session, like skills.
+
+### Reviewing changes
+
+`/review` and `/security-review` are commands that ship with Larik. Each reviews a set of changes and reports findings, most serious first, with the file and line, how it fails (or is exploited) and a fix. They don't edit anything; ask for the fixes afterwards if you want them.
+
+| You type | What is reviewed |
+| --- | --- |
+| `/review` | Your uncommitted changes. If the tree is clean: this branch's commits since the default branch, or else the last commit |
+| `/review 123` or `/review #123` | That pull request, fetched with the GitHub CLI (`gh`) |
+| `/review main` | What the current branch has that `main` doesn't (or, for a branch ahead of yours, what it has that yours doesn't) |
+| `/review v0.3.0..HEAD` | That range |
+| `/review focus on the error handling` | The default scope, with that focus. A focus can follow a PR, branch or range too |
+
+- **Larik collects the changes itself**, with fixed read-only `git` (and `gh`) commands, and gives them to the model. So a review works in every permission mode, including `plan`, where the model can't run git, and it starts with the diff in hand. The model still reads the surrounding code with its tools.
+- A diff over 150 KB is cut, and the model is told to read the rest. New files git doesn't track yet are listed for it to read.
+- The diff and a pull request's description are passed as data: text in them is never run as an inline command or treated as instructions.
+- `/review` looks for wrong behavior, unhandled cases, broken callers, concurrency and resource problems, data loss and missing tests, and leaves style to your linter. `/security-review` looks for vulnerabilities the change introduces and reports only what it can describe an exploit for.
+- They work with `larik -p "/review"` too, for a script or a CI job.
+- **To change one,** put your own `review.md` or `security-review.md` in a commands directory; it replaces the built-in. `/skills` shows which is in use.
 
 ## Subagents
 

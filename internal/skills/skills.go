@@ -36,6 +36,10 @@ type Skill struct {
 	Command bool
 	// ArgumentHint describes a command's arguments, e.g. "[issue-number]".
 	ArgumentHint string
+	// Builtin marks a command that ships with Larik (see builtin.go); data
+	// is its file, which isn't on disk.
+	Builtin bool
+	data    []byte
 }
 
 type frontmatter struct {
@@ -103,9 +107,14 @@ func Roots(home, configDir, cwd, repoRoot string) []Root {
 func Discover(roots []Root) *Set {
 	s := &Set{roots: roots, byName: map[string]Skill{}}
 	add := func(sk Skill) {
-		if prev, ok := s.byName[sk.Name]; ok && !sameFile(prev.Path, sk.Path) {
+		// Replacing a built-in command with your own is not a conflict.
+		if prev, ok := s.byName[sk.Name]; ok && !prev.Builtin && !sameFile(prev.Path, sk.Path) {
 			s.Shadowed = append(s.Shadowed, prev)
 		}
+		s.byName[sk.Name] = sk
+	}
+	// Built-in commands come first, so anything found on disk wins.
+	for _, sk := range builtins() {
 		s.byName[sk.Name] = sk
 	}
 	for _, root := range roots {
@@ -187,6 +196,10 @@ func parseCommand(path, scope string) (Skill, error) {
 	if err != nil {
 		return Skill{}, err
 	}
+	return parseCommandData(path, data, scope)
+}
+
+func parseCommandData(path string, data []byte, scope string) (Skill, error) {
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if !commandNameRe.MatchString(name) || len(name) > 64 {
 		return Skill{}, fmt.Errorf("%s: invalid command name %q (letters, digits, - and _, max 64)", path, name)
@@ -344,9 +357,12 @@ func (s *Set) Body(name string) (Skill, string, error) {
 	if !ok {
 		return Skill{}, "", fmt.Errorf("no skill named %q", name)
 	}
-	data, err := os.ReadFile(sk.Path)
-	if err != nil {
-		return sk, "", err
+	data := sk.data
+	if !sk.Builtin {
+		var err error
+		if data, err = os.ReadFile(sk.Path); err != nil {
+			return sk, "", err
+		}
 	}
 	_, body, err := split(data)
 	if err != nil {
@@ -411,6 +427,9 @@ func Render(sk Skill, body, args string) string {
 		tag = "command"
 	}
 	out := fmt.Sprintf("<%s name=%q base_dir=%q>\n%s\n</%s>", tag, sk.Name, sk.Dir, body, tag)
+	if sk.Builtin { // no directory to resolve paths against
+		out = fmt.Sprintf("<%s name=%q>\n%s\n</%s>", tag, sk.Name, body, tag)
+	}
 	if strings.TrimSpace(args) != "" {
 		out += "\n\nARGUMENTS: " + strings.TrimSpace(args)
 	}

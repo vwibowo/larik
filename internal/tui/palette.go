@@ -123,6 +123,9 @@ func (m *model) syncPalette() {
 				if sk.Command {
 					section = "custom commands"
 				}
+				if sk.Builtin {
+					args, section = sk.ArgumentHint, "review"
+				}
 				add("/"+sk.Name, args, sk.Description, section, "")
 			}
 		}

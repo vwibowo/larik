@@ -378,7 +378,15 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 	} else if expanded, ok := a.opts.Skills.Expand(prompt); ok && !quiet {
 		name, _, _ := strings.Cut(strings.TrimPrefix(prompt, "/"), " ")
 		emit(Event{Kind: EvNotice, Text: "running /" + name})
-		prompt = a.runInline(ctx, name, expanded, emit)
+		if sk, _ := a.opts.Skills.Get(name); sk.Builtin {
+			// A built-in command has no inline commands; its changes
+			// marker is filled here, and the diff must never go through
+			// runInline, which would run any !`command` quoted in it.
+			_, args, _ := strings.Cut(prompt, " ")
+			prompt = strings.Replace(expanded, skills.ChangesMarker, a.reviewChanges(ctx, strings.TrimSpace(args), emit), 1)
+		} else {
+			prompt = a.runInline(ctx, name, expanded, emit)
+		}
 	}
 	if len(res.Context) > 0 {
 		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)
