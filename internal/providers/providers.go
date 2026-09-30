@@ -3,12 +3,15 @@
 package providers
 
 import (
+	"context"
 	"fmt"
+	"iter"
 	"os"
 	"strings"
 	"time"
 
 	"larik/internal/chatgpt"
+	"larik/internal/claudeagent"
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/llm/anthropic"
@@ -21,6 +24,7 @@ import (
 // Resolved is a ready-to-use provider and model.
 type Resolved struct {
 	Provider llm.Provider
+	Runtime  llm.AgentRuntime
 	Model    string
 }
 
@@ -53,8 +57,19 @@ func Resolve(cfg *config.Config, spec string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
-	return withFallbacks(cfg, r, role, spec), nil
+	r = withFallbacks(cfg, r, role, spec)
+	if r.Runtime != nil {
+		r.Provider = runtimeBoundProvider{Provider: r.Provider, runtime: r.Runtime}
+	}
+	return r, nil
 }
+
+type runtimeBoundProvider struct {
+	llm.Provider
+	runtime llm.AgentRuntime
+}
+
+func (p runtimeBoundProvider) AgentRuntime() llm.AgentRuntime { return p.runtime }
 
 // resolveSpec builds the provider for a plain provider/model spec.
 func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
@@ -62,11 +77,25 @@ func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	if model == "" {
 		return Resolved{}, fmt.Errorf("model spec %q has no model id", spec)
 	}
+	if name == ClaudeCLI {
+		runtime := claudeagent.New()
+		return Resolved{Provider: cliProvider{runtime: runtime}, Runtime: runtime, Model: model}, nil
+	}
 	p, err := build(cfg, name)
 	if err != nil {
 		return Resolved{}, err
 	}
 	return Resolved{Provider: llm.WithStallTimeout(p, stallTimeout(cfg, name)), Model: model}, nil
+}
+
+type cliProvider struct{ runtime llm.AgentRuntime }
+
+func (cliProvider) Name() string                     { return ClaudeCLI }
+func (p cliProvider) AgentRuntime() llm.AgentRuntime { return p.runtime }
+func (cliProvider) Stream(context.Context, llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		yield(llm.StreamEvent{}, fmt.Errorf("Claude Code CLI is a whole-turn runtime"))
+	}
 }
 
 // Default stall timeouts. A local server gets longer: before its first
@@ -149,7 +178,7 @@ func split(cfg *config.Config, spec string) (provider, model string) {
 
 func isBuiltin(name string) bool {
 	switch name {
-	case anthropic.Name, openai.Name, gemini.Name, Codex:
+	case anthropic.Name, openai.Name, gemini.Name, Codex, ClaudeCLI:
 		return true
 	}
 	_, ok := openaicompat.Presets[name]
@@ -158,7 +187,7 @@ func isBuiltin(name string) bool {
 
 // Names lists the built-in provider names for help text.
 func Names() []string {
-	names := []string{anthropic.Name, openai.Name, gemini.Name, Codex}
+	names := []string{anthropic.Name, openai.Name, gemini.Name, Codex, ClaudeCLI}
 	for n := range openaicompat.Presets {
 		names = append(names, n)
 	}

@@ -241,6 +241,8 @@ func (w *wizard) enterConnect(c providers.Choice, custom bool) tea.Cmd {
 		if chatgpt.SignedIn(chatgpt.Path(w.cfg.ConfigDir)) {
 			w.savedKey, w.useSaved = keySource(w.cfg, c), true
 		}
+	case c.CLI:
+		w.savedKey, w.useSaved = "Claude Code CLI sign-in", true
 	default:
 		w.savedKey = providers.EndpointFor(w.cfg, c.Name).Key
 		w.useSaved = w.savedKey != ""
@@ -431,6 +433,10 @@ func (w *wizard) test() tea.Cmd {
 		if !w.useSaved {
 			return w.startLogin()
 		}
+		w.pc = pc
+		w.endpoint = providers.EndpointFor(w.cfg, name)
+		return w.listModels()
+	case w.choice.CLI:
 		w.pc = pc
 		w.endpoint = providers.EndpointFor(w.cfg, name)
 		return w.listModels()
@@ -964,6 +970,9 @@ func (w *wizard) connectView(st styles, width int) ([]string, string) {
 		if w.signingIn {
 			hint = "esc cancel the sign-in"
 		}
+	case c.CLI:
+		body = append(body, st.dim.Render("Authentication is owned by the official Claude Code CLI."), st.dim.Render("Sign in in a terminal with: claude auth login"))
+		hint = "enter check CLI and continue · esc back"
 	default:
 		body = append(body, st.dim.Render("API key"))
 		if w.savedKey != "" {

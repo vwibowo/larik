@@ -48,6 +48,24 @@ func TestOpenCodeFreeIsNotBuiltin(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeCLIChoiceAndResolution(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.ProviderConfig{}}
+	choice, ok := ChoiceFor(ClaudeCLI)
+	if !ok || choice.Title != "Claude Code CLI" || !choice.CLI {
+		t.Fatalf("CLI choice = %+v, %v", choice, ok)
+	}
+	if !slices.Contains(Usable(cfg), ClaudeCLI) {
+		t.Fatal("Claude Code CLI should be available to connect without a saved key")
+	}
+	r, err := Resolve(cfg, ClaudeCLI+"/sonnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.String() != ClaudeCLI+"/sonnet" || r.Runtime == nil {
+		t.Fatalf("resolved runtime = %+v", r)
+	}
+}
+
 func TestNVIDIAPresetStreamsTextAndToolCalls(t *testing.T) {
 	for _, tc := range []struct{ name, model string }{
 		{"nvidia-nim", "meta/llama-test"},

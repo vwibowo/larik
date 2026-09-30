@@ -32,6 +32,8 @@ func (m *model) availableEfforts(v pickModel) []llm.Effort {
 		}
 	}
 	switch {
+	case kind.Kind == providers.ClaudeCLI:
+		return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortMax}
 	case kind.IsOllama():
 		for _, candidate := range m.modelLists[v.provider].models {
 			if candidate.ID == v.model && candidate.CapsKnown && candidate.Thinking {
@@ -283,7 +285,7 @@ func (m *model) switchModel(spec string, effort llm.Effort) tea.Cmd {
 	m.opts.Config.Model, m.opts.Config.Effort = r.String(), effort
 	changed := r.Provider.Name() != m.agent.ProviderName() || r.Model != m.agent.Model()
 	if changed {
-		m.agent.SetModel(r.Provider, r.Model)
+		m.agent.SetModel(r.Provider, r.Model, r.Runtime)
 	}
 	m.agent.SetEffort(effort)
 	m.stats = m.agent.Stats()

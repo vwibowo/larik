@@ -55,7 +55,12 @@ func (m *model) providerStatus(name string) (status string, ok, warn bool) {
 	if builtin && c.SignIn && providers.EndpointFor(cfg, name).Token == nil {
 		return "needs sign-in", false, true
 	}
-	if builtin && !c.Local && !c.SignIn && providers.EndpointFor(cfg, name).Key == "" {
+	if builtin && c.CLI {
+		if res, ok := m.modelLists[name]; ok && res.err != nil && strings.Contains(strings.ToLower(res.err.Error()), "not signed in") {
+			return "needs sign-in · claude auth login", false, true
+		}
+	}
+	if builtin && !c.Local && !c.SignIn && !c.CLI && providers.EndpointFor(cfg, name).Key == "" {
 		return "needs a key", false, true
 	}
 	res, loaded := m.modelLists[name]
@@ -296,6 +301,17 @@ func (m *model) providerDetail(name string) []string {
 
 	var key string
 	switch {
+	case builtin && c.CLI:
+		status, ok := m.modelLists[name]
+		auth := m.st.warn.Render("checking Claude Code CLI")
+		if ok && status.err == nil {
+			auth = m.st.ok.Render("ready · signed in through Claude Code")
+		}
+		if ok && status.err != nil {
+			auth = m.st.warn.Render(status.err.Error())
+		}
+		lines := []string{m.st.accent.Render(name) + m.st.dim.Render(" · "+kind), row("runtime", "official Claude CLI"), row("auth", auth)}
+		return append(lines, m.modelLines(name, row)...)
 	case builtin && c.SignIn:
 		row := func(k, v string) string { return m.st.dim.Render(pad(k, 11)) + v }
 		auth := m.st.warn.Render("not signed in") + m.st.dim.Render(" · enter to sign in")

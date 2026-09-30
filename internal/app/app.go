@@ -350,6 +350,7 @@ func (a *App) Open(o Options) (*Session, error) {
 	cwd := a.Cwd
 	ag := agent.New(agent.Options{
 		Provider:    resolved.Provider,
+		Runtime:     resolved.Runtime,
 		Model:       resolved.Model,
 		Effort:      eff,
 		System:      a.SystemPrompt(),

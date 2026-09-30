@@ -111,6 +111,10 @@ classDiagram
 
 ## The adapters
 
+### Claude Code CLI runtime
+
+`claude-code-cli/<model>` uses the installed `claude` executable as a whole-turn runtime. It checks the CLI's supported flags and first-party subscription sign-in, starts an isolated process with stream-json input/output, and serves Larik tools through a short-lived authenticated loopback MCP bridge. Tool calls still return to Larik for permission decisions, hooks, execution, and transcript recording. Authentication remains owned by Claude Code; the inference child does not receive Anthropic API-key or cloud-provider routing variables. Claude Code has no supported non-interactive command to enumerate account-available models. Larik offers its rolling `sonnet`, `opus`, and `fable` aliases, plus the CLI's supported effort levels; enter a full model ID if needed. Claude Code validates the selection when a turn starts. Context compaction is managed by Claude Code; Larik's `/compact` command is unavailable for this runtime. Use `anthropic/<model>` for the API-key Messages API adapter.
+
 | Adapter | API | What it handles |
 |---|---|---|
 | [anthropic](../internal/llm/anthropic/anthropic.go) | Messages API (official SDK) | Adaptive thinking with summarized display and `effort`; fixed budgets for older models. Prompt caching: a breakpoint on the system prompt plus automatic placement on the last cacheable block. Eager tool-input streaming, with detection of truncated JSON. If thinking blocks are rejected because their prefix changed (e.g. resumed with different tools), it strips thinking and retries once. |

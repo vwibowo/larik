@@ -420,7 +420,7 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, l *live) {
 		}
 	}
 	if req.Model != nil {
-		l.a.SetModel(res.Provider, res.Model)
+		l.a.SetModel(res.Provider, res.Model, res.Runtime)
 	}
 	if req.Effort != nil {
 		l.a.SetEffort(eff)

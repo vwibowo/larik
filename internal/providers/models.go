@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"larik/internal/chatgpt"
+	"larik/internal/claudeagent"
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/llm/anthropic"
@@ -33,10 +34,13 @@ type Choice struct {
 	BaseURL string // default endpoint
 	Local   bool
 	SignIn  bool // authenticates by signing in (ChatGPT) instead of a key
+	CLI     bool // authenticates through an installed vendor CLI
 }
 
 // Codex runs OpenAI's Codex models on a ChatGPT plan, via sign-in.
 const Codex = "codex"
+
+const ClaudeCLI = "claude-code-cli"
 
 // Choices lists the built-in providers in the order the wizard shows them.
 func Choices() []Choice {
@@ -45,6 +49,7 @@ func Choices() []Choice {
 		{Name: openai.Name, Title: "OpenAI", Desc: "GPT models", KeyEnv: "OPENAI_API_KEY", BaseURL: "https://api.openai.com/v1"},
 		{Name: gemini.Name, Title: "Google Gemini", Desc: "Gemini models", KeyEnv: "GEMINI_API_KEY", BaseURL: "https://generativelanguage.googleapis.com"},
 		{Name: Codex, Title: "ChatGPT (Codex)", Desc: "Codex models on your ChatGPT plan, via sign-in", BaseURL: chatgpt.BaseURL, SignIn: true},
+		{Name: ClaudeCLI, Title: "Claude Code CLI", Desc: "Claude models using your Claude Code sign-in", CLI: true},
 	}
 	for _, c := range []struct{ name, title, desc string }{
 		{"nvidia-nim", "NVIDIA NIM", "hosted models for development and testing"},
@@ -151,6 +156,21 @@ type Model struct {
 // ListModels asks the provider which models it serves.
 func (e Endpoint) ListModels(ctx context.Context) ([]Model, error) {
 	switch {
+	case e.Kind == ClaudeCLI:
+		status := claudeagent.New().Check(ctx)
+		if !status.Ready() {
+			return nil, errors.New(status.Detail)
+		}
+		// Claude Code has no supported non-interactive model-list command.
+		// Offer its rolling aliases as useful defaults; arbitrary full model
+		// IDs remain available through the picker's freeform entry.
+		out := make([]Model, 0, len(claudeagent.SuggestedModels))
+		for _, id := range claudeagent.SuggestedModels {
+			out = append(out, Model{ID: id, Chat: true, Tools: true, Thinking: true, Efforts: []llm.Effort{
+				llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax,
+			}})
+		}
+		return out, nil
 	case e.Kind == Codex:
 		return e.codexModels(ctx)
 	case e.Kind == anthropic.Name:
@@ -460,7 +480,7 @@ func Usable(cfg *config.Config) []string {
 	}
 	for _, c := range Choices() {
 		signedIn := c.SignIn && chatgpt.SignedIn(chatgpt.Path(cfg.ConfigDir))
-		if _, ok := cfg.Providers[c.Name]; ok || c.Local || EnvKey(c.Name) != "" || signedIn {
+		if _, ok := cfg.Providers[c.Name]; ok || c.Local || c.CLI || EnvKey(c.Name) != "" || signedIn {
 			add(c.Name)
 		}
 	}

@@ -29,6 +29,7 @@ const compactThreshold = 0.8
 
 type Options struct {
 	Provider    llm.Provider
+	Runtime     llm.AgentRuntime
 	Model       string
 	Effort      llm.Effort
 	System      string
@@ -216,10 +217,14 @@ func (a *Agent) TokenSaverOn() bool { return a.tokenSaver.Load() }
 
 // SetModel switches provider/model for subsequent turns. Provider-bound
 // blocks (thinking, reasoning items) are filtered out automatically.
-func (a *Agent) SetModel(p llm.Provider, model string) {
+func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRuntime) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.opts.Provider, a.opts.Model = p, model
+	a.opts.Runtime = nil
+	if len(runtime) > 0 {
+		a.opts.Runtime = runtime[0]
+	}
 }
 
 func (a *Agent) SetEffort(e llm.Effort) {
@@ -420,6 +425,9 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 	a.answerDangling()
 	a.tracer().TurnStart(typed, user.Text(), attachmentNames(attached))
 	a.appendMessage(user, nil)
+	if a.opts.Runtime != nil {
+		return a.runRuntime(ctx, emit)
+	}
 
 	compactedThisTurn := false
 	stopContinuations := 0
@@ -512,6 +520,111 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 	}
 	emit(Event{Kind: EvNotice, Text: fmt.Sprintf("stopped after %d model turns (max_turns)", a.opts.MaxTurns)})
 	return "max_turns"
+}
+
+// runRuntime delegates the full model/tool loop to a process-backed runtime.
+// Tool requests re-enter runTools so permission checks, hooks, and transcript
+// results follow the same path as API-backed providers.
+func (a *Agent) runRuntime(ctx context.Context, emit func(Event)) string {
+	stopContinuations := 0
+	for {
+		reason := a.runRuntimePass(ctx, emit)
+		if reason != "stop" {
+			return reason
+		}
+		stopEvent, source := hooks.Stop, "Stop"
+		if a.opts.Subagent != "" {
+			stopEvent, source = hooks.SubagentStop, "SubagentStop"
+		}
+		res := a.runHook(ctx, emit, hooks.Input{HookEventName: stopEvent, StopHookActive: stopContinuations > 0, AgentType: a.opts.Subagent}, a.opts.Subagent)
+		if res.Halt {
+			emit(Event{Kind: EvNotice, Text: "stopped by " + source + " hook: " + res.HaltReason})
+			return "hook_stopped"
+		}
+		if !res.Block || res.Reason == "" || ctx.Err() != nil {
+			return "end_turn"
+		}
+		if stopContinuations >= maxStopContinuations {
+			emit(Event{Kind: EvNotice, Text: source + " hook asked to continue again; ignoring after 5 continuations"})
+			return "end_turn"
+		}
+		stopContinuations++
+		emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + firstLine(res.Reason)})
+		a.appendMessage(llm.UserText(hookFeedback(source, res.Reason)), nil)
+	}
+}
+
+func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
+	var loops loopGuard
+	a.mu.Lock()
+	req := llm.AgentRuntimeRequest{Model: a.opts.Model, System: a.opts.System, Workspace: a.opts.Cwd,
+		Messages: append([]llm.Message(nil), a.messages...), Tools: a.opts.Tools.Specs(), Effort: a.opts.Effort, MaxTurns: a.opts.MaxTurns}
+	runtime := a.opts.Runtime
+	a.mu.Unlock()
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	defer cancelRuntime()
+	events, err := runtime.Run(runtimeCtx, req)
+	if err != nil {
+		emit(Event{Kind: EvError, Text: err.Error()})
+		return "error"
+	}
+	for event := range events {
+		if event.Text != "" {
+			emit(Event{Kind: EvTextDelta, Text: event.Text})
+		}
+		if event.Thinking != "" {
+			emit(Event{Kind: EvThinkingDelta, Text: event.Thinking})
+		}
+		if event.Assistant != nil {
+			msg := *event.Assistant
+			if msg.Model == "" {
+				msg.Model = req.Model
+			}
+			a.appendMessage(msg, nil)
+			emit(Event{Kind: EvAssistant, Message: &msg})
+		}
+		if event.Tool != nil {
+			call := event.Tool.Call
+			uses := []llm.Block{call}
+			results := a.runTools(ctx, uses, emit)
+			if len(results) != 0 {
+				a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: results}, nil)
+				select {
+				case event.Tool.Result <- results[0]:
+				case <-ctx.Done():
+					return "interrupted"
+				}
+			}
+			if a.opts.Subagent != "" && loops.see(uses, results) {
+				cancelRuntime()
+				emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", call.Name, loopRepeats)})
+				return "loop"
+			}
+			if halted, reason := a.takeHalt(); halted {
+				cancelRuntime()
+				emit(Event{Kind: EvNotice, Text: "stopped by hook: " + reason})
+				return "hook_stopped"
+			}
+		}
+		if event.Usage != nil {
+			a.recordUsage(req.Model, *event.Usage, emit)
+		}
+		if event.Err != nil {
+			if ctx.Err() != nil {
+				return "interrupted"
+			}
+			emit(Event{Kind: EvError, Text: event.Err.Error()})
+			return "error"
+		}
+		if event.Done {
+			return "stop"
+		}
+	}
+	if ctx.Err() != nil {
+		return "interrupted"
+	}
+	emit(Event{Kind: EvError, Text: "Claude Code CLI runtime ended without completing the turn"})
+	return "error"
 }
 
 // stream makes one model request and records the assistant message.
@@ -663,7 +776,7 @@ func (a *Agent) needsCompaction() bool {
 	// With only a prompt and an answer there is nothing worth summarizing;
 	// compacting would just throw the conversation away (tiny local windows
 	// can be exceeded by the system prompt alone).
-	if len(a.messages) < 4 || a.opts.NoAutoCompact {
+	if len(a.messages) < 4 || a.opts.NoAutoCompact || a.opts.Runtime != nil {
 		return false
 	}
 	return a.lastContext > 0 && float64(a.lastContext) > compactThreshold*float64(a.windowLocked())
@@ -691,6 +804,12 @@ func (a *Agent) compact(ctx context.Context, emit func(Event), midTurn bool) err
 }
 
 func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool, trigger string) error {
+	a.mu.Lock()
+	wholeTurn := a.opts.Runtime != nil
+	a.mu.Unlock()
+	if wholeTurn {
+		return errors.New("compaction is managed by the Claude Code CLI runtime")
+	}
 	a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreCompact, Trigger: trigger}, trigger)
 	a.mu.Lock()
 	msgs := append([]llm.Message(nil), a.messages...)

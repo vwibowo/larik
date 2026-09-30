@@ -61,8 +61,13 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	if label == "" {
 		label = o.Type
 	}
+	var runtime llm.AgentRuntime
+	if p, ok := o.Provider.(interface{ AgentRuntime() llm.AgentRuntime }); ok {
+		runtime = p.AgentRuntime()
+	}
 	opts := Options{
 		Provider:      o.Provider,
+		Runtime:       runtime,
 		Model:         o.Model,
 		Effort:        effort,
 		NoAutoCompact: noAutoCompact,
