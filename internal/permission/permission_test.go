@@ -41,6 +41,8 @@ func TestDecide(t *testing.T) {
 		{"auto leaves commands to the check", ModeAuto, call("bash", false, `{"command":"make deploy"}`), Ask},
 		{"auto leaves mcp to the check", ModeAuto, call("mcp__jira__create", false, `{}`), Ask},
 		{"deny beats auto", ModeAuto, call("bash", false, `{"command":"rm -rf /"}`), Deny},
+		{"memory needs no approval", ModeDefault, call("memory", false, `{"action":"save","name":"x"}`), Allow},
+		{"memory works in plan mode", ModePlan, call("memory", false, `{"action":"save","name":"x"}`), Allow},
 		{"plan denies writes", ModePlan, call("edit", false, `{"path":"main.go"}`), Deny},
 		{"plan allows reads", ModePlan, call("grep", true, `{"pattern":"x"}`), Allow},
 		{"yolo", ModeYolo, call("bash", false, `{"command":"make deploy"}`), Allow},
@@ -260,5 +262,12 @@ func TestExitPlanToolAsksOnlyInPlanMode(t *testing.T) {
 	}
 	if r := SuggestRule(ExitPlanTool, json.RawMessage(in)); r != "" {
 		t.Errorf("no rule should be suggested for a plan, got %q", r)
+	}
+}
+
+func TestMemoryCanBeDenied(t *testing.T) {
+	c := NewChecker(ModeYolo, Rules{Deny: []string{"memory"}}, "/w")
+	if got, _ := c.Decide(call("memory", false, `{"action":"save"}`)); got != Deny {
+		t.Errorf("a deny rule should block the memory tool: %v", got)
 	}
 }

@@ -171,6 +171,7 @@ func run() error {
 		SessionDir:    a.SessionDir,
 		MCP:           a.MCP,
 		Skills:        a.Skills,
+		Memory:        a.Memory,
 		Agents:        a.AgentDefs,
 		LSP:           a.LSP,
 		Sandbox:       a.Sandbox,

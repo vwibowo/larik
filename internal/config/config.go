@@ -120,6 +120,10 @@ type Config struct {
 	// receives every query) is honored only from personal files.
 	Web WebConfig `json:"web,omitempty"`
 
+	// Memory configures the notes Larik keeps across sessions. Shared
+	// files may only switch it off.
+	Memory MemoryConfig `json:"memory,omitempty"`
+
 	// AutoMode configures auto mode's safety check. Only personal files
 	// may set it: a shared file choosing the model that approves its own
 	// repository's commands would defeat the check.
@@ -309,6 +313,9 @@ func (c *Config) merge(path string, trusted bool) error {
 		if o.Web.Search.Disabled {
 			c.Web.Search.Disabled = true
 		}
+	}
+	if o.Memory.Enabled != nil && (trusted || !*o.Memory.Enabled) {
+		c.Memory.Enabled = o.Memory.Enabled
 	}
 	if trusted && o.AutoMode.Model != "" {
 		c.AutoMode.Model = o.AutoMode.Model
@@ -943,6 +950,15 @@ func (c *Config) ApproveProjectHooks() error {
 	c.ApprovedHooks = hash
 	return nil
 }
+
+// MemoryConfig is the "memory" settings section.
+type MemoryConfig struct {
+	// Enabled defaults to true.
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// MemoryOn reports whether memory is enabled (default on).
+func (c *Config) MemoryOn() bool { return on(c.Memory.Enabled, true) }
 
 // AutoModeConfig is the "auto_mode" settings section.
 type AutoModeConfig struct {

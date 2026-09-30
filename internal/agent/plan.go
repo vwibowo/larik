@@ -89,3 +89,11 @@ func (a *Agent) approvePlan(mode permission.Mode) {
 	a.planNoted = false // the tool result says so
 	a.mu.Unlock()
 }
+
+// AddNote queues text for the model to see with the next prompt, as a
+// system note: something that changed outside the conversation.
+func (a *Agent) AddNote(text string) {
+	a.mu.Lock()
+	a.notes = append(a.notes, text)
+	a.mu.Unlock()
+}

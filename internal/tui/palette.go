@@ -20,7 +20,7 @@ type command struct {
 
 var commands = []command{
 	{"/model", "[provider/model]", "pick a model from a list, or switch directly (e.g. /model openai/gpt-5.5)", "model and mode", "alt+p"},
-	{"/mode", "[mode]", "pick the permission mode: default, accept-edits, plan, yolo", "model and mode", "shift+tab"},
+	{"/mode", "[mode]", "pick the permission mode: default, accept-edits, plan, auto, yolo", "model and mode", "shift+tab"},
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},
 	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
@@ -41,6 +41,7 @@ var commands = []command{
 	{"/mcp", "[approve|login|logout <name>]", "MCP servers, their tools, prompts and resources; approve a project server, or sign in to one", "tools", ""},
 	{"/hooks", "[approve]", "configured lifecycle hooks; approve the project's shared hooks", "tools", ""},
 	{"/skills", "", "list available skills", "tools", ""},
+	{"/memory", "[add <text> | show <name> | delete <name>]", "notes remembered across sessions: list, read, add or delete them", "tools", ""},
 	{"/agents", "", "list subagents the model can delegate to", "tools", ""},
 	{"/lsp", "", "language servers and their status", "tools", ""},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},

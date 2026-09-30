@@ -407,6 +407,26 @@ func TestSharedSettingsCannotWidenTrust(t *testing.T) {
 	}
 }
 
+func TestMemorySetting(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	if cfg, _ := Load(cwd); !cfg.MemoryOn() {
+		t.Error("memory is on by default")
+	}
+	// A repository may switch it off for its contributors...
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"memory":{"enabled":false}}`)
+	if cfg, _ := Load(cwd); cfg.MemoryOn() {
+		t.Error("shared settings may switch memory off")
+	}
+	// ...but not back on when you switched it off.
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"memory":{"enabled":false}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"memory":{"enabled":true}}`)
+	if cfg, _ := Load(cwd); cfg.MemoryOn() {
+		t.Error("shared settings must not switch memory on")
+	}
+}
+
 func TestAutoModeOnlyFromPersonalSettings(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()

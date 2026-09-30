@@ -316,7 +316,8 @@ func (namedTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result 
 }
 
 func TestChildToolsLeaveOutBrowserUnlessNamed(t *testing.T) {
-	parent := tools.NewRegistry(namedTool("read"), namedTool("browser_navigate"), namedTool("browser_click"))
+	// memory is the main agent's alone, whatever the definition lists.
+	parent := tools.NewRegistry(namedTool("read"), namedTool("browser_navigate"), namedTool("browser_click"), namedTool("memory"))
 	names := func(def Definition) string {
 		var out []string
 		for _, s := range childTools(parent, def, false).Specs() {

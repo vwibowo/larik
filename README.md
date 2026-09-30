@@ -237,6 +237,7 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 | `/hooks`                                         | List configured hooks                                                                                                                                                                                                                                                    |
 | `/hooks approve`                                 | Allow the project's shared hooks to run                                                                                                                                                                                                                                  |
 | `/skills`                                        | List skills                                                                                                                                                                                                                                                              |
+| `/memory [add <text> \| show <name> \| delete <name>]` | List the notes Larik remembers across sessions, or add, read or delete one. See [Memory](#memory)                                                                                                                                                                  |
 | `/agents`                                        | List subagents                                                                                                                                                                                                                                                           |
 | `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
@@ -621,6 +622,29 @@ Fix issue #$1 with priority $2. Current branch: !`git branch --show-current`
 - `/review` looks for wrong behavior, unhandled cases, broken callers, concurrency and resource problems, data loss and missing tests, and leaves style to your linter. `/security-review` looks for vulnerabilities the change introduces and reports only what it can describe an exploit for.
 - They work with `larik -p "/review"` too, for a script or a CI job.
 - **To change one,** put your own `review.md` or `security-review.md` in a commands directory; it replaces the built-in. `/skills` shows which is in use.
+
+## Memory
+
+Larik remembers things between sessions as short notes: who you are and how you like to work, corrections you've given it, decisions and constraints of the project, and where things live outside the repository. It saves a note when it learns something a later session will need, or when you ask it to ("remember that we deploy on Tuesdays").
+
+```
+> /memory
+notes for this project  (~/.local/share/larik/memory/myapp-3f9a…)
+  use-pnpm                     project   Use pnpm for package commands in this project
+  prefers-table-tests          feedback  Write Go tests as table tests
+notes for every project  (~/.local/share/larik/memory/_user)
+  who                          user      Senior Go developer, new to the frontend
+```
+
+- **Two scopes.** Project notes belong to one project (its git root); user notes apply everywhere. Both are kept under `~/.local/share/larik/memory`, outside your repository, so nothing is committed or shared.
+- **Notes are Markdown files** with a name, a one-line description and a type (`user`, `feedback`, `project` or `reference`). Edit or delete them by hand if you like; a plain `.md` file you drop in works too.
+- **What the model sees.** At the start of each context (a new session, or after `/clear`) the system prompt lists the notes by name and description. It reads a note's content with the `memory` tool when the description is relevant. A note saved during a session joins that list at the next fresh context.
+- **`/memory add <text>`** saves a note yourself (`--user` for every project) and tells the model straight away. `/memory show <name>` and `/memory delete <name>` read and remove one.
+- **No approval needed.** The `memory` tool writes only to that directory, so it runs without asking in every mode, plan included; each save shows in the conversation. Add `"memory"` to your deny rules to stop the model saving or reading notes.
+- **Notes are background, not instructions.** The model is told that they may be out of date and to check what they name before relying on it, and never to save something a web page, a file or a tool result asks it to remember, or any secret. Still, read `/memory` now and then: a note shapes every later session.
+- **Off switch:** `"memory": {"enabled": false}`. A shared `.larik/settings.json` can switch memory off for a repository but not on.
+
+Subagents don't get memory; the main agent passes on what they need.
 
 ## Subagents
 

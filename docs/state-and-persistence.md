@@ -1,6 +1,6 @@
 # State and persistence
 
-Larik keeps four kinds of state on disk. All of it is under `~/.local/share/larik` (or `$XDG_DATA_HOME/larik`), except config.
+Larik keeps several kinds of state on disk. All of it is under `~/.local/share/larik` (or `$XDG_DATA_HOME/larik`), except config.
 
 ```
 ~/.local/share/larik/
@@ -13,6 +13,9 @@ Larik keeps four kinds of state on disk. All of it is under `~/.local/share/lari
 │   ├── manifest.json                         which files, whether they existed, mode
 │   └── 0.bin, 1.bin, …                       original bytes
 ├── worktrees/<repo>/task-xxxxxx/             isolated subagent checkouts
+├── memory/<root-slug>/<name>.md              notes kept across sessions, per project
+├── memory/_user/<name>.md                    notes that apply to every project
+├── browser-profile/, browser-downloads/      the browser tools' Chrome profile and downloads
 └── logs/                                     mcp-<name>.log, lsp-<name>.log
 ```
 
@@ -139,6 +142,15 @@ Each layer is marked **trusted** (personal: only you write it) or not (shared: a
 The approvals are pinned to a content hash (`MCPServer.Hash`, `hooks.Config.Hash`), so a later commit that changes the command or URL silently loses its approval instead of inheriting it. See [security](security.md#trust-boundaries).
 
 "Always allow" answers and approvals are written to private project settings under `~/.config/larik/projects/` with `updateJSON`, which edits the file as generic JSON so unknown keys survive. A private `.lock` sidecar serializes read, edit, and atomic write across Larik processes, so concurrent updates do not overwrite each other. `/config` writes user-wide settings to `~/.config/larik/config.json` the same way. Larik does not load the repository's `.larik/settings.local.json`.
+
+## Memory
+
+[internal/memory](../internal/memory/memory.go) keeps notes that carry across sessions. A note is `<name>.md` with YAML frontmatter (`name`, `description`, `type`) and a body of at most 8 KB; a file without frontmatter is a note described by its first line. There is no separate index file: `Store.List` scans the two directories, the project's (`memory.Dir`, keyed on the git root the way `session.Dir` keys on cwd) and the user's, so hand edits can't leave an index stale.
+
+- **Prompt.** `App.SystemPrompt` appends `Store.Prompt()`: the guidance on what to save, then each note's name, type and description. Like the instruction files it is read once per fresh context, so saving a note never changes the cached prefix mid-conversation. Bodies stay out of the prompt; the model loads one with the tool.
+- **Tool.** `memory` (save, read, list, delete) writes through `Store.Save`, which validates the name (lowercase, digits, hyphens: also a safe file name), type and size, caps a scope at 150 notes, and replaces the file atomically with mode `0600`. `permission.Decide` allows the tool in every mode after deny rules, since it can't touch the project. Subagents don't get it (`childTools`).
+- **`/memory add`** saves directly, with a name slugged from the text, and queues a system note (`Agent.AddNote`) so the model knows before the next fresh context.
+- **Trust.** Notes are presented as background that may be stale, inside a `<memory-note>` tag when read. The guidance and the tool description both say to save only what the user said or the model verified, never what tool output asks to be remembered, which is the path a prompt injection would take to persist.
 
 ## Instruction files
 

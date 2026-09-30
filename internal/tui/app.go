@@ -25,6 +25,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/lsp"
 	"larik/internal/mcp"
+	"larik/internal/memory"
 	"larik/internal/permission"
 	"larik/internal/sandbox"
 	"larik/internal/skills"
@@ -48,6 +49,7 @@ type Options struct {
 	MCP           *mcp.Manager
 	Hooks         *hooks.Runner
 	Skills        *skills.Set
+	Memory        *memory.Store // nil when memory is off
 	Agents        *subagent.Set
 	LSP           *lsp.Manager
 	Sandbox       *sandbox.Sandbox // nil when unavailable or disabled

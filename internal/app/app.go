@@ -17,6 +17,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/lsp"
 	"larik/internal/mcp"
+	"larik/internal/memory"
 	"larik/internal/permission"
 	"larik/internal/providers"
 	"larik/internal/sandbox"
@@ -40,6 +41,8 @@ type App struct {
 	MCP       *mcp.Manager
 	LSP       *lsp.Manager
 	Sandbox   *sandbox.Sandbox // nil when unavailable or disabled
+	// Memory is the notes kept across sessions; nil when switched off.
+	Memory *memory.Store
 	// Browser drives Chrome for the browser_* tools; nil unless enabled.
 	Browser *browsercdp.Session
 
@@ -90,6 +93,10 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	if searchErr != nil {
 		a.SearchNote = searchErr.Error()
+	}
+	if cfg.MemoryOn() {
+		a.Memory = memory.New(memory.Dir(cfg.DataDir, projectRoot), memory.UserDir(cfg.DataDir))
+		baseTools = append(baseTools, memory.Tool{S: a.Memory})
 	}
 	if cfg.Browser.Enabled {
 		// Chrome starts on the first browser_* call, not here.
@@ -147,6 +154,11 @@ func (a *App) SystemPrompt() string {
 	}
 	if idx := a.Skills.Index(); idx != "" {
 		system += "\n\n" + idx
+	}
+	// Read at each fresh context, like the instruction files: notes saved
+	// during a session join the prompt at the next one.
+	if mem := a.Memory.Prompt(); mem != "" {
+		system += "\n\n" + mem
 	}
 	return system
 }

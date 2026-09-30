@@ -163,6 +163,11 @@ func urlHost(raw string) string {
 // approval; elsewhere it has nothing to do and is allowed.
 const ExitPlanTool = "exit_plan_mode"
 
+// MemoryTool saves notes in Larik's own memory directory, outside the
+// project. It needs no approval in any mode (plan included: it changes
+// nothing in the project), though a deny rule can still block it.
+const MemoryTool = "memory"
+
 // fileWriteTools write one file named by their path argument.
 var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "apply_code_action": true}
 
@@ -196,7 +201,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		}
 		return Allow, ""
 	}
-	if c.mode == ModeYolo {
+	if c.mode == ModeYolo || call.Tool == MemoryTool {
 		return Allow, ""
 	}
 	if call.ReadOnly {

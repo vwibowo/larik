@@ -1110,6 +1110,8 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["key"])
 	case "browser_eval":
 		arg = str(in["expression"])
+	case "memory":
+		arg = strings.TrimSpace(str(in["action"]) + " " + str(in["name"]))
 	case "browser_history":
 		arg = str(in["direction"])
 	case "browser_upload":

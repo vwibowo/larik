@@ -59,6 +59,7 @@ classDiagram
 | `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback otherwise |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
+| `memory` | memory | no | Saves, reads, lists and deletes notes kept across sessions; allowed in every mode (deny rules aside); see [state](state-and-persistence.md#memory). Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_upload`, `browser_history`, `browser_tabs`, `browser_eval` | browsercdp | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
 | `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console` | browsercdp | yes | Read the active tab; `browser_screenshot` returns an image |
@@ -146,7 +147,7 @@ flowchart TD
 
 1. `write`/`edit` outside the project, through a symlink, or to a protected project file → Deny (even in yolo).
 2. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
-3. Mode **yolo** → Allow.
+3. Mode **yolo**, or the `memory` tool (it writes only to Larik's memory directory) → Allow.
 4. Tool is **read-only** → Allow.
 5. Mode **plan** → Deny, except `web_fetch`/`web_search`/`browser_navigate`, which fall through to ask (research is part of planning).
 6. Any **allow rule** matches → Allow.

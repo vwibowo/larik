@@ -228,6 +228,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/skills":
 		return m.skillsCommand(info)
 
+	case "/memory":
+		return m.memoryCommand(args, info, fail)
+
 	case "/agents":
 		return m.agentsCommand(info)
 
