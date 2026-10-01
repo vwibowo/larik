@@ -228,16 +228,16 @@ func TestSpinnerTip(t *testing.T) {
 }
 
 func TestExecutionCommand(t *testing.T) {
-	m := testModel(t)
+	m := testModel(t) // ollama/m
 	if strings.Contains(plain(m.statusLine()), "{}") {
 		t.Fatal("the tool chain, the default, needs no footer tag")
 	}
 	m.command("/execution hybrid")
-	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "hybrid" {
-		t.Fatalf("execution = %q, config %q", m.agent.Execution(), m.opts.Config.Execution)
+	if m.agent.Execution() != "hybrid" || m.opts.Config.ExecutionFor("ollama", "m") != "hybrid" {
+		t.Fatalf("execution = %q", m.agent.Execution())
 	}
-	if !strings.Contains(savedConfig(t, m), `"execution": "hybrid"`) {
-		t.Fatalf("execution should be saved: %s", savedConfig(t, m))
+	if !strings.Contains(savedConfig(t, m), `"ollama/m": "hybrid"`) || strings.Contains(savedConfig(t, m), `"execution": "hybrid"`) {
+		t.Fatalf("/execution should save a setting for this model only: %s", savedConfig(t, m))
 	}
 	if !strings.Contains(plain(m.statusLine()), "{} hybrid") {
 		t.Fatalf("footer should show hybrid: %s", plain(m.statusLine()))
@@ -246,12 +246,23 @@ func TestExecutionCommand(t *testing.T) {
 	if m.agent.Execution() != "hybrid" {
 		t.Fatal("an unknown value must not change the setting")
 	}
-	m.command("/execution tools")
-	if m.agent.Execution() != "tools" || m.opts.Config.Execution != "" || strings.Contains(savedConfig(t, m), "execution") {
-		t.Fatalf("tools is the default and is stored as no setting: %s", savedConfig(t, m))
+
+	// The default applies to models without their own setting, so it
+	// doesn't override this one.
+	if _, err := m.saveSetting("execution", "code"); err != nil {
+		t.Fatal(err)
 	}
-	m.command("/execution")
-	if m.settings == nil {
-		t.Fatal("/execution with no value should open its choices")
+	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "code" {
+		t.Fatalf("the default must not override the model's own setting: %q", m.agent.Execution())
+	}
+	m.command("/execution default")
+	if m.agent.Execution() != "code" || strings.Contains(savedConfig(t, m), "ollama/m") {
+		t.Fatalf("removing the model's setting should fall back to the default: %q %s", m.agent.Execution(), savedConfig(t, m))
+	}
+	if _, err := m.saveSetting("execution", "tools"); err != nil {
+		t.Fatal(err)
+	}
+	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "execution") {
+		t.Fatalf("tools is the default and is stored as no setting: %s", savedConfig(t, m))
 	}
 }

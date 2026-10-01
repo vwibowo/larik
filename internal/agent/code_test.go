@@ -119,3 +119,34 @@ func TestSubagentsInheritExecution(t *testing.T) {
 		t.Errorf("child execution = %q", child.Execution())
 	}
 }
+
+// strongCode gives "fake/strong" scripts only and every other model tools.
+func strongCode(provider, model string) tools.Execution {
+	if provider+"/"+model == "fake/strong" {
+		return tools.ExecCode
+	}
+	return tools.ExecTools
+}
+
+func TestExecutionFollowsTheModel(t *testing.T) {
+	a := New(Options{Provider: &fakeProvider{}, Model: "strong", Cwd: t.TempDir(), Tools: tools.Default(),
+		Execution: tools.ExecCode, ExecutionFor: strongCode})
+	a.SetModel(&fakeProvider{}, "small")
+	if a.Execution() != tools.ExecTools {
+		t.Errorf("switching to a model without scripts: %q", a.Execution())
+	}
+	a.SetModel(&fakeProvider{}, "strong")
+	if a.Execution() != tools.ExecCode {
+		t.Errorf("switching back: %q", a.Execution())
+	}
+	// A subagent on another model gets that model's setting, and keeps
+	// following models itself.
+	child := a.Spawn(SpawnOptions{Type: "worker", Provider: &fakeProvider{}, Model: "small", Tools: tools.Default()})
+	if child.Execution() != tools.ExecTools {
+		t.Errorf("worker on the small model: %q", child.Execution())
+	}
+	child.SetModel(&fakeProvider{}, "strong")
+	if child.Execution() != tools.ExecCode {
+		t.Errorf("the child should follow its own model changes: %q", child.Execution())
+	}
+}

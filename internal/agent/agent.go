@@ -46,6 +46,10 @@ type Options struct {
 	// Execution is how the model carries out actions: with tools only,
 	// or also (or only) with run_code scripts. Empty means tools.
 	Execution tools.Execution
+	// ExecutionFor, if set, gives the execution for a provider and model:
+	// it is applied when the model changes (SetModel) and to subagents,
+	// which may run another model.
+	ExecutionFor func(provider, model string) tools.Execution
 
 	// LoadTools, if set, supplies the tool set at the start of each fresh
 	// context (first prompt, and after Clear). The set then stays fixed so
@@ -232,6 +236,9 @@ func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRunti
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.opts.Provider, a.opts.Model = p, model
+	if a.opts.ExecutionFor != nil && p != nil {
+		a.opts.Execution = a.opts.ExecutionFor(p.Name(), model)
+	}
 	a.opts.Runtime = nil
 	if len(runtime) > 0 {
 		a.opts.Runtime = runtime[0]

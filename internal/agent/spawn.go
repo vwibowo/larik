@@ -55,8 +55,12 @@ type SpawnOptions struct {
 // hooks and checkpoints, but has its own context, prompt and tools.
 func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
-	effort, noAutoCompact, compactWith, tr, exec := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace, a.opts.Execution
+	effort, noAutoCompact, compactWith, tr, exec, execFor := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace, a.opts.Execution, a.opts.ExecutionFor
 	a.mu.Unlock()
+	// A subagent on another model gets that model's execution.
+	if execFor != nil && o.Provider != nil {
+		exec = execFor(o.Provider.Name(), o.Model)
+	}
 	label := o.Label
 	if label == "" {
 		label = o.Type
@@ -77,6 +81,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		MaxTurns:      o.MaxTurns,
 		Tools:         o.Tools,
 		Execution:     exec,
+		ExecutionFor:  execFor,
 		Perms:         a.opts.Perms,
 		Session:       o.Session,
 		Checkpoints:   a.opts.Checkpoints,

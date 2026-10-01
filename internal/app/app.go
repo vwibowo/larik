@@ -328,10 +328,6 @@ func (a *App) Open(o Options) (*Session, error) {
 	if permMode, err = permission.ParseMode(string(permMode)); err != nil {
 		return fail(err)
 	}
-	exec, err := tools.ParseExecution(string(a.Cfg.Execution))
-	if err != nil {
-		return fail(err)
-	}
 	eff := a.Cfg.Effort
 	if o.Effort != "" {
 		if eff, err = ParseEffort(o.Effort); err != nil {
@@ -362,7 +358,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Cwd:         cwd,
 		MaxTurns:    a.Cfg.MaxTurns,
 		Tools:       tools.NewRegistry(a.tools...),
-		Execution:   exec,
+		Execution:   a.Cfg.ExecutionFor(resolved.Provider.Name(), resolved.Model),
 		Perms:       perms,
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(a.Cfg.DataDir, "checkpoints", sess.ID), cwd),
@@ -374,6 +370,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		LSP:         a.LSP,
 		Sandbox:     sbTool,
 
+		ExecutionFor:  func(provider, model string) tools.Execution { return a.Cfg.ExecutionFor(provider, model) },
 		NoAutoCompact: !a.Cfg.AutoCompactOn(),
 		TokenSaver:    a.Cfg.TokenSaverOn(),
 		Language:      a.Cfg.Language,

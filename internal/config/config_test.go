@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -727,5 +728,57 @@ func TestDebugIsPersonal(t *testing.T) {
 	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"debug":true,"debug_retention_days":3}`)
 	if cfg, err = Load(cwd); err != nil || !cfg.DebugOn() || cfg.DebugRetention() != 3*24*time.Hour {
 		t.Errorf("personal debug settings: %v %v", cfg.DebugOn(), cfg.DebugRetention())
+	}
+}
+
+func TestExecutionPerModel(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik", "config.json")
+	write(t, path, `{"execution":"hybrid","model_execution":{"codex/gpt-6-luna":"code","small-model":"tools"}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ provider, model, want, src string }{
+		{"codex", "gpt-6-luna", "code", "codex/gpt-6-luna"},
+		{"openai", "gpt-6-luna", "hybrid", ""}, // the entry names codex
+		{"ollama", "small-model", "tools", "small-model"},
+		{"anthropic", "claude-opus-5", "hybrid", ""},
+	} {
+		if e, src := cfg.ExecutionSource(c.provider, c.model); string(e) != c.want || src != c.src {
+			t.Errorf("%s/%s: %q from %q, want %q from %q", c.provider, c.model, e, src, c.want, c.src)
+		}
+	}
+
+	if err := cfg.SetModelExecution("anthropic/claude-opus-5", "code"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetModelExecution("codex/gpt-6-luna", ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExecutionFor("anthropic", "claude-opus-5") != "code" || cfg.ExecutionFor("codex", "gpt-6-luna") != "hybrid" {
+		t.Error("in-memory config should follow the saved changes")
+	}
+	again, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ExecutionFor("anthropic", "claude-opus-5") != "code" || again.ExecutionFor("codex", "gpt-6-luna") != "hybrid" || again.ExecutionFor("ollama", "small-model") != "tools" {
+		t.Errorf("saved model_execution = %v", again.ModelExecution)
+	}
+}
+
+func TestExecutionTyposFailLoad(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik", "config.json")
+	write(t, path, `{"model_execution":{"codex/gpt-6-luna":"scripts"}}`)
+	if _, err := Load(cwd); err == nil || !strings.Contains(err.Error(), "codex/gpt-6-luna") {
+		t.Fatalf("an unknown model_execution value should name its key: %v", err)
+	}
+	write(t, path, `{"execution":"fast"}`)
+	if _, err := Load(cwd); err == nil {
+		t.Fatal("an unknown execution should fail")
 	}
 }

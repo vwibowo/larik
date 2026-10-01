@@ -56,6 +56,9 @@ type Config struct {
 	// default) offers one tool call per step, "hybrid" adds run_code
 	// scripts the model may use when they help, "code" offers scripts only.
 	Execution tools.Execution `json:"execution,omitempty"`
+	// ModelExecution sets the execution per model, keyed "provider/model"
+	// or a bare model id; models without an entry use Execution.
+	ModelExecution map[string]tools.Execution `json:"model_execution,omitempty"`
 
 	// CheckpointRetentionDays is how long /undo snapshots are kept: 0
 	// means the default (7), a negative value keeps them forever. The
@@ -285,6 +288,14 @@ func Load(cwd string) (*Config, error) {
 		m.ID = id
 		llm.Catalog[id] = m
 	}
+	if _, err := tools.ParseExecution(string(cfg.Execution)); err != nil {
+		return nil, fmt.Errorf("execution: %w", err)
+	}
+	for k, e := range cfg.ModelExecution {
+		if _, err := tools.ParseExecution(string(e)); err != nil {
+			return nil, fmt.Errorf("model_execution %q: %w", k, err)
+		}
+	}
 	if cfg.MaxTurns == 0 {
 		cfg.MaxTurns = 200
 	}
@@ -407,6 +418,14 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.Execution != "" {
 		c.Execution = o.Execution
+	}
+	if trusted && len(o.ModelExecution) > 0 {
+		if c.ModelExecution == nil {
+			c.ModelExecution = map[string]tools.Execution{}
+		}
+		for k, v := range o.ModelExecution {
+			c.ModelExecution[k] = v
+		}
 	}
 	if o.MaxTurns != 0 && (trusted || c.MaxTurns == 0 || o.MaxTurns < c.MaxTurns) {
 		c.MaxTurns = o.MaxTurns
@@ -758,6 +777,59 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 			}
 		}
 	})
+}
+
+// ExecutionFor is how a model carries out actions: its model_execution
+// entry ("provider/model" first, then the bare id), else the default.
+func (c *Config) ExecutionFor(provider, model string) tools.Execution {
+	e, _ := c.ExecutionSource(provider, model)
+	return e
+}
+
+// ExecutionSource is ExecutionFor plus the model_execution key it came
+// from, "" when it is the default.
+func (c *Config) ExecutionSource(provider, model string) (tools.Execution, string) {
+	for _, k := range []string{provider + "/" + model, model} {
+		if e, ok := c.ModelExecution[k]; ok && e != "" {
+			x, _ := tools.ParseExecution(string(e))
+			return x, k
+		}
+	}
+	e, _ := tools.ParseExecution(string(c.Execution))
+	return e, ""
+}
+
+// SetModelExecution saves a model's execution under key ("provider/model")
+// in the user config, or removes its entry when e is empty.
+func (c *Config) SetModelExecution(key string, e tools.Execution) error {
+	err := updateJSON(c.UserConfigPath(), 0o644, func(raw map[string]any) {
+		m, _ := raw["model_execution"].(map[string]any)
+		if m == nil {
+			m = map[string]any{}
+		}
+		if e == "" {
+			delete(m, key)
+		} else {
+			m[key] = string(e)
+		}
+		if len(m) == 0 {
+			delete(raw, "model_execution")
+		} else {
+			raw["model_execution"] = m
+		}
+	})
+	if err != nil {
+		return err
+	}
+	if e == "" {
+		delete(c.ModelExecution, key)
+	} else {
+		if c.ModelExecution == nil {
+			c.ModelExecution = map[string]tools.Execution{}
+		}
+		c.ModelExecution[key] = e
+	}
+	return nil
 }
 
 // UserConfigPath is the personal config file shared by all projects.

@@ -118,7 +118,7 @@ After each tool runs, `PostToolUse` hooks can append feedback or context to the 
 
 ## Scripts (run_code)
 
-The execution setting ([code.go](../internal/tools/code.go)) is separate from the permission mode: it changes the declared tools, not what may run. `Registry.ForExecution` returns the registry the model sees. `hybrid` appends `run_code`, whose description then indexes only the deferred tools, since the model already has the declared tools' schemas. `code` declares only `run_code` but keeps every tool resolvable by name, for the calls scripts make. The agent caches that view per base registry and setting (`activeTools`).
+The execution setting ([code.go](../internal/tools/code.go)) is separate from the permission mode: it changes the declared tools, not what may run. `Registry.ForExecution` returns the registry the model sees. `hybrid` appends `run_code`, whose description then indexes only the deferred tools, since the model already has the declared tools' schemas. `code` declares only `run_code` but keeps every tool resolvable by name, for the calls scripts make. The agent caches that view per base registry and setting (`activeTools`). The setting is per model (`Config.ExecutionFor`: `model_execution` by `provider/model`, then bare id, then `execution`); `Options.ExecutionFor` lets `SetModel` and `Spawn` apply the new model's setting.
 
 A script runs in-process in goja, with no file, network or process access of its own. Its `tools.<name>(args)` bindings call `tools.Caller`, which the agent puts in the context of a `run_code` call (`scriptCaller` in [runtools.go](../internal/agent/runtools.go)). Each inner call:
 

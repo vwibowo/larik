@@ -165,14 +165,17 @@ var settingSpecs = []settingSpec{
 			m.agent.SetTokenSaver(on)
 		}),
 	{
-		key: "execution", title: "Execution", section: "behavior", kind: kindChoice,
+		key: "execution", title: "Default execution", section: "behavior", kind: kindChoice,
 		choices: []settingChoice{
 			{value: "tools", label: "Tool chain", desc: "one tool call per step"},
 			{value: "hybrid", label: "Hybrid", desc: "tools, plus scripts that call them when a task has many steps"},
 			{value: "code", label: "Code", desc: "scripts only: every tool is called from run_code"},
 		},
-		later: "applies from the next request; each call a script makes is still permission-checked",
-		get:   func(m *model) string { return string(m.agent.Execution()) },
+		later: "for models without their own setting (/execution sets one); applies from the next request",
+		get: func(m *model) string {
+			e, _ := tools.ParseExecution(string(m.opts.Config.Execution))
+			return string(e)
+		},
 		store: orEmpty("tools"),
 		set: func(m *model, v string) {
 			e, _ := tools.ParseExecution(v)
@@ -180,7 +183,7 @@ var settingSpecs = []settingSpec{
 			if e == tools.ExecTools {
 				m.opts.Config.Execution = ""
 			}
-			m.agent.SetExecution(e)
+			m.agent.SetExecution(m.opts.Config.ExecutionFor(m.agent.ProviderName(), m.agent.Model()))
 		},
 	},
 	{
@@ -687,4 +690,38 @@ func boolRows(on bool) int {
 		return 1
 	}
 	return 0
+}
+
+// executionCommand handles /execution: with no argument it shows the
+// current model's setting; a value saves it for that model ("default"
+// removes the model's own setting, so the default applies).
+func (m *model) executionCommand(arg string) tea.Cmd {
+	cfg := m.opts.Config
+	provider, modelID := m.agent.ProviderName(), m.agent.Model()
+	key := provider + "/" + modelID
+	describe := func() string {
+		e, src := cfg.ExecutionSource(provider, modelID)
+		from := "the default"
+		if src != "" {
+			from = "model_execution[" + src + "]"
+		}
+		return fmt.Sprintf("execution for %s: %s (from %s)", key, e, from)
+	}
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		def, _ := tools.ParseExecution(string(cfg.Execution))
+		return m.println(m.st.dim.Render(describe() + fmt.Sprintf(" · default: %s · /execution tools|hybrid|code sets it for this model, /execution default removes that", def)))
+	}
+	var e tools.Execution
+	if arg != "default" {
+		var err error
+		if e, err = tools.ParseExecution(arg); err != nil {
+			return m.println(m.st.err.Render(err.Error() + `, or "default"`))
+		}
+	}
+	if err := cfg.SetModelExecution(key, e); err != nil {
+		return m.println(m.st.err.Render("couldn't save execution: " + err.Error()))
+	}
+	m.agent.SetExecution(cfg.ExecutionFor(provider, modelID))
+	return m.println(m.st.dim.Render(describe() + " · saved to " + shortHome(cfg.UserConfigPath()) + " · applies from the next request"))
 }

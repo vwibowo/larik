@@ -135,10 +135,7 @@ func (m *model) command(line string) tea.Cmd {
 		return m.setMode(md)
 
 	case "/execution":
-		if arg == "" {
-			return m.openSettings("execution")
-		}
-		return m.configCommand("execution=" + arg)
+		return m.executionCommand(arg)
 
 	case "/undo":
 		paths, err := m.agent.Undo()

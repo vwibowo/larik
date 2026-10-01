@@ -224,7 +224,7 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 | `/theme [auto\|dark\|light]`                     | Color theme; `auto` follows the terminal's background. Moving through the list previews each one                                                                                                                                                                         |
 | `/effort [low…max\|default]`                     | Set and save the default reasoning effort                                                                                                                                                                                                                                |
 | `/mode [default\|accept-edits\|plan\|auto\|yolo]` | Pick and save the default permission mode from a list (`1`–`5`), or set it directly                                                                                                                                                                                     |
-| `/execution [tools\|hybrid\|code]`               | How the model acts: `tools` (a tool call per step, the default), `hybrid` (also `run_code` scripts when a task has many steps) or `code` (scripts only). See [Execution](#execution)                                                                                   |
+| `/execution [tools\|hybrid\|code\|default]`      | How the model you are using acts: `tools` (a tool call per step), `hybrid` (also `run_code` scripts) or `code` (scripts only), saved for that model; `default` removes it. See [Execution](#execution)                                                                 |
 | `/undo`                                          | Revert the file changes of the last turn that made any: edits by the file tools, and in a git repository what `bash` commands changed (files git ignores aren't covered, nor are MCP side effects). See [Undo](#undo)                                                  |
 | `/compact`                                       | Summarize the conversation to free context                                                                                                                                                                                                                               |
 | `/clear`                                         | Fresh context; also reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers                                                                                                                                                                               |
@@ -317,7 +317,16 @@ The permission mode decides what Larik may do without asking. The execution sett
 
 Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls and a timeout (120 seconds by default, up to 600). Subagents follow the session's setting.
 
-Set it with `/execution hybrid` or `"execution": "hybrid"` in config. Compare the settings on your own models with `larik bench --execution tools,hybrid,code --runs 3`.
+The right setting depends on the model: a strong model writes reliable scripts, a small one may not. So it is set per model, with a default for the rest:
+
+```json
+{
+  "execution": "tools",
+  "model_execution": { "codex/gpt-6-luna": "code", "claude-opus-5": "hybrid" }
+}
+```
+
+Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execution code` saves a setting for the model you're using, `/execution default` removes it, and `/execution` alone shows which applies and where it comes from. The default is "Default execution" in `/config`. Switching models (`/model`) switches to that model's setting, and subagents use their own model's. Measure before choosing: `larik bench --models <model> --execution tools,hybrid,code --runs 3`.
 
 ## Web
 
