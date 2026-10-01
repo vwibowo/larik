@@ -20,12 +20,15 @@ import (
 	"larik/internal/providers"
 	"larik/internal/sandbox"
 	"larik/internal/session"
+	"larik/internal/tools"
 	"larik/internal/tui"
 )
 
 var version = "0.1.0-dev"
 
 func main() {
+	// A run_code script runner, started by Larik itself; see tools.ServeCodeIfChild.
+	tools.ServeCodeIfChild()
 	if len(os.Args) > 1 && os.Args[1] == sandbox.BridgeCommand {
 		// Runs inside a Linux sandbox, before the command; see sandbox.BridgeMain.
 		os.Exit(sandbox.BridgeMain(os.Args[2:]))

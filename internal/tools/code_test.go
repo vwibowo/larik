@@ -227,3 +227,80 @@ func TestRunCodeDescribe(t *testing.T) {
 		t.Fatalf("describe/list:\n%s", res.Content)
 	}
 }
+
+func lowMemoryLimit(t *testing.T, mb uint64) {
+	t.Helper()
+	old := codeMemoryLimit
+	codeMemoryLimit = mb << 20
+	t.Cleanup(func() { codeMemoryLimit = old })
+}
+
+func TestRunCodeMemoryLimit(t *testing.T) {
+	lowMemoryLimit(t, 64)
+	for name, code := range map[string]string{
+		// Growth the interpreter sees step by step.
+		"gradual": `console.log("started"); const a = []; for (;;) a.push("x".repeat(1000) + a.length)`,
+		// One built-in call that allocates without returning to the script.
+		"one call":  `console.log("started"); Array(1e9).fill(0)`,
+		"one alloc": `console.log("started"); "x".repeat(1e10).length`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			res := runCode(t, &fakeCaller{}, code, 60)
+			if !res.IsError || !strings.Contains(res.Content, "more than 64 MB of memory") {
+				t.Fatalf("the script should be stopped for memory:\n%s", res.Content)
+			}
+			if !strings.Contains(res.Content, "started") {
+				t.Errorf("output printed before the limit should be kept:\n%s", res.Content)
+			}
+			if d := time.Since(start); d > 20*time.Second {
+				t.Errorf("stopping took %s", d)
+			}
+		})
+	}
+}
+
+func TestRunCodeUnderTheLimitRuns(t *testing.T) {
+	lowMemoryLimit(t, 64)
+	// Lots of short-lived garbage, little live data: well within the limit.
+	res := runCode(t, &fakeCaller{}, `let n = 0; for (let i = 0; i < 200; i++) { n += "y".repeat(100000).length } n`, 60)
+	if res.IsError || !strings.Contains(res.Content, "=> 20000000") {
+		t.Fatalf("garbage should not count against the limit:\n%s", res.Content)
+	}
+}
+
+func TestRunCodeRecursionLimit(t *testing.T) {
+	res := runCode(t, &fakeCaller{}, `function down(n) { return down(n + 1) } down(0)`, 0)
+	if !res.IsError || !strings.Contains(res.Content, "maximum call depth") {
+		t.Fatalf("runaway recursion should stop with a clear error:\n%s", res.Content)
+	}
+}
+
+func TestRunCodeArgumentLimit(t *testing.T) {
+	c := &fakeCaller{}
+	res := runCode(t, c, `tools.echo({text: "z".repeat(17 * 1024 * 1024)})`, 0)
+	if !res.IsError || !strings.Contains(res.Content, "over the 16 MB limit") || len(c.calls) != 0 {
+		t.Fatalf("oversized arguments should not reach the parent:\n%s", res.Content)
+	}
+}
+
+func TestRunnerStopsItselfPastItsDeadline(t *testing.T) {
+	// A parent that never stops the child: it must stop by itself.
+	cmd, err := codeCommand(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := cmd.StdinPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	json.NewEncoder(stdin).Encode(codeMsg{Type: "start", Code: `while (true) {}`, Memory: 64 << 20, Deadline: time.Now().Add(-10 * time.Second)})
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("the runner kept going past its deadline")
+	}
+}

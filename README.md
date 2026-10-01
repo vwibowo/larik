@@ -313,9 +313,9 @@ The permission mode decides what Larik may do without asking. The execution sett
 | `hybrid` | The tools plus `run_code`, and it picks per step: scripts for loops, chained lookups and filtering large output, direct calls otherwise.  |
 | `code`   | `run_code` only; every tool is reached from scripts.                                                                                      |
 
-`run_code` runs JavaScript in an embedded interpreter with no file, network or process access of its own: a script can only call tools (`tools.read({path})`, `tools.call(name, args)`), and gets their text back. Only what the script prints returns to the model, so reading forty files to count something costs the context one summary instead of forty results.
+`run_code` runs JavaScript in an embedded interpreter, in a separate process started from the Larik binary, with no file, network or process access of its own: a script can only call tools (`tools.read({path})`, `tools.call(name, args)`), and gets their text back. Only what the script prints returns to the model, so reading forty files to count something costs the context one summary instead of forty results.
 
-Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls and a timeout (120 seconds by default, up to 600). Subagents follow the session's setting.
+Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
 
 The right setting depends on the model: a strong model writes reliable scripts, a small one may not. So it is set per model, with a default for the rest:
 

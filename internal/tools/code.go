@@ -3,13 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/dop251/goja"
 
 	"larik/internal/llm"
 )
@@ -50,7 +47,16 @@ const (
 	// codeMaxBuffer bounds the output a script collects before it is
 	// truncated to MaxOutputBytes for the model.
 	codeMaxBuffer = 1 << 20
+	// codeMaxStack bounds the script's call depth, so runaway recursion
+	// stops with an error instead of growing until the memory limit.
+	codeMaxStack = 10_000
+	// codeMaxInput bounds the arguments of one tool call from a script.
+	codeMaxInput = 16 << 20
 )
+
+// codeMemoryLimit is the heap a script's process may use (a variable so
+// tests can lower it).
+var codeMemoryLimit uint64 = 256 << 20
 
 // unbound are tools a script can't call: the wrappers it replaces, itself,
 // and tools that only make sense as a step of the conversation.
@@ -145,8 +151,8 @@ func (c codeTool) Spec() llm.ToolSpec {
 	fmt.Fprintf(&d, "tools.<name>(args) runs a tool with the arguments of its schema and returns its text output, or throws an Error with the tool's message; tools.call(name, args) is the same. "+
 		"tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
 		"Calls are synchronous (no await). There is no file, network or process access except through tools, and every call is permission-checked. "+
-		"Print summaries, not raw dumps. Limits: %d tool calls and %s per script (timeout_seconds, up to %d).",
-		codeMaxCalls, codeTimeoutDefault, int(codeTimeoutMax.Seconds()))
+		"Print summaries, not raw dumps. Limits per script: %d tool calls, %d MB of memory, and %s (timeout_seconds, up to %d).",
+		codeMaxCalls, codeMemoryLimit>>20, codeTimeoutDefault, int(codeTimeoutMax.Seconds()))
 	switch {
 	case !c.hybrid:
 		d.WriteString("\n\nTools (? marks optional arguments):\n" + c.index())
@@ -206,236 +212,4 @@ func signature(sp llm.ToolSpec) string {
 		}
 	}
 	return sp.Name + "({" + strings.Join(props, ", ") + "})"
-}
-
-func (c codeTool) find(name string) (llm.ToolSpec, bool) {
-	for _, sp := range c.specs {
-		if sp.Name == name {
-			return sp, true
-		}
-	}
-	return llm.ToolSpec{}, false
-}
-
-func (c codeTool) Run(ctx context.Context, _ *Env, input json.RawMessage) Result {
-	in, err := decode[struct {
-		Code    string `json:"code"`
-		Timeout int    `json:"timeout_seconds"`
-	}](input)
-	if err != nil {
-		return errorf("%v", err)
-	}
-	if strings.TrimSpace(in.Code) == "" {
-		return errorf("code is empty")
-	}
-	caller, ok := CallerFrom(ctx)
-	if !ok {
-		return errorf("%s is unavailable here", CodeToolName)
-	}
-	timeout := codeTimeoutDefault
-	if in.Timeout > 0 {
-		timeout = min(time.Duration(in.Timeout)*time.Second, codeTimeoutMax)
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	s := &script{vm: goja.New(), spec: c, caller: caller, ctx: ctx}
-	s.install()
-	stop := context.AfterFunc(ctx, func() { s.vm.Interrupt(ctx.Err()) })
-	defer stop()
-
-	v, err := s.run(in.Code)
-	out := s.out.String()
-	if s.truncated {
-		out += "\n[output stopped at 1 MB]"
-	}
-	if err == nil && v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
-		if out != "" && !strings.HasSuffix(out, "\n") {
-			out += "\n"
-		}
-		out += "=> " + s.show(v)
-	}
-	footer := fmt.Sprintf("[%s: %d tool call%s]", CodeToolName, s.calls, plural(s.calls))
-	if err != nil {
-		msg := scriptError(err, ctx, timeout)
-		return Result{Content: Truncate(strings.TrimSpace(out+"\n"+msg), MaxOutputBytes) + "\n" + footer, IsError: true}
-	}
-	if strings.TrimSpace(out) == "" {
-		out = "(no output: print the result with console.log)"
-	}
-	return Result{Content: Truncate(out, MaxOutputBytes) + "\n" + footer}
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
-
-// scriptError explains why a script stopped.
-func scriptError(err error, ctx context.Context, timeout time.Duration) string {
-	var intr *goja.InterruptedError
-	if errors.As(err, &intr) {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Sprintf("Error: the script timed out after %s", timeout)
-		}
-		return "Error: interrupted by user"
-	}
-	var ex *goja.Exception
-	if errors.As(err, &ex) {
-		// Drop the frames of the Go bindings; the script's lines remain.
-		var lines []string
-		for _, l := range strings.Split(ex.String(), "\n") {
-			if !strings.HasSuffix(l, "(native)") {
-				lines = append(lines, l)
-			}
-		}
-		return strings.Join(lines, "\n")
-	}
-	return err.Error()
-}
-
-// script is one run_code execution.
-type script struct {
-	vm        *goja.Runtime
-	spec      codeTool
-	caller    Caller
-	ctx       context.Context
-	out       strings.Builder
-	truncated bool
-	calls     int
-}
-
-func (s *script) install() {
-	console := s.vm.NewObject()
-	for _, name := range []string{"log", "info", "warn", "error", "debug"} {
-		_ = console.Set(name, s.print)
-	}
-	_ = s.vm.Set("console", console)
-	_ = s.vm.Set("print", s.print)
-
-	t := s.vm.NewObject()
-	for _, sp := range s.spec.specs {
-		name := sp.Name
-		_ = t.Set(name, func(call goja.FunctionCall) goja.Value { return s.invoke(name, call.Argument(0)) })
-	}
-	_ = t.Set("call", func(name string, args goja.Value) goja.Value { return s.invoke(name, args) })
-	_ = t.Set("describe", func(name string) goja.Value {
-		sp, ok := s.spec.find(name)
-		if !ok {
-			s.throw("no tool named %q; tools.list() returns the names", name)
-		}
-		var sch any
-		_ = json.Unmarshal(sp.Schema, &sch)
-		return s.vm.ToValue(map[string]any{"name": sp.Name, "description": sp.Description, "schema": sch})
-	})
-	_ = t.Set("list", func() []string {
-		names := make([]string, len(s.spec.specs))
-		for i, sp := range s.spec.specs {
-			names[i] = sp.Name
-		}
-		return names
-	})
-	_ = s.vm.Set("tools", t)
-}
-
-// run runs code as a script. Top-level await, which only async functions
-// allow, is supported by wrapping code in one when it doesn't compile.
-func (s *script) run(code string) (goja.Value, error) {
-	prog, err := goja.Compile("script.js", code, false)
-	if err != nil && strings.Contains(code, "await") {
-		if wrapped, werr := goja.Compile("script.js", "(async () => {\n"+code+"\n})()", false); werr == nil {
-			prog, err = wrapped, nil
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	v, err := s.vm.RunProgram(prog)
-	if err != nil {
-		return nil, err
-	}
-	if p, ok := v.Export().(*goja.Promise); ok {
-		switch p.State() {
-		case goja.PromiseStateFulfilled:
-			return p.Result(), nil
-		case goja.PromiseStateRejected:
-			return nil, errors.New(s.show(p.Result()))
-		default:
-			return nil, errors.New("the script's promise never settled")
-		}
-	}
-	return v, nil
-}
-
-// throw raises a JavaScript Error, which a script can catch.
-func (s *script) throw(format string, args ...any) {
-	e, err := s.vm.New(s.vm.Get("Error"), s.vm.ToValue(fmt.Sprintf(format, args...)))
-	if err != nil {
-		panic(s.vm.NewGoError(fmt.Errorf(format, args...)))
-	}
-	panic(e)
-}
-
-func (s *script) invoke(name string, args goja.Value) goja.Value {
-	if _, ok := s.spec.find(name); !ok {
-		s.throw("no tool named %q is available to scripts; tools.list() returns the names", name)
-	}
-	if s.calls >= codeMaxCalls {
-		s.throw("the script reached its limit of %d tool calls", codeMaxCalls)
-	}
-	s.calls++
-	input := json.RawMessage(`{}`)
-	if args != nil && !goja.IsUndefined(args) && !goja.IsNull(args) {
-		b, err := json.Marshal(args.Export())
-		if err != nil {
-			s.throw("%s: arguments aren't JSON: %v", name, err)
-		}
-		input = b
-	}
-	res := s.caller.CallTool(s.ctx, name, input)
-	if err := s.ctx.Err(); err != nil {
-		s.vm.Interrupt(err)
-	}
-	content := res.Content
-	if n := len(res.Images); n > 0 {
-		content += fmt.Sprintf("\n[%d image(s) omitted: scripts get text only]", n)
-	}
-	if res.IsError {
-		s.throw("%s: %s", name, content)
-	}
-	return s.vm.ToValue(content)
-}
-
-func (s *script) print(call goja.FunctionCall) goja.Value {
-	parts := make([]string, len(call.Arguments))
-	for i, a := range call.Arguments {
-		parts[i] = s.show(a)
-	}
-	line := strings.Join(parts, " ") + "\n"
-	if room := codeMaxBuffer - s.out.Len(); len(line) > room {
-		line, s.truncated = safeCut(line, max(room, 0)), true
-	}
-	s.out.WriteString(line)
-	return goja.Undefined()
-}
-
-// show renders a value: primitives, functions and errors as JavaScript
-// would print them, other objects as JSON.
-func (s *script) show(v goja.Value) string {
-	if v == nil || goja.IsUndefined(v) {
-		return "undefined"
-	}
-	o, ok := v.(*goja.Object)
-	if !ok {
-		return v.String()
-	}
-	if _, fn := goja.AssertFunction(v); fn || o.ClassName() == "Error" {
-		return v.String()
-	}
-	if b, err := json.MarshalIndent(o.Export(), "", "  "); err == nil {
-		return string(b)
-	}
-	return v.String()
 }
