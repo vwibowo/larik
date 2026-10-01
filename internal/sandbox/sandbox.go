@@ -134,7 +134,7 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	// command would fail, so fall back as if there were no sandbox.
 	if err := s.probe(); err != nil {
 		s.Close()
-		return nil, "the " + s.kind + " sandbox can't start here (" + err.Error() + "); bash commands run unsandboxed and ask for approval" + probeHint(s.kind, err.Error())
+		return nil, "the " + s.kind + " sandbox can't start here (" + err.Error() + "); bash commands run unsandboxed and ask for approval" + probeHint(s.kind, err.Error(), inContainer())
 	}
 	if err := s.probeConfine(); err != nil {
 		s.noConfine = true

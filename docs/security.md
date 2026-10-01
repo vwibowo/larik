@@ -60,7 +60,7 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 - **macOS:** `sandbox-exec -p <profile> bash -c <cmd>` with a generated Seatbelt profile (`deny default`, then specific allows).
 - **Linux:** `bwrap` with `/` bound read-only, writable paths bound read-write, protected paths re-bound read-only, `--unshare-net` and `--unshare-pid`.
 - **Elsewhere, or without `bwrap`:** no sandbox; commands ask except a small list of side-effect-free forms, and Larik warns at startup.
-- **Installed but unable to start:** at startup [probe.go](../internal/sandbox/probe.go) runs `true` the way bash commands run. If that fails, Larik treats the sandbox as unavailable (commands ask, as above) and the warning carries the sandbox's own error plus a likely fix: in a container, bubblewrap can't mount `/proc` unless the container runs with `--security-opt systempaths=unconfined`; on Ubuntu 24.04+ AppArmor may restrict unprivileged user namespaces; on macOS, Seatbelt can't start inside another, deny-by-default sandbox. A second probe checks the stricter `Confine` sandbox; if only that fails, bash stays sandboxed and Larik's helpers run unconfined, with a warning. Without the probe, every command would fail with the sandbox's error instead.
+- **Installed but unable to start:** at startup [probe.go](../internal/sandbox/probe.go) runs `true` the way bash commands run. If that fails, Larik treats the sandbox as unavailable (commands ask, as above) and the warning carries the sandbox's own error plus a likely fix: in a container, Docker's default options stop bubblewrap (see [Running Larik in a container](#running-larik-in-a-container)); on Ubuntu 24.04+ AppArmor may restrict unprivileged user namespaces; on macOS, Seatbelt can't start inside another, deny-by-default sandbox. A second probe checks the stricter `Confine` sandbox; if only that fails, bash stays sandboxed and Larik's helpers run unconfined, with a warning. Without the probe, every command would fail with the sandbox's error instead.
 
 | | Allowed | Denied |
 |---|---|---|
@@ -117,6 +117,36 @@ The `run_code` script runner (a child `larik` process; see [tools and permission
 | Environment | Larik's | only `LARIK_RUN_CODE_CHILD=1` (and `SYSTEMROOT` on Windows); no API keys |
 
 macOS uses a deny-by-default Seatbelt profile that allows `sysctl-read` (the Go runtime needs the page size), reads outside the denied directories, and exec of the binary. Linux runs `bwrap --die-with-parent --new-session --unshare-all --cap-drop ALL` with `/` bound read-only and `/home`, `/root`, `/tmp`, `/var/tmp`, `/run/user`, `/media`, `/mnt` (and the home directory) replaced by empty tmpfs mounts. With the sandbox off or unavailable, the runner runs unconfined, like bash commands; it still has no file, network or process access of its own.
+
+### Running Larik in a container
+
+bubblewrap creates namespaces and mounts a fresh `/proc` for every command, and Docker's default options block both. Its seccomp filter refuses to create namespaces ("No permissions to create a new namespace"). It also masks parts of `/proc`, and the kernel then refuses to mount another one ("Can't mount proc on /proc"). Larik notices at startup and runs without its sandbox, so commands ask for approval. The startup warning names this section. There are two ways to set it up.
+
+**1. Keep Larik's sandbox inside the container.** Start the container with:
+
+```bash
+docker run --security-opt seccomp=unconfined --security-opt systempaths=unconfined --user <non-root> …
+```
+
+| Docker options | Larik's sandbox |
+|---|---|
+| defaults | fails (namespaces) |
+| `systempaths=unconfined` | fails (namespaces) |
+| `seccomp=unconfined` | fails (`/proc`) |
+| `seccomp=unconfined` + `systempaths=unconfined` | **works** |
+| `--cap-add SYS_ADMIN` | fails |
+| `--privileged` | works, but don't: it gives the container nearly everything the host has |
+
+Tested with Docker Desktop 28.3 (linux/arm64), Debian stable, bubblewrap 0.12.0 and a non-root user. On a Linux host with AppArmor (Docker Engine on Ubuntu, for example), Docker's default AppArmor profile also denies the mounts. Add `--security-opt apparmor=unconfined` there; this hasn't been tested. Podman hasn't been tested either.
+
+These options weaken the container itself. `seccomp=unconfined` lets every process in it make any system call, which gives an escape attempt more of the kernel to work with. `systempaths=unconfined` exposes the `/proc` and `/sys` files Docker normally hides (`/proc/kcore`, `/proc/sys`, `/sys/firmware`). In return, Larik's sandbox limits what the model's commands can do *inside* the container: no writes outside the project, no `.git/hooks`, no network.
+
+**2. Use the container as the boundary.** Keep Docker's defaults and set `"sandbox": {"enabled": false}` in your config, which also silences the warning. Commands then ask for approval like any unsandboxed command, unless you choose `auto` or `yolo` mode. That's reasonable only in a throwaway container. In this setup, the container is all that protects you:
+- mount only the project,
+- run as a non-root user,
+- don't mount the Docker socket, SSH keys, cloud credentials or your home directory.
+
+**Which to use:** for a throwaway container with nothing in it but the project, option 2 is simpler and keeps the container fully hardened. Use option 1 when the container holds things the model's commands shouldn't touch, such as credentials, other checkouts, or a long-lived development environment.
 
 ## Web tools
 
