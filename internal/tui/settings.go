@@ -14,6 +14,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/providers"
+	"larik/internal/tools"
 )
 
 // settingsPanel is the /config screen: a list of settings, and for the one
@@ -163,6 +164,25 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.TokenSaver = &on
 			m.agent.SetTokenSaver(on)
 		}),
+	{
+		key: "execution", title: "Execution", section: "behavior", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "tools", label: "Tool chain", desc: "one tool call per step"},
+			{value: "hybrid", label: "Hybrid", desc: "tools, plus scripts that call them when a task has many steps"},
+			{value: "code", label: "Code", desc: "scripts only: every tool is called from run_code"},
+		},
+		later: "applies from the next request; each call a script makes is still permission-checked",
+		get:   func(m *model) string { return string(m.agent.Execution()) },
+		store: orEmpty("tools"),
+		set: func(m *model, v string) {
+			e, _ := tools.ParseExecution(v)
+			m.opts.Config.Execution = e
+			if e == tools.ExecTools {
+				m.opts.Config.Execution = ""
+			}
+			m.agent.SetExecution(e)
+		},
+	},
 	{
 		key: "notifications", title: "Notifications", section: "behavior", kind: kindChoice,
 		choices: []settingChoice{

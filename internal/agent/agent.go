@@ -43,6 +43,10 @@ type Options struct {
 	// AutoApprove judges calls in auto mode; nil sends them all to the user.
 	AutoApprove AutoApprover
 
+	// Execution is how the model carries out actions: with tools only,
+	// or also (or only) with run_code scripts. Empty means tools.
+	Execution tools.Execution
+
 	// LoadTools, if set, supplies the tool set at the start of each fresh
 	// context (first prompt, and after Clear). The set then stays fixed so
 	// the prompt prefix, and provider caches, remain stable. notify reports
@@ -114,6 +118,13 @@ type Agent struct {
 	saveReported bool
 	pending      []llm.Block // attached to the next user message, e.g. "!" output
 	toolsLoaded  bool
+	// active is opts.Tools as the model sees it under the execution
+	// setting; activeFor records what it was built from.
+	active    *tools.Registry
+	activeFor struct {
+		base *tools.Registry
+		exec tools.Execution
+	}
 
 	sessionStarted bool
 	startSource    string // SessionStart source: startup, resume, clear
@@ -286,6 +297,44 @@ func (a *Agent) Tools() *tools.Registry {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.opts.Tools
+}
+
+// activeTools returns the registry the model sees and calls resolve in.
+func (a *Agent) activeTools() *tools.Registry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.activeLocked()
+}
+
+func (a *Agent) activeLocked() *tools.Registry {
+	base, exec := a.opts.Tools, a.opts.Execution
+	if base == nil {
+		return nil
+	}
+	if a.active == nil || a.activeFor.base != base || a.activeFor.exec != exec {
+		a.active = base.ForExecution(exec)
+		a.activeFor.base, a.activeFor.exec = base, exec
+	}
+	return a.active
+}
+
+// Execution reports how the model carries out actions.
+func (a *Agent) Execution() tools.Execution {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.opts.Execution == "" {
+		return tools.ExecTools
+	}
+	return a.opts.Execution
+}
+
+// SetExecution changes how the model carries out actions from its next
+// request on. It changes the tool list, so the provider's prompt cache
+// starts over.
+func (a *Agent) SetExecution(e tools.Execution) {
+	a.mu.Lock()
+	a.opts.Execution = e
+	a.mu.Unlock()
 }
 
 func (a *Agent) loadTools(ctx context.Context, emit func(Event)) {
@@ -558,7 +607,7 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 	var loops loopGuard
 	a.mu.Lock()
 	req := llm.AgentRuntimeRequest{Model: a.opts.Model, System: a.opts.System, Workspace: a.opts.Cwd,
-		Messages: append([]llm.Message(nil), a.messages...), Tools: a.opts.Tools.Specs(), Effort: a.opts.Effort, MaxTurns: a.opts.MaxTurns}
+		Messages: append([]llm.Message(nil), a.messages...), Tools: a.activeLocked().Specs(), Effort: a.opts.Effort, MaxTurns: a.opts.MaxTurns}
 	runtime := a.opts.Runtime
 	a.mu.Unlock()
 	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
@@ -634,7 +683,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		Model:     a.opts.Model,
 		System:    a.opts.System,
 		Messages:  append([]llm.Message(nil), a.messages...),
-		Tools:     a.opts.Tools.Specs(),
+		Tools:     a.activeLocked().Specs(),
 		MaxTokens: min(llm.Lookup(a.opts.Model).MaxOutput, 64_000),
 		Effort:    a.opts.Effort,
 	}
@@ -816,7 +865,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	req := llm.Request{
 		Model:     a.opts.Model,
 		System:    a.opts.System,
-		Tools:     a.opts.Tools.Specs(), // unchanged tools keep the cached prefix valid
+		Tools:     a.activeLocked().Specs(), // unchanged tools keep the cached prefix valid
 		MaxTokens: 32_000,
 		Effort:    a.opts.Effort,
 	}

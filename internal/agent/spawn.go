@@ -55,7 +55,7 @@ type SpawnOptions struct {
 // hooks and checkpoints, but has its own context, prompt and tools.
 func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
-	effort, noAutoCompact, compactWith, tr := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace
+	effort, noAutoCompact, compactWith, tr, exec := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace, a.opts.Execution
 	a.mu.Unlock()
 	label := o.Label
 	if label == "" {
@@ -76,6 +76,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		Cwd:           a.opts.Cwd,
 		MaxTurns:      o.MaxTurns,
 		Tools:         o.Tools,
+		Execution:     exec,
 		Perms:         a.opts.Perms,
 		Session:       o.Session,
 		Checkpoints:   a.opts.Checkpoints,

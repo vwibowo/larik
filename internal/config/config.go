@@ -28,6 +28,7 @@ import (
 	"larik/internal/lsp"
 	"larik/internal/permission"
 	"larik/internal/sandbox"
+	"larik/internal/tools"
 	"larik/internal/web"
 )
 
@@ -50,6 +51,12 @@ type Config struct {
 	Effort   llm.Effort      `json:"effort,omitempty"`
 	Mode     permission.Mode `json:"mode,omitempty"`
 	MaxTurns int             `json:"max_turns,omitempty"`
+
+	// Execution is how the model carries out actions: "tools" (the
+	// default) offers one tool call per step, "hybrid" adds run_code
+	// scripts the model may use when they help, "code" offers scripts only.
+	Execution tools.Execution `json:"execution,omitempty"`
+
 	// CheckpointRetentionDays is how long /undo snapshots are kept: 0
 	// means the default (7), a negative value keeps them forever. The
 	// cleanup covers every project, so only personal files may set it.
@@ -397,6 +404,9 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.Mode != "" {
 		c.Mode = o.Mode
+	}
+	if trusted && o.Execution != "" {
+		c.Execution = o.Execution
 	}
 	if o.MaxTurns != 0 && (trusted || c.MaxTurns == 0 || o.MaxTurns < c.MaxTurns) {
 		c.MaxTurns = o.MaxTurns

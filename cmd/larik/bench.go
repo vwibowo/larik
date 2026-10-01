@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"larik/internal/bench"
 	"larik/internal/config"
 	"larik/internal/providers"
+	"larik/internal/tools"
 )
 
 // runBench implements `larik bench`: a handful of small, self-checking
@@ -24,13 +26,17 @@ func runBench(args []string) error {
 		modelsFlag = fs.String("models", "", "comma-separated provider/model specs or config roles to compare (required), e.g. \"anthropic/claude-opus-5,worker,explore\"")
 		tasksFlag  = fs.String("tasks", "", "comma-separated task names to run (default: all)")
 		timeout    = fs.Duration("timeout", 3*time.Minute, "per task, per model")
+		execFlag   = fs.String("execution", "tools", "comma-separated execution settings to compare: tools, hybrid, code")
+		runs       = fs.Int("runs", 1, "how many times to run each task; with more than one, a table of medians and ranges follows")
+		keepFailed = fs.Bool("keep-failed", false, "keep each failed run's directory, with transcript.md and calls.jsonl (every tool call, scripts' included)")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: larik bench --models spec1,spec2,... [flags]\n\n"+
 			"Runs each task in %s against every model in its own throwaway directory in yolo mode\n"+
-			"(the directory is discarded after; nothing you have is touched), then checks the result\n"+
-			"with `go test`. Use it to compare a cheap model against your main one before trusting it\n"+
-			"with real work, or to see what a routing preset actually buys you.\n\n", taskNames())
+			"(the directory is discarded after unless --keep-failed keeps a failure; nothing you have\n"+
+			"is touched), then checks the result mechanically (`go test`, or an exact expected file).\n"+
+			"Use it to compare a cheap model against your main one before trusting it with real work,\n"+
+			"to see what a routing preset actually buys you, or to compare execution settings.\n\n", taskNames())
 		fs.PrintDefaults()
 	}
 	fs.Parse(args)
@@ -42,6 +48,17 @@ func runBench(args []string) error {
 	tasks, err := selectTasks(*tasksFlag)
 	if err != nil {
 		return err
+	}
+	if *runs < 1 {
+		return fmt.Errorf("bench: --runs must be at least 1")
+	}
+	var execs []tools.Execution
+	for _, e := range strings.Split(*execFlag, ",") {
+		x, err := tools.ParseExecution(strings.TrimSpace(e))
+		if err != nil {
+			return fmt.Errorf("bench: %w", err)
+		}
+		execs = append(execs, x)
 	}
 
 	cwd, err := os.Getwd()
@@ -74,17 +91,35 @@ func runBench(args []string) error {
 		if spec != resolved.String() {
 			label = fmt.Sprintf("%s (%s)", spec, resolved.String())
 		}
-		for _, task := range tasks {
-			fmt.Printf("%-40s %-24s ", label, task.Name)
-			if ctx.Err() != nil {
-				fmt.Println("interrupted")
-				return ctx.Err()
+		// Runs go round all settings before repeating, so a provider
+		// that slows down mid-bench affects every setting alike.
+		for run := 1; run <= *runs; run++ {
+			for _, exec := range execs {
+				row := label
+				if len(execs) > 1 || exec != tools.ExecTools {
+					row += " [" + string(exec) + "]"
+				}
+				for _, task := range tasks {
+					name := task.Name
+					if *runs > 1 {
+						name = fmt.Sprintf("%s #%d", task.Name, run)
+					}
+					fmt.Printf("%-40s %-24s ", row, name)
+					if ctx.Err() != nil {
+						fmt.Println("interrupted")
+						return ctx.Err()
+					}
+					res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed})
+					res.Model = row
+					all = append(all, res)
+					printResult(res)
+				}
 			}
-			res := bench.Run(ctx, task, resolved.Provider, resolved.Model, *timeout)
-			res.Model = label
-			all = append(all, res)
-			printResult(res)
 		}
+	}
+	if *runs > 1 {
+		fmt.Println()
+		printSpread(all)
 	}
 	fmt.Println()
 	printSummary(all)
@@ -128,10 +163,22 @@ func printResult(r bench.Result) {
 	if r.Pass {
 		status = "pass"
 	}
-	fmt.Printf("%-4s  %6.1fs  %-10s  %d tools\n", status, r.Duration.Seconds(), costLabel(r.CostUSD), r.ToolCalls)
+	fmt.Printf("%-4s  %6.1fs  %-10s  %3d tools  %2d req  %s in  %s out  %s peak ctx\n", status, r.Duration.Seconds(), costLabel(r.CostUSD), r.ToolCalls, r.Requests,
+		kilo(r.Usage.ContextTokens()), kilo(r.Usage.Output), kilo(r.PeakContext))
 	if !r.Pass && r.Detail != "" {
 		fmt.Println(indent(truncate(r.Detail, 400)))
 	}
+	if r.Kept != "" {
+		fmt.Println(indent("kept: " + r.Kept))
+	}
+}
+
+// kilo shortens a token count: 950, 12.3k.
+func kilo(n int) string {
+	if n < 1000 {
+		return fmt.Sprint(n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 func costLabel(usd float64) string {
@@ -156,6 +203,54 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// printSpread prints, for each model and task run more than once, the
+// pass count and the median and range of tokens, context, requests and
+// time, so one lucky or unlucky run doesn't decide a comparison.
+func printSpread(results []bench.Result) {
+	type key struct{ model, task string }
+	var order []key
+	groups := map[key][]bench.Result{}
+	for _, r := range results {
+		k := key{r.Model, r.Task}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], r)
+	}
+	fmt.Println("Per task, median (range):")
+	for _, k := range order {
+		rs := groups[k]
+		pass := 0
+		var in, peak, req, ms []int
+		for _, r := range rs {
+			if r.Pass {
+				pass++
+			}
+			in = append(in, r.Usage.ContextTokens())
+			peak = append(peak, r.PeakContext)
+			req = append(req, r.Requests)
+			ms = append(ms, int(r.Duration.Milliseconds()))
+		}
+		seconds := func(n int) string { return fmt.Sprintf("%.1fs", float64(n)/1000) }
+		fmt.Printf("  %-40s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s\n", k.model, k.task, pass, len(rs),
+			spread(in, kilo), spread(peak, kilo), spread(req, func(n int) string { return fmt.Sprint(n) }), spread(ms, seconds))
+	}
+}
+
+// spread renders the median of xs and, when they differ, their range.
+func spread(xs []int, show func(int) string) string {
+	s := slices.Clone(xs)
+	slices.Sort(s)
+	med := s[len(s)/2]
+	if len(s)%2 == 0 {
+		med = (s[len(s)/2-1] + s[len(s)/2]) / 2
+	}
+	if s[0] == s[len(s)-1] {
+		return show(med)
+	}
+	return fmt.Sprintf("%s (%s–%s)", show(med), show(s[0]), show(s[len(s)-1]))
+}
+
 // printSummary prints one line per model: pass rate, total cost, total time.
 func printSummary(results []bench.Result) {
 	type totals struct {
@@ -163,6 +258,8 @@ func printSummary(results []bench.Result) {
 		cost      float64
 		dur       time.Duration
 		anyPriced bool
+		in, out   int
+		peak      int
 	}
 	order := []string{}
 	byModel := map[string]*totals{}
@@ -180,6 +277,9 @@ func printSummary(results []bench.Result) {
 		t.cost += r.CostUSD
 		t.dur += r.Duration
 		t.anyPriced = t.anyPriced || r.CostUSD > 0
+		t.in += r.Usage.ContextTokens()
+		t.out += r.Usage.Output
+		t.peak = max(t.peak, r.PeakContext)
 	}
 	fmt.Println("Summary:")
 	for _, model := range order {
@@ -188,6 +288,6 @@ func printSummary(results []bench.Result) {
 		if t.anyPriced {
 			cost = fmt.Sprintf("$%.4f", t.cost)
 		}
-		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total\n", model, t.pass, t.n, cost, t.dur.Seconds())
+		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s\n", model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
 	}
 }

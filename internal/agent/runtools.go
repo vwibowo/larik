@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"larik/internal/hooks"
@@ -29,45 +31,16 @@ type approved struct {
 func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)) []llm.Block {
 	results := make([]llm.Block, len(uses))
 	var queue []approved
-	registry := a.Tools()
+	registry := a.activeTools()
 
 	for i, use := range uses {
-		// The result must carry the name the model called, which providers
-		// match it by, even when call_tool stands for another tool.
-		called := use.Name
-		res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: called}
-		tool, ok := registry.Get(use.Name)
-		// call_tool runs a deferred tool. From here on the call is that
-		// tool's: permission rules, hooks, auto mode and the events all
-		// see its name and arguments, not the wrapper's.
-		var unwrapErr error
-		if ok && use.Name == tools.CallToolName && use.Input != nil && ctx.Err() == nil {
-			var inner tools.Tool
-			var args json.RawMessage
-			if inner, args, unwrapErr = registry.ResolveCall(use.Input); unwrapErr == nil {
-				tool, use.Name, use.Input = inner, inner.Spec().Name, args
-			}
-		}
-		switch {
-		case ctx.Err() != nil:
-			res.Content, res.IsError = "interrupted by user", true
-		case !ok:
-			res.Content, res.IsError = "unknown tool: "+use.Name, true
-		case use.Input == nil:
-			res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
-		case unwrapErr != nil:
-			res.Content, res.IsError = unwrapErr.Error(), true
-		default:
-			allow, reason, input := a.authorize(ctx, use, tool, emit)
-			if allow {
-				use.Input = input
-				queue = append(queue, approved{i, use, tool, called})
-				continue
-			}
-			res.Content, res.IsError = reason, true
+		job, res, ok := a.prepare(ctx, use, registry, emit)
+		if ok {
+			job.idx = i
+			queue = append(queue, job)
+			continue
 		}
 		results[i] = res
-		emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: res.Content, IsError: true})
 	}
 
 	for start := 0; start < len(queue); {
@@ -93,6 +66,69 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 	return results
 }
 
+// prepare resolves a call to its tool and authorizes it. When the call
+// may not run, ok is false and res is the error result to return.
+func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Registry, emit func(Event)) (job approved, res llm.Block, ok bool) {
+	// The result must carry the name the model called, which providers
+	// match it by, even when call_tool stands for another tool.
+	called := use.Name
+	res = llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: called}
+	tool, found := registry.Get(use.Name)
+	// call_tool runs a deferred tool. From here on the call is that
+	// tool's: permission rules, hooks, auto mode and the events all
+	// see its name and arguments, not the wrapper's.
+	var unwrapErr error
+	if found && use.Name == tools.CallToolName && use.Input != nil && ctx.Err() == nil {
+		var inner tools.Tool
+		var args json.RawMessage
+		if inner, args, unwrapErr = registry.ResolveCall(use.Input); unwrapErr == nil {
+			tool, use.Name, use.Input = inner, inner.Spec().Name, args
+		}
+	}
+	switch {
+	case ctx.Err() != nil:
+		res.Content, res.IsError = "interrupted by user", true
+	case !found:
+		res.Content, res.IsError = "unknown tool: "+use.Name, true
+	case use.Input == nil:
+		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
+	case unwrapErr != nil:
+		res.Content, res.IsError = unwrapErr.Error(), true
+	case use.Name == tools.CodeToolName:
+		// A script can do nothing by itself: each call it makes is
+		// authorized on its own (see scriptCaller).
+		return approved{use: use, tool: tool, name: called}, res, true
+	default:
+		allow, reason, input := a.authorize(ctx, use, tool, emit)
+		if allow {
+			use.Input = input
+			return approved{use: use, tool: tool, name: called}, res, true
+		}
+		res.Content, res.IsError = reason, true
+	}
+	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: res.Content, IsError: true})
+	return approved{}, res, false
+}
+
+// scriptCaller runs the tool calls a run_code script makes, one at a time,
+// exactly as if the model had made them: permission rules, hooks, auto
+// mode, checkpoints and events all apply. Their ids extend the script's.
+type scriptCaller struct {
+	a      *Agent
+	emit   func(Event)
+	parent string
+	n      atomic.Int64
+}
+
+func (c *scriptCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
+	use := llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
+	job, res, ok := c.a.prepare(ctx, use, c.a.activeTools(), c.emit)
+	if ok {
+		res = c.a.execute(ctx, job, c.emit)
+	}
+	return tools.Result{Content: res.Content, IsError: res.IsError, Images: res.Images}
+}
+
 func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm.Block {
 	use := job.use
 	res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: use.Name}
@@ -101,7 +137,11 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 		return res
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
-	out := job.tool.Run(tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner), a.env, use.Input)
+	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
+	if use.Name == tools.CodeToolName {
+		runCtx = tools.WithCaller(runCtx, &scriptCaller{a: a, emit: emit, parent: use.ID})
+	}
+	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: out.Content, Display: out.Display, IsError: out.IsError})
 

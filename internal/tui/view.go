@@ -770,7 +770,7 @@ func (m *model) permDetail(e *agent.Event) string {
 // the terminal is narrow.
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
-	modeChip := m.st.modeStyle(mode).Render(modeLabels[mode]) + m.vimTag()
+	modeChip := m.st.modeStyle(mode).Render(modeLabels[mode]) + m.execTag() + m.vimTag()
 	if m.sess != nil && m.sess.Trace() != nil {
 		modeChip += " " + m.st.err.Render("● rec")
 	}
@@ -1380,4 +1380,16 @@ func diagnosticLines(out string) string {
 		}
 	}
 	return truncateLines(strings.Join(lines, "\n"), 5)
+}
+
+// execTag marks the footer when scripts are on; the tool chain, the
+// default, shows nothing.
+func (m *model) execTag() string {
+	switch m.agent.Execution() {
+	case tools.ExecHybrid:
+		return " " + m.st.accent.Render("{} hybrid")
+	case tools.ExecCode:
+		return " " + m.st.accent.Render("{} code")
+	}
+	return ""
 }

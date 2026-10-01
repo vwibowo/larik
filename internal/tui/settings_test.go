@@ -226,3 +226,32 @@ func TestSpinnerTip(t *testing.T) {
 		t.Fatal("spinner_tips off should hide it")
 	}
 }
+
+func TestExecutionCommand(t *testing.T) {
+	m := testModel(t)
+	if strings.Contains(plain(m.statusLine()), "{}") {
+		t.Fatal("the tool chain, the default, needs no footer tag")
+	}
+	m.command("/execution hybrid")
+	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "hybrid" {
+		t.Fatalf("execution = %q, config %q", m.agent.Execution(), m.opts.Config.Execution)
+	}
+	if !strings.Contains(savedConfig(t, m), `"execution": "hybrid"`) {
+		t.Fatalf("execution should be saved: %s", savedConfig(t, m))
+	}
+	if !strings.Contains(plain(m.statusLine()), "{} hybrid") {
+		t.Fatalf("footer should show hybrid: %s", plain(m.statusLine()))
+	}
+	m.command("/execution fast")
+	if m.agent.Execution() != "hybrid" {
+		t.Fatal("an unknown value must not change the setting")
+	}
+	m.command("/execution tools")
+	if m.agent.Execution() != "tools" || m.opts.Config.Execution != "" || strings.Contains(savedConfig(t, m), "execution") {
+		t.Fatalf("tools is the default and is stored as no setting: %s", savedConfig(t, m))
+	}
+	m.command("/execution")
+	if m.settings == nil {
+		t.Fatal("/execution with no value should open its choices")
+	}
+}

@@ -2,13 +2,16 @@ package bench
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/session"
 	"larik/internal/tools"
 )
 
@@ -16,11 +19,32 @@ import (
 type Result struct {
 	Task      string
 	Model     string
+	Execution tools.Execution
 	Pass      bool
 	Detail    string // why it failed, or Setup/agent error
 	CostUSD   float64
 	Duration  time.Duration
+	// ToolCalls counts every tool call, including those run_code scripts
+	// make; Requests counts model requests.
 	ToolCalls int
+	Requests  int
+	// Usage is the tokens over all requests; PeakContext is the largest
+	// prompt a single request sent.
+	Usage       llm.Usage
+	PeakContext int
+	// Kept is the directory a failed run was kept in (Options.KeepFailed):
+	// work/ is the fixture as the agent left it, transcript.md the
+	// conversation and calls.jsonl every tool call, scripts' included.
+	Kept string
+}
+
+// Options tune a run.
+type Options struct {
+	Execution tools.Execution // empty means tools
+	Timeout   time.Duration
+	// KeepFailed keeps a failed run's directory and transcript instead of
+	// deleting it, to see why it failed.
+	KeepFailed bool
 }
 
 // Run sets up task in a fresh temporary directory, gives its prompt to a
@@ -30,47 +54,130 @@ type Result struct {
 // failure comes back as a failing Result with Detail explaining why, so a
 // whole run of several models and tasks doesn't stop on one bad model.
 func Run(ctx context.Context, task Task, provider llm.Provider, model string, timeout time.Duration) Result {
-	res := Result{Task: task.Name, Model: model}
-	dir, err := os.MkdirTemp("", "larik-bench-")
+	return RunWith(ctx, task, provider, model, Options{Timeout: timeout})
+}
+
+// RunWith is Run with options: an execution setting, to compare the tool
+// chain with run_code scripts on the same task, and keeping failures.
+func RunWith(ctx context.Context, task Task, provider llm.Provider, model string, o Options) (res Result) {
+	exec, _ := tools.ParseExecution(string(o.Execution))
+	res = Result{Task: task.Name, Model: model, Execution: exec}
+	root, err := os.MkdirTemp("", "larik-bench-")
 	if err != nil {
 		res.Detail = "creating the fixture directory: " + err.Error()
 		return res
 	}
-	defer os.RemoveAll(dir)
-
+	// The agent works in root/work, so the transcript beside it stays out
+	// of the model's view.
+	dir := filepath.Join(root, "work")
+	keep := false
+	defer func() {
+		if keep {
+			res.Kept = root
+		} else {
+			os.RemoveAll(root)
+		}
+	}()
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		res.Detail = "creating the fixture directory: " + err.Error()
+		return res
+	}
 	if err := task.Setup(dir); err != nil {
 		res.Detail = "setting up the fixture: " + err.Error()
 		return res
 	}
 
+	var sess *session.Session
+	if o.KeepFailed {
+		if sess, err = session.Create(filepath.Join(root, "session"), session.Meta{Cwd: dir, Provider: provider.Name(), Model: model}); err != nil {
+			res.Detail = "creating the transcript: " + err.Error()
+			return res
+		}
+	}
 	a := agent.New(agent.Options{
-		Provider: provider,
-		Model:    model,
-		Cwd:      dir,
-		MaxTurns: 40,
-		Tools:    tools.Default(),
-		Perms:    permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir),
+		Provider:  provider,
+		Model:     model,
+		Cwd:       dir,
+		MaxTurns:  40,
+		Tools:     tools.Default(),
+		Execution: exec,
+		Perms:     permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir),
+		Session:   sess,
 	})
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 
+	var calls []callRecord
 	start := time.Now()
 	for e := range a.Run(runCtx, task.Prompt) {
 		switch e.Kind {
 		case agent.EvToolEnd:
-			res.ToolCalls++
+			if e.ToolName != tools.CodeToolName {
+				res.ToolCalls++
+			}
+			if o.KeepFailed {
+				calls = append(calls, callRecord{ID: e.ToolID, Tool: e.ToolName, Input: e.Input, Output: tools.Truncate(e.Output, 4000), IsError: e.IsError})
+			}
+		case agent.EvUsage:
+			res.Requests++
+			if e.Usage != nil {
+				res.PeakContext = max(res.PeakContext, e.Usage.Turn.ContextTokens())
+			}
 		case agent.EvPermission:
 			e.Reply <- agent.PermissionReply{Allow: true}
 		}
 	}
 	res.Duration = time.Since(start)
-	res.CostUSD = a.Stats().CostUSD
+	stats := a.Stats()
+	res.CostUSD, res.Usage = stats.CostUSD, stats.Total
 
 	if runCtx.Err() != nil {
-		res.Detail = fmt.Sprintf("timed out after %s", timeout)
-		return res
+		res.Detail = fmt.Sprintf("timed out after %s", o.Timeout)
+	} else {
+		res.Pass, res.Detail = task.Verify(dir)
 	}
-	res.Pass, res.Detail = task.Verify(dir)
+	if sess != nil {
+		sess.Close()
+		if !res.Pass {
+			keep = true
+			if err := writeRecord(root, sess, calls); err != nil {
+				res.Detail += "\n(keeping the transcript failed: " + err.Error() + ")"
+			}
+		}
+	}
 	return res
+}
+
+// callRecord is one line of calls.jsonl.
+type callRecord struct {
+	ID      string          `json:"id"`
+	Tool    string          `json:"tool"`
+	Input   json.RawMessage `json:"input,omitempty"`
+	Output  string          `json:"output"`
+	IsError bool            `json:"is_error,omitempty"`
+}
+
+// writeRecord saves a failed run's conversation as Markdown and its tool
+// calls, including the ones scripts made, as JSON lines.
+func writeRecord(root string, sess *session.Session, calls []callRecord) error {
+	st, err := session.Load(sess.Path)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(root, "transcript.md"), []byte(session.Markdown(st, sess.ID)), 0o644); err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(root, "calls.jsonl"))
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(f)
+	for _, c := range calls {
+		if err := enc.Encode(c); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	return f.Close()
 }

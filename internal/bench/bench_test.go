@@ -6,11 +6,13 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"larik/internal/llm"
+	"larik/internal/tools"
 )
 
 // TestTasksAreSelfChecking is the important test here: it proves each
@@ -31,6 +33,9 @@ func TestTasksAreSelfChecking(t *testing.T) {
 	local, domain := s[:at], s[at+1:]
 	return !strings.ContainsAny(local, " \t") && !strings.ContainsAny(domain, " \t")
 `)
+		},
+		"find-undocumented": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "UNDOCUMENTED.txt"), []byte(strings.Join(surveyAnswer(), "\n")+"\n"), 0o644)
 		},
 		"rename-across-files": func(dir string) error {
 			if err := replaceAll(dir, "order/order.go", "OldName", "NewName"); err != nil {
@@ -159,5 +164,97 @@ func TestRunReportsSetupFailure(t *testing.T) {
 	res := Run(context.Background(), task, &scriptedProvider{}, "m", time.Second)
 	if res.Pass || !strings.Contains(res.Detail, "setting up the fixture") {
 		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestSurveyFixtureMatchesItsAnswer(t *testing.T) {
+	dir := t.TempDir()
+	want, err := writeSurvey(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want) < 10 || len(want) > 40 {
+		t.Fatalf("the survey should have tens of answers, has %d", len(want))
+	}
+	// Recompute the answer from the files, the way a model would.
+	var got []string
+	paths, _ := filepath.Glob(filepath.Join(dir, "pkg*", "*.go"))
+	for _, p := range paths {
+		data, _ := os.ReadFile(p)
+		lines := strings.Split(string(data), "\n")
+		for i, l := range lines {
+			name, ok := strings.CutPrefix(l, "func ")
+			if !ok || name[0] < 'A' || name[0] > 'Z' {
+				continue
+			}
+			if i == 0 || !strings.HasPrefix(lines[i-1], "//") {
+				got = append(got, filepath.Base(filepath.Dir(p))+"."+name[:strings.IndexByte(name, '(')])
+			}
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("fixture and answer disagree:\n%v\n%v", got, want)
+	}
+	if pass, _ := goTest(dir); !pass {
+		t.Fatal("the survey fixture should compile")
+	}
+}
+
+func TestRunWithCodeCountsInnerCalls(t *testing.T) {
+	task := Tasks()[0] // fix-off-by-one
+	code := `const src = tools.read({path: "calc/calc.go"}); tools.edit({path: "calc/calc.go", old_string: "for i := 1;", new_string: "for i := 0;"}); "ok"`
+	in, _ := json.Marshal(map[string]string{"code": code})
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("run_code", string(in))}},
+		{Blocks: []llm.Block{llm.TextBlock("Fixed.")}},
+	}}
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecCode, Timeout: 30 * time.Second})
+	if !res.Pass {
+		t.Fatalf("expected a pass: %s", res.Detail)
+	}
+	if res.ToolCalls != 2 || res.Requests != 2 || res.PeakContext != 100 || res.Usage.Output != 40 || res.Execution != tools.ExecCode {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestKeepFailedKeepsTheTranscriptAndScriptCalls(t *testing.T) {
+	task := Tasks()[0] // fix-off-by-one
+	code := `tools.read({path: "calc/calc.go"}); tools.glob({pattern: "**/*.go"}).length`
+	in, _ := json.Marshal(map[string]string{"code": code})
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "s1", Name: "run_code", Input: in}}},
+		{Blocks: []llm.Block{llm.TextBlock("Looks fine to me.")}},
+	}}
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecCode, Timeout: 30 * time.Second, KeepFailed: true})
+	if res.Pass || res.Kept == "" {
+		t.Fatalf("a failed run should be kept: %+v", res)
+	}
+	t.Cleanup(func() { os.RemoveAll(res.Kept) })
+	if _, err := os.Stat(filepath.Join(res.Kept, "work", "calc", "calc.go")); err != nil {
+		t.Errorf("the fixture should be kept as the agent left it: %v", err)
+	}
+	md, _ := os.ReadFile(filepath.Join(res.Kept, "transcript.md"))
+	if !strings.Contains(string(md), "Looks fine to me.") || !strings.Contains(string(md), "tools.glob") {
+		t.Errorf("transcript.md should hold the conversation and the script:\n%s", md)
+	}
+	calls, _ := os.ReadFile(filepath.Join(res.Kept, "calls.jsonl"))
+	for _, want := range []string{`"id":"s1.1","tool":"read"`, `"id":"s1.2","tool":"glob"`, `"tool":"run_code"`} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("calls.jsonl lacks %s:\n%s", want, calls)
+		}
+	}
+}
+
+func TestPassingRunsAreNotKept(t *testing.T) {
+	task := Tasks()[0]
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
+		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1;","new_string":"for i := 0;"}`)}},
+		{Blocks: []llm.Block{llm.TextBlock("Fixed.")}},
+	}}
+	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	if !res.Pass || res.Kept != "" {
+		t.Fatalf("a passing run should be discarded: %+v", res)
 	}
 }

@@ -72,6 +72,7 @@ type statusInput struct {
 		Provider        string `json:"provider"`
 		Effort          string `json:"effort,omitempty"`
 		Mode            string `json:"permission_mode"`
+		Execution       string `json:"execution"`
 		BackgroundTasks int    `json:"background_tasks"`
 		Running         bool   `json:"turn_running"`
 	} `json:"larik"`
@@ -97,6 +98,7 @@ func (m *model) statusPayload() string {
 	in.Larik.Provider = m.agent.ProviderName()
 	in.Larik.Effort = string(m.agent.Effort())
 	in.Larik.Mode = string(m.agent.Perms().Mode())
+	in.Larik.Execution = string(m.agent.Execution())
 	in.Larik.BackgroundTasks = m.agent.RunningBackground()
 	in.Larik.Running = m.running
 	data, _ := json.Marshal(in)

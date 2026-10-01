@@ -69,6 +69,7 @@ classDiagram
 | `mcp__<server>__<tool>` | mcp | only with `readOnlyHint` and not `openWorldHint` | Adapter over an MCP server's tool |
 | `tool_search`, `call_tool` | tools | `tool_search` yes; `call_tool` as the tool it runs | Present only when MCP tools are deferred (a large set). `call_tool` is unwrapped before the permission check, so rules name the tool it runs; see [extensibility](extensibility.md#mcp-servers) |
 | `list_mcp_resources`, `read_mcp_resource` | mcp | yes | Offered when a connected server has resources; reads go to already-approved servers |
+| `run_code` | tools | as each tool it calls | Offered under the `hybrid` and `code` execution settings (in `code` it is the only declared tool). Runs a goja JavaScript script whose only effects are `tools.*` calls; `prepare` skips authorizing the script itself, and each inner call goes through `prepare`/`execute` like a direct one. See [Scripts](#scripts-run_code) |
 | `task`, `task_wait`, `task_stop` | subagent | yes | Child calls are checked one by one; plan mode rejects task worktree creation |
 | `exit_plan_mode` | agent | yes | Presents a plan. `Decide` always asks for it in plan mode (and allows it elsewhere); the prompt is the approval, and the reply's `Mode` (accept-edits or default) is applied by `authorize`. An empty plan is refused before asking. Not offered to subagents |
 
@@ -114,6 +115,18 @@ flowchart LR
 The results go back as one user message with six `tool_result` blocks in the original order. This keeps a model's "read these five files" fast while preserving the order of anything with side effects.
 
 After each tool runs, `PostToolUse` hooks can append feedback or context to the result, or halt the turn ([runtools.go:73](../internal/agent/runtools.go:73)).
+
+## Scripts (run_code)
+
+The execution setting ([code.go](../internal/tools/code.go)) is separate from the permission mode: it changes the declared tools, not what may run. `Registry.ForExecution` returns the registry the model sees. `hybrid` appends `run_code`, whose description then indexes only the deferred tools, since the model already has the declared tools' schemas. `code` declares only `run_code` but keeps every tool resolvable by name, for the calls scripts make. The agent caches that view per base registry and setting (`activeTools`).
+
+A script runs in-process in goja, with no file, network or process access of its own. Its `tools.<name>(args)` bindings call `tools.Caller`, which the agent puts in the context of a `run_code` call (`scriptCaller` in [runtools.go](../internal/agent/runtools.go)). Each inner call:
+
+- gets the id `<run_code id>.<n>`, and emits its own `EvToolStart`/`EvToolEnd` (and `EvPermission` if it asks);
+- goes through `prepare` (unknown tool, `call_tool` unwrap, `authorize` with hooks, rules, mode and auto mode) and `execute` (checkpoints, PostToolUse hooks);
+- runs sequentially, inside the script's single `run_code` call, which itself runs alone.
+
+Only the script's printed output and final value go back to the model, capped like any tool output. Limits: 200 calls, a timeout (default 120s, max 600s, enforced with `Runtime.Interrupt`), 1 MB of collected output. Scripts can't call `run_code`, `tool_search`, `call_tool`, `todo_write`, `task*`, `exit_plan_mode`, `skill` or `memory`.
 
 ## Authorization
 
