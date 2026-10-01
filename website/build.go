@@ -26,14 +26,15 @@ type Download struct {
 }
 
 type Site struct {
-	Name        string     `json:"name"`
-	Tagline     string     `json:"tagline"`
-	Description string     `json:"description"`
-	Version     string     `json:"version"`
-	GoVersion   string     `json:"go_version"`
-	InstallURL  string     `json:"install_url"`          // where /install.sh is served
-	InstallRaw  string     `json:"install_fallback_url"` // the same script on GitHub
-	Downloads   []Download `json:"downloads"`
+	Name          string     `json:"name"`
+	Tagline       string     `json:"tagline"`
+	Description   string     `json:"description"`
+	Version       string     `json:"version"`
+	GoVersion     string     `json:"go_version"`
+	InstallURL    string     `json:"install_url"`          // where /install.sh is served
+	InstallRaw    string     `json:"install_fallback_url"` // the same script on GitHub
+	RepositoryURL string     `json:"repository_url"`
+	Downloads     []Download `json:"downloads"`
 }
 
 // DownloadsAvailable reports whether at least one platform has a live URL.
@@ -47,17 +48,18 @@ func (s Site) DownloadsAvailable() bool {
 }
 
 type Page struct {
-	Kind    string // landing, doc, download, changelog, notfound
-	Section string // Guide or Internals, for docs
-	Title   string
-	Nav     string // shorter sidebar label
-	Desc    string
-	URL     string // root-relative, e.g. /docs/sandbox/
-	Source  string // repository-relative source file
-	Anchor  string // README heading this page starts at, for README anchors
-	Body    template.HTML
-	TOC     []heading
-	Mermaid bool
+	Kind     string // landing, doc, download, changelog, redirect, notfound
+	Section  string // Guide, for docs
+	Title    string
+	Nav      string // shorter sidebar label
+	Desc     string
+	URL      string // root-relative, e.g. /docs/sandbox/
+	Source   string // repository-relative source file
+	Redirect string // destination for old documentation URLs
+	Anchor   string // README heading this page starts at, for README anchors
+	Body     template.HTML
+	TOC      []heading
+	Mermaid  bool
 
 	Prev, Next *Page
 	doc        *doc
@@ -94,7 +96,10 @@ func build(root, dir, out, base string) error {
 	if err := b.loadGuide(); err != nil {
 		return err
 	}
-	if err := b.loadInternals(); err != nil {
+	if err := b.loadHowItWorks(); err != nil {
+		return err
+	}
+	if err := b.loadInternalsRedirects(); err != nil {
 		return err
 	}
 	if err := b.loadChangelog(); err != nil {
@@ -180,52 +185,34 @@ func (b *builder) loadGuide() error {
 	return nil
 }
 
-// readingOrder matches rows of the table in docs/README.md:
-// | 1 | [Architecture](architecture.md) | ... |
-var readingOrder = regexp.MustCompile(`(?m)^\|\s*\d+\s*\|\s*\[([^\]]+)\]\(([\w.-]+\.md)\)`)
-
-func (b *builder) loadInternals() error {
-	docsDir := filepath.Join(b.root, "docs")
-	index, err := os.ReadFile(filepath.Join(docsDir, "README.md"))
+func (b *builder) loadHowItWorks() error {
+	src, err := os.ReadFile(filepath.Join(b.dir, "content", "how-it-works.md"))
 	if err != nil {
 		return err
 	}
-	group := NavGroup{Title: "Internals"}
-	overview := &Page{Kind: "doc", Section: "Internals", Nav: "Overview", Source: "docs/README.md", URL: "/docs/internals/"}
-	b.addDoc(overview, index)
-	group.Pages = append(group.Pages, overview)
+	p := &Page{Kind: "doc", Section: "Guide", Source: "website/content/how-it-works.md", URL: "/docs/how-it-works/"}
+	b.addDoc(p, src)
+	b.nav[0].Pages = append(b.nav[0].Pages, p)
+	return nil
+}
 
-	seen := map[string]bool{"README.md": true}
-	add := func(file, nav string) error {
-		src, err := os.ReadFile(filepath.Join(docsDir, file))
-		if err != nil {
-			return err
-		}
-		seen[file] = true
-		p := &Page{Kind: "doc", Section: "Internals", Nav: nav, Source: "docs/" + file,
-			URL: "/docs/internals/" + strings.TrimSuffix(file, ".md") + "/"}
-		b.addDoc(p, src)
-		group.Pages = append(group.Pages, p)
-		return nil
-	}
-	for _, m := range readingOrder.FindAllStringSubmatch(string(index), -1) {
-		if err := add(m[2], m[1]); err != nil {
-			return err
-		}
-	}
-	// Docs missing from the reading order still get a page.
-	entries, err := os.ReadDir(docsDir)
+// Keep old links working without publishing contributor documentation on the site.
+func (b *builder) loadInternalsRedirects() error {
+	entries, err := os.ReadDir(filepath.Join(b.root, "docs"))
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".md") && !seen[e.Name()] {
-			if err := add(e.Name(), ""); err != nil {
-				return err
-			}
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
 		}
+		url := "/docs/internals/" + strings.TrimSuffix(e.Name(), ".md") + "/"
+		if e.Name() == "README.md" {
+			url = "/docs/internals/"
+		}
+		b.pages = append(b.pages, &Page{Kind: "redirect", Title: "Documentation moved", URL: url,
+			Redirect: b.site.RepositoryURL + "/blob/main/docs/" + e.Name()})
 	}
-	b.nav = append(b.nav, group)
 	return nil
 }
 
@@ -259,6 +246,12 @@ func (b *builder) resolve(p *Page, dest string) (string, bool, error) {
 		target = b.bySource[rel]
 		if target == nil {
 			if _, err := os.Stat(filepath.Join(b.root, filepath.FromSlash(lineSuffix.ReplaceAllString(rel, "")))); err == nil {
+				if strings.HasPrefix(rel, "docs/") && strings.HasSuffix(rel, ".md") {
+					if frag != "" {
+						frag = "#" + frag
+					}
+					return b.site.RepositoryURL + "/blob/main/" + rel + frag, false, nil
+				}
 				return "", true, nil
 			}
 			return "", false, fmt.Errorf("%s: link to %q: no such page or file", p.Source, dest)

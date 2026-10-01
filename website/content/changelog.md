@@ -12,7 +12,7 @@
 
 ### Changed
 
-- **Larik checks that the sandbox can start.** At startup Larik runs a command in the sandbox. If that fails (most often bubblewrap inside a Docker container), Larik runs without the sandbox, so commands ask for approval, and says why and how to fix it at startup and in `/sandbox`. Before, every sandboxed command failed. See [Sandbox](/docs/sandbox/) and [Running Larik in a container](/docs/internals/security/#running-larik-in-a-container).
+- **Larik checks that the sandbox can start.** At startup Larik runs a command in the sandbox. If that fails (most often bubblewrap inside a Docker container), Larik runs without the sandbox, so commands ask for approval, and says why and how to fix it at startup and in `/sandbox`. Before, every sandboxed command failed. See [Sandbox](/docs/sandbox/) and [Running Larik in a container](https://github.com/vwibowo/larik/blob/main/docs/security.md#running-larik-in-a-container).
 
 ### Security
 
@@ -135,7 +135,7 @@
 - **Cheap and strong model routing.** The main agent plans and reviews on a strong model while `worker` and `explore` subagents run on cheaper or local ones, across providers. `/routing` offers Balanced, Cheapest and Local-first presets, per-task tiers, fallbacks on rate limits and outages, and a session budget. See [Model routing](/docs/model-routing/).
 - **`larik bench`** runs small self-checking coding tasks against several models and reports pass/fail, cost and time, so you can check a cheap model before trusting it with a role.
 - Routing shows what it saved, and cheap subagents can use a minimal prompt (`role_options.<role>.context: "minimal"`).
-- **Token saver** filters recognized successful shell output before it enters model context. `/config token_saver=true` enables it; `raw_output` retrieves the exact private session copy without rerunning a command. See [Tools and permissions](/docs/internals/tools-and-permissions/).
+- **Token saver** filters recognized successful shell output before it enters model context. `/config token_saver=true` enables it; `raw_output` retrieves the exact private session copy without rerunning a command. See [Tools and permissions](https://github.com/vwibowo/larik/blob/main/docs/tools-and-permissions.md).
 
 ### Fixed
 
@@ -157,7 +157,7 @@
 - **Server mode:** `larik serve`, an HTTP + SSE API. See [Server mode](/docs/server-mode/).
 - **Sessions:** branching with `/fork` and `/rewind`, and switching sessions inside the TUI.
 - **Interface:** the provider setup wizard, model picker, command palette, mode picker, `/providers` manager, shortcuts overlay, `/config` settings screen and themes.
-- **Internals docs** with diagrams, for contributors. See [Internals](/docs/internals/).
+- **Internals docs** with diagrams, for contributors. See [Contributor docs](https://github.com/vwibowo/larik/blob/main/docs/README.md).
 
 ### Changed
 

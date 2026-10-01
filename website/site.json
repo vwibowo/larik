@@ -4,6 +4,7 @@
   "description": "Larik is an open terminal coding agent written in Go. Plan on a strong model, let cheap and local models do the volume work, let models run scripts that call their tools when that saves context, and run shell commands in an OS sandbox by default.",
   "version": "v0.5.0",
   "go_version": "1.27",
+  "repository_url": "https://github.com/vwibowo/larik",
   "install_url": "https://larik.vinensiuswibowo.com/install.sh",
   "install_fallback_url": "https://raw.githubusercontent.com/vwibowo/larik/main/scripts/get-larik.sh",
   "downloads": [

@@ -949,7 +949,7 @@ go test ./...
 
 The provider adapters are tested against local SSE servers (`internal/llm/llmtest`), so no API keys are needed.
 
-The website in `website/` is generated from this README and `docs/`. `cd website && go run . -serve :8080` builds and serves it, rebuilding on every page load; `go run .` writes the static site to `website/dist/`. The build fails on any broken link.
+The website in `website/` builds the user guide from this README, plus a short page in `website/content/`. The detailed contributor docs stay in `docs/` and are linked from the site. `cd website && go run . -serve :8080` builds and serves it, rebuilding on every page load; `go run .` writes the static site to `website/dist/`. The build fails on broken internal links.
 
 To prepare the next GitHub release locally, see the [release steps](docs/contributing-guide.md#prepare-a-github-release). The packaging script checks tests and website links, builds cross-platform archives, and writes SHA-256 checksums; tagging, pushing, and publishing remain manual.
 

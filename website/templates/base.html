@@ -6,6 +6,7 @@
 <title>{{if eq .Page.Kind "landing"}}{{.Page.Title}}{{else}}{{.Page.Title}} · {{.Site.Name}}{{end}}</title>
 <meta name="description" content="{{.Page.Desc}}">
 <meta name="theme-color" content="#000000">
+{{if eq .Page.Kind "redirect"}}<meta http-equiv="refresh" content="0;url={{.Page.Redirect}}">{{end}}
 <meta property="og:title" content="{{.Page.Title}}">
 <meta property="og:description" content="{{.Page.Desc}}">
 <link rel="icon" href="{{url "/favicon.svg"}}" type="image/svg+xml">
@@ -35,6 +36,7 @@
 {{else if eq .Page.Kind "doc"}}{{template "doc" .}}
 {{else if eq .Page.Kind "download"}}{{template "download" .}}
 {{else if eq .Page.Kind "changelog"}}{{template "changelog" .}}
+{{else if eq .Page.Kind "redirect"}}<main id="main" class="notfound"><h1>Documentation moved</h1><p><a href="{{.Page.Redirect}}">Continue to the contributor docs on GitHub</a>.</p></main>
 {{else}}
 <main id="main" class="notfound">
   <p class="eyebrow">404</p>
@@ -52,11 +54,11 @@
     </div>
     <div class="footer-cols">
       <div><h2>Docs</h2><a href="{{url "/docs/getting-started/"}}">Getting started</a><a href="{{url "/docs/model-routing/"}}">Model routing</a><a href="{{url "/docs/commands/"}}">Commands</a><a href="{{url "/docs/configuration/"}}">Configuration</a></div>
-      <div><h2>Internals</h2><a href="{{url "/docs/internals/"}}">Overview</a><a href="{{url "/docs/internals/architecture/"}}">Architecture</a><a href="{{url "/docs/internals/security/"}}">Security model</a><a href="{{url "/docs/internals/comparison/"}}">How Larik compares</a></div>
-      <div><h2>Project</h2><a href="{{url "/download/"}}">Download</a><a href="{{url "/changelog/"}}">Changelog</a><a href="{{url "/docs/internals/contributing-guide/"}}">Contributing</a></div>
+      <div><h2>About</h2><a href="{{url "/docs/how-it-works/"}}">How Larik works</a><a href="{{url "/docs/permissions/"}}">Permissions</a><a href="{{url "/docs/sandbox/"}}">Sandbox</a></div>
+      <div><h2>Project</h2><a href="{{url "/download/"}}">Download</a><a href="{{url "/changelog/"}}">Changelog</a><a href="https://github.com/vwibowo/larik/blob/main/docs/README.md">Contributor docs</a></div>
     </div>
   </div>
-  <div class="footer-base">{{.Site.Name}} {{.Site.Version}} · Built with Go, from the repository's own README and docs.</div>
+  <div class="footer-base">{{.Site.Name}} {{.Site.Version}} · Built with Go. Guide generated from the repository README.</div>
 </footer>
 
 <div class="search" hidden>
@@ -68,7 +70,7 @@
       <kbd data-close>esc</kbd>
     </div>
     <ol class="search-results" role="listbox"></ol>
-    <p class="search-empty">Type to search every guide and internals page.</p>
+    <p class="search-empty">Type to search the guide.</p>
   </div>
 </div>
 

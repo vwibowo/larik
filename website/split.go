@@ -29,7 +29,7 @@ var guideTitles = map[string]string{
 // ownPage lists `### ` sections that become pages of their own.
 var ownPage = map[string]bool{"Mixing cheap and strong models": true}
 
-// skipSections are covered by the Internals docs instead.
+// Contributor sections stay in the repository README instead of the user guide.
 var skipSections = map[string]bool{"Architecture": true, "Development": true}
 
 type readmePart struct {
