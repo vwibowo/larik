@@ -63,13 +63,27 @@ type codeMsg struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
-// codeCommand starts the runner; tests may replace it.
-var codeCommand = func(ctx context.Context) (*exec.Cmd, error) {
+// Confiner is implemented by sandboxes that can run a program with no
+// writes, no network and no personal files, which is all the runner needs.
+type Confiner interface {
+	// Confine wraps a command line whose argv[0] is an absolute path.
+	Confine(argv []string) []string
+}
+
+// codeCommand prepares the runner, confined by env's sandbox when it has
+// one that can (with the sandbox off, it runs like any other helper).
+func codeCommand(ctx context.Context, env *Env) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, exe)
+	argv := []string{exe}
+	if env != nil {
+		if c, ok := env.Sandbox.(Confiner); ok && c != nil {
+			argv = c.Confine(argv)
+		}
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	// Nothing from Larik's environment (API keys included) is needed.
 	cmd.Env = []string{CodeChildEnv + "=1"}
 	for _, k := range []string{"SYSTEMROOT", "GOCOVERDIR"} { // Windows needs SYSTEMROOT
@@ -80,7 +94,7 @@ var codeCommand = func(ctx context.Context) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func (c codeTool) Run(ctx context.Context, _ *Env, input json.RawMessage) Result {
+func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	in, err := decode[struct {
 		Code    string `json:"code"`
 		Timeout int    `json:"timeout_seconds"`
@@ -102,7 +116,7 @@ func (c codeTool) Run(ctx context.Context, _ *Env, input json.RawMessage) Result
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	r := &codeRun{caller: caller, ctx: runCtx}
+	r := &codeRun{caller: caller, ctx: runCtx, env: env}
 	done, err := r.run(c, in.Code)
 	out := r.out.String()
 	if r.truncated || done.Truncated {
@@ -144,6 +158,7 @@ func plural(n int) string {
 // the tool calls it asks for, and collects what it prints.
 type codeRun struct {
 	caller    Caller
+	env       *Env
 	ctx       context.Context
 	out       strings.Builder
 	truncated bool
@@ -153,7 +168,7 @@ type codeRun struct {
 // run returns the child's done message, or an error when the child ended
 // without one (killed for time, out of memory, or crashed).
 func (r *codeRun) run(c codeTool, code string) (codeMsg, error) {
-	cmd, err := codeCommand(r.ctx)
+	cmd, err := codeCommand(r.ctx, r.env)
 	if err != nil {
 		return codeMsg{}, fmt.Errorf("starting the script runner: %w", err)
 	}

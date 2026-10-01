@@ -286,7 +286,7 @@ func TestRunCodeArgumentLimit(t *testing.T) {
 
 func TestRunnerStopsItselfPastItsDeadline(t *testing.T) {
 	// A parent that never stops the child: it must stop by itself.
-	cmd, err := codeCommand(context.Background())
+	cmd, err := codeCommand(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

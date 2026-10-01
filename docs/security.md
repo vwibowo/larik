@@ -103,6 +103,20 @@ With `sandbox.allowed_domains` (personal files only) and `network` off, [proxy.g
 - On macOS, Seatbelt already allows loopback, so commands reach the proxy directly. On Linux, `--unshare-net` leaves the namespace with its own loopback only, so bubblewrap runs `larik __sandbox-bridge` first: it listens on the proxy's port inside the namespace and forwards to the proxy's Unix socket in the sandbox's private temp directory, then runs the command.
 - Direct connections stay blocked by the OS sandbox itself; the proxy variables only make well-behaved tools use it.
 
+### Larik's own helpers: the run_code script runner
+
+The `run_code` script runner (a child `larik` process; see [tools and permissions](tools-and-permissions.md#scripts-run_code)) runs under `Sandbox.Confine` ([confine.go](../internal/sandbox/confine.go)), which is much stricter than the bash sandbox, because the runner needs nothing but the pipes to its parent. Every tool call a script makes is a message to the parent, which runs it with the usual checks.
+
+| | bash commands | Confined helpers |
+|---|---|---|
+| Writes | project, private temp, build caches | none |
+| Network | localhost (or allowlist / on) | none, not even localhost |
+| Reads | everything | everything except home and temp directories and mounted volumes (only the binary itself is let through) |
+| Starting programs | yes | macOS: only the binary itself; Linux: allowed, but confined the same way |
+| Environment | Larik's | only `LARIK_RUN_CODE_CHILD=1` (and `SYSTEMROOT` on Windows); no API keys |
+
+macOS uses a deny-by-default Seatbelt profile that allows `sysctl-read` (the Go runtime needs the page size), reads outside the denied directories, and exec of the binary. Linux runs `bwrap --die-with-parent --new-session --unshare-all --cap-drop ALL` with `/` bound read-only and `/home`, `/root`, `/tmp`, `/var/tmp`, `/run/user`, `/media`, `/mnt` (and the home directory) replaced by empty tmpfs mounts. With the sandbox off or unavailable, the runner runs unconfined, like bash commands; it still has no file, network or process access of its own.
+
 ## Web tools
 
 - `web_fetch` resolves DNS itself and refuses to connect if any resolved address is link-local (including `169.254.169.254`), multicast, unspecified, or a known cloud metadata address. Checking the resolved IP defeats DNS tricks. Loopback and private ranges stay reachable for local dev servers; the call still asks.

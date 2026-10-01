@@ -56,6 +56,9 @@ type Sandbox struct {
 	// exe is the larik binary, which runs the network bridge on Linux.
 	proxy *proxy
 	exe   string
+	// home is the user's home directory, which confined programs can't
+	// read (see Confine).
+	home string
 	// holders keeps missing protected paths from being created under
 	// bubblewrap (see holders.go); nil with Seatbelt, which denies by path.
 	holders *holders
@@ -77,7 +80,7 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	if cfg.Enabled != nil && !*cfg.Enabled {
 		return nil, ""
 	}
-	s := &Sandbox{root: real(root), network: cfg.Network}
+	s := &Sandbox{root: real(root), network: cfg.Network, home: real(home)}
 	switch runtime.GOOS {
 	case "darwin":
 		if _, err := exec.LookPath("sandbox-exec"); err != nil {
