@@ -24,15 +24,23 @@ func confined(t *testing.T, sb *Sandbox, argv ...string) (string, error) {
 	return string(out), err
 }
 
-func TestConfineRunsTheProgram(t *testing.T) {
-	sb, _, _ := newTest(t, Config{})
+// mustRun checks that confined programs run at all, so a test that
+// expects something to be blocked can't pass because nothing ran.
+func mustRun(t *testing.T, sb *Sandbox) {
+	t.Helper()
 	if out, err := confined(t, sb, "echo", "hello"); err != nil || strings.TrimSpace(out) != "hello" {
 		t.Fatalf("a confined program should run: %v %q", err, out)
 	}
 }
 
+func TestConfineRunsTheProgram(t *testing.T) {
+	sb, _, _ := newTest(t, Config{})
+	mustRun(t, sb)
+}
+
 func TestConfineHidesPersonalFiles(t *testing.T) {
 	sb, root, home := newTest(t, Config{})
+	mustRun(t, sb)
 	for _, dir := range []string{home, root} { // a home and a temp directory
 		secret := filepath.Join(dir, "secret.txt")
 		os.WriteFile(secret, []byte("s3cret"), 0o600)
@@ -51,6 +59,7 @@ func TestConfineHidesPersonalFiles(t *testing.T) {
 
 func TestConfineBlocksWrites(t *testing.T) {
 	sb, root, _ := newTest(t, Config{})
+	mustRun(t, sb)
 	// Even the project and the sandbox's own temp directory, which bash
 	// commands may write to.
 	for _, p := range []string{filepath.Join(root, "made.txt"), filepath.Join(sb.tmpDir, "made.txt")} {
@@ -66,6 +75,7 @@ func TestConfineBlocksLocalhost(t *testing.T) {
 		t.Skip("nc needed")
 	}
 	sb, _, _ := newTest(t, Config{Network: true}) // even with bash's network on
+	mustRun(t, sb)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +104,7 @@ func TestConfineBlocksOtherPrograms(t *testing.T) {
 		t.Skip("on Linux a started program is confined the same way, not blocked")
 	}
 	sb, _, _ := newTest(t, Config{})
+	mustRun(t, sb)
 	if out, err := confined(t, sb, "sh", "-c", "/bin/echo escaped"); err == nil || strings.Contains(out, "escaped") {
 		t.Errorf("a confined program started another: %v %q", err, out)
 	}
