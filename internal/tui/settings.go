@@ -709,8 +709,7 @@ func (m *model) executionCommand(arg string) tea.Cmd {
 	}
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
-		def, _ := tools.ParseExecution(string(cfg.Execution))
-		return m.println(m.st.dim.Render(describe() + fmt.Sprintf(" · default: %s · /execution tools|hybrid|code sets it for this model, /execution default removes that", def)))
+		return m.openExecPicker()
 	}
 	var e tools.Execution
 	if arg != "default" {
@@ -724,4 +723,67 @@ func (m *model) executionCommand(arg string) tea.Cmd {
 	}
 	m.agent.SetExecution(cfg.ExecutionFor(provider, modelID))
 	return m.println(m.st.dim.Render(describe() + " · saved to " + shortHome(cfg.UserConfigPath()) + " · applies from the next request"))
+}
+
+// execChoices are the /execution picker's rows; "default" removes the
+// model's own setting.
+var execChoices = []struct{ value, label, desc string }{
+	{"tools", "Tool chain", "one tool call per step"},
+	{"hybrid", "Hybrid", "tools, plus scripts that call them when a task has many steps"},
+	{"code", "Code", "scripts only: every tool is called from run_code"},
+	{"default", "Default", "drop this model's own setting and use the default"},
+}
+
+func (m *model) openExecPicker() tea.Cmd {
+	cfg := m.opts.Config
+	_, src := cfg.ExecutionSource(m.agent.ProviderName(), m.agent.Model())
+	def, _ := tools.ParseExecution(string(cfg.Execution))
+	cur := "default"
+	if src != "" {
+		cur = string(m.agent.Execution())
+	}
+	p := &picker{}
+	for i, c := range execChoices {
+		it := pickItem{label: fmt.Sprintf("%d. %s", i+1, c.label), detail: c.desc, value: c.value}
+		if c.value == "default" {
+			it.detail = fmt.Sprintf("use the default (%s) for this model", def)
+			if src != "" && src != m.agent.ProviderName()+"/"+m.agent.Model() {
+				it.detail += "; model_execution[" + src + "] still applies"
+			}
+		}
+		if c.value == cur {
+			it.note, it.noteOK = "✓ current", true
+		}
+		p.items = append(p.items, it)
+	}
+	p.selectWhere(func(it pickItem) bool { return it.value == cur })
+	m.execPick = p
+	return nil
+}
+
+func (m *model) handleExecPickerKey(msg tea.KeyPressMsg) tea.Cmd {
+	p := m.execPick
+	k := msg.String()
+	switch {
+	case k == "esc" || k == "ctrl+c":
+		m.execPick = nil
+		return nil
+	case len(k) == 1 && k[0] >= '1' && k[0] <= byte('0'+len(execChoices)):
+		m.execPick = nil
+		return m.executionCommand(execChoices[k[0]-'1'].value)
+	}
+	if p.handleKey(msg) {
+		it, _ := p.selected()
+		m.execPick = nil
+		return m.executionCommand(it.value.(string))
+	}
+	return nil
+}
+
+func (m *model) execPickerView() string {
+	w := max(m.width-6, 20)
+	m.execPick.height = max(m.availablePanelRows()-4, 1)
+	head := spread(m.st.accent.Render("Execution for "+m.agent.ProviderName()+"/"+m.agent.Model()), m.st.dim.Render("saved for this model"), w)
+	hint := fmt.Sprintf("1–%d or ↑/↓ + enter select · esc close", len(execChoices))
+	return m.st.modal.Width(max(m.width-2, 10)).Render(head + "\n" + m.execPick.view(m.st, w) + "\n" + m.st.dim.Render(hint))
 }

@@ -156,6 +156,7 @@ type model struct {
 	wizard      *wizard                   // the connect wizard, when open
 	routing     *routingWizard            // the /routing wizard, when open
 	modePick    *picker                   // the /mode dropdown, when open
+	execPick    *picker                   // the /execution dropdown, when open
 	sessionPick *picker                   // the /sessions and /resume dropdown
 	provs       *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
@@ -569,6 +570,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleModelPickerKey(msg)
 		case m.modePick != nil:
 			return m, m.handleModePickerKey(msg)
+		case m.execPick != nil:
+			return m, m.handleExecPickerKey(msg)
 		case m.sessionPick != nil:
 			return m, m.handleSessionPickerKey(msg)
 		case m.histPick != nil:
@@ -665,7 +668,7 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 func (m *model) composerFocused() bool {
 	return m.perm == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
 		m.settings == nil && m.provs == nil && m.mpick == nil && m.modePick == nil &&
-		m.sessionPick == nil && m.histPick == nil && !m.showKeys
+		m.execPick == nil && m.sessionPick == nil && m.histPick == nil && !m.showKeys
 }
 
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

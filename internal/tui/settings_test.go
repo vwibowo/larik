@@ -266,3 +266,37 @@ func TestExecutionCommand(t *testing.T) {
 		t.Fatalf("tools is the default and is stored as no setting: %s", savedConfig(t, m))
 	}
 }
+
+func TestExecutionPicker(t *testing.T) {
+	m := testModel(t) // ollama/m, no setting of its own
+	m.command("/execution")
+	if m.execPick == nil || len(m.execPick.items) != 4 {
+		t.Fatal("/execution with no value should open its picker")
+	}
+	if it, _ := m.execPick.selected(); it.value != "default" {
+		t.Fatalf("a model without its own setting starts on Default, got %v", it.value)
+	}
+	if !strings.Contains(plain(m.execPickerView()), "Execution for ollama/m") {
+		t.Errorf("the picker should name the model:\n%s", plain(m.execPickerView()))
+	}
+	m.Update(typedKey('3'))
+	if m.execPick != nil || m.agent.Execution() != "code" || !strings.Contains(savedConfig(t, m), `"ollama/m": "code"`) {
+		t.Fatalf("3 should save code for this model: %q %s", m.agent.Execution(), savedConfig(t, m))
+	}
+
+	m.command("/execution")
+	if it, _ := m.execPick.selected(); it.value != "code" || !it.noteOK {
+		t.Fatalf("the cursor should start on the model's setting, marked current: %+v", it)
+	}
+	m.Update(press(tea.KeyDown)) // Code → Default
+	m.Update(press(tea.KeyEnter))
+	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "ollama/m") {
+		t.Fatalf("Default should remove the model's setting: %q %s", m.agent.Execution(), savedConfig(t, m))
+	}
+
+	m.command("/execution")
+	m.Update(press(tea.KeyEscape))
+	if m.execPick != nil || m.agent.Execution() != "tools" {
+		t.Fatal("esc should close without changing anything")
+	}
+}

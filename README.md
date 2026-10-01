@@ -326,7 +326,7 @@ The right setting depends on the model: a strong model writes reliable scripts, 
 }
 ```
 
-Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execution code` saves a setting for the model you're using, `/execution default` removes it, and `/execution` alone shows which applies and where it comes from. The default is "Default execution" in `/config`. Switching models (`/model`) switches to that model's setting, and subagents use their own model's. Measure before choosing: `larik bench --models <model> --execution tools,hybrid,code --runs 3`.
+Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execution code` saves a setting for the model you're using, `/execution default` removes it, and `/execution` alone opens a picker for the model you're using, with its current setting marked. The default is "Default execution" in `/config`. Switching models (`/model`) switches to that model's setting, and subagents use their own model's. Measure before choosing: `larik bench --models <model> --execution tools,hybrid,code --runs 3`.
 
 ## Web
 
