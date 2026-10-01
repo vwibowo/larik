@@ -103,12 +103,45 @@ func TestExecutionSetsTheDeclaredTools(t *testing.T) {
 	}
 	// With code, it is the only declared tool, and scripts reach the rest.
 	a.SetExecution(tools.ExecCode)
+	if a.Execution() != tools.ExecTools {
+		t.Fatal("execution must stay fixed until the next fresh context")
+	}
+	a.Clear()
 	drain(a.Run(context.Background(), "go"), PermissionReply{})
 	if specs := fp.requests[2].Tools; len(specs) != 1 || specs[0].Name != tools.CodeToolName {
 		t.Errorf("code execution declares %+v", specs)
 	}
 	if res := lastResult(fp, 3); !res.IsError || !strings.Contains(res.Content, "read: ") {
 		t.Errorf("the script's read should have run and failed: %+v", res)
+	}
+}
+
+func TestCodeExecutionRejectsDirectUndeclaredTool(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(toolUse("r1", "read", `{"path":"missing.txt"}`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if res := lastResult(fp, 1); !res.IsError || !strings.Contains(res.Content, "unknown tool: read") {
+		t.Fatalf("a direct tool call in code execution must be rejected: %+v", res)
+	}
+}
+
+func TestExecutionChangeWaitsForClear(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(llm.TextBlock("first")),
+		assistant(llm.TextBlock("second")),
+		assistant(llm.TextBlock("third")))
+	drain(a.Run(context.Background(), "first"), PermissionReply{})
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "second"), PermissionReply{})
+	if a.Execution() != tools.ExecTools || len(fp.requests[0].Tools) != len(fp.requests[1].Tools) {
+		t.Fatal("a saved execution change must not alter the current context")
+	}
+	a.Clear()
+	drain(a.Run(context.Background(), "third"), PermissionReply{})
+	if a.Execution() != tools.ExecCode || len(fp.requests[2].Tools) != 1 || fp.requests[2].Tools[0].Name != tools.CodeToolName {
+		t.Fatalf("fresh context tools = %+v", fp.requests[2].Tools)
 	}
 }
 

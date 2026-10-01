@@ -10,6 +10,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/session"
 )
 
 func TestThemeSettingOverridesTerminal(t *testing.T) {
@@ -298,5 +299,36 @@ func TestExecutionPicker(t *testing.T) {
 	m.Update(press(tea.KeyEscape))
 	if m.execPick != nil || m.agent.Execution() != "tools" {
 		t.Fatal("esc should close without changing anything")
+	}
+}
+
+func TestExecutionWaitsForFreshContext(t *testing.T) {
+	m := testModel(t)
+	m.agent.Restore(&session.State{Messages: []llm.Message{llm.UserText("earlier prompt")}})
+	m.command("/execution hybrid")
+	if m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") != "hybrid" {
+		t.Fatalf("saved execution changed the current context: %q", m.agent.Execution())
+	}
+	m.command("/execution")
+	if it, _ := m.execPick.selected(); it.value != "hybrid" {
+		t.Fatalf("picker should show the saved choice: %+v", it)
+	}
+	m.execPick = nil
+	m.agent.Clear()
+	if m.agent.Execution() != "hybrid" {
+		t.Fatalf("fresh context execution = %q", m.agent.Execution())
+	}
+}
+
+func TestExecutionSettingsCannotChangeDuringTurn(t *testing.T) {
+	m := testModel(t)
+	m.running = true
+	m.command("/execution code")
+	m.command("/config execution=hybrid")
+	if m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") != "tools" {
+		t.Fatalf("running turn changed execution: %q", m.agent.Execution())
+	}
+	if strings.Contains(savedConfig(t, m), "execution") {
+		t.Fatalf("running turn saved execution: %s", savedConfig(t, m))
 	}
 }

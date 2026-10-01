@@ -44,7 +44,7 @@ func (m *model) command(line string) tea.Cmd {
 	// compaction.
 	if !m.idle() {
 		switch name {
-		case "/model", "/connect", "/providers", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/execution", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
 			what := "a turn is running"
 			switch {
 			case m.compactCancel != nil:

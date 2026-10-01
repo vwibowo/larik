@@ -76,8 +76,8 @@ func TestForExecution(t *testing.T) {
 	if len(specs) != 1 || specs[0].Name != CodeToolName {
 		t.Fatalf("code execution specs = %v, want run_code only", specs)
 	}
-	if _, ok := code.Get("echo"); !ok {
-		t.Fatal("code execution must still resolve tools by name for scripts")
+	if _, ok := code.Get("echo"); ok {
+		t.Fatal("code execution must not resolve undeclared model calls")
 	}
 	desc := specs[0].Description
 	if !strings.Contains(desc, "echo({text, loud?})") {

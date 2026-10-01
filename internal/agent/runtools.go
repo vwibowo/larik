@@ -117,12 +117,13 @@ type scriptCaller struct {
 	a      *Agent
 	emit   func(Event)
 	parent string
+	tools  *tools.Registry
 	n      atomic.Int64
 }
 
 func (c *scriptCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
 	use := llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
-	job, res, ok := c.a.prepare(ctx, use, c.a.activeTools(), c.emit)
+	job, res, ok := c.a.prepare(ctx, use, c.tools, c.emit)
 	if ok {
 		res = c.a.execute(ctx, job, c.emit)
 	}
@@ -139,7 +140,7 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
 	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
 	if use.Name == tools.CodeToolName {
-		runCtx = tools.WithCaller(runCtx, &scriptCaller{a: a, emit: emit, parent: use.ID})
+		runCtx = tools.WithCaller(runCtx, &scriptCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
 	}
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images

@@ -39,7 +39,6 @@ func undocumentedTask() Task {
 					got = append(got, l)
 				}
 			}
-			slices.Sort(got)
 			if !slices.Equal(got, want) {
 				return false, fmt.Sprintf("got %d names, want %d:\ngot:  %s\nwant: %s", len(got), len(want), strings.Join(got, " "), strings.Join(want, " "))
 			}

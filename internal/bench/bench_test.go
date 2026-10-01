@@ -201,6 +201,22 @@ func TestSurveyFixtureMatchesItsAnswer(t *testing.T) {
 	}
 }
 
+func TestSurveyRejectsUnsortedAnswer(t *testing.T) {
+	dir := t.TempDir()
+	task := undocumentedTask()
+	if err := task.Setup(dir); err != nil {
+		t.Fatal(err)
+	}
+	answer := surveyAnswer()
+	slices.Reverse(answer)
+	if err := os.WriteFile(filepath.Join(dir, "UNDOCUMENTED.txt"), []byte(strings.Join(answer, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if pass, _ := task.Verify(dir); pass {
+		t.Fatal("an unsorted answer must not pass")
+	}
+}
+
 func TestRunWithCodeCountsInnerCalls(t *testing.T) {
 	task := Tasks()[0] // fix-off-by-one
 	code := `const src = tools.read({path: "calc/calc.go"}); tools.edit({path: "calc/calc.go", old_string: "for i := 1;", new_string: "for i := 0;"}); "ok"`

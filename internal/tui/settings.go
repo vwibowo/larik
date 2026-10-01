@@ -169,9 +169,9 @@ var settingSpecs = []settingSpec{
 		choices: []settingChoice{
 			{value: "tools", label: "Tool chain", desc: "one tool call per step"},
 			{value: "hybrid", label: "Hybrid", desc: "tools, plus scripts that call them when a task has many steps"},
-			{value: "code", label: "Code", desc: "scripts only: every tool is called from run_code"},
+			{value: "code", label: "Code", desc: "ordinary tools via scripts; plan approval stays direct"},
 		},
-		later: "for models without their own setting (/execution sets one); applies from the next request",
+		later: "for models without their own setting (/execution sets one); existing contexts change after /clear",
 		get: func(m *model) string {
 			e, _ := tools.ParseExecution(string(m.opts.Config.Execution))
 			return string(e)
@@ -406,6 +406,9 @@ func (s settingSpec) check(v string) (string, error) {
 // saveSetting stores a setting in the user config and applies it to this
 // session, returning what to tell the user.
 func (m *model) saveSetting(key, raw string) (string, error) {
+	if key == "execution" && !m.idle() {
+		return "", fmt.Errorf("execution can't change while a turn or command is running")
+	}
 	spec, ok := settingByKey(key)
 	if !ok {
 		var keys []string
@@ -722,7 +725,11 @@ func (m *model) executionCommand(arg string) tea.Cmd {
 		return m.println(m.st.err.Render("couldn't save execution: " + err.Error()))
 	}
 	m.agent.SetExecution(cfg.ExecutionFor(provider, modelID))
-	return m.println(m.st.dim.Render(describe() + " · saved to " + shortHome(cfg.UserConfigPath()) + " · applies from the next request"))
+	when := "active now"
+	if m.agent.Execution() != cfg.ExecutionFor(provider, modelID) {
+		when = "applies after /clear or in a new session"
+	}
+	return m.println(m.st.dim.Render(describe() + " · saved to " + shortHome(cfg.UserConfigPath()) + " · " + when))
 }
 
 // execChoices are the /execution picker's rows; "default" removes the
@@ -730,17 +737,17 @@ func (m *model) executionCommand(arg string) tea.Cmd {
 var execChoices = []struct{ value, label, desc string }{
 	{"tools", "Tool chain", "one tool call per step"},
 	{"hybrid", "Hybrid", "tools, plus scripts that call them when a task has many steps"},
-	{"code", "Code", "scripts only: every tool is called from run_code"},
+	{"code", "Code", "ordinary tools via scripts; plan approval stays direct"},
 	{"default", "Default", "drop this model's own setting and use the default"},
 }
 
 func (m *model) openExecPicker() tea.Cmd {
 	cfg := m.opts.Config
-	_, src := cfg.ExecutionSource(m.agent.ProviderName(), m.agent.Model())
+	saved, src := cfg.ExecutionSource(m.agent.ProviderName(), m.agent.Model())
 	def, _ := tools.ParseExecution(string(cfg.Execution))
 	cur := "default"
 	if src != "" {
-		cur = string(m.agent.Execution())
+		cur = string(saved)
 	}
 	p := &picker{}
 	for i, c := range execChoices {
@@ -752,7 +759,7 @@ func (m *model) openExecPicker() tea.Cmd {
 			}
 		}
 		if c.value == cur {
-			it.note, it.noteOK = "✓ current", true
+			it.note, it.noteOK = "✓ saved", true
 		}
 		p.items = append(p.items, it)
 	}

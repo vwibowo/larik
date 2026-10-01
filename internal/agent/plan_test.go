@@ -55,6 +55,27 @@ func TestExitPlanModeApproved(t *testing.T) {
 	}
 }
 
+func TestCodeExecutionCanPresentPlan(t *testing.T) {
+	a, fp := planAgent(t,
+		assistant(toolUse("p1", "exit_plan_mode", `{"plan":"Fix the bug"}`)),
+		assistant(llm.TextBlock("starting")))
+	a.SetExecution(tools.ExecCode)
+	evs := drain(a.Run(context.Background(), "plan it"), PermissionReply{Allow: true, Mode: permission.ModeAcceptEdits})
+	if got := a.Perms().Mode(); got != permission.ModeAcceptEdits {
+		t.Fatalf("code execution could not leave plan mode: %s", got)
+	}
+	if asked := permissionEvents(evs); len(asked) != 1 || asked[0].ToolName != "exit_plan_mode" {
+		t.Fatalf("plan approval events = %+v", asked)
+	}
+	var declared []string
+	for _, spec := range fp.requests[0].Tools {
+		declared = append(declared, spec.Name)
+	}
+	if strings.Join(declared, ",") != "run_code,exit_plan_mode" {
+		t.Fatalf("code execution tools = %v", declared)
+	}
+}
+
 func TestExitPlanModeRejected(t *testing.T) {
 	a, fp := planAgent(t,
 		assistant(toolUse("p1", "exit_plan_mode", `{"plan":"rewrite everything"}`)),

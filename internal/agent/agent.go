@@ -152,6 +152,9 @@ type Agent struct {
 	// prefix, and provider caches, stay stable meanwhile.
 	baseSystem string
 	nextLang   *string
+	// nextExecution waits for a fresh context so the declared tool list
+	// stays stable throughout the current conversation.
+	nextExecution *tools.Execution
 
 	// Runtime facts from providers that can report them (see probe.go).
 	windows map[string]int  // model -> context window actually in use
@@ -238,6 +241,7 @@ func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRunti
 	a.opts.Provider, a.opts.Model = p, model
 	if a.opts.ExecutionFor != nil && p != nil {
 		a.opts.Execution = a.opts.ExecutionFor(p.Name(), model)
+		a.nextExecution = nil
 	}
 	a.opts.Runtime = nil
 	if len(runtime) > 0 {
@@ -295,6 +299,9 @@ func (a *Agent) Clear() {
 	if a.nextLang != nil {
 		a.opts.Language, a.nextLang = *a.nextLang, nil
 	}
+	if a.nextExecution != nil {
+		a.opts.Execution, a.nextExecution = *a.nextExecution, nil
+	}
 	a.opts.System = WithLanguage(a.baseSystem, a.opts.Language)
 	a.mu.Unlock()
 }
@@ -335,12 +342,18 @@ func (a *Agent) Execution() tools.Execution {
 	return a.opts.Execution
 }
 
-// SetExecution changes how the model carries out actions from its next
-// request on. It changes the tool list, so the provider's prompt cache
-// starts over.
+// SetExecution changes how the model carries out actions. Once a context
+// has messages, the change waits for Clear so its tool list stays stable.
 func (a *Agent) SetExecution(e tools.Execution) {
 	a.mu.Lock()
-	a.opts.Execution = e
+	if len(a.messages) == 0 {
+		a.opts.Execution = e
+		a.nextExecution = nil
+	} else if e == a.opts.Execution {
+		a.nextExecution = nil
+	} else {
+		a.nextExecution = &e
+	}
 	a.mu.Unlock()
 }
 

@@ -22,7 +22,8 @@ const (
 	ExecTools Execution = "tools"
 	// ExecHybrid offers the tools and run_code; the model picks per step.
 	ExecHybrid Execution = "hybrid"
-	// ExecCode offers run_code only; every tool is reached from scripts.
+	// ExecCode offers run_code and the plan approval tool, when present.
+	// Ordinary tools are reached from scripts.
 	ExecCode Execution = "code"
 )
 
@@ -86,8 +87,8 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 }
 
 // ForExecution returns the registry the model sees under e. Hybrid adds
-// run_code; code leaves run_code as the only tool sent to the model, while
-// every tool can still be looked up by name for the calls scripts make.
+// run_code; code declares run_code and, when present, exit_plan_mode.
+// Script calls resolve against the base registry instead.
 func (r *Registry) ForExecution(e Execution) *Registry {
 	if e != ExecHybrid && e != ExecCode {
 		return r
@@ -104,14 +105,11 @@ func (r *Registry) ForExecution(e Execution) *Registry {
 		}
 		return r.With(codeTool{specs: specs, listed: listed, hybrid: true})
 	}
-	nr := NewRegistry(codeTool{specs: specs, listed: specs})
-	nr.deferred = r.deferred
-	for name, t := range r.byName {
-		if _, ok := nr.byName[name]; !ok {
-			nr.byName[name] = t
-		}
+	modelTools := []Tool{codeTool{specs: specs, listed: specs}}
+	if plan, ok := r.Get("exit_plan_mode"); ok {
+		modelTools = append(modelTools, plan)
 	}
-	return nr
+	return NewRegistry(modelTools...)
 }
 
 // bindable lists the specs of the tools scripts may call, sorted by name.
