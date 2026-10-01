@@ -25,7 +25,7 @@ Everything else hangs off that loop:
 
 - **Front ends** (terminal UI, `-p` headless mode, HTTP server) never touch the loop. They read one stream of `Event`s and answer permission requests. See [architecture](architecture.md#one-event-stream-three-front-ends).
 - **Providers** (Anthropic, OpenAI, Gemini, Ollama, any OpenAI-compatible server) translate one neutral message format to each vendor's API. See [providers](providers.md).
-- **Tools** (read, write, edit, bash, grep, glob, web, lsp, skills, MCP, task) share one small interface. See [tools](tools-and-permissions.md).
+- **Tools** (read, write, edit, bash, grep, glob, web, lsp, skills, MCP, task) share one small interface. Under the `hybrid` and `code` execution settings the model can also call them from a script (`run_code`), and each call still goes through the same checks. See [tools](tools-and-permissions.md).
 - **Guards** sit between the model and the tools: hooks, permission rules and modes, and the OS sandbox. See [security](security.md).
 - **State** is append-only: a JSONL transcript per session, file snapshots per turn for `/undo`, and git worktrees for isolated subagents. See [state](state-and-persistence.md).
 

@@ -9,8 +9,9 @@ The comparisons describe publicly documented behavior at a high level. These pro
 | | **Larik** | Claude Code | OpenAI Codex CLI | Gemini CLI | OpenCode | Aider |
 |---|---|---|---|---|---|---|
 | Language / distribution | Go, one static binary | TypeScript (Node) | Rust | TypeScript (Node) | TypeScript + Go TUI | Python |
-| Model providers | Anthropic, OpenAI, Gemini, Ollama, any OpenAI-compatible, ChatGPT plan | Anthropic (incl. via cloud platforms) | OpenAI-first, others configurable | Gemini-first | Many | Many |
+| Model providers | Anthropic, OpenAI, Gemini, Ollama, any OpenAI-compatible, ChatGPT plan, Claude Code CLI | Anthropic (incl. via cloud platforms) | OpenAI-first, others configurable | Gemini-first | Many | Many |
 | Tool calling | Native function calling | Native | Native | Native | Native | Mostly edit formats parsed from text |
+| Multi-step work | One call per step, or scripts that call tools (`run_code`), set per model | One call per step | One call per step | One call per step | One call per step | — |
 | OS sandbox for shell | Seatbelt / bubblewrap, on by default | Available (Seatbelt / bubblewrap) | Seatbelt / Landlock, central to its design | Optional containers / Seatbelt | No | No |
 | Hooks, skills, custom commands, subagents, `.mcp.json` format | Claude Code–compatible | Native | Own formats | Own formats | Own formats | — |
 | Subagents in git worktrees | Built in, per task | Available | — | — | — | — |
@@ -67,6 +68,12 @@ Subagents can run in the foreground, in parallel, in the background (with result
 
 The Ollama adapter uses the native API to request a usable context window (Ollama's OpenAI-compatible endpoint silently loads 4096 tokens), reads back the window actually loaded, warns when a request fills it, and warns when a model can't call tools. Compaction sizes itself to the real window.
 
+### 10. Scripts when they pay off
+
+A tool-calling loop spends a model turn on every step and keeps every result in the context, even when the model only needed a count or one line out of a hundred. The alternative, often called Code Mode or CodeAct, is to let the model write a short program that calls the tools and returns just the answer.
+
+Larik offers both and lets you choose per model. Under the `hybrid` execution setting the model gets `run_code` next to the normal tools and picks per step; under `code` it works only through scripts. A script's tool calls are not a side channel: each one goes through the same permission rules, mode, hooks, auto mode and `/undo` checkpoints as a direct call, and the script itself runs in a separate, sandboxed process with no file, network or process access of its own. Because how well a model writes scripts varies, the setting is per model (`model_execution`), and `larik bench --execution tools,hybrid,code` measures which one suits a model before you commit to it. See [tools and permissions](tools-and-permissions.md#scripts-run_code) and [security](security.md#lariks-own-helpers-the-run_code-script-runner).
+
 ## Trade-offs
 
 Choices that cost something:
@@ -75,6 +82,7 @@ Choices that cost something:
 - **Sessions are never pruned.** Session files keep everything, including history from before compaction. Worktrees kept by subagents stay until `/worktrees remove`. Checkpoint snapshots, which are full copies of edited files and may include secrets, are kept for 7 days by default (`checkpoint_retention_days`) so `/undo` works after a resume, then deleted at startup.
 - **`/undo` has limits.** It restores what `write`, `edit` and `multi_edit` changed and, in a git repository, what shell commands changed. It doesn't see files git ignores, changes a command makes by moving `HEAD`, a file written by an MCP tool, or anything outside a repository. It reaches back as far as snapshots are kept (7 days by default) within a session (including after `larik -c`), but a branch starts with no undo history. Git remains the safety net.
 - **Fixed tool set per context.** An MCP server approved mid-session needs `/clear` to appear, in exchange for cache stability. For the same reason a large MCP tool set is reached through two fixed tools (`tool_search`, `call_tool`) rather than by adding found tools to the request, so their arguments aren't schema-checked by the API.
+- **Scripts are not free.** Each script runs in a new process (about 20 ms), a weak model can write a script that is wrong where a direct call would not be, and in `hybrid` the extra tool definition and the model's choice can cost more tokens than they save. That is why `tools` stays the default and the setting is per model.
 - **Prompt changes wait for a fresh context.** Edits to `AGENTS.md`/`CLAUDE.md` and new skills take effect after `/clear` or in a new session, not mid-conversation.
 - **Compaction is lossy.** One summary replaces the whole context and nothing from before it is replayed. The summary names the transcript file so the model can grep it for exact details, but it has to think to look.
 - **No sandbox on Windows.** Larik runs on macOS, Linux and Windows, but the OS sandbox is macOS (Seatbelt) and Linux (bubblewrap) only. On Windows, and on Linux without `bwrap`, every shell command asks, and Windows needs Bash (for example Git Bash).

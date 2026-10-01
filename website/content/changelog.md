@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0
+
+<p class="release-meta"><time datetime="2026-10-02">October 2, 2026</time></p>
+
+### Added
+
+- **Scripts that call tools.** A new execution setting decides how the model carries out its work. `tools` is one tool call per step, as before and still the default. `hybrid` adds `run_code`, and the model picks per step: a short JavaScript script for loops, chained lookups and filtering large output, a direct call otherwise. `code` gives the model `run_code` only. A script calls tools (`tools.read({path})`, `tools.grep({...})`) and only what it prints returns to the model, so reading forty files to count something costs the context one summary. Every call a script makes goes through the same permission rules, mode, hooks, auto mode and `/undo` checkpoints as a direct call; in plan mode a script can read but not write. See [Execution](/docs/execution/).
+- **Execution per model.** A strong model writes reliable scripts and a small one may not, so `"model_execution": {"codex/gpt-6-luna": "code"}` sets it per model, with `"execution"` as the default for the rest. `/execution` opens a picker for the model you're using; `/execution default` removes its setting. Switching models switches the setting, and subagents use their own model's.
+- **Benchmarking execution settings.** `larik bench --execution tools,hybrid,code` runs each setting side by side, `--runs 3` repeats each task and reports medians and ranges, and `--keep-failed` keeps a failed run's directory with its transcript and every tool call, scripts' included. A new task (finding undocumented functions across packages) is the kind of work where scripts should help.
+
+### Changed
+
+- **Larik checks that the sandbox can start.** At startup Larik runs a command in the sandbox. If that fails (most often bubblewrap inside a Docker container), Larik runs without the sandbox, so commands ask for approval, and says why and how to fix it at startup and in `/sandbox`. Before, every sandboxed command failed. See [Sandbox](/docs/sandbox/) and [Running Larik in a container](/docs/internals/security/#running-larik-in-a-container).
+
+### Security
+
+- Scripts run in a separate process started from the Larik binary, with no file, network or process access of their own. With the sandbox on, that process is confined more strictly than bash commands: no writes, no network (not even localhost), no API keys in its environment, and no reading home or temp directories.
+- Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000 and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik keeps running.
+
 ## v0.5.0
 
 <p class="release-meta"><time datetime="2026-10-01">October 1, 2026</time></p>

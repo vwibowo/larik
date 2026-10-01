@@ -28,9 +28,9 @@
     </ul>
   </div>
   <div class="lx-wrap lx-providers">
-    <p>Anthropic, OpenAI, Gemini, your ChatGPT plan, Ollama and any OpenAI-compatible endpoint, in one session.</p>
+    <p>Anthropic, OpenAI, Gemini, your Claude or ChatGPT plan, Ollama and any OpenAI-compatible endpoint, in one session.</p>
     <ul aria-label="Supported providers">
-      <li>Anthropic</li><li>OpenAI</li><li>Google Gemini</li><li>ChatGPT plan</li><li>NVIDIA NIM</li><li>Ollama</li><li>LM Studio</li><li>OpenRouter</li><li>Groq</li><li>DeepSeek</li><li>xAI</li><li>Mistral</li><li>Together</li>
+      <li>Anthropic</li><li>Claude Code CLI</li><li>OpenAI</li><li>Google Gemini</li><li>ChatGPT plan</li><li>NVIDIA NIM</li><li>Ollama</li><li>LM Studio</li><li>OpenRouter</li><li>Groq</li><li>DeepSeek</li><li>xAI</li><li>Mistral</li><li>Together</li>
     </ul>
   </div>
 </section>
@@ -84,6 +84,53 @@
       <li><strong>Fallbacks</strong> that don't waste a turn</li>
       <li><strong>A leash</strong> for small models: worktrees, turn caps, loop detection</li>
       <li><strong><code>larik bench</code></strong> measures pass/fail, cost and time per model</li>
+    </ul>
+  </div>
+</section>
+
+<section class="lx-section">
+  <div class="lx-wrap">
+    <div class="lx-head lx-head-row reveal">
+      <div>
+        <p class="lx-kicker">Execution</p>
+        <h2 class="lx-h2">Tool calls or scripts.<br><span class="lx-muted">Chosen per model.</span></h2>
+        <p class="lx-sub">A model can write a short script that calls your tools. Loops, chained lookups and filtering happen in the script, and only what it prints comes back. Reading forty files to count something costs the context one summary, not forty results.</p>
+      </div>
+      <a class="lx-btn lx-btn-sm" href="{{url "/docs/execution/"}}">Execution guide</a>
+    </div>
+
+    <div class="lx-grid-2">
+      <div class="lx-card lx-card-code reveal">
+        {{code "js" `// run_code: tests per package, top five
+const hits = tools.grep({ pattern: "^func Test", glob: "*_test.go" })
+const perPkg = {}
+for (const line of hits.split("\n")) {
+  const file = line.split(":")[0]
+  if (!file.endsWith("_test.go")) continue
+  const pkg = file.slice(0, file.lastIndexOf("/"))
+  perPkg[pkg] = (perPkg[pkg] || 0) + 1
+}
+Object.entries(perPkg).sort((a, b) => b[1] - a[1]).slice(0, 5)`}}
+        <h3>Hundreds of matches in, five rows out.</h3>
+        <p>The script sees the full results; the conversation sees the answer. Fewer turns, a smaller context, and nothing copied by hand.</p>
+      </div>
+      <div class="lx-card lx-card-code reveal">
+        {{code "json" `{
+  "execution": "tools",
+  "model_execution": {
+    "codex/gpt-6-luna": "code",
+    "claude-opus-5": "hybrid"
+  }
+}`}}
+        <h3>Three settings, one per model.</h3>
+        <p><code>tools</code>: one call per step. <code>hybrid</code>: the model picks scripts or calls each step. <code>code</code>: scripts only. Pick with <code>/execution</code>; switching models switches the setting.</p>
+      </div>
+    </div>
+
+    <ul class="lx-chips reveal">
+      <li><strong>Same rules</strong> for every call a script makes: permissions, hooks, auto mode, <code>/undo</code></li>
+      <li><strong>Sandboxed:</strong> no writes, no network, no keys, 256 MB cap</li>
+      <li><strong><code>larik bench --execution</code></strong> measures it on your model</li>
     </ul>
   </div>
 </section>
@@ -164,6 +211,11 @@
         <h3>MCP, with approval</h3>
         <p>stdio, HTTP or SSE servers with OAuth sign-in. Servers from shared project files wait for your approval.</p>
       </a>
+      <a class="lx-feature reveal" href="{{url "/docs/mcp/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 6 6M8 10.5h5M10.5 8v5"/></svg>
+        <h3>Tools on demand</h3>
+        <p>With dozens of MCP tools connected, the model searches for the one it needs instead of carrying every definition in every request.</p>
+      </a>
       <a class="lx-feature reveal" href="{{url "/docs/lsp/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/><path d="m13.5 5-3 14"/></svg>
         <h3>Language servers</h3>
@@ -174,15 +226,35 @@
         <h3>Web fetch and search</h3>
         <p>Pages as clean Markdown. Domain rules, blocked metadata addresses, cross-host redirects reported rather than followed.</p>
       </a>
+      <a class="lx-feature reveal" href="{{url "/docs/web/#browser"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M6.5 6.5h.01M9 6.5h.01"/><path d="m11 13 6 2.5-2.6 1-1 2.5Z"/></svg>
+        <h3>Browser control</h3>
+        <p>Drives a real Chrome window: click, type, upload, read frames and network requests. Every request is checked, sign-ins persist.</p>
+      </a>
       <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         <h3>Permissions you control</h3>
-        <p>Four modes, from plan to yolo, on <code>shift+tab</code>. Allow and deny rules with globs; deny always wins.</p>
+        <p>Five modes, from plan to yolo, on <code>shift+tab</code>. Allow and deny rules with globs; deny always wins.</p>
+      </a>
+      <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="M12 8v4M12 16h.01"/></svg>
+        <h3>Auto mode</h3>
+        <p>A model approves routine steps against your recent prompts. Pushes, deletes, secrets and <code>sudo</code> still ask, with the reason.</p>
       </a>
       <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/></svg>
         <h3>Plan, then approve</h3>
         <p>In plan mode the model reads, then puts its plan to you. Longer work runs from a checklist in the sidebar.</p>
+      </a>
+      <a class="lx-feature reveal" href="{{url "/docs/skills/#reviewing-changes"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5M8 11l2 2 4-4"/></svg>
+        <h3>Reviews and a GitHub Action</h3>
+        <p><code>/review</code> and <code>/security-review</code> report findings with file, line and fix. The Action posts them on every pull request.</p>
+      </a>
+      <a class="lx-feature reveal" href="{{url "/docs/memory/"}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>
+        <h3>Memory</h3>
+        <p>Your preferences, corrections and project decisions, kept as short notes outside the repo and recalled in later sessions.</p>
       </a>
       <a class="lx-feature reveal" href="{{url "/docs/commands/#composer"}}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>
