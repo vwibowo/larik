@@ -406,6 +406,8 @@ The model gets these tools:
 
 On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik has no Windows sandbox, so shell commands ask for approval.
 
+Larik checks at startup that the sandbox actually starts. If it can't (most often inside a Docker container, where bubblewrap needs the container started with `--security-opt systempaths=unconfined`), Larik runs without it, so commands ask for approval, and says why and how to fix it at startup and in `/sandbox`.
+
 **Inside the sandbox, a command:**
 
 - **Can** read everything.

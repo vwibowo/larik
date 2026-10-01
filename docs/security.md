@@ -60,6 +60,7 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 - **macOS:** `sandbox-exec -p <profile> bash -c <cmd>` with a generated Seatbelt profile (`deny default`, then specific allows).
 - **Linux:** `bwrap` with `/` bound read-only, writable paths bound read-write, protected paths re-bound read-only, `--unshare-net` and `--unshare-pid`.
 - **Elsewhere, or without `bwrap`:** no sandbox; commands ask except a small list of side-effect-free forms, and Larik warns at startup.
+- **Installed but unable to start:** at startup [probe.go](../internal/sandbox/probe.go) runs `true` the way bash commands run. If that fails, Larik treats the sandbox as unavailable (commands ask, as above) and the warning carries the sandbox's own error plus a likely fix: in a container, bubblewrap can't mount `/proc` unless the container runs with `--security-opt systempaths=unconfined`; on Ubuntu 24.04+ AppArmor may restrict unprivileged user namespaces; on macOS, Seatbelt can't start inside another, deny-by-default sandbox. A second probe checks the stricter `Confine` sandbox; if only that fails, bash stays sandboxed and Larik's helpers run unconfined, with a warning. Without the probe, every command would fail with the sandbox's error instead.
 
 | | Allowed | Denied |
 |---|---|---|

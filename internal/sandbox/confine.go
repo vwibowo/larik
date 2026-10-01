@@ -13,6 +13,9 @@ import (
 // only over the pipes it inherits. It is meant for Larik's own helpers,
 // such as the run_code script runner, which need nothing more.
 func (s *Sandbox) Confine(argv []string) []string {
+	if s.noConfine {
+		return argv
+	}
 	exe := real(argv[0])
 	if s.kind == "seatbelt" {
 		return append([]string{"sandbox-exec", "-p", confineProfile(exe, s.home), exe}, argv[1:]...)

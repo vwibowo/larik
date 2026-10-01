@@ -59,6 +59,9 @@ type Sandbox struct {
 	// home is the user's home directory, which confined programs can't
 	// read (see Confine).
 	home string
+	// noConfine is set when Confine's stricter sandbox can't start here
+	// (see New); Confine then leaves commands unconfined.
+	noConfine bool
 	// holders keeps missing protected paths from being created under
 	// bubblewrap (see holders.go); nil with Seatbelt, which denies by path.
 	holders *holders
@@ -125,6 +128,17 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	}
 	if s.kind == "seatbelt" {
 		s.profile = s.seatbeltProfile()
+	}
+	// Installed isn't the same as working: inside a container, or under
+	// another sandbox, the OS can refuse what the sandbox needs. Then every
+	// command would fail, so fall back as if there were no sandbox.
+	if err := s.probe(); err != nil {
+		s.Close()
+		return nil, "the " + s.kind + " sandbox can't start here (" + err.Error() + "); bash commands run unsandboxed and ask for approval" + probeHint(s.kind, err.Error())
+	}
+	if err := s.probeConfine(); err != nil {
+		s.noConfine = true
+		warning = strings.TrimPrefix(warning+"; ", "; ") + "Larik's helpers (the run_code script runner) can't be confined here (" + err.Error() + ") and run unconfined"
 	}
 	return s, warning
 }

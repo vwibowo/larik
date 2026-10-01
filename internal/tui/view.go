@@ -1211,8 +1211,11 @@ func (m *model) printBanner() tea.Cmd {
 		lines = append(lines, m.st.warn.Render("  ! "+w))
 	}
 	warn := func(s string) { lines = append(lines, m.st.warn.Render("  ! "+s)) }
-	if m.opts.Sandbox == nil && m.opts.SandboxNote != "" {
+	switch {
+	case m.opts.Sandbox == nil && m.opts.SandboxNote != "":
 		warn("no sandbox: " + m.opts.SandboxNote)
+	case m.opts.SandboxNote != "":
+		warn("sandbox: " + m.opts.SandboxNote)
 	}
 	if m.sess != nil && m.sess.TraceErr != nil {
 		warn("debug trace: " + m.sess.TraceErr.Error())

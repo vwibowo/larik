@@ -248,8 +248,12 @@ func (m *model) command(line string) tea.Cmd {
 			}
 			return info("no sandbox: " + note)
 		}
-		return info(m.opts.Sandbox.Summary() + "\nwritable: " + strings.Join(m.opts.Sandbox.Writable(), ", ") +
-			"\nsandboxed commands run without asking; commands the model runs with sandbox:false ask first")
+		msg := m.opts.Sandbox.Summary() + "\nwritable: " + strings.Join(m.opts.Sandbox.Writable(), ", ") +
+			"\nsandboxed commands run without asking; commands the model runs with sandbox:false ask first"
+		if m.opts.SandboxNote != "" {
+			msg += "\nnote: " + m.opts.SandboxNote
+		}
+		return info(msg)
 
 	case "/tasks":
 		return m.tasksCommand(args, info, fail)
