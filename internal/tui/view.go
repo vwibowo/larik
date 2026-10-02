@@ -299,7 +299,7 @@ func (m *model) sessionSidebar(width, height int) string {
 		rows = append(rows, "")
 	}
 	rows = append(rows, hint)
-	return m.st.modal.Width(inner + 4).Render(strings.Join(rows[:min(len(rows), room)], "\n"))
+	return m.st.box.Width(inner + 4).Render(strings.Join(rows[:min(len(rows), room)], "\n"))
 }
 
 // fitRight right-aligns s in width columns.
