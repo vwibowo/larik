@@ -74,7 +74,7 @@ func TestDeferredServerTools(t *testing.T) {
 	for _, s := range reg.Specs() {
 		names = append(names, s.Name)
 	}
-	if got := strings.Join(names, ","); got != "read,write,edit,bash,raw_output,grep,glob,todo_write,multi_edit,list_mcp_resources,read_mcp_resource,tool_search,call_tool" {
+	if got := strings.Join(names, ","); got != "read,write,write_files,edit,bash,raw_output,grep,glob,todo_write,multi_edit,list_mcp_resources,read_mcp_resource,tool_search,call_tool" {
 		t.Fatalf("tools sent to the model = %s", got)
 	}
 	if got := strings.Join(notices, "; "); !strings.Contains(got, "2 MCP tools are loaded on demand") {

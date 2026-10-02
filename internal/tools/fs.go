@@ -105,7 +105,7 @@ func (Write) ReadOnly() bool { return false }
 func (Write) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "write",
-		Description: "Create a file or overwrite it entirely. Prefer edit for changes to existing files. Existing files must be read first.",
+		Description: "Create a file or overwrite it entirely. Prefer edit for changes to existing files. Existing files must be read first. Use write_files to create several files in one model turn.",
 		Schema: schema(`{"type":"object","properties":{
 			"path":{"type":"string"},
 			"content":{"type":"string","description":"Full file content"}},

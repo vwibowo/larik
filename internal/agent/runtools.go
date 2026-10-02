@@ -94,9 +94,9 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
 	case unwrapErr != nil:
 		res.Content, res.IsError = unwrapErr.Error(), true
-	case use.Name == tools.CodeToolName:
-		// A script can do nothing by itself: each call it makes is
-		// authorized on its own (see scriptCaller).
+	case use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName:
+		// Wrappers delegate their actions through the same authorization
+		// path as direct tool calls (see toolCaller).
 		return approved{use: use, tool: tool, name: called}, res, true
 	default:
 		allow, reason, input := a.authorize(ctx, use, tool, emit)
@@ -110,10 +110,10 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	return approved{}, res, false
 }
 
-// scriptCaller runs the tool calls a run_code script makes, one at a time,
-// exactly as if the model had made them: permission rules, hooks, auto
-// mode, checkpoints and events all apply. Their ids extend the script's.
-type scriptCaller struct {
+// toolCaller runs delegated calls from run_code and write_files one at a time,
+// with the same permissions, hooks, checkpoints and events as direct calls.
+// Their ids extend the parent tool call's id.
+type toolCaller struct {
 	a      *Agent
 	emit   func(Event)
 	parent string
@@ -121,7 +121,7 @@ type scriptCaller struct {
 	n      atomic.Int64
 }
 
-func (c *scriptCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
+func (c *toolCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
 	use := llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
 	job, res, ok := c.a.prepare(ctx, use, c.tools, c.emit)
 	if ok {
@@ -139,8 +139,8 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
 	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
-	if use.Name == tools.CodeToolName {
-		runCtx = tools.WithCaller(runCtx, &scriptCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
+	if use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName {
+		runCtx = tools.WithCaller(runCtx, &toolCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
 	}
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images

@@ -123,6 +123,93 @@ func TestWriteThenUndo(t *testing.T) {
 	}
 }
 
+func TestWriteFilesUsesPerFilePermissionsAndUndo(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("batch", tools.WriteFilesToolName, `{"files":[{"path":"index.html","content":"<h1>Hi</h1>"},{"path":"script.js","content":"console.log('hi')"}]}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	evs := drain(a.Run(context.Background(), "create the app"), PermissionReply{Allow: true})
+	permissions, writes := 0, 0
+	for _, ev := range evs {
+		if ev.Kind == EvPermission {
+			permissions++
+		}
+		if ev.Kind == EvToolStart && ev.ToolName == "write" {
+			writes++
+		}
+	}
+	if permissions != 2 || writes != 2 || len(fp.requests) != 2 {
+		t.Fatalf("permissions=%d writes=%d requests=%d", permissions, writes, len(fp.requests))
+	}
+	result := fp.requests[1].Messages[len(fp.requests[1].Messages)-1].Blocks[0]
+	if result.ID != "batch" || result.IsError {
+		t.Fatalf("batch tool result = %+v", result)
+	}
+	for name, want := range map[string]string{"index.html": "<h1>Hi</h1>", "script.js": "console.log('hi')"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("%s = %q, %v", name, data, err)
+		}
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"index.html", "script.js"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("undo should remove %s: %v", name, err)
+		}
+	}
+}
+
+func TestWriteFilesRejectsUnsafeBatchBeforeWriting(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeYolo,
+		assistant(toolUse("batch", tools.WriteFilesToolName, `{"files":[{"path":"safe.txt","content":"safe"},{"path":".git/config","content":"unsafe"}]}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	drain(a.Run(context.Background(), "create files"), PermissionReply{})
+	result := fp.requests[1].Messages[len(fp.requests[1].Messages)-1].Blocks[0]
+	if !result.IsError || !strings.Contains(result.Content, "protected") {
+		t.Fatalf("batch tool result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "safe.txt")); !os.IsNotExist(err) {
+		t.Fatalf("preflight should prevent every write: %v", err)
+	}
+}
+
+func TestWriteFilesKeepsPerFileDenyRules(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeYolo,
+		assistant(toolUse("batch", tools.WriteFilesToolName, `{"files":[{"path":"safe.txt","content":"safe"},{"path":"secret.txt","content":"blocked"}]}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	a.opts.Perms = permission.NewChecker(permission.ModeYolo, permission.Rules{Deny: []string{"write(secret.txt)"}}, dir)
+	drain(a.Run(context.Background(), "create files"), PermissionReply{})
+	result := fp.requests[1].Messages[len(fp.requests[1].Messages)-1].Blocks[0]
+	if !result.IsError || !strings.Contains(result.Content, "Stopped at file 2 of 2") {
+		t.Fatalf("batch tool result = %+v", result)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "safe.txt")); err != nil || string(data) != "safe" {
+		t.Fatalf("first file = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secret.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied file should not be written: %v", err)
+	}
+}
+
+func TestWriteFilesRespectsPlanMode(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModePlan,
+		assistant(toolUse("batch", tools.WriteFilesToolName, `{"files":[{"path":"one.txt","content":"one"},{"path":"two.txt","content":"two"}]}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	drain(a.Run(context.Background(), "plan files"), PermissionReply{Allow: true})
+	result := fp.requests[1].Messages[len(fp.requests[1].Messages)-1].Blocks[0]
+	if !result.IsError || !strings.Contains(result.Content, "plan mode") {
+		t.Fatalf("batch tool result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "one.txt")); !os.IsNotExist(err) {
+		t.Fatalf("plan mode should not write files: %v", err)
+	}
+}
+
 func TestAlwaysAllowSaveFailureIsReportedAndSessionRuleRemains(t *testing.T) {
 	a, _, dir := setup(t, permission.ModeDefault,
 		assistant(toolUse("t1", "write", `{"path":"first.txt","content":"first"}`)),

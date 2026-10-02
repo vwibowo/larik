@@ -43,8 +43,7 @@ func (TodoWrite) ReadOnly() bool { return true }
 func (TodoWrite) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: TodoToolName,
-		Description: "Keep a task list for the current work, shown to the user as a checklist. Use it for tasks with three or more steps, " +
-			"when the user gives several things to do, or when new steps turn up along the way; skip it for a single quick change or a question. " +
+		Description: "Keep a task list for the current work, shown to the user as a checklist. Use it when work has distinct phases or multiple independent deliverables that need progress tracking; skip it for a single bug fix, a question, or one deliverable with several requirements. " +
 			"Each call replaces the whole list, so send every item each time. Mark an item in_progress before starting it, with exactly one " +
 			"in_progress at a time, and completed as soon as it is done (not in batches). Only mark completed what is fully done: if tests fail " +
 			"or the work is blocked, keep it in_progress and add an item for what is needed. Remove items that no longer apply.",

@@ -214,7 +214,7 @@ func (r *Registry) With(ts ...Tool) *Registry {
 
 // Builtin returns the built-in tools.
 func Builtin() []Tool {
-	return []Tool{Read{}, Write{}, Edit{}, Bash{}, RawOutput{}, Grep{}, Glob{}, TodoWrite{}, MultiEdit{}}
+	return []Tool{Read{}, Write{}, WriteFiles{}, Edit{}, Bash{}, RawOutput{}, Grep{}, Glob{}, TodoWrite{}, MultiEdit{}}
 }
 
 // Default returns a registry of the built-in tools.

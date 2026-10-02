@@ -210,7 +210,7 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 - **History.** `↑` on the first line recalls earlier prompts for this project, and `↓` goes back toward your draft. `ctrl+r` searches them. History is kept in the data directory under `history/`, up to 500 entries per project.
 - **`ctrl+g`** opens the prompt in `$VISUAL` or `$EDITOR` (falling back to `vi`). The text you save becomes the prompt.
 
-**Task list.** For work with several steps, the model keeps a checklist with the `todo_write` tool. While a turn runs, the open items are pinned under the conversation and the status line names the item in progress. Each update is also printed in the conversation. `/todos` shows the current list. It is restored when you resume a session, and it survives compaction.
+**Task list.** For work with distinct phases or multiple deliverables, the model keeps a checklist with the `todo_write` tool. It skips the checklist for a single fix or deliverable with several requirements, avoiding extra model turns. While a turn runs, the open items are pinned under the conversation and the status line names the item in progress. Each update is also printed in the conversation. `/todos` shows the current list. It is restored when you resume a session, and it survives compaction.
 
 | Command                                          | What it does                                                                                                                                                                                                                                                             |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -302,6 +302,8 @@ Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command,
 Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
 
 `write`, `edit` and `multi_edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
+
+For several independent files, `write_files` creates them in one model turn. Each file still goes through `write`'s permission check, hooks, checkpoint and diagnostics. If one file fails, the tool stops and reports which earlier files were already written.
 
 ## Execution
 

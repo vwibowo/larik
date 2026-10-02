@@ -5,3 +5,21 @@
 /dist/
 AGENTS.md
 .DS_Store
+/benchmarks/
+
+# Local OpenCode/Larik comparison runs and reports.
+/docs/opencode-comparison.md
+/docs/opencode-expanded.md
+/docs/performance-data/
+/scripts/analyze_agent_compare.py
+/scripts/audit_dashboard.cjs
+/scripts/compare_agents.py
+/scripts/compare_agents_dashboard.txt
+/scripts/extended_tasks.py
+/scripts/measure_agent_startup.py
+/scripts/regrade_code.py
+/scripts/regrade_dashboard.py
+/scripts/regrade_expanded.py
+/scripts/regrade_extended_code.py
+/scripts/retry_compare_cases.py
+/scripts/verify_dashboard.cjs

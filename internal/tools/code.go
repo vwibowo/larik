@@ -62,12 +62,12 @@ var codeMemoryLimit uint64 = 256 << 20
 // unbound are tools a script can't call: the wrappers it replaces, itself,
 // and tools that only make sense as a step of the conversation.
 var unbound = map[string]bool{
-	CodeToolName: true, ToolSearchName: true, CallToolName: true,
+	CodeToolName: true, WriteFilesToolName: true, ToolSearchName: true, CallToolName: true,
 	"todo_write": true, "task": true, "task_stop": true, "task_wait": true,
 	"exit_plan_mode": true, "skill": true, "memory": true,
 }
 
-// Caller runs one tool call on behalf of a script, with the same
+// Caller runs one delegated tool call, with the same
 // permission checks, hooks and events as a call the model makes directly.
 type Caller interface {
 	CallTool(ctx context.Context, name string, input json.RawMessage) Result
@@ -75,7 +75,7 @@ type Caller interface {
 
 type callerKey struct{}
 
-// WithCaller lets tools that make tool calls (run_code) reach the agent.
+// WithCaller lets tools that delegate calls (run_code, write_files) reach the agent.
 func WithCaller(ctx context.Context, c Caller) context.Context {
 	return context.WithValue(ctx, callerKey{}, c)
 }
