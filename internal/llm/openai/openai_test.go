@@ -96,7 +96,8 @@ func TestChatGPTHeadersAndParams(t *testing.T) {
 	defer srv.Close()
 	p := NewChatGPT("codex", srv.URL, func(context.Context) (string, string, error) { return "tok_1", "acct_1", nil })
 	var done llm.StreamEvent
-	for ev, err := range p.Stream(context.Background(), llm.Request{Model: "gpt-6-luna", System: "sys", MaxTokens: 100, Messages: []llm.Message{llm.UserText("hi")}}) {
+	const key = "0d6c7f2e-5a3b-4c1d-9e8f-1a2b3c4d5e6f"
+	for ev, err := range p.Stream(context.Background(), llm.Request{Model: "gpt-6-luna", System: "sys", MaxTokens: 100, Messages: []llm.Message{llm.UserText("hi")}, CacheKey: key}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,6 +111,10 @@ func TestChatGPTHeadersAndParams(t *testing.T) {
 	}
 	if strings.Contains(body, "max_output_tokens") || !strings.Contains(body, `"store":false`) {
 		t.Fatalf("body: %s", body)
+	}
+	// The backend takes the cache key from these headers, not the body.
+	if got.Header.Get("session_id") != key || got.Header.Get("conversation_id") != key || !strings.Contains(body, `"prompt_cache_key":"`+key+`"`) {
+		t.Fatalf("cache key not sent: headers %v body %s", got.Header, body)
 	}
 }
 

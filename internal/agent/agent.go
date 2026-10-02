@@ -4,6 +4,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"maps"
@@ -112,6 +114,9 @@ type Agent struct {
 	// be reported: both are read for every streamed event, without mu.
 	trace       atomic.Pointer[trace.Tracer]
 	savePending atomic.Bool
+	// cacheKey names this conversation to providers that route prompt
+	// caching by key (see llm.Request.CacheKey).
+	cacheKey string
 
 	mu          sync.Mutex
 	messages    []llm.Message
@@ -174,6 +179,7 @@ func New(opts Options) *Agent {
 	a.tokenSaver = &atomic.Bool{}
 	a.tokenSaver.Store(opts.TokenSaver)
 	a.trace.Store(opts.Trace)
+	a.cacheKey = conversationKey(opts.Session)
 	a.env.TokenSaver = a.tokenSaver
 	if opts.Session != nil {
 		a.env.RawOutputDir = session.RawDir(opts.Session.Path)
@@ -723,6 +729,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		Tools:     a.activeLocked().Specs(),
 		MaxTokens: min(llm.Lookup(a.opts.Model).MaxOutput, 64_000),
 		Effort:    a.opts.Effort,
+		CacheKey:  a.cacheKey,
 	}
 	provider := a.opts.Provider
 	tr := a.opts.Trace
@@ -905,6 +912,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		Tools:     a.activeLocked().Specs(), // unchanged tools keep the cached prefix valid
 		MaxTokens: 32_000,
 		Effort:    a.opts.Effort,
+		CacheKey:  a.cacheKey, // same prefix as the conversation's requests
 	}
 	provider := a.opts.Provider
 	pick := a.opts.CompactWith
@@ -1014,4 +1022,20 @@ func (a *Agent) SetTools(r *tools.Registry) {
 	a.mu.Lock()
 	a.opts.Tools, a.toolsLoaded = r, true
 	a.mu.Unlock()
+}
+
+// conversationKey is a UUID naming the conversation for prompt caching:
+// derived from the session, so a resumed session keeps its key (and can
+// still hit the provider's cache), or random without one.
+func conversationKey(s *session.Session) string {
+	var b [16]byte
+	if s != nil {
+		sum := sha256.Sum256([]byte("larik-cache-key\x00" + s.ID))
+		copy(b[:], sum[:])
+	} else {
+		rand.Read(b[:])
+	}
+	b[6] = b[6]&0x0f | 0x40 // version 4 layout
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }

@@ -146,6 +146,10 @@ type Request struct {
 	Tools     []ToolSpec
 	MaxTokens int
 	Effort    Effort
+	// CacheKey names the conversation, for providers that route prompt
+	// caching by a key (OpenAI's prompt_cache_key): requests that share a
+	// prefix and a key reach the same cache. A UUID; "" sends none.
+	CacheKey string
 }
 
 type Usage struct {

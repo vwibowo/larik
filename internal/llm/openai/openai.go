@@ -25,9 +25,9 @@ const DefaultModel = "gpt-5.5"
 type Provider struct {
 	client sdk.Client
 	name   string
-	// noMaxTokens leaves out max_output_tokens, which the ChatGPT
-	// backend does not accept.
-	noMaxTokens bool
+	// chatGPT is the backend behind a ChatGPT sign-in: it doesn't accept
+	// max_output_tokens, and takes the cache key from session headers.
+	chatGPT bool
 }
 
 // New builds a Responses API provider. name is the configured provider
@@ -72,7 +72,7 @@ func NewChatGPT(name, baseURL string, token TokenFunc) *Provider {
 		option.WithMiddleware(auth),
 		option.WithHTTPClient(llm.HTTPClient),
 	)
-	return &Provider{client: client, name: name, noMaxTokens: true}
+	return &Provider{client: client, name: name, chatGPT: true}
 }
 
 func (p *Provider) Name() string { return p.name }
@@ -183,7 +183,7 @@ func (p *Provider) buildParams(req llm.Request) (responses.ResponseNewParams, []
 	if req.System != "" {
 		params.Instructions = sdk.String(req.System)
 	}
-	if req.MaxTokens > 0 && !p.noMaxTokens {
+	if req.MaxTokens > 0 && !p.chatGPT {
 		params.MaxOutputTokens = sdk.Int(int64(req.MaxTokens))
 	}
 	if reasoningModel(req.Model) {
@@ -207,6 +207,15 @@ func (p *Provider) buildParams(req llm.Request) (responses.ResponseNewParams, []
 	opts := []option.RequestOption{option.WithJSONSet("input", inputItems(req, p.name))}
 	if len(tools) > 0 {
 		opts = append(opts, option.WithJSONSet("tools", tools))
+	}
+	if req.CacheKey != "" {
+		params.PromptCacheKey = sdk.String(req.CacheKey)
+		if p.chatGPT {
+			// The ChatGPT backend ignores the body's key: without these
+			// headers it assigns every request a fresh one, and no
+			// request ever reads another's cache.
+			opts = append(opts, option.WithHeader("session_id", req.CacheKey), option.WithHeader("conversation_id", req.CacheKey))
+		}
 	}
 	return params, opts
 }

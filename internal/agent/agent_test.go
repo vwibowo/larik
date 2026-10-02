@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -640,5 +641,33 @@ func TestCompactionForgetsShownReads(t *testing.T) {
 	drain(a.Run(context.Background(), "again"), PermissionReply{})
 	if got := result(fp.requests[5]); !strings.Contains(got, "the content") {
 		t.Fatalf("after compaction the read should return the content: %q", got)
+	}
+}
+
+// TestCacheKey: every request of a conversation, compaction included,
+// carries one UUID cache key, derived from the session so a resumed
+// session keeps it.
+func TestCacheKey(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(llm.TextBlock("one")),
+		assistant(llm.TextBlock("<summary>s</summary>")),
+		assistant(llm.TextBlock("two")),
+	)
+	drain(a.Run(context.Background(), "hi"), PermissionReply{})
+	if _, err := a.Compact(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	drain(a.Run(context.Background(), "again"), PermissionReply{})
+	key := fp.requests[0].CacheKey
+	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(key) {
+		t.Fatalf("cache key %q is not a UUID", key)
+	}
+	for i, r := range fp.requests {
+		if r.CacheKey != key {
+			t.Errorf("request %d has key %q, want %q", i, r.CacheKey, key)
+		}
+	}
+	if conversationKey(a.opts.Session) != key || conversationKey(nil) == conversationKey(nil) {
+		t.Error("the key should follow the session, and differ between agents without one")
 	}
 }
