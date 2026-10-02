@@ -4,11 +4,15 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,7 +144,7 @@ func TestBridgeIsLoopbackAuthenticatedPrivateAndRemoved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan llm.AgentRuntimeEvent, 1)
-	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "read_file", Schema: []byte(`{"type":"object"}`)}}, out, &callMatcher{})
+	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "read_file", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,4 +188,96 @@ func TestRuntimeCancellationStopsChild(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("runtime did not stop after cancellation")
 	}
+}
+
+// bridgeCall posts one JSON-RPC request to the bridge and returns the body.
+func bridgeCall(t *testing.T, bridge *bridgeServer, body string) string {
+	t.Helper()
+	config, err := os.ReadFile(bridge.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		MCPServers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(config, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	server := parsed.MCPServers["larik"]
+	req, _ := http.NewRequest("POST", server.URL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range server.Headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Error(err)
+		return ""
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return string(data)
+}
+
+// TestBridgeServesCallsConcurrently: parallel-safe tools are marked
+// read-only, which is what lets Claude Code issue them together, and the
+// bridge passes concurrent calls on without waiting for each other.
+func TestBridgeServesCallsConcurrently(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan llm.AgentRuntimeEvent, 4)
+	specs := []llm.ToolSpec{{Name: "grep", Schema: []byte(`{"type":"object"}`)}, {Name: "write", Schema: []byte(`{"type":"object"}`)}}
+	bridge, err := startBridge(ctx, specs, []string{"grep"}, out, &callMatcher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close(context.Background())
+
+	list := bridgeCall(t, bridge, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	var tools struct {
+		Result struct {
+			Tools []struct {
+				Name        string
+				Annotations *struct {
+					ReadOnlyHint bool `json:"readOnlyHint"`
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(list), &tools); err != nil || len(tools.Result.Tools) != 2 {
+		t.Fatalf("tools/list: %v %s", err, list)
+	}
+	for _, tl := range tools.Result.Tools {
+		readOnly := tl.Annotations != nil && tl.Annotations.ReadOnlyHint
+		if readOnly != (tl.Name == "grep") {
+			t.Errorf("%s readOnlyHint = %v", tl.Name, readOnly)
+		}
+	}
+
+	// Two calls in flight: both must reach the agent before either is answered.
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bridgeCall(t, bridge, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"grep","arguments":{"n":%d}}}`, i+2, i))
+		}()
+	}
+	var pending []*llm.AgentRuntimeToolRequest
+	for len(pending) < 2 {
+		select {
+		case ev := <-out:
+			pending = append(pending, ev.Tool)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of 2 concurrent calls reached the agent", len(pending))
+		}
+	}
+	for _, p := range pending {
+		p.Result <- llm.Block{Type: llm.BlockToolResult, Content: "ok"}
+	}
+	wg.Wait()
 }

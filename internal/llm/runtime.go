@@ -13,8 +13,12 @@ type AgentRuntimeRequest struct {
 	Model, System, Workspace string
 	Messages                 []Message
 	Tools                    []ToolSpec
-	Effort                   Effort
-	MaxTurns                 int
+	// Parallel names the tools that may run at the same time as each
+	// other (read-only or concurrency-safe); the runtime may issue those
+	// concurrently and the agent runs them together.
+	Parallel []string
+	Effort   Effort
+	MaxTurns int
 }
 
 type AgentRuntimeToolRequest struct {

@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,7 +193,7 @@ func (r *Runtime) Run(ctx context.Context, request llm.AgentRuntimeRequest) (<-c
 	runCtx, cancel := context.WithCancel(ctx)
 	out := make(chan llm.AgentRuntimeEvent, 32)
 	matcher := &callMatcher{}
-	bridge, err := startBridge(runCtx, request.Tools, out, matcher)
+	bridge, err := startBridge(runCtx, request.Tools, request.Parallel, out, matcher)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("start Claude tool bridge: %w", err)
@@ -536,7 +537,7 @@ type bridgeServer struct {
 
 var callSequence atomic.Uint64
 
-func startBridge(ctx context.Context, tools []llm.ToolSpec, out chan<- llm.AgentRuntimeEvent, matcher *callMatcher) (*bridgeServer, error) {
+func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, out chan<- llm.AgentRuntimeEvent, matcher *callMatcher) (*bridgeServer, error) {
 	if len(tools) == 0 {
 		return &bridgeServer{}, nil
 	}
@@ -548,17 +549,23 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, out chan<- llm.Agent
 	expected := "Bearer " + token
 	server := mcp.NewServer(&mcp.Implementation{Name: "larik", Version: "1"}, nil)
 	bridge := &bridgeServer{}
-	var toolMu sync.Mutex
 	for _, definition := range tools {
 		definition := definition
 		schema := definition.Schema
 		if len(schema) == 0 {
 			schema = json.RawMessage(`{"type":"object"}`)
 		}
-		server.AddTool(&mcp.Tool{Name: definition.Name, Description: definition.Description, InputSchema: json.RawMessage(schema)},
+		tool := &mcp.Tool{Name: definition.Name, Description: definition.Description, InputSchema: json.RawMessage(schema)}
+		if slices.Contains(parallel, definition.Name) {
+			// Claude Code runs only read-only MCP tools concurrently. The
+			// agent still checks permission for each call, and keeps calls
+			// that write from overlapping.
+			tool.Annotations = &mcp.ToolAnnotations{ReadOnlyHint: true}
+		}
+		// Calls can arrive concurrently: each is matched to its tool_use
+		// and answered on its own channel.
+		server.AddTool(tool,
 			func(callCtx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				toolMu.Lock()
-				defer toolMu.Unlock()
 				arguments := request.Params.Arguments
 				id, ok, _ := matcher.take(definition.Name, arguments)
 				if !ok {

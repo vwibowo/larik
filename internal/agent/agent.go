@@ -649,8 +649,10 @@ func (a *Agent) runRuntime(ctx context.Context, emit func(Event)) string {
 func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 	var loops loopGuard
 	a.mu.Lock()
+	registry := a.activeLocked()
 	req := llm.AgentRuntimeRequest{Model: a.opts.Model, System: a.opts.System, Workspace: a.opts.Cwd,
-		Messages: append([]llm.Message(nil), a.messages...), Tools: a.activeLocked().Specs(), Effort: a.opts.Effort, MaxTurns: a.opts.MaxTurns}
+		Messages: append([]llm.Message(nil), a.messages...), Tools: registry.Specs(), Parallel: parallelTools(registry),
+		Effort: a.opts.Effort, MaxTurns: a.opts.MaxTurns}
 	runtime := a.opts.Runtime
 	a.mu.Unlock()
 	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
@@ -660,63 +662,119 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 		emit(Event{Kind: EvError, Text: err.Error()})
 		return "error"
 	}
-	for event := range events {
-		if event.Text != "" {
-			emit(Event{Kind: EvTextDelta, Text: event.Text})
-		}
-		if event.Thinking != "" {
-			emit(Event{Kind: EvThinkingDelta, Text: event.Thinking})
-		}
-		if event.Assistant != nil {
-			msg := *event.Assistant
-			if msg.Model == "" {
-				msg.Model = req.Model
-			}
-			a.appendMessage(msg, nil)
-			emit(Event{Kind: EvAssistant, Message: &msg})
-		}
-		if event.Tool != nil {
-			call := event.Tool.Call
-			uses := []llm.Block{call}
-			results := a.runTools(ctx, uses, emit)
-			if len(results) != 0 {
-				a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: results}, nil)
-				select {
-				case event.Tool.Result <- results[0]:
-				case <-ctx.Done():
-					return "interrupted"
+
+	// The runtime asks for tool calls one event each, and issues the
+	// parallel-safe ones concurrently. Each runs in its own goroutine, as
+	// runTools would run them: permission is checked one call at a time,
+	// in the order they arrived (turn passes from one check to the next),
+	// and a call that writes holds writing to itself.
+	type finished struct {
+		tool *llm.AgentRuntimeToolRequest
+		res  llm.Block
+	}
+	done := make(chan finished)
+	inflight := 0
+	turn := make(chan struct{})
+	close(turn)
+	var writing sync.RWMutex
+	start := func(tool *llm.AgentRuntimeToolRequest) {
+		inflight++
+		prev, mine := turn, make(chan struct{})
+		turn = mine
+		go func() {
+			<-prev
+			job, res, ok := a.prepare(runtimeCtx, tool.Call, registry, nil, emit)
+			close(mine)
+			if ok {
+				lock, unlock := writing.Lock, writing.Unlock
+				if tools.Parallel(job.tool) {
+					lock, unlock = writing.RLock, writing.RUnlock
 				}
+				lock()
+				res = a.execute(runtimeCtx, job, emit)
+				unlock()
+				res.Name = job.name
 			}
-			if a.opts.Subagent != "" && loops.see(uses, results) {
-				cancelRuntime()
-				emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", call.Name, loopRepeats)})
+			done <- finished{tool, res}
+		}()
+	}
+	record := func(f finished) {
+		inflight--
+		a.appendMessage(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{f.res}}, nil)
+		f.tool.Result <- f.res // buffered: the bridge may have stopped waiting
+	}
+	// However the pass ends, every call that started gets its result
+	// recorded, so the transcript never holds an unanswered tool_use.
+	defer func() {
+		cancelRuntime()
+		for inflight > 0 {
+			record(<-done)
+		}
+	}()
+
+	for {
+		select {
+		case f := <-done:
+			record(f)
+			if a.opts.Subagent != "" && loops.see([]llm.Block{f.tool.Call}, []llm.Block{f.res}) {
+				emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", f.tool.Call.Name, loopRepeats)})
 				return "loop"
 			}
 			if halted, reason := a.takeHalt(); halted {
-				cancelRuntime()
 				emit(Event{Kind: EvNotice, Text: "stopped by hook: " + reason})
 				return "hook_stopped"
 			}
-		}
-		if event.Usage != nil {
-			a.recordUsage(req.Model, *event.Usage, emit)
-		}
-		if event.Err != nil {
-			if ctx.Err() != nil {
-				return "interrupted"
+		case event, ok := <-events:
+			if !ok {
+				if ctx.Err() != nil {
+					return "interrupted"
+				}
+				emit(Event{Kind: EvError, Text: "Claude Code CLI runtime ended without completing the turn"})
+				return "error"
 			}
-			emit(Event{Kind: EvError, Text: event.Err.Error()})
-			return "error"
-		}
-		if event.Done {
-			return "stop"
+			if event.Text != "" {
+				emit(Event{Kind: EvTextDelta, Text: event.Text})
+			}
+			if event.Thinking != "" {
+				emit(Event{Kind: EvThinkingDelta, Text: event.Thinking})
+			}
+			if event.Assistant != nil {
+				msg := *event.Assistant
+				if msg.Model == "" {
+					msg.Model = req.Model
+				}
+				a.appendMessage(msg, nil)
+				emit(Event{Kind: EvAssistant, Message: &msg})
+			}
+			if event.Tool != nil {
+				start(event.Tool)
+			}
+			if event.Usage != nil {
+				a.recordUsage(req.Model, *event.Usage, emit)
+			}
+			if event.Err != nil {
+				if ctx.Err() != nil {
+					return "interrupted"
+				}
+				emit(Event{Kind: EvError, Text: event.Err.Error()})
+				return "error"
+			}
+			if event.Done {
+				return "stop"
+			}
 		}
 	}
-	if ctx.Err() != nil {
-		return "interrupted"
+}
+
+// parallelTools names the tools in r that may run alongside each other.
+func parallelTools(r *tools.Registry) []string {
+	var names []string
+	for _, sp := range r.Specs() {
+		if t, ok := r.Get(sp.Name); ok && tools.Parallel(t) {
+			names = append(names, sp.Name)
+		}
 	}
-	emit(Event{Kind: EvError, Text: "Claude Code CLI runtime ended without completing the turn"})
-	return "error"
+	return names
 }
 
 // stream makes one model request and records the assistant message.
