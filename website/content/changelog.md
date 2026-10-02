@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.7.0
+
+<p class="release-meta"><time datetime="2026-10-03">October 3, 2026</time></p>
+
+### Added
+
+- **`write_files`.** The model can create several independent files (2 to 16) in one call instead of one turn per file. Each file still goes through `write`'s permission check, hooks, checkpoint and diagnostics; if one fails, the tool stops and reports which files were already written.
+
+### Changed
+
+- **Faster tool calls under Claude Code.** With `claude-code-cli`, tools that are safe to run together now run in parallel. A call that writes still runs alone, and permission prompts still come one at a time in order. See [Providers](/docs/providers/#claude-code-cli-runtime).
+- **Better prompt caching.** Requests through a ChatGPT sign-in now send a per-session cache key, so later requests read most of the prompt from cache instead of none of it. Anthropic requests add a cache breakpoint where the previous request ended, so turns with many tool calls stay cached.
+- **Leaner tools.** `grep` and `glob` return paths relative to the working directory, stop at the result cap, and `glob` follows `.gitignore`. `read` returns a short reply when a file is read again unchanged. `bash` strips colour codes and progress redraws and turns pagers off. `todo_write` no longer echoes the list back. All of this means less context per turn.
+- Auto mode checks a batch of tool calls concurrently; prompts still appear in order. Retries honour `Retry-After`. A long turn can compact more than once.
+- The model keeps a task list only for work with distinct phases or several deliverables, not for a single fix.
+
+### Fixed
+
+- **Claude Code runtime had no tools on newer CLIs.** Claude Code 2.1.274's `--safe-mode` turns off the MCP server that serves Larik's tools. Larik now uses `--restricted` and falls back to `--safe-mode` on older CLIs.
+
+### Security
+
+- Updated grpc and x/crypto to fix reachable vulnerabilities.
+
 ## v0.6.0
 
 <p class="release-meta"><time datetime="2026-10-02">October 2, 2026</time></p>

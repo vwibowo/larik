@@ -18,7 +18,7 @@ inputs:
     description: "provider/model, e.g. anthropic/claude-sonnet-5. Defaults to Larik's choice for the API key that is set."
     default: ""
   version:
-    description: "Larik release to use: latest, or a tag such as v0.6.0"
+    description: "Larik release to use: latest, or a tag such as v0.7.0"
     default: latest
   comment:
     description: "Post the review as a pull request comment (updated on later runs)"

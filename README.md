@@ -10,7 +10,7 @@ On macOS or Linux, download a release, verify its checksum and install `larik` i
 curl -fsSL https://raw.githubusercontent.com/vwibowo/larik/main/scripts/get-larik.sh | sh
 ```
 
-Set `LARIK_VERSION` (for example `v0.6.0`) to pin a release, or `LARIK_INSTALL_DIR` to install elsewhere. On Windows, download the zip from the releases page.
+Set `LARIK_VERSION` (for example `v0.7.0`) to pin a release, or `LARIK_INSTALL_DIR` to install elsewhere. On Windows, download the zip from the releases page.
 
 To build from a checkout and install `larik` into `/usr/local/bin`:
 
@@ -692,7 +692,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: vwibowo/larik@v0.6.0
+      - uses: vwibowo/larik@v0.7.0
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # or OPENAI_API_KEY, GEMINI_API_KEY
         with:
