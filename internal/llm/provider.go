@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"time"
 )
 
 type EventType int
@@ -44,7 +45,10 @@ var ErrContextOverflow = errors.New("context window exceeded")
 type APIError struct {
 	Status    int
 	Retryable bool
-	Err       error
+	// RetryAfter is how long the server asked to wait before retrying
+	// (Retry-After, or Gemini's RetryInfo), when it said.
+	RetryAfter time.Duration
+	Err        error
 }
 
 func (e *APIError) Error() string { return e.Err.Error() }

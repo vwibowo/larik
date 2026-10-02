@@ -570,3 +570,75 @@ func TestTranscriptWriteFailureIsReportedOnce(t *testing.T) {
 		t.Fatalf("the turn should still finish: %+v", last)
 	}
 }
+
+// overflowProvider fails a request with ErrContextOverflow wherever its
+// script has a nil-role message, and otherwise behaves like fakeProvider.
+type overflowProvider struct{ fakeProvider }
+
+func (o *overflowProvider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	if len(o.script) > 0 && o.script[0].Role == "" {
+		o.script = o.script[1:]
+		o.requests = append(o.requests, req)
+		return func(yield func(llm.StreamEvent, error) bool) { yield(llm.StreamEvent{}, llm.ErrContextOverflow) }
+	}
+	return o.fakeProvider.Stream(ctx, req)
+}
+
+// TestSecondOverflowInOneTurnCompactsAgain: a long turn can fill the window
+// twice; once a compaction brought the context down, the next overflow
+// compacts again instead of ending the turn with an error.
+func TestSecondOverflowInOneTurnCompactsAgain(t *testing.T) {
+	op := &overflowProvider{fakeProvider{script: []llm.Message{
+		assistant(toolUse("t1", "glob", `{"pattern":"*.none"}`)),
+		{}, // overflow
+		assistant(llm.TextBlock("<summary>one</summary>")),
+		assistant(toolUse("t2", "glob", `{"pattern":"*.none"}`)),
+		{}, // overflow again
+		assistant(llm.TextBlock("<summary>two</summary>")),
+		assistant(llm.TextBlock("done")),
+	}}}
+	a := New(Options{Provider: op, Model: "m", Cwd: t.TempDir(), Tools: tools.Default(), MaxTurns: 10,
+		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, t.TempDir())})
+	var stop string
+	for e := range a.Run(context.Background(), "go") {
+		if e.Kind == EvDone {
+			stop = e.StopReason
+		}
+	}
+	if stop != string(llm.StopEnd) {
+		t.Fatalf("stop = %q, want %q", stop, llm.StopEnd)
+	}
+	if len(op.script) != 0 {
+		t.Fatalf("%d scripted replies unused", len(op.script))
+	}
+}
+
+// TestCompactionForgetsShownReads: after compaction the model no longer
+// has an earlier read's output, so the same read returns the content
+// again rather than "unchanged".
+func TestCompactionForgetsShownReads(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeYolo,
+		assistant(toolUse("r1", "read", `{"path":"f.txt"}`)),
+		assistant(toolUse("r2", "read", `{"path":"f.txt"}`)),
+		assistant(llm.TextBlock("read twice")),
+		assistant(llm.TextBlock("<summary>read f.txt</summary>")),
+		assistant(toolUse("r3", "read", `{"path":"f.txt"}`)),
+		assistant(llm.TextBlock("done")),
+	)
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("the content\n"), 0o644)
+	result := func(req llm.Request) string {
+		last := req.Messages[len(req.Messages)-1]
+		return last.Blocks[0].Content
+	}
+	drain(a.Run(context.Background(), "read it twice"), PermissionReply{})
+	if got := result(fp.requests[2]); !strings.Contains(got, "unchanged") {
+		t.Fatalf("second read in one context should be short: %q", got)
+	}
+	if _, err := a.Compact(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	drain(a.Run(context.Background(), "again"), PermissionReply{})
+	if got := result(fp.requests[5]); !strings.Contains(got, "the content") {
+		t.Fatalf("after compaction the read should return the content: %q", got)
+	}
+}

@@ -132,9 +132,9 @@ Esc cancels the turn's context. If text was already streaming, `keepPartial` ([a
 
 ### Errors and retries
 
-- **Transient API errors** (408, 409, 429, 5xx) are retried below the loop. The Anthropic and OpenAI SDKs retry on their own; the Gemini adapter is wrapped in `llm.WithRetry` (4 attempts, exponential backoff), which retries only if nothing has been shown yet: once a delta reached the screen, the error is surfaced ([retry.go](../internal/llm/retry.go)).
+- **Transient API errors** (408, 409, 429, 5xx) are retried below the loop. The Anthropic and OpenAI SDKs retry on their own; the Gemini and Ollama adapters are wrapped in `llm.WithRetry` (4 and 3 attempts, exponential backoff), which retries only if nothing has been shown yet: once a delta reached the screen, the error is surfaced ([retry.go](../internal/llm/retry.go)). A wait the server asks for (`Retry-After`, or Gemini's `RetryInfo`) is honored; past a minute the error is surfaced instead.
 - **A server that goes quiet.** Every provider is wrapped in `llm.WithStallTimeout` ([stall.go](../internal/llm/stall.go)). It puts a timer in the request's context, and the shared HTTP transport runs it while waiting for the response headers and during each read of the body; if no byte arrives for `stall_timeout` (5 minutes, 15 for local servers), the request is cancelled and fails with `*llm.StallError`. That error is a `net.Error` timeout, so a fallback chain switches models when nothing has been shown yet; otherwise the turn ends with the error. After a stall the transport refuses the SDK's own connection retries, which would each wait the timeout again.
-- **Context overflow** (`llm.ErrContextOverflow`, which adapters return when the prompt is too long) triggers one compaction and one retry per turn.
+- **Context overflow** (`llm.ErrContextOverflow`, which adapters return when the prompt is too long) triggers a compaction and one retry. A long turn can compact again later, once the previous compaction brought the context back under the threshold; one that didn't isn't repeated.
 - **Truncated tool input** (possible with Anthropic's eager input streaming) arrives with `Input == nil`; the tool result tells the model to retry with complete JSON rather than failing the turn.
 
 ## Compaction

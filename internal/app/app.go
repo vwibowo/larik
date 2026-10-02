@@ -119,6 +119,7 @@ func Setup(cwd, version string) (*App, error) {
 		Set:                a.AgentDefs,
 		ContextFunc:        a.childContext,
 		MinimalContextFunc: a.minimalChildContext,
+		SkillsIndex:        a.Skills.Index,
 		Resolve: func(spec string) (llm.Provider, string, error) {
 			r, err := a.Resolve(cfg, spec)
 			return r.Provider, r.Model, err
@@ -150,10 +151,7 @@ func Setup(cwd, version string) (*App, error) {
 // once per fresh context (a new session or /clear), never mid-context.
 func (a *App) SystemPrompt() string {
 	a.Skills.Reload()
-	system := agent.BuildSystemPrompt(a.Cwd, a.Cfg.ConfigDir)
-	if a.Sandbox != nil {
-		system += "\n\n<sandbox>\n" + a.Sandbox.Summary() + "\n</sandbox>"
-	}
+	system := agent.BuildSystemPrompt(a.Cwd, a.Cfg.ConfigDir) + a.sandboxSection()
 	if idx := a.Skills.Index(); idx != "" {
 		system += "\n\n" + idx
 	}
@@ -162,22 +160,27 @@ func (a *App) SystemPrompt() string {
 	if mem := a.Memory.Prompt(); mem != "" {
 		system += "\n\n" + mem
 	}
-	return system
+	return system + "\n\n" + agent.DateSection()
 }
 
-// childContext is what subagent prompts share with the main agent's.
-func (a *App) childContext() string {
-	ctx := agent.ContextSections(a.Cwd, a.Cfg.ConfigDir)
-	if idx := a.Skills.Index(); idx != "" {
-		ctx += "\n\n" + idx
+// sandboxSection describes the bash sandbox, when one is active.
+func (a *App) sandboxSection() string {
+	if a.Sandbox == nil {
+		return ""
 	}
-	return ctx
+	return "\n\n<sandbox>\n" + a.Sandbox.Summary() + "\n</sandbox>"
+}
+
+// childContext is what subagent prompts share with the main agent's; the
+// task tool adds the skills index for agents that may load skills.
+func (a *App) childContext() string {
+	return agent.SafetySection + "\n\n" + agent.ContextSections(a.Cwd, a.Cfg.ConfigDir) + a.sandboxSection() + "\n\n" + agent.DateSection()
 }
 
 // minimalChildContext is childContext without the user's global
 // instructions or the skills index, for roles with `context: "minimal"`.
 func (a *App) minimalChildContext() string {
-	return agent.MinimalContextSections(a.Cwd)
+	return agent.SafetySection + "\n\n" + agent.MinimalContextSections(a.Cwd) + a.sandboxSection() + "\n\n" + agent.DateSection()
 }
 
 // loadTools is each agent's tool set for a fresh context: the built-in

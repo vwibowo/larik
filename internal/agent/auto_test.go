@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"larik/internal/llm"
 	"larik/internal/permission"
@@ -161,5 +163,46 @@ func TestAutoModeLabelsASubagentsTask(t *testing.T) {
 	call := (*calls)[0]
 	if len(call.Prompts) != 1 || call.Prompts[0] != "fix the flaky test" || call.Task != "run go test ./... and report" {
 		t.Errorf("a subagent's call carries the user's prompts and, apart, its task: %+v", call)
+	}
+}
+
+// TestAutoChecksOverlapAndPromptsStayInOrder: the classifier judges a
+// batch's calls concurrently, while the user is still asked about them
+// one at a time, in the order the model made them.
+func TestAutoChecksOverlapAndPromptsStayInOrder(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeAuto,
+		assistant(
+			toolUse("1", "bash", `{"command":"sh -c 'echo one'"}`),
+			toolUse("2", "bash", `{"command":"sh -c 'echo two'"}`),
+			toolUse("3", "bash", `{"command":"sh -c 'echo three'"}`)),
+		assistant(llm.TextBlock("done")))
+	var mu sync.Mutex
+	judged := 0
+	a.SetAutoApprover(func(ctx context.Context, call AutoCall) (AutoVerdict, error) {
+		time.Sleep(300 * time.Millisecond)
+		mu.Lock()
+		judged++
+		mu.Unlock()
+		return AutoVerdict{Reason: "needs a person"}, nil
+	})
+	start := time.Now()
+	evs := drain(a.Run(context.Background(), "run them"), PermissionReply{Allow: true})
+	elapsed := time.Since(start)
+
+	var order []string
+	for _, e := range permissionEvents(evs) {
+		order = append(order, e.ToolID)
+		if e.AutoReason != "needs a person" {
+			t.Errorf("prompt for %s lacks the classifier's reason: %q", e.ToolID, e.AutoReason)
+		}
+	}
+	if strings.Join(order, ",") != "1,2,3" {
+		t.Fatalf("prompts in order %v, want 1,2,3", order)
+	}
+	if judged != 3 {
+		t.Fatalf("classifier ran %d times, want 3", judged)
+	}
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("three checks took %s; they should overlap", elapsed)
 	}
 }

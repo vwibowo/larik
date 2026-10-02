@@ -65,17 +65,24 @@ func (TodoWrite) Run(_ context.Context, _ *Env, input json.RawMessage) Result {
 	if len(todos) == 0 {
 		return Result{Content: "Task list cleared."}
 	}
-	done := 0
+	done, now := 0, ""
 	for _, t := range todos {
-		if t.Status == TodoCompleted {
+		switch t.Status {
+		case TodoCompleted:
 			done++
+		case TodoInProgress:
+			now = t.Content
 		}
 	}
 	msg := fmt.Sprintf("Task list updated (%d of %d done).", done, len(todos))
-	if done == len(todos) {
+	switch {
+	case done == len(todos):
 		msg += " Everything is done."
+	case now != "":
+		msg += " In progress: " + now
 	}
-	return Result{Content: msg + "\n" + FormatTodos(todos)}
+	// The model just sent the list; echoing it back would only cost tokens.
+	return Result{Content: msg, Display: FormatTodos(todos)}
 }
 
 // ParseTodos reads and checks a todo_write input.

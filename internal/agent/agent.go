@@ -108,6 +108,10 @@ type Agent struct {
 	opts       Options
 	env        *tools.Env
 	tokenSaver *atomic.Bool
+	// trace mirrors opts.Trace, and savePending says saveErr is waiting to
+	// be reported: both are read for every streamed event, without mu.
+	trace       atomic.Pointer[trace.Tracer]
+	savePending atomic.Bool
 
 	mu          sync.Mutex
 	messages    []llm.Message
@@ -169,6 +173,7 @@ func New(opts Options) *Agent {
 	a := &Agent{opts: opts, env: tools.NewEnv(opts.Cwd), startSource: "startup", baseSystem: opts.System}
 	a.tokenSaver = &atomic.Bool{}
 	a.tokenSaver.Store(opts.TokenSaver)
+	a.trace.Store(opts.Trace)
 	a.env.TokenSaver = a.tokenSaver
 	if opts.Session != nil {
 		a.env.RawOutputDir = session.RawDir(opts.Session.Path)
@@ -179,6 +184,7 @@ func New(opts Options) *Agent {
 		a.env.RecordOriginal = opts.Checkpoints.Record
 	}
 	a.env.Sandbox = opts.Sandbox
+	a.env.NoReadDedup.Store(opts.Runtime != nil)
 	if opts.LSP.Enabled() {
 		a.env.Diagnostics = opts.LSP.Diagnostics
 		a.env.Touch = opts.LSP.Touch
@@ -191,6 +197,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.messages = st.Messages
+	a.env.ForgetShown()
 	a.usage = st.Usage
 	a.cost = st.Cost
 	a.byModel = maps.Clone(st.ByModel)
@@ -247,6 +254,9 @@ func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRunti
 	if len(runtime) > 0 {
 		a.opts.Runtime = runtime[0]
 	}
+	// A runtime compacts its own context, unseen: reads can't be known
+	// to still be in it.
+	a.env.NoReadDedup.Store(a.opts.Runtime != nil)
 }
 
 func (a *Agent) SetEffort(e llm.Effort) {
@@ -292,6 +302,7 @@ func (a *Agent) Clear() {
 	}
 	a.mu.Lock()
 	a.messages, a.lastContext, a.toolsLoaded = nil, 0, false
+	a.env.ForgetShown()
 	a.sessionStarted, a.startSource = false, "clear"
 	if a.opts.BuildSystem != nil {
 		a.baseSystem = base
@@ -535,6 +546,12 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 			}
 			emit(Event{Kind: EvError, Text: err.Error()})
 			return "error"
+		}
+		// A compaction that brought the context back under the threshold
+		// may happen again later in a long turn; one that didn't must not
+		// repeat on every request.
+		if compactedThisTurn && !a.needsCompaction() {
+			compactedThisTurn = false
 		}
 
 		// The reply is saved by now. If it called tools, answer every call
@@ -948,6 +965,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 
 	a.mu.Lock()
 	a.messages = []llm.Message{session.CompactionMessage(summary, a.SessionPath())}
+	a.env.ForgetShown()
 	a.lastContext = 0
 	a.mu.Unlock()
 	if a.opts.Session != nil {

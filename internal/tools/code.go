@@ -155,7 +155,9 @@ func (c codeTool) Spec() llm.ToolSpec {
 	case !c.hybrid:
 		d.WriteString("\n\nTools (? marks optional arguments):\n" + c.index())
 	case len(c.listed) > 0:
-		d.WriteString("\n\nEvery tool you have works this way, with the same arguments, and so do these tools that aren't declared to you (? marks optional arguments):\n" + c.index())
+		// tool_search's description already lists them; repeating the
+		// list here would send it twice on every request.
+		d.WriteString("\n\nEvery tool you have works this way, with the same arguments, and so do the tools listed in " + ToolSearchName + "'s description; tools.describe(name) gives one's arguments.")
 	default:
 		d.WriteString("\n\nEvery tool you have works this way, with the same arguments.")
 	}
@@ -174,7 +176,7 @@ func (c codeTool) Spec() llm.ToolSpec {
 func (c codeTool) index() string {
 	var lines, names []string
 	for _, sp := range c.listed {
-		lines = append(lines, "- "+signature(sp)+": "+clipLine(sp.Description, 90))
+		lines = append(lines, "- "+signature(sp)+": "+indexLine(sp))
 		names = append(names, sp.Name)
 	}
 	if out := strings.Join(lines, "\n"); len(out) <= indexBudget {

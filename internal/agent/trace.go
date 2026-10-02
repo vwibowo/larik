@@ -6,11 +6,7 @@ import (
 )
 
 // tracer is the debug-mode recorder, or nil.
-func (a *Agent) tracer() *trace.Tracer {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.opts.Trace
-}
+func (a *Agent) tracer() *trace.Tracer { return a.trace.Load() }
 
 // SetTrace turns debug-mode recording on (t non-nil) or off. It applies
 // from the next request, which records the whole context.
@@ -18,6 +14,7 @@ func (a *Agent) SetTrace(t *trace.Tracer) {
 	a.mu.Lock()
 	old := a.opts.Trace
 	a.opts.Trace = t
+	a.trace.Store(t)
 	a.mu.Unlock()
 	old.State(false)
 	t.State(true)

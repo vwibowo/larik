@@ -11,7 +11,10 @@ var searchMatch = regexp.MustCompile(`^(.+?):([0-9]+):(.*)$`)
 
 // filterCommandOutput recognizes only simple commands and known output shapes.
 // Unknown lines remain verbatim; a caller uses the result only if it is shorter.
-func filterCommandOutput(command, raw string) (string, bool) {
+// For a command that failed, only test runners are filtered: their filters
+// drop passing tests and keep the failures as they are.
+func filterCommandOutput(command, raw string, failed bool) (string, bool) {
+	command = simpleCommand(command)
 	if strings.ContainsAny(command, ";|&<>$()`\n") || strings.TrimSpace(raw) == "" {
 		return "", false
 	}
@@ -20,6 +23,9 @@ func filterCommandOutput(command, raw string) (string, bool) {
 		return "", false
 	}
 	name := filepath.Base(args[0])
+	if failed && !testCommand(name, args) {
+		return "", false
+	}
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 	switch name {
 	case "git":
@@ -63,6 +69,33 @@ func filterCommandOutput(command, raw string) (string, bool) {
 		return filterPytest(lines)
 	}
 	return "", false
+}
+
+// simpleCommand strips what models often wrap around a single command: a
+// leading "cd <dir> &&", and a trailing "2>&1" (stderr is captured with
+// stdout anyway).
+func simpleCommand(command string) string {
+	c := strings.TrimSpace(command)
+	c = strings.TrimSpace(strings.TrimSuffix(c, "2>&1"))
+	if rest, ok := strings.CutPrefix(c, "cd "); ok {
+		if dir, cmd, ok := strings.Cut(rest, "&&"); ok && !strings.ContainsAny(strings.TrimSpace(dir), " ;|&<>$()`'\"\\") {
+			c = strings.TrimSpace(cmd)
+		}
+	}
+	return c
+}
+
+// testCommand reports whether args run a test suite.
+func testCommand(name string, args []string) bool {
+	switch name {
+	case "go", "cargo":
+		return len(args) > 1 && args[1] == "test"
+	case "npm", "pnpm", "yarn":
+		return len(args) > 1 && (args[1] == "test" || args[1] == "run" && len(args) > 2 && args[2] == "test")
+	case "pytest":
+		return true
+	}
+	return false
 }
 
 func slicesContain(xs []string, want string) bool {
@@ -240,7 +273,7 @@ func filterGoTest(lines []string) (string, bool) {
 			out = append(out, line)
 			continue
 		}
-		if line == "PASS" || strings.TrimSpace(line) == "" {
+		if line == "PASS" || strings.TrimSpace(line) == "" || goTestNoise(line) {
 			continue
 		}
 		out = append(out, line)
@@ -249,6 +282,18 @@ func filterGoTest(lines []string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(append([]string{fmt.Sprintf("PASS %d Go package(s)", passed)}, out...), "\n"), true
+}
+
+// goTestNoise reports the lines go test -v prints for tests that pass:
+// starts, pauses and passes. Failures and skips stay.
+func goTestNoise(line string) bool {
+	trim := strings.TrimLeft(line, " ")
+	for _, p := range []string{"=== RUN ", "=== PAUSE ", "=== CONT ", "=== NAME ", "--- PASS: "} {
+		if strings.HasPrefix(trim, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterCargo(lines []string) (string, bool) {

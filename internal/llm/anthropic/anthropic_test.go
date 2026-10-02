@@ -182,3 +182,47 @@ func TestToolResultImages(t *testing.T) {
 		}
 	}
 }
+
+// TestPreviousTurnBreakpoint: besides the automatic breakpoint, the end of
+// the previous request (the user message before the newest assistant
+// message) carries one, so wide turns still hit the cache.
+func TestPreviousTurnBreakpoint(t *testing.T) {
+	var results []llm.Block
+	var uses []llm.Block
+	for i := range 15 {
+		id := "toolu_" + string(rune('a'+i))
+		uses = append(uses, llm.Block{Type: llm.BlockToolUse, ID: id, Name: "read", Input: json.RawMessage(`{}`)})
+		results = append(results, llm.Block{Type: llm.BlockToolResult, ID: id, Content: "ok"})
+	}
+	msgs := []llm.Message{
+		llm.UserText("first"),
+		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: uses},
+		{Role: llm.RoleUser, Blocks: results},
+		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: []llm.Block{llm.TextBlock("done?")}},
+		llm.UserText("next"),
+	}
+	params, err := buildParams(llm.Request{Model: "claude-opus-5", Messages: msgs}, Name, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked := func(m, b int) bool {
+		cc := params.Messages[m].Content[b].GetCacheControl()
+		return cc != nil && cc.Type != ""
+	}
+	if !marked(2, 14) {
+		t.Error("the previous request's last block has no breakpoint")
+	}
+	for m := range params.Messages {
+		for b := range params.Messages[m].Content {
+			if marked(m, b) && (m != 2 || b != 14) {
+				t.Errorf("unexpected breakpoint on message %d block %d", m, b)
+			}
+		}
+	}
+
+	// A first request has no previous turn to mark.
+	params, _ = buildParams(llm.Request{Model: "claude-opus-5", Messages: msgs[:1]}, Name, false)
+	if cc := params.Messages[0].Content[0].GetCacheControl(); cc.Type != "" {
+		t.Error("first request should rely on the automatic breakpoint only")
+	}
+}

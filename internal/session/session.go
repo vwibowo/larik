@@ -6,6 +6,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -63,6 +64,7 @@ type Session struct {
 	f   *os.File
 	tip string
 	seq int
+	buf bytes.Buffer // reused for each entry, written in one call
 }
 
 // Dir returns a collision-resistant sessions directory for a working directory.
@@ -280,11 +282,15 @@ func (s *Session) append(e Entry) error {
 	e.ID = fmt.Sprintf("%s-%d", s.ID, s.seq)
 	e.ParentID = s.tip
 	e.Time = time.Now()
-	b, err := json.Marshal(e)
-	if err != nil {
+	// Unescaped <, > and & keep code and shell output greppable: the
+	// compaction summary points the model at this file for exact details.
+	s.buf.Reset()
+	enc := json.NewEncoder(&s.buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(e); err != nil {
 		return err
 	}
-	if _, err := s.f.Write(append(b, '\n')); err != nil {
+	if _, err := s.f.Write(s.buf.Bytes()); err != nil {
 		return err
 	}
 	s.tip = e.ID

@@ -263,3 +263,43 @@ func TestMinimalContextRole(t *testing.T) {
 		t.Errorf("a minimal-context role should get the minimal prompt, not the full one:\n%s", child.System)
 	}
 }
+
+// TestSkillsIndexOnlyForSkillUsers: the skills index goes to children
+// that may load skills, not to agents like explore whose tool list
+// excludes the skill tool.
+func TestSkillsIndexOnlyForSkillUsers(t *testing.T) {
+	for typ, want := range map[string]bool{"general-purpose": true, "explore": false} {
+		fp := &funcProvider{}
+		fp.respond = func(req llm.Request) llm.Message {
+			if isChild(req) {
+				return text("done")
+			}
+			return llm.Message{Blocks: []llm.Block{use("p1", "task", `{"description":"work","prompt":"do it","subagent_type":"`+typ+`"}`)}}
+		}
+		dir := t.TempDir()
+		task := &Tool{
+			Set:         Discover(nil),
+			ContextFunc: func() string { return "<env/>" },
+			SkillsIndex: func() string { return "<skills>index</skills>" },
+		}
+		a := agent.New(agent.Options{
+			Provider: fp, Model: "m", Cwd: dir,
+			Tools: tools.NewRegistry(append(tools.Builtin(), task)...),
+			Perms: permission.NewChecker(permission.ModeAcceptEdits, permission.Rules{}, dir),
+		})
+		drain(a.Run(context.Background(), "go"), true)
+		var child llm.Request
+		for _, r := range fp.requests() {
+			if isChild(r) {
+				child = r
+				break
+			}
+		}
+		if child.System == "" {
+			t.Fatalf("%s: no child request", typ)
+		}
+		if got := strings.Contains(child.System, "<skills>"); got != want {
+			t.Errorf("%s: skills index present = %v, want %v", typ, got, want)
+		}
+	}
+}

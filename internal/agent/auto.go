@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"larik/internal/llm"
+	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/tools"
 )
 
 // Auto mode (permission.ModeAuto) puts each call that would otherwise ask
@@ -98,6 +100,86 @@ func (a *Agent) autoApprove(ctx context.Context, tool string, input json.RawMess
 		root.mu.Unlock()
 	}
 	return verdict, err
+}
+
+// autoVerdicts are classifier verdicts started ahead of time for one batch
+// of tool calls, by tool name and input.
+type autoVerdicts map[string]*autoPending
+
+type autoPending struct {
+	done    chan struct{}
+	verdict AutoVerdict
+	err     error
+}
+
+// prefetchAuto starts the classifier, concurrently, on every call in uses
+// that the permission rules would otherwise put to the user. Authorizing
+// a batch still goes call by call, in order (hooks run and the user is
+// asked one at a time), but each call's verdict is then already under
+// way instead of costing a model round trip of its own. A call that a
+// PreToolUse hook settles or rewrites leaves its verdict unused.
+func (a *Agent) prefetchAuto(ctx context.Context, uses []llm.Block, registry *tools.Registry) autoVerdicts {
+	perms := a.opts.Perms
+	if perms == nil || perms.Mode() != permission.ModeAuto || len(uses) < 2 || a.autoApprover() == nil {
+		return nil
+	}
+	type call struct {
+		name  string
+		input json.RawMessage
+	}
+	var calls []call
+	for _, use := range uses {
+		tool, ok := registry.Get(use.Name)
+		if !ok || use.Input == nil {
+			continue
+		}
+		name, input := use.Name, use.Input
+		if name == tools.CallToolName {
+			inner, args, err := registry.ResolveCall(input)
+			if err != nil {
+				continue
+			}
+			tool, name, input = inner, inner.Spec().Name, args
+		}
+		if name == tools.CodeToolName || name == tools.WriteFilesToolName || name == permission.ExitPlanTool {
+			continue // authorized call by call, or always the user's
+		}
+		if d, _ := perms.Decide(permission.Call{Tool: name, ReadOnly: tool.ReadOnly(), Input: input}); d == permission.Ask {
+			calls = append(calls, call{name, input})
+		}
+	}
+	if len(calls) < 2 {
+		return nil // nothing to overlap
+	}
+	out := autoVerdicts{}
+	for _, c := range calls {
+		key := c.name + "\x00" + string(c.input)
+		if out[key] != nil {
+			continue
+		}
+		p := &autoPending{done: make(chan struct{})}
+		out[key] = p
+		go func() {
+			defer close(p.done)
+			p.verdict, p.err = a.autoApprove(ctx, c.name, c.input)
+		}()
+	}
+	return out
+}
+
+// get returns the verdict on a call: the one started ahead when there is
+// one for exactly this call, otherwise a fresh one.
+func (v autoVerdicts) get(ctx context.Context, a *Agent, name string, input json.RawMessage) (AutoVerdict, error) {
+	p := v[name+"\x00"+string(input)]
+	if p == nil {
+		return a.autoApprove(ctx, name, input)
+	}
+	select {
+	case <-p.done:
+		return p.verdict, p.err
+	case <-ctx.Done():
+		return AutoVerdict{}, ctx.Err()
+	}
 }
 
 // recentPrompts returns the last few things the user typed.

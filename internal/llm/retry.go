@@ -5,6 +5,9 @@ import (
 	"errors"
 	"iter"
 	"math/rand/v2"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +44,14 @@ func (r *retrying) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 				return
 			}
 			backoff := time.Duration(1<<attempt)*time.Second + time.Duration(rand.IntN(500))*time.Millisecond
+			// Retrying before the server's Retry-After only spends an
+			// attempt; a wait longer than maxRetryWait is the user's call.
+			if wait := retryAfter(failure); wait > maxRetryWait {
+				yield(StreamEvent{}, failure)
+				return
+			} else if wait > backoff {
+				backoff = wait
+			}
 			select {
 			case <-ctx.Done():
 				yield(StreamEvent{}, ctx.Err())
@@ -68,6 +79,32 @@ func (r *retrying) SupportsTools(ctx context.Context, model string) (supported, 
 		return p.SupportsTools(ctx, model)
 	}
 	return false, false
+}
+
+// maxRetryWait is the longest Retry-After a retry waits out.
+const maxRetryWait = time.Minute
+
+func retryAfter(err error) time.Duration {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.RetryAfter
+	}
+	return 0
+}
+
+// ParseRetryAfter reads a Retry-After header: seconds, or an HTTP date.
+func ParseRetryAfter(h string) time.Duration {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(h); err == nil {
+		return max(0, time.Duration(secs)*time.Second)
+	}
+	if t, err := http.ParseTime(h); err == nil {
+		return max(0, time.Until(t))
+	}
+	return 0
 }
 
 func Retryable(err error) bool {

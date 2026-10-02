@@ -370,7 +370,9 @@ func statusErr(resp *http.Response) error {
 	if json.Unmarshal(data, &e) == nil && e.Error != "" {
 		msg = e.Error
 	}
-	return llm.ClassifyStatus(resp.StatusCode, fmt.Errorf("ollama: %s (HTTP %d)", msg, resp.StatusCode))
+	err := llm.ClassifyStatus(resp.StatusCode, fmt.Errorf("ollama: %s (HTTP %d)", msg, resp.StatusCode))
+	err.(*llm.APIError).RetryAfter = llm.ParseRetryAfter(resp.Header.Get("Retry-After"))
+	return err
 }
 
 // call does a small JSON request: POST with body, or GET without.

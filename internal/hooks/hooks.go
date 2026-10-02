@@ -238,12 +238,25 @@ func (r *Runner) Run(ctx context.Context, in Input, target string) Result {
 	return combine(results)
 }
 
+// matchers caches compiled matcher patterns (nil for an invalid one):
+// they are checked on every tool call, and come from config, so there
+// are few of them.
+var matchers sync.Map // pattern -> *regexp.Regexp
+
 func matches(pattern, target string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
-	re, err := regexp.Compile("(?i)^(?:" + pattern + ")$")
-	if err != nil {
+	cached, ok := matchers.Load(pattern)
+	if !ok {
+		re, err := regexp.Compile("(?i)^(?:" + pattern + ")$")
+		if err != nil {
+			re = nil
+		}
+		cached, _ = matchers.LoadOrStore(pattern, re)
+	}
+	re := cached.(*regexp.Regexp)
+	if re == nil {
 		return pattern == target
 	}
 	return re.MatchString(target)

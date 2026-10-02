@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"sync"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -228,7 +229,32 @@ func buildParams(req llm.Request, name string, stripThinking bool) (sdk.MessageN
 			params.Messages = append(params.Messages, sdk.NewUserMessage(blocks...))
 		}
 	}
+	markPreviousTurn(params.Messages)
 	return params, nil
+}
+
+// markPreviousTurn puts a cache breakpoint where the previous request
+// ended: the last block of the user message before the newest assistant
+// message. The automatic breakpoint finds earlier cache entries only
+// within about 20 blocks, which a turn of many parallel tool calls
+// exceeds; this one hits the previous entry exactly.
+func markPreviousTurn(msgs []sdk.MessageParam) {
+	seenAssistant := false
+	for i := len(msgs) - 1; i >= 0; i-- {
+		switch {
+		case msgs[i].Role == sdk.MessageParamRoleAssistant:
+			seenAssistant = true
+		case seenAssistant:
+			blocks := msgs[i].Content
+			for j := len(blocks) - 1; j >= 0; j-- {
+				if cc := blocks[j].GetCacheControl(); cc != nil {
+					*cc = sdk.NewCacheControlEphemeralParam()
+					return
+				}
+			}
+			return
+		}
+	}
 }
 
 // legacyThinking reports models that predate adaptive thinking.
@@ -277,7 +303,22 @@ func toParam(b llm.Block) (sdk.ContentBlockParamUnion, bool) {
 	return sdk.ContentBlockParamUnion{}, false
 }
 
+// schemas caches converted tool schemas by their JSON: the tool list is
+// the same on every request of a context, and is only read once built.
+var schemas sync.Map // string -> sdk.ToolInputSchemaParam
+
 func toolSchema(raw json.RawMessage) (sdk.ToolInputSchemaParam, error) {
+	if s, ok := schemas.Load(string(raw)); ok {
+		return s.(sdk.ToolInputSchemaParam), nil
+	}
+	s, err := convertSchema(raw)
+	if err == nil {
+		schemas.Store(string(raw), s)
+	}
+	return s, err
+}
+
+func convertSchema(raw json.RawMessage) (sdk.ToolInputSchemaParam, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return sdk.ToolInputSchemaParam{}, err

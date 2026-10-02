@@ -10,6 +10,7 @@ import (
 	"iter"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -260,7 +261,23 @@ func convertErr(err error) error {
 		if apiErr.Code == 400 && strings.Contains(strings.ToLower(apiErr.Message), "token") && strings.Contains(strings.ToLower(apiErr.Message), "exceed") {
 			return fmt.Errorf("%w: %v", llm.ErrContextOverflow, err)
 		}
-		return llm.ClassifyStatus(apiErr.Code, err)
+		classified := llm.ClassifyStatus(apiErr.Code, err)
+		classified.(*llm.APIError).RetryAfter = retryDelay(apiErr.Details)
+		return classified
 	}
 	return err
+}
+
+// retryDelay reads the wait a google.rpc.RetryInfo detail asks for.
+func retryDelay(details []map[string]any) time.Duration {
+	for _, d := range details {
+		if t, _ := d["@type"].(string); strings.HasSuffix(t, "google.rpc.RetryInfo") {
+			if s, ok := d["retryDelay"].(string); ok {
+				if wait, err := time.ParseDuration(s); err == nil && wait > 0 {
+					return wait
+				}
+			}
+		}
+	}
+	return 0
 }

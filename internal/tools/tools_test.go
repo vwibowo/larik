@@ -187,9 +187,36 @@ func TestGrepAndGlob(t *testing.T) {
 		t.Fatalf("grep: %q", r.Content)
 	}
 	// The pure-Go fallback must agree.
-	out, err := goGrep(context.Background(), dir, grepInput{Pattern: "hello", IgnoreCase: true, Glob: "*.go"})
-	if err != nil || !strings.Contains(out, "a.go:2:") || strings.Contains(out, "b.txt") {
+	lines := newSearchLines(dir)
+	err := goGrep(context.Background(), dir, grepInput{Pattern: "hello", IgnoreCase: true, Glob: "*.go"}, lines)
+	if out := lines.String(""); err != nil || !strings.HasPrefix(out, filepath.Join("pkg", "a.go")+":2:") || strings.Contains(out, "b.txt") {
 		t.Fatalf("goGrep: %q %v", out, err)
+	}
+	// Results inside the working directory are shown relative to it.
+	if r := run(t, Glob{}, env, `{"pattern":"**/*.go"}`); r.Content != filepath.Join("pkg", "a.go")+"\n" {
+		t.Fatalf("glob paths should be relative: %q", r.Content)
+	}
+	if r := run(t, Grep{}, env, `{"pattern":"Hello"}`); !strings.HasPrefix(r.Content, filepath.Join("pkg", "a.go")+":2:") {
+		t.Fatalf("grep paths should be relative: %q", r.Content)
+	}
+}
+
+// TestSearchLinesCap: results stop at the line and byte caps on a line
+// boundary, and say that more were left out.
+func TestSearchLinesCap(t *testing.T) {
+	s := newSearchLines("/w")
+	for i := 0; s.add(fmt.Sprintf("/w/f.go:%d:x", i)); i++ {
+	}
+	out := s.String("more")
+	if s.n != maxSearchResults || !strings.HasPrefix(out, "f.go:0:x\n") || !strings.HasSuffix(out, "... (more)\n") {
+		t.Fatalf("n=%d out tail %q", s.n, out[max(0, len(out)-40):])
+	}
+	s = newSearchLines("/w")
+	long := strings.Repeat("y", 1000)
+	for s.add("/elsewhere/g.go:1:" + long) {
+	}
+	if out := s.String("more"); len(out) > MaxOutputBytes+20 || !strings.HasPrefix(out, "/elsewhere/g.go:1:") {
+		t.Fatalf("byte cap: %d bytes", len(out))
 	}
 }
 
@@ -360,5 +387,94 @@ func TestMultiEdit(t *testing.T) {
 		if r := run(t, MultiEdit{}, env, input); !r.IsError || !strings.Contains(r.Content, want) {
 			t.Errorf("%s: %+v, want %q", input, r, want)
 		}
+	}
+}
+
+// TestReadStopsAtBudget: a file too large for one read is cut on a line
+// boundary, and the hint names the first line that wasn't shown.
+func TestReadStopsAtBudget(t *testing.T) {
+	dir := t.TempDir()
+	var src strings.Builder
+	for i := 1; i <= 1500; i++ {
+		fmt.Fprintf(&src, "line %04d %s\n", i, strings.Repeat("x", 80))
+	}
+	os.WriteFile(filepath.Join(dir, "big.txt"), []byte(src.String()), 0o644)
+	r := run(t, Read{}, NewEnv(dir), `{"path":"big.txt"}`)
+	if strings.Contains(r.Content, "truncated") {
+		t.Fatal("read must not cut the middle out")
+	}
+	var last int
+	for _, l := range strings.Split(strings.TrimSpace(r.Content), "\n") {
+		fmt.Sscanf(strings.TrimSpace(l), "%d", &last)
+	}
+	want := fmt.Sprintf("continue with offset=%d)", last+1)
+	if !strings.HasSuffix(strings.TrimSpace(r.Content), want) || len(r.Content) > readOutputBytes+100 {
+		t.Fatalf("got %d bytes ending %q, want hint %q", len(r.Content), r.Content[len(r.Content)-60:], want)
+	}
+}
+
+// TestGlobFollowsGitignore: with ripgrep, glob leaves out what .gitignore
+// excludes, yet a pattern aimed at an ignored directory still finds it.
+func TestGlobFollowsGitignore(t *testing.T) {
+	if ripgrepPath() == "" {
+		t.Skip("ripgrep not installed")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	for name, content := range map[string]string{".gitignore": "out/\n", "src/a.js": "a", "out/b.js": "b"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755)
+		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+	env := NewEnv(dir)
+	if r := run(t, Glob{}, env, `{"pattern":"**/*.js"}`); r.Content != filepath.Join("src", "a.js")+"\n" {
+		t.Fatalf("ignored files should be left out: %q", r.Content)
+	}
+	if r := run(t, Glob{}, env, `{"pattern":"out/*.js"}`); r.Content != filepath.Join("out", "b.js")+"\n" {
+		t.Fatalf("a pattern naming an ignored directory should still find it: %q", r.Content)
+	}
+}
+
+type nopCaller struct{}
+
+func (nopCaller) CallTool(context.Context, string, json.RawMessage) Result { return Result{} }
+
+// TestRepeatedReadIsShort: reading the same unchanged lines again answers
+// in a line, but not once the file changed, the record was forgotten (a
+// new context), or for a script's reads, which the model never saw.
+func TestRepeatedReadIsShort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.go")
+	os.WriteFile(path, []byte("package a\n"), 0o644)
+	env := NewEnv(dir)
+	full := func(r Result) bool { return strings.Contains(r.Content, "package a") }
+
+	if r := run(t, Read{}, env, `{"path":"a.go"}`); !full(r) {
+		t.Fatalf("first read: %q", r.Content)
+	}
+	if r := run(t, Read{}, env, `{"path":"a.go"}`); full(r) || !strings.Contains(r.Content, "unchanged") {
+		t.Fatalf("second read should be short: %q", r.Content)
+	}
+	if r := run(t, Read{}, env, `{"path":"a.go","offset":1,"limit":5}`); !full(r) {
+		t.Fatalf("another range is another read: %q", r.Content)
+	}
+	if err := run(t, Edit{}, env, `{"path":"a.go","old_string":"package a","new_string":"package a // changed"}`); err.IsError {
+		t.Fatal(err.Content)
+	}
+	if r := run(t, Read{}, env, `{"path":"a.go"}`); !full(r) {
+		t.Fatalf("a changed file is read in full: %q", r.Content)
+	}
+	env.ForgetShown()
+	if r := run(t, Read{}, env, `{"path":"a.go"}`); !full(r) {
+		t.Fatalf("after ForgetShown the read is full: %q", r.Content)
+	}
+	script := WithCaller(context.Background(), nopCaller{})
+	if r := (Read{}).Run(script, env, json.RawMessage(`{"path":"a.go"}`)); !full(r) {
+		t.Fatalf("a script's read gets the content: %q", r.Content)
+	}
+	env.NoReadDedup.Store(true)
+	if r := run(t, Read{}, env, `{"path":"a.go"}`); !full(r) {
+		t.Fatalf("with dedup off every read is full: %q", r.Content)
 	}
 }

@@ -2,17 +2,21 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -54,25 +58,29 @@ func (Grep) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	root := env.Abs(in.Path)
-	var out string
-	if rg, err := exec.LookPath("rg"); err == nil {
-		out, err = ripgrep(ctx, rg, root, in)
-		if err != nil {
-			return errorf("%v", err)
-		}
+	lines := newSearchLines(env.Cwd)
+	if rg := ripgrepPath(); rg != "" {
+		err = ripgrep(ctx, rg, root, in, lines)
 	} else {
-		out, err = goGrep(ctx, root, in)
-		if err != nil {
-			return errorf("%v", err)
-		}
+		err = goGrep(ctx, root, in, lines)
 	}
-	if out == "" {
+	if err != nil {
+		return errorf("%v", err)
+	}
+	if lines.n == 0 && !lines.full {
 		return Result{Content: "No matches found."}
 	}
-	return Result{Content: Truncate(out, MaxOutputBytes)}
+	return Result{Content: lines.String("more matches not shown; narrow the pattern, path or glob")}
 }
 
-func ripgrep(ctx context.Context, rg, root string, in grepInput) (string, error) {
+var ripgrepPath = sync.OnceValue(func() string {
+	rg, _ := exec.LookPath("rg")
+	return rg
+})
+
+// ripgrep streams rg's matches into out and stops rg once out is full, so
+// a broad pattern over a large tree costs no more than the lines shown.
+func ripgrep(ctx context.Context, rg, root string, in grepInput, out *searchLines) error {
 	args := []string{"--line-number", "--no-heading", "--color=never", "--max-columns=300", "--max-count=50"}
 	if in.IgnoreCase {
 		args = append(args, "-i")
@@ -81,32 +89,61 @@ func ripgrep(ctx context.Context, rg, root string, in grepInput) (string, error)
 		args = append(args, "--glob", in.Glob)
 	}
 	args = append(args, "-e", in.Pattern, root)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, rg, args...)
-	out, err := cmd.Output()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return "", nil // no matches
-	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		if exitErr != nil {
-			return "", fmt.Errorf("rg: %s", strings.TrimSpace(string(exitErr.Stderr)))
-		}
-		return "", err
+		return err
 	}
-	return capLines(string(out), maxSearchResults), nil
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	stopped := false
+	for sc.Scan() {
+		if !out.add(sc.Text()) {
+			stopped = true
+			break
+		}
+	}
+	if stopped || sc.Err() != nil {
+		cancel() // rg may still be writing; what's left isn't shown
+	}
+	err = cmd.Wait()
+	if stopped {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	switch {
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
+		return nil // no matches
+	case err != nil && out.n == 0:
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("rg: %s", msg)
+		}
+		return err
+	}
+	// Exit 2 with matches: some files couldn't be read; show what was found.
+	return nil
 }
 
-func goGrep(ctx context.Context, root string, in grepInput) (string, error) {
+// goGrep is grep without ripgrep: files are searched a batch at a time in
+// parallel, and their matches added in walk order, so results stay the
+// same from run to run and the search stops once out is full.
+func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) error {
 	pat := in.Pattern
 	if in.IgnoreCase {
 		pat = "(?i)" + pat
 	}
 	re, err := regexp.Compile(pat)
 	if err != nil {
-		return "", err
+		return err
 	}
-	var b strings.Builder
-	count := 0
+	var files []string
 	err = WalkFiles(ctx, root, func(path string) error {
 		if in.Glob != "" {
 			if ok, _ := doublestar.Match(in.Glob, filepath.Base(path)); !ok {
@@ -115,28 +152,105 @@ func goGrep(ctx context.Context, root string, in grepInput) (string, error) {
 				}
 			}
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	workers := runtime.GOMAXPROCS(0)
+	for start := 0; start < len(files); start += 4 * workers {
+		batch := files[start:min(start+4*workers, len(files))]
+		found := make([][]string, len(batch))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, workers)
+		for i, path := range batch {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem; wg.Done() }()
+				found[i] = grepFile(path, re)
+			}()
 		}
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 64*1024), 1024*1024)
-		for n := 1; sc.Scan(); n++ {
-			line := sc.Text()
-			if strings.ContainsRune(line, 0) {
-				return nil // binary
-			}
-			if re.MatchString(line) {
-				fmt.Fprintf(&b, "%s:%d:%s\n", path, n, safeCut(line, 300))
-				if count++; count >= maxSearchResults {
-					return fs.SkipAll
+		wg.Wait()
+		for _, lines := range found {
+			for _, line := range lines {
+				if !out.add(line) {
+					return nil
 				}
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// grepFile returns path's matching lines as path:line:text, at most 50 as
+// rg --max-count gives. A file with a NUL in its first 8 KB is binary.
+func grepFile(path string, re *regexp.Regexp) []string {
+	f, err := os.Open(path)
+	if err != nil {
 		return nil
-	})
-	return b.String(), err
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 64*1024)
+	if head, _ := r.Peek(8192); bytes.IndexByte(head, 0) >= 0 {
+		return nil
+	}
+	var out []string
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for n := 1; sc.Scan() && len(out) < 50; n++ {
+		line := sc.Text()
+		if strings.ContainsRune(line, 0) {
+			return nil // binary after all
+		}
+		if re.MatchString(line) {
+			out = append(out, fmt.Sprintf("%s:%d:%s", path, n, safeCut(line, 300)))
+		}
+	}
+	return out
+}
+
+// searchLines collects result lines for the model: paths relative to the
+// working directory, at most maxSearchResults lines and MaxOutputBytes
+// bytes, cut on line boundaries so no result is half shown.
+type searchLines struct {
+	prefix string
+	b      strings.Builder
+	n      int
+	full   bool
+}
+
+func newSearchLines(cwd string) *searchLines {
+	return &searchLines{prefix: strings.TrimSuffix(cwd, string(filepath.Separator)) + string(filepath.Separator)}
+}
+
+// add records a line and reports whether there is room for more.
+func (s *searchLines) add(line string) bool {
+	if s.full {
+		return false
+	}
+	line = strings.TrimPrefix(line, s.prefix)
+	if s.n >= maxSearchResults || s.b.Len()+len(line)+1 > MaxOutputBytes {
+		s.full = true
+		return false
+	}
+	s.b.WriteString(line)
+	s.b.WriteByte('\n')
+	s.n++
+	return true
+}
+
+// String is the collected lines, ending with "... (more)" when some were
+// left out.
+func (s *searchLines) String(more string) string {
+	if !s.full {
+		return s.b.String()
+	}
+	return s.b.String() + "... (" + more + ")\n"
 }
 
 // Glob finds files by pattern.
@@ -177,7 +291,7 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		mod  int64
 	}
 	var hits []hit
-	err = WalkFiles(ctx, root, func(path string) error {
+	match := func(path string) error {
 		rel, _ := filepath.Rel(root, path)
 		if ok, _ := doublestar.Match(in.Pattern, filepath.ToSlash(rel)); ok {
 			var mod int64
@@ -187,7 +301,21 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 			hits = append(hits, hit{path, mod})
 		}
 		return nil
-	})
+	}
+	// ripgrep lists files as grep searches them: .gitignore'd build output
+	// and caches left out, in parallel. When that finds nothing (a pattern
+	// aimed at ignored or hidden files), the plain walk still looks.
+	if rg := ripgrepPath(); rg != "" {
+		err = rgFiles(ctx, rg, root, func(path string) error {
+			if rel, _ := filepath.Rel(root, path); !inSkippedDir(rel) {
+				return match(path)
+			}
+			return nil
+		})
+	}
+	if len(hits) == 0 {
+		err = WalkFiles(ctx, root, match)
+	}
 	if err != nil {
 		return errorf("%v", err)
 	}
@@ -195,15 +323,46 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return Result{Content: "No files found."}
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].mod > hits[j].mod })
-	var b strings.Builder
-	for i, h := range hits {
-		if i == maxSearchResults {
-			fmt.Fprintf(&b, "... (%d more)\n", len(hits)-i)
+	lines := newSearchLines(env.Cwd)
+	for _, h := range hits {
+		if !lines.add(h.path) {
 			break
 		}
-		b.WriteString(h.path + "\n")
 	}
-	return Result{Content: b.String()}
+	return Result{Content: lines.String(fmt.Sprintf("%d more", len(hits)-lines.n))}
+}
+
+// rgFiles calls fn for each file rg lists under root.
+func rgFiles(ctx context.Context, rg, root string, fn func(path string) error) error {
+	cmd := exec.CommandContext(ctx, rg, "--files", "--no-messages", "--color=never", root)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		if err := fn(sc.Text()); err != nil {
+			break
+		}
+	}
+	io.Copy(io.Discard, stdout)
+	cmd.Wait() // exit 1 is no files, 2 some unreadable: what was listed stands
+	return ctx.Err()
+}
+
+// inSkippedDir reports whether rel lies in a directory WalkFiles skips.
+func inSkippedDir(rel string) bool {
+	dirs := strings.Split(filepath.ToSlash(filepath.Dir(rel)), "/")
+	for _, d := range dirs {
+		if skipDirs[d] {
+			return true
+		}
+	}
+	return false
 }
 
 // WalkFiles calls fn for each regular file under root, skipping hidden
@@ -238,12 +397,4 @@ func WalkFiles(ctx context.Context, root string, fn func(path string) error) err
 		return nil
 	}
 	return err
-}
-
-func capLines(s string, n int) string {
-	lines := strings.SplitAfter(s, "\n")
-	if len(lines) <= n {
-		return s
-	}
-	return strings.Join(lines[:n], "") + fmt.Sprintf("... (%d more matches)\n", len(lines)-n)
 }

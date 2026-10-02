@@ -13,6 +13,7 @@ func (a *Agent) saveFailed(err error) {
 	a.mu.Lock()
 	if a.saveErr == nil {
 		a.saveErr = err
+		a.savePending.Store(true)
 	}
 	a.mu.Unlock()
 }
@@ -27,6 +28,9 @@ func (a *Agent) reportingSaveErrors(emit func(Event)) func(Event) {
 }
 
 func (a *Agent) reportSaveError(emit func(Event)) {
+	if !a.savePending.Load() {
+		return // the usual case, checked for every event without the lock
+	}
 	a.mu.Lock()
 	err := a.saveErr
 	if err == nil || a.saveReported {
@@ -34,6 +38,7 @@ func (a *Agent) reportSaveError(emit func(Event)) {
 		return
 	}
 	a.saveReported = true
+	a.savePending.Store(false)
 	a.mu.Unlock()
 	emit(Event{Kind: EvNotice, Text: "couldn't save to the session transcript (" + err.Error() + "); the conversation goes on, but resuming it later may lose what follows"})
 }

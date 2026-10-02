@@ -53,3 +53,30 @@ func TestProbeWarnsAndUsesRealWindow(t *testing.T) {
 		}
 	}
 }
+
+// countingProber counts window probes.
+type countingProber struct {
+	*fakeProvider
+	window, probes int
+}
+
+func (p *countingProber) ContextWindow(context.Context, string) int { p.probes++; return p.window }
+func (p *countingProber) SupportsTools(context.Context, string) (bool, bool) {
+	return true, true
+}
+
+// TestProbeOnlyNearTheWindow: once the window is known, requests that use
+// little of it don't ask the server again.
+func TestProbeOnlyNearTheWindow(t *testing.T) {
+	cp := &countingProber{fakeProvider: &fakeProvider{script: []llm.Message{
+		assistant(llm.TextBlock("one")), assistant(llm.TextBlock("two")), assistant(llm.TextBlock("three")),
+	}}, window: 100_000}
+	a := New(Options{Provider: cp, Model: "m", Cwd: t.TempDir(), Tools: tools.Default(),
+		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, t.TempDir())})
+	for _, p := range []string{"a", "b", "c"} {
+		drain(a.Run(context.Background(), p), PermissionReply{})
+	}
+	if cp.probes != 1 {
+		t.Fatalf("probed %d times, want once", cp.probes)
+	}
+}

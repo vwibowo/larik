@@ -142,3 +142,14 @@ func TestResolveCall(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexLineDropsMCPTag(t *testing.T) {
+	sp := llm.ToolSpec{Name: "mcp__gh__create_issue", Description: `[MCP server "gh"] Create an issue in a repository`}
+	if got := indexLine(sp); got != "Create an issue in a repository" {
+		t.Fatalf("got %q", got)
+	}
+	sp = llm.ToolSpec{Name: "local", Description: `[MCP server "x"] not from MCP`}
+	if got := indexLine(sp); got != sp.Description {
+		t.Fatalf("a non-MCP tool's description must stay: %q", got)
+	}
+}

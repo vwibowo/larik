@@ -65,10 +65,11 @@ func (WriteFiles) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	for i, file := range in.Files {
 		args, _ := json.Marshal(file)
 		result := caller.CallTool(ctx, "write", args)
-		fmt.Fprintf(&output, "%s: %s\n", file.Path, result.Content)
 		if result.IsError {
+			fmt.Fprintf(&output, "%s: %s\n", file.Path, result.Content)
 			return Result{Content: fmt.Sprintf("Stopped at file %d of %d; earlier files may already have been written.\n%s", i+1, len(in.Files), strings.TrimSpace(output.String())), IsError: true}
 		}
+		output.WriteString(result.Content + "\n") // names the file already
 	}
 	return Result{Content: strings.TrimSpace(output.String())}
 }

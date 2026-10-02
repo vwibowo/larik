@@ -16,6 +16,7 @@ import (
 const (
 	defaultReadLines = 2000
 	maxLineLen       = 2000
+	readOutputBytes  = MaxOutputBytes * 2
 )
 
 // Read returns a file with line numbers.
@@ -25,7 +26,7 @@ func (Read) ReadOnly() bool { return true }
 func (Read) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "read",
-		Description: "Read a text file. Returns lines prefixed with line numbers. Use offset/limit for large files. You must read a file before editing or overwriting it.",
+		Description: "Read a text file. Returns lines prefixed with line numbers. Use offset/limit for large files.",
 		Schema: schema(`{"type":"object","properties":{
 			"path":{"type":"string","description":"File path, absolute or relative to the working directory"},
 			"offset":{"type":"integer","description":"1-based line to start from"},
@@ -58,6 +59,24 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if in.Limit <= 0 {
 		in.Limit = defaultReadLines
 	}
+	// A script's reads go to the script, not the model's context.
+	_, delegated := CallerFrom(ctx)
+	key := shownKey{path, in.Offset, in.Limit}
+	mark, dedup := readMark{}, !delegated && !env.NoReadDedup.Load()
+	if fi, _ := f.Stat(); fi != nil {
+		mark = readMark{fi.ModTime(), fi.Size()}
+	} else {
+		dedup = false
+	}
+	if dedup {
+		env.mu.Lock()
+		seen, ok := env.shown[key]
+		env.mu.Unlock()
+		if ok && seen.mod.Equal(mark.mod) && seen.size == mark.size {
+			env.markRead(path)
+			return Result{Content: "(unchanged since you last read these lines; that output is still above)"}
+		}
+	}
 
 	var b strings.Builder
 	sc := bufio.NewScanner(f)
@@ -79,7 +98,15 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		if len(text) > maxLineLen {
 			text = safeCut(text, maxLineLen) + " ... [line truncated]"
 		}
-		fmt.Fprintf(&b, "%6d\t%s\n", line, text)
+		// Stop on a line boundary at the output budget, so the hint names
+		// the first line not shown (cutting the middle out afterwards
+		// would hide lines the hint claims were read).
+		entry := fmt.Sprintf("%6d\t%s\n", line, text)
+		if shown > 0 && b.Len()+len(entry) > readOutputBytes-100 { // room for the hint
+			fmt.Fprintf(&b, "... (output limit reached; continue with offset=%d)\n", line)
+			break
+		}
+		b.WriteString(entry)
 		shown++
 	}
 	if err := sc.Err(); err != nil {
@@ -95,7 +122,15 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if shown == 0 {
 		return errorf("offset %d is past the end of the file (%d lines)", in.Offset, line)
 	}
-	return Result{Content: Truncate(b.String(), MaxOutputBytes*2)}
+	if dedup {
+		env.mu.Lock()
+		if env.shown == nil {
+			env.shown = map[shownKey]readMark{}
+		}
+		env.shown[key] = mark
+		env.mu.Unlock()
+	}
+	return Result{Content: Truncate(b.String(), readOutputBytes)}
 }
 
 // Write creates or overwrites a file.

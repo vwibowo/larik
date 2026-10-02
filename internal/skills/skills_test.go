@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,28 @@ func TestReload(t *testing.T) {
 	set.Reload()
 	if _, ok := set.Get("notes"); !ok || !strings.Contains(set.Index(), "notes: Take notes") {
 		t.Fatalf("reload should find the new skill: %q", set.Index())
+	}
+}
+
+// TestIndexBudget: long descriptions are clipped and, past the budget,
+// skills are still named so the model can load them.
+func TestIndexBudget(t *testing.T) {
+	root := t.TempDir()
+	long := strings.Repeat("word ", 200)
+	for i := range 60 {
+		name := fmt.Sprintf("skill-%02d", i)
+		mk(t, root, name, "---\nname: "+name+"\ndescription: "+long+"\n---\nbody\n")
+	}
+	idx := Discover([]Root{{Dir: root, Scope: "project"}}).Index()
+	if len(idx) > indexBudget+2000 {
+		t.Fatalf("index is %d bytes", len(idx))
+	}
+	for i := range 60 {
+		if name := fmt.Sprintf("skill-%02d", i); !strings.Contains(idx, name) {
+			t.Errorf("%s is missing from the index", name)
+		}
+	}
+	if !strings.Contains(idx, "More skills") || strings.Contains(idx, long[:maxIndexDesc+10]) {
+		t.Errorf("descriptions should be clipped and overflow named:\n%s", idx)
 	}
 }

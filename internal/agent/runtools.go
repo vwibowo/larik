@@ -32,9 +32,10 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 	results := make([]llm.Block, len(uses))
 	var queue []approved
 	registry := a.activeTools()
+	auto := a.prefetchAuto(ctx, uses, registry)
 
 	for i, use := range uses {
-		job, res, ok := a.prepare(ctx, use, registry, emit)
+		job, res, ok := a.prepare(ctx, use, registry, auto, emit)
 		if ok {
 			job.idx = i
 			queue = append(queue, job)
@@ -67,8 +68,9 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 }
 
 // prepare resolves a call to its tool and authorizes it. When the call
-// may not run, ok is false and res is the error result to return.
-func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Registry, emit func(Event)) (job approved, res llm.Block, ok bool) {
+// may not run, ok is false and res is the error result to return. auto
+// holds auto-mode verdicts started ahead for the batch; it may be nil.
+func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Registry, auto autoVerdicts, emit func(Event)) (job approved, res llm.Block, ok bool) {
 	// The result must carry the name the model called, which providers
 	// match it by, even when call_tool stands for another tool.
 	called := use.Name
@@ -99,7 +101,7 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		// path as direct tool calls (see toolCaller).
 		return approved{use: use, tool: tool, name: called}, res, true
 	default:
-		allow, reason, input := a.authorize(ctx, use, tool, emit)
+		allow, reason, input := a.authorize(ctx, use, tool, auto, emit)
 		if allow {
 			use.Input = input
 			return approved{use: use, tool: tool, name: called}, res, true
@@ -123,7 +125,7 @@ type toolCaller struct {
 
 func (c *toolCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
 	use := llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
-	job, res, ok := c.a.prepare(ctx, use, c.tools, c.emit)
+	job, res, ok := c.a.prepare(ctx, use, c.tools, nil, c.emit)
 	if ok {
 		res = c.a.execute(ctx, job, c.emit)
 	}
@@ -165,7 +167,7 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 // authorize runs PreToolUse hooks and permission rules, asking the front
 // end when needed. It returns the (possibly hook-rewritten) input to run.
 // Order: hook deny > rule deny > hook allow/ask > rules/mode > prompt.
-func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, emit func(Event)) (bool, string, json.RawMessage) {
+func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, auto autoVerdicts, emit func(Event)) (bool, string, json.RawMessage) {
 	input := use.Input
 	pre := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreToolUse, ToolName: use.Name, ToolInput: input, ToolUseID: use.ID}, use.Name)
 	if pre.Halt {
@@ -213,7 +215,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, e
 	autoReason := ""
 	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan {
 		started := time.Now()
-		verdict, err := a.autoApprove(ctx, use.Name, input)
+		verdict, err := auto.get(ctx, a, use.Name, input)
 		switch {
 		case ctx.Err() != nil:
 			return false, "interrupted by user", input

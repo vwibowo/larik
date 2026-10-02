@@ -11,6 +11,9 @@ import (
 // likely got (or is about to get) truncated by the server.
 const truncationWarnAt = 0.9
 
+// reprobeAt is the share of a known window past which it is checked again.
+const reprobeAt = 0.5
+
 // windowLocked is the context window for the current model: the one the
 // provider reported, else the catalog's. Callers hold a.mu.
 func (a *Agent) windowLocked() int {
@@ -49,11 +52,20 @@ func (a *Agent) probeWindow(ctx context.Context, p llm.Provider, model string, u
 	if !ok {
 		return
 	}
+	// Asking costs a request to the server; once the window is known, ask
+	// again only when this request came near it, the one case where a
+	// changed window (a model reloaded with another size) matters.
+	used := u.ContextTokens()
+	a.mu.Lock()
+	known := a.windows[model]
+	a.mu.Unlock()
+	if known > 0 && float64(used) < reprobeAt*float64(known) {
+		return
+	}
 	w := prober.ContextWindow(ctx, model)
 	if w <= 0 {
 		return
 	}
-	used := u.ContextTokens()
 	a.mu.Lock()
 	if a.windows == nil {
 		a.windows, a.warned = map[string]int{}, map[string]bool{}

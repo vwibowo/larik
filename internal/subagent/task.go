@@ -11,6 +11,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/skills"
 	"larik/internal/tools"
 	"larik/internal/worktree"
 )
@@ -64,6 +65,9 @@ type Tool struct {
 	// roles with Context "minimal". Falls back to ContextFunc/Context
 	// when unset.
 	MinimalContextFunc func() string
+	// SkillsIndex, if set, is appended to the full context of children
+	// whose definition allows the skill tool; the others couldn't use it.
+	SkillsIndex func() string
 
 	// Repo is the git repository root; worktree isolation is offered only
 	// when it is set. Worktrees are created under WorktreeRoot.
@@ -242,6 +246,10 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	}
 	if c.minimalContext && t.MinimalContextFunc != nil {
 		shared = t.MinimalContextFunc()
+	} else if t.SkillsIndex != nil && def.toolAllowed(skills.ToolName) {
+		if idx := t.SkillsIndex(); idx != "" {
+			shared = idx + "\n\n" + shared // shared ends with the date, which changes daily
+		}
 	}
 	spawn := agent.SpawnOptions{
 		Type:     def.Name,

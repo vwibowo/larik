@@ -61,10 +61,39 @@ type Env struct {
 	TokenSaver   *atomic.Bool
 
 	mu    sync.Mutex
-	reads map[string]time.Time // path -> mtime when last read
+	reads map[string]readMark // path -> its state when last read
+	// repo is the git top-level directory containing Cwd, once found; a
+	// command can create a repository, so not finding one isn't kept.
+	repo string
+	// shown records the reads whose output is in the model's context, so
+	// reading the same unchanged lines again can answer in a line. The
+	// agent forgets them when that context goes (ForgetShown), and turns
+	// this off where it can't tell (NoReadDedup).
+	shown       map[shownKey]readMark
+	NoReadDedup atomic.Bool
 }
 
-func NewEnv(cwd string) *Env { return &Env{Cwd: cwd, reads: map[string]time.Time{}} }
+type shownKey struct {
+	path          string
+	offset, limit int
+}
+
+// ForgetShown drops the record of reads the model has seen: its context
+// was replaced (compaction, /clear, a restored session).
+func (e *Env) ForgetShown() {
+	e.mu.Lock()
+	e.shown = nil
+	e.mu.Unlock()
+}
+
+func NewEnv(cwd string) *Env { return &Env{Cwd: cwd, reads: map[string]readMark{}} }
+
+// readMark is a file's modification time and size when it was read. Size
+// catches a change within the file system's timestamp granularity.
+type readMark struct {
+	mod  time.Time
+	size int64
+}
 
 // Abs resolves p against the working directory.
 func (e *Env) Abs(p string) string {
@@ -80,7 +109,7 @@ func (e *Env) Abs(p string) string {
 func (e *Env) markRead(path string) {
 	if fi, err := os.Stat(path); err == nil {
 		e.mu.Lock()
-		e.reads[path] = fi.ModTime()
+		e.reads[path] = readMark{fi.ModTime(), fi.Size()}
 		e.mu.Unlock()
 	}
 }
@@ -101,7 +130,7 @@ func (e *Env) checkFresh(path string) error {
 	if !ok {
 		return fmt.Errorf("%s exists but has not been read yet; read it first", path)
 	}
-	if !fi.ModTime().Equal(seen) {
+	if !fi.ModTime().Equal(seen.mod) || fi.Size() != seen.size {
 		return fmt.Errorf("%s was modified since it was last read; read it again", path)
 	}
 	return nil
@@ -188,7 +217,8 @@ type Registry struct {
 	specs []llm.ToolSpec
 	// deferred tools are in byName but not in list or specs: the model
 	// reaches them through tool_search and call_tool (see deferred.go).
-	deferred []Tool
+	deferred      []Tool
+	deferredNames map[string]bool
 }
 
 func NewRegistry(ts ...Tool) *Registry {
@@ -205,7 +235,7 @@ func NewRegistry(ts ...Tool) *Registry {
 // With returns a new registry with ts appended.
 func (r *Registry) With(ts ...Tool) *Registry {
 	nr := NewRegistry(append(append([]Tool(nil), r.list...), ts...)...)
-	nr.deferred = r.deferred
+	nr.deferred, nr.deferredNames = r.deferred, r.deferredNames
 	for _, t := range r.deferred {
 		nr.byName[t.Spec().Name] = t
 	}

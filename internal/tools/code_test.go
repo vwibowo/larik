@@ -87,8 +87,8 @@ func TestForExecution(t *testing.T) {
 		t.Fatal("todo_write must not be bound to scripts")
 	}
 
-	// Hybrid doesn't repeat the schemas the model already has, but lists
-	// the deferred tools it doesn't.
+	// Hybrid doesn't repeat the schemas the model already has, nor the
+	// deferred tools tool_search already lists.
 	hdesc := specOf(t, hybrid, CodeToolName).Description
 	if strings.Contains(hdesc, "echo(") || !strings.Contains(hdesc, "Every tool you have works this way") {
 		t.Fatalf("hybrid should not index declared tools:\n%s", hdesc)
@@ -99,8 +99,8 @@ func TestForExecution(t *testing.T) {
 	}
 	deferred := NewRegistry(codeStub{"echo", `{"type":"object"}`}).Defer(codeStub{"mcp__x__ping", `{"type":"object","properties":{"host":{"type":"string"}},"required":["host"]}`})
 	ddesc := specOf(t, deferred.ForExecution(ExecHybrid), CodeToolName).Description
-	if !strings.Contains(ddesc, "mcp__x__ping({host})") || strings.Contains(ddesc, "echo(") {
-		t.Fatalf("hybrid should index only deferred tools:\n%s", ddesc)
+	if strings.Contains(ddesc, "mcp__x__ping") || strings.Contains(ddesc, "echo(") || !strings.Contains(ddesc, ToolSearchName) {
+		t.Fatalf("hybrid should point to tool_search's list of deferred tools, not repeat it:\n%s", ddesc)
 	}
 }
 

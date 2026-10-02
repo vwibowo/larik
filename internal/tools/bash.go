@@ -40,7 +40,7 @@ func (Bash) Spec() llm.ToolSpec {
 		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
 			"In a git repository, files the command changes (tracked, or untracked and not ignored) are recorded so /undo can restore them. " +
 			"For files git ignores, or outside a repository, list the ones the command may change in checkpoint_paths; other changes there can't be undone. " +
-			"When a sandbox is active (see the environment section), commands run confined: they can write only to the project, temp directories and build caches, and have no network except localhost (or, if the environment section lists allowed domains, only those, through a proxy). " +
+			"When the system prompt has a <sandbox> section, commands run confined as it describes. " +
 			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
 		Schema: schema(`{"type":"object","properties":{
 			"command":{"type":"string"},
@@ -126,11 +126,12 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		cmd = exec.Command("bash", "-c", in.Command)
 		cmd.Dir = env.Cwd
 	}
+	cmd.Env = quietEnv(cmd.Env)
 	// Note the repository's state, to make what the command changes undoable.
 	track := env.trackShell(ctx)
 	// Own process group so cancellation kills children too.
 	procgroup.Configure(cmd)
-	var buffer bytes.Buffer
+	var buffer capBuffer // bounded: a chatty command can't exhaust memory
 	var rawFile *os.File
 	var captureErr error
 	callID, _ := ctx.Value(callIDKey{}).(string)
@@ -206,6 +207,9 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		}
 		raw += buffer.String()
 	}
+	// Escape codes and progress-bar redraws are noise to the model; the
+	// raw_output file keeps the exact bytes.
+	raw = cleanTerminal(raw)
 	output := Truncate(raw, MaxOutputBytes)
 	if largeRaw && captureErr == nil {
 		output = raw
@@ -213,8 +217,10 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if captureErr != nil {
 		output += "\n[token saver unavailable; command output was not filtered and raw capture may be incomplete]"
 	}
-	if rawFile != nil && captureErr == nil && !largeRaw && !in.RawOutput && runErr == nil && len(raw) > 0 {
-		if filtered, ok := filterCommandOutput(in.Command, raw); ok {
+	var exitErr *exec.ExitError
+	failed := errors.As(runErr, &exitErr)
+	if rawFile != nil && captureErr == nil && !largeRaw && !in.RawOutput && (runErr == nil || failed) && len(raw) > 0 {
+		if filtered, ok := filterCommandOutput(in.Command, raw, failed); ok {
 			marker := fmt.Sprintf("\n[token saver: %d -> %d bytes of command output (estimate); exact output: raw_output tool_call_id=%s]", len(raw), len(filtered), callID)
 			if len(filtered)+len(marker) < len(output) {
 				output = filtered + marker
@@ -231,7 +237,6 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 			}
 		}
 	}
-	var exitErr *exec.ExitError
 	switch {
 	case errors.Is(runErr, context.DeadlineExceeded):
 		return Result{Content: fmt.Sprintf("%s\n[command timed out after %s]", output, timeout), IsError: true}

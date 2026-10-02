@@ -266,3 +266,24 @@ func TestGeneratedMessagesAreNotPrompts(t *testing.T) {
 		t.Fatalf("prompts = %v, want [0 3]", got)
 	}
 }
+
+// TestEntriesAreGreppable: the transcript keeps <, > and & literal, since
+// the model searches it with grep after compaction.
+func TestEntriesAreGreppable(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.AppendMessage(llm.UserText("go test ./... && echo <ok> -> done"), nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "go test ./... && echo <ok> -> done") {
+		t.Fatalf("transcript escapes the text: %s", data)
+	}
+}

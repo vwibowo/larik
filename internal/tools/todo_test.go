@@ -10,7 +10,7 @@ import (
 
 func TestTodoWrite(t *testing.T) {
 	r := run(t, TodoWrite{}, nil, `{"todos":[{"content":"Read the code","status":"completed"},{"content":"Fix the bug","status":"in_progress","active_form":"Fixing the bug"},{"content":"Run the tests","status":"pending"}]}`)
-	if r.IsError || !strings.Contains(r.Content, "1 of 3 done") || !strings.Contains(r.Content, "[x] Read the code\n[>] Fix the bug\n[ ] Run the tests") {
+	if r.IsError || r.Content != "Task list updated (1 of 3 done). In progress: Fix the bug" || r.Display != "[x] Read the code\n[>] Fix the bug\n[ ] Run the tests" {
 		t.Fatalf("got %+v", r)
 	}
 	for input, want := range map[string]string{

@@ -48,14 +48,14 @@ func TestTokenSaverRecognizedFormats(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.command, func(t *testing.T) {
-			got, ok := filterCommandOutput(tc.command, tc.raw)
+			got, ok := filterCommandOutput(tc.command, tc.raw, false)
 			if !ok || !strings.Contains(got, tc.want) {
 				t.Fatalf("got %q, ok=%v; want %q", got, ok, tc.want)
 			}
 		})
 	}
 	for _, command := range []string{"git diff", "go test ./... | cat", "unknown --verbose"} {
-		if got, ok := filterCommandOutput(command, "patch or unfamiliar output\n"); ok {
+		if got, ok := filterCommandOutput(command, "patch or unfamiliar output\n", false); ok {
 			t.Errorf("%q unexpectedly filtered: %q", command, got)
 		}
 	}
@@ -63,12 +63,18 @@ func TestTokenSaverRecognizedFormats(t *testing.T) {
 
 func TestGitStatusKeepsStagesAndPaths(t *testing.T) {
 	raw := "On branch main\nChanges to be committed:\n\tnew file:   staged.go\nChanges not staged for commit:\n\tmodified:   edited.go\n\tdeleted:    removed.go\nUntracked files:\n\tnew.go\n"
-	got, ok := filterCommandOutput("git status", raw)
-	if !ok { t.Fatal("standard status was not recognized") }
-	for _, want := range []string{"staged new file (1):\n  staged.go", "unstaged modified (1):\n  edited.go", "unstaged deleted (1):\n  removed.go", "untracked files (1):\n  new.go"} {
-		if !strings.Contains(got, want) { t.Fatalf("missing %q in %q", want, got) }
+	got, ok := filterCommandOutput("git status", raw, false)
+	if !ok {
+		t.Fatal("standard status was not recognized")
 	}
-	if _, ok := filterCommandOutput("git status", "On branch main\n\tunexpected: no section\n"); ok { t.Fatal("unfamiliar status shape was filtered") }
+	for _, want := range []string{"staged new file (1):\n  staged.go", "unstaged modified (1):\n  edited.go", "unstaged deleted (1):\n  removed.go", "untracked files (1):\n  new.go"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if _, ok := filterCommandOutput("git status", "On branch main\n\tunexpected: no section\n", false); ok {
+		t.Fatal("unfamiliar status shape was filtered")
+	}
 }
 
 func TestTokenSaverBashRawRecoveryAndBypass(t *testing.T) {
@@ -177,5 +183,30 @@ func TestTokenSaverBashRawRecoveryAndBypass(t *testing.T) {
 	env.RawOutputDir = session.RawDir(resumed.Path)
 	if recovered := (RawOutput{}).Run(context.Background(), env, json.RawMessage(`{"tool_call_id":"call-filtered"}`)); recovered.IsError || !strings.Contains(recovered.Content, raw) {
 		t.Fatalf("raw output after resume: %+v", recovered)
+	}
+}
+
+// TestTokenSaverCommonShapes: the wrappers models add around one command
+// don't turn filtering off, failing test runs are filtered with their
+// failures kept, and other failing commands are left alone.
+func TestTokenSaverCommonShapes(t *testing.T) {
+	raw := "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n    b_test.go:9: boom\n--- FAIL: TestB (0.00s)\nFAIL\nFAIL\texample.com/b\t0.1s\nok  \texample.com/a\t0.2s\n"
+	got, ok := filterCommandOutput("cd /repo && go test -v ./... 2>&1", raw, true)
+	if !ok {
+		t.Fatal("a failing go test run should be filtered")
+	}
+	for _, want := range []string{"PASS 1 Go package(s)", "b_test.go:9: boom", "--- FAIL: TestB", "FAIL\texample.com/b"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("filtered output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "TestA") || strings.Contains(got, "=== RUN") {
+		t.Errorf("passing tests should be dropped:\n%s", got)
+	}
+	if _, ok := filterCommandOutput("git status", "On branch main\nnothing to commit, working tree clean\n", true); ok {
+		t.Error("a failing non-test command must not be filtered")
+	}
+	if _, ok := filterCommandOutput("cd $(mktemp -d) && go test ./...", raw, false); ok {
+		t.Error("a cd with shell expansion is not a simple command")
 	}
 }

@@ -49,9 +49,10 @@ func (r *Registry) Defer(ts ...Tool) *Registry {
 		specs = append(specs, t.Spec())
 	}
 	nr := NewRegistry(append(append([]Tool(nil), r.list...), searchTool{specs: specs}, callTool{})...)
-	nr.deferred = ts
+	nr.deferred, nr.deferredNames = ts, make(map[string]bool, len(ts))
 	for i, t := range ts {
 		nr.byName[specs[i].Name] = t
+		nr.deferredNames[specs[i].Name] = true
 	}
 	return nr
 }
@@ -60,14 +61,7 @@ func (r *Registry) Defer(ts ...Tool) *Registry {
 func (r *Registry) Deferred() []Tool { return r.deferred }
 
 // IsDeferred reports whether name is a deferred tool.
-func (r *Registry) IsDeferred(name string) bool {
-	for _, t := range r.deferred {
-		if t.Spec().Name == name {
-			return true
-		}
-	}
-	return false
-}
+func (r *Registry) IsDeferred(name string) bool { return r.deferredNames[name] }
 
 // ResolveCall unwraps a call_tool input: the deferred tool it names and
 // the arguments for it.
@@ -121,7 +115,7 @@ func (s searchTool) Spec() llm.ToolSpec {
 func (s searchTool) index() string {
 	var lines []string
 	for _, sp := range s.specs {
-		lines = append(lines, "- "+sp.Name+": "+clipLine(sp.Description, 90))
+		lines = append(lines, "- "+sp.Name+": "+indexLine(sp))
 	}
 	if out := strings.Join(lines, "\n"); len(out) <= indexBudget {
 		return out
@@ -153,6 +147,19 @@ func (s searchTool) index() string {
 		lines = append(lines, fmt.Sprintf("- %s: %d tools", g, len(groups[g])))
 	}
 	return strings.Join(lines, "\n") + "\n(Too many to list: search by keyword.)"
+}
+
+// indexLine is a tool's description clipped for a list of tools. The
+// "[MCP server ...]" tag MCP tools carry is dropped: their mcp__server__
+// names already say it, and the clipped line has no room to spare.
+func indexLine(sp llm.ToolSpec) string {
+	d := sp.Description
+	if rest, ok := strings.CutPrefix(d, "[MCP server "); ok && strings.HasPrefix(sp.Name, "mcp__") {
+		if _, after, ok := strings.Cut(rest, "] "); ok {
+			d = after
+		}
+	}
+	return clipLine(d, 90)
 }
 
 func clipLine(s string, n int) string {

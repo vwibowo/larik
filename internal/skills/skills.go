@@ -374,28 +374,56 @@ func (s *Set) Body(name string) (Skill, string, error) {
 	return sk, strings.TrimSpace(string(body)), nil
 }
 
+// Index budgets: each description is clipped, and past indexBudget the
+// remaining skills are listed by name only. The index is in every
+// request's system prompt.
+const (
+	maxIndexDesc = 250
+	indexBudget  = 8000
+)
+
 // Index is the system-prompt section listing model-invocable skills.
 // It is empty when there are none.
 func (s *Set) Index() string {
-	var lines []string
-	all := s.List()
-	for _, sk := range all {
-		if !sk.ModelInvocable {
-			continue
+	var invocable []Skill
+	for _, sk := range s.List() {
+		if sk.ModelInvocable {
+			invocable = append(invocable, sk)
 		}
-		if len(lines) == maxIndexed {
-			lines = append(lines, fmt.Sprintf("- (%d more skills not listed)", len(all)-maxIndexed))
+	}
+	if len(invocable) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	var namesOnly []string
+	for i, sk := range invocable {
+		if i == maxIndexed {
+			fmt.Fprintf(&b, "- (%d more skills not listed)\n", len(invocable)-maxIndexed)
 			break
 		}
-		lines = append(lines, "- "+sk.Name+": "+sk.Description)
+		line := "- " + sk.Name + ": " + clip(sk.Description, maxIndexDesc) + "\n"
+		if len(namesOnly) > 0 || b.Len()+len(line) > indexBudget {
+			namesOnly = append(namesOnly, sk.Name)
+			continue
+		}
+		b.WriteString(line)
 	}
-	if len(lines) == 0 {
-		return ""
+	if len(namesOnly) > 0 {
+		b.WriteString("- More skills (descriptions load with the skill): " + strings.Join(namesOnly, ", ") + "\n")
 	}
 	return "<skills>\nSkills are folders of instructions, scripts and resources for specialized tasks. " +
 		"When a task matches a skill's description, call the skill tool with its name before starting and follow what it says. " +
 		"Relative paths inside a skill are relative to its base directory; read bundled files only when needed.\n\n" +
-		strings.Join(lines, "\n") + "\n</skills>"
+		b.String() + "</skills>"
+}
+
+// clip shortens s to n runes on one line.
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
 
 var positional = regexp.MustCompile(`\$([1-9])`)

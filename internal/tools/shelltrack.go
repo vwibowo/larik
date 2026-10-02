@@ -1,11 +1,14 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,6 +45,10 @@ type fileState struct {
 	data    []byte
 	mode    os.FileMode
 	skip    bool // too large, or not a regular file: left alone
+	// size and modTime say whether the file may have changed since, so
+	// an untouched one needn't be read again to compare.
+	size    int64
+	modTime time.Time
 }
 
 // shellTrack is the state of the repository before a command.
@@ -63,12 +70,9 @@ func (e *Env) trackShell(ctx context.Context) *shellTrack {
 	}
 	ctx, cancel := context.WithTimeout(ctx, trackTimeout)
 	defer cancel()
-	repo, err := gitText(ctx, e.Cwd, "rev-parse", "--show-toplevel")
-	if err != nil || repo == "" {
+	repo := e.repoRoot(ctx)
+	if repo == "" {
 		return nil
-	}
-	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-		repo = resolved
 	}
 	paths, ok := dirtyPaths(ctx, repo)
 	if !ok || len(paths) > trackCountMax {
@@ -115,9 +119,10 @@ func (t *shellTrack) finish(ctx context.Context) int {
 			recorded++
 		}
 	}
-	// Files that were already changed before: compare with the copy taken.
+	// Files that were already changed before: compare with the copy taken,
+	// reading only those whose size or modification time moved.
 	for p, before := range t.dirty {
-		if before.skip {
+		if before.skip || before.unchanged(filepath.Join(t.repo, p)) {
 			continue
 		}
 		now := readState(filepath.Join(t.repo, p), trackFileMax)
@@ -126,6 +131,7 @@ func (t *shellTrack) finish(ctx context.Context) int {
 		}
 	}
 	// Files that were clean before and aren't now.
+	var fromHead []string
 	for p, code := range after {
 		if _, was := t.dirty[p]; was {
 			continue
@@ -134,24 +140,114 @@ func (t *shellTrack) finish(ctx context.Context) int {
 			record(p, fileState{}) // created by the command
 			continue
 		}
-		if t.head == "" {
-			continue
+		if t.head != "" {
+			fromHead = append(fromHead, p)
 		}
-		// It matched the commit the command started from: that is its original.
-		data, err := gitBytes(ctx, t.repo, trackFileMax, "cat-file", "blob", t.head+":"+p)
-		if err != nil {
-			if code[0] == 'A' || code[1] == 'A' {
-				record(p, fileState{}) // added and staged by the command
-			}
-			continue
+	}
+	// They matched the commit the command started from: that is their
+	// original. One git process reads them all.
+	originals := headFiles(ctx, t.repo, t.head, fromHead)
+	for _, p := range fromHead {
+		if st, ok := originals[p]; ok {
+			record(p, st)
+		} else if code := after[p]; code[0] == 'A' || code[1] == 'A' {
+			record(p, fileState{}) // added and staged by the command
 		}
-		mode := os.FileMode(0o644)
-		if entry, _ := gitText(ctx, t.repo, "ls-tree", t.head, "--", p); strings.HasPrefix(entry, "100755") {
-			mode = 0o755
-		}
-		record(p, fileState{existed: true, data: data, mode: mode})
 	}
 	return recorded
+}
+
+// unchanged reports whether the file at path still has the size and
+// modification time it had when st was read.
+func (st fileState) unchanged(path string) bool {
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return !st.existed
+	}
+	return err == nil && st.existed && fi.Mode().IsRegular() && fi.Size() == st.size && fi.ModTime().Equal(st.modTime) && fi.Mode().Perm() == st.mode
+}
+
+// headFiles reads paths as they are in commit head, with their modes, in
+// one git cat-file --batch process. Paths missing from head, larger than
+// trackFileMax, or not regular files are left out.
+func headFiles(ctx context.Context, repo, head string, paths []string) map[string]fileState {
+	out := map[string]fileState{}
+	if len(paths) == 0 {
+		return out
+	}
+	var in bytes.Buffer
+	var asked []string
+	for _, p := range paths {
+		if strings.ContainsAny(p, "\n\r") {
+			continue // can't be named on a --batch line
+		}
+		asked = append(asked, p)
+		in.WriteString(head + ":" + p + "\n")
+	}
+	cmd := gitCommand(ctx, repo, "cat-file", "--batch")
+	cmd.Stdin = &in
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return out
+	}
+	if err := cmd.Start(); err != nil {
+		return out
+	}
+	r := bufio.NewReader(stdout)
+	defer func() {
+		io.Copy(io.Discard, r) // an early return must not leave git blocked writing
+		cmd.Wait()
+	}()
+	for _, p := range asked {
+		header, err := r.ReadString('\n')
+		if err != nil {
+			return out
+		}
+		// "<oid> <type> <size>", or "<name> missing".
+		fields := strings.Fields(header)
+		if len(fields) != 3 {
+			continue
+		}
+		size, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil {
+			return out
+		}
+		data := make([]byte, size+1) // content and its trailing newline
+		if _, err := io.ReadFull(r, data); err != nil {
+			return out
+		}
+		if fields[1] == "blob" && size <= trackFileMax {
+			out[p] = fileState{existed: true, data: data[:size], mode: 0o644}
+		}
+	}
+	// Executable bits come from the tree; links and submodules aren't
+	// files to restore.
+	for start := 0; start < len(asked); start += 500 {
+		chunk := asked[start:min(start+500, len(asked))]
+		listing, err := gitBytes(ctx, repo, 64<<20, append([]string{"ls-tree", "-z", head, "--"}, chunk...)...)
+		if err != nil {
+			continue
+		}
+		for _, entry := range bytes.Split(listing, []byte{0}) {
+			// "<mode> <type> <oid>\t<path>"
+			meta, path, ok := bytes.Cut(entry, []byte{'\t'})
+			if !ok {
+				continue
+			}
+			st, ok := out[string(path)]
+			if !ok {
+				continue
+			}
+			switch {
+			case bytes.HasPrefix(meta, []byte("100755")):
+				st.mode = 0o755
+				out[string(path)] = st
+			case !bytes.HasPrefix(meta, []byte("100644")):
+				delete(out, string(path))
+			}
+		}
+	}
+	return out
 }
 
 // readState reads a file as it is now. Anything but a regular file of at
@@ -168,7 +264,31 @@ func readState(path string, limit int64) fileState {
 	if err != nil {
 		return fileState{skip: true}
 	}
-	return fileState{existed: true, data: data, mode: fi.Mode().Perm()}
+	return fileState{existed: true, data: data, mode: fi.Mode().Perm(), size: fi.Size(), modTime: fi.ModTime()}
+}
+
+// repoRoot is the git top-level directory containing Cwd, symlinks
+// resolved, or "" outside a repository.
+func (e *Env) repoRoot(ctx context.Context) string {
+	e.mu.Lock()
+	repo := e.repo
+	e.mu.Unlock()
+	if repo != "" {
+		if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
+			return repo
+		}
+	}
+	repo, err := gitText(ctx, e.Cwd, "rev-parse", "--show-toplevel")
+	if err != nil || repo == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = resolved
+	}
+	e.mu.Lock()
+	e.repo = repo
+	e.mu.Unlock()
+	return repo
 }
 
 // dirtyPaths lists the files that differ from HEAD or are untracked (not
@@ -192,14 +312,9 @@ func gitText(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// gitBytes runs a read-only git command directly (no shell), with settings
-// that keep it from running programs the repository configures or taking
-// locks a concurrent git would trip over.
+// gitBytes runs a gitCommand and returns its output, at most limit bytes.
 func gitBytes(ctx context.Context, dir string, limit int, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-pager", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false"}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
-	out, err := cmd.Output()
+	out, err := gitCommand(ctx, dir, args...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -207,4 +322,14 @@ func gitBytes(ctx context.Context, dir string, limit int, args ...string) ([]byt
 		return nil, os.ErrInvalid // too large to keep for undo
 	}
 	return out, nil
+}
+
+// gitCommand is a read-only git command run directly (no shell), with
+// settings that keep it from running programs the repository configures
+// or taking locks a concurrent git would trip over.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-pager", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	return cmd
 }

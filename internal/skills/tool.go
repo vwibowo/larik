@@ -8,6 +8,9 @@ import (
 	"larik/internal/tools"
 )
 
+// ToolName is the tool that loads a skill.
+const ToolName = "skill"
+
 // Tool lets the model load a skill's full instructions by name.
 type Tool struct{ Set *Set }
 
@@ -15,7 +18,7 @@ func (Tool) ReadOnly() bool { return true }
 
 func (Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "skill",
+		Name:        ToolName,
 		Description: "Load a skill's full instructions by name (see the skills list in the system prompt). Call it before starting a task the skill covers.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"name":{"type":"string","description":"Skill name"},
