@@ -43,13 +43,21 @@ const (
 var SuggestedModels = []string{"sonnet", "opus", "fable"}
 
 var requiredFlags = []string{
-	"--print", "--safe-mode", "--tools", "--allowedTools", "--strict-mcp-config",
+	"--print", "--tools", "--allowedTools", "--strict-mcp-config",
 	"--mcp-config", "--permission-mode", "--input-format", "--output-format",
 	"--include-partial-messages", "--no-session-persistence", "--model",
 	"--effort", "--disable-slash-commands", "--no-chrome",
 	"--prompt-suggestions", "--verbose", "--system-prompt",
 	"--setting-sources",
 }
+
+// isolationFlags keep the user's own Claude Code setup (settings, hooks,
+// plugins) out of the child, in order of preference; one is required.
+// --restricted ignores settings files but keeps --mcp-config servers.
+// --safe-mode, for CLIs without it, also turns off every MCP server in
+// current releases, Larik's tool bridge included, so the model gets no
+// tools there.
+var isolationFlags = []string{"--restricted", "--safe-mode"}
 
 type State string
 
@@ -66,6 +74,8 @@ type Status struct {
 	// MaxTurns reports whether this CLI accepts --max-turns. Newer releases
 	// may omit it; the runtime then enforces the same ceiling from the stream.
 	MaxTurns bool
+	// Isolation is the isolationFlags entry this CLI supports.
+	Isolation string
 }
 
 func (s Status) Ready() bool { return s.State == string(StateReady) }
@@ -110,6 +120,16 @@ func (r *Runtime) Check(ctx context.Context) Status {
 			missing = append(missing, flag)
 		}
 	}
+	isolation := ""
+	for _, flag := range isolationFlags {
+		if bytes.Contains(help, []byte(flag)) {
+			isolation = flag
+			break
+		}
+	}
+	if isolation == "" {
+		missing = append(missing, strings.Join(isolationFlags, " or "))
+	}
 	if len(missing) > 0 {
 		return Status{State: string(StateIncompatible), Path: path, Detail: "Claude CLI is missing required flags: " + strings.Join(missing, ", ")}
 	}
@@ -134,7 +154,7 @@ func (r *Runtime) Check(ctx context.Context) Status {
 	if provider != "firstparty" || method == "api_key" || strings.Contains(method, "bedrock") || strings.Contains(method, "vertex") || strings.Contains(method, "foundry") {
 		return Status{State: string(StateWrongAuth), Path: path, Version: strings.TrimSpace(string(version)), Detail: "Claude CLI is using an API key or cloud provider; sign in with a first-party Claude subscription using: claude auth login"}
 	}
-	return Status{State: string(StateReady), Path: path, Version: strings.TrimSpace(string(version)), Detail: "Claude CLI subscription authentication is ready", MaxTurns: hasMaxTurns}
+	return Status{State: string(StateReady), Path: path, Version: strings.TrimSpace(string(version)), Detail: "Claude CLI subscription authentication is ready", MaxTurns: hasMaxTurns, Isolation: isolation}
 }
 
 func commandOutput(ctx context.Context, path string, args ...string) ([]byte, error) {
@@ -194,7 +214,7 @@ func (r *Runtime) Run(ctx context.Context, request llm.AgentRuntimeRequest) (<-c
 		maxTurns = 200
 	}
 	args := []string{
-		"--print", "--safe-mode", "--tools", "", "--allowedTools", strings.Join(bridge.toolNames, ","),
+		"--print", status.Isolation, "--tools", "", "--allowedTools", strings.Join(bridge.toolNames, ","),
 		"--strict-mcp-config", "--mcp-config", bridge.configPath,
 		"--permission-mode", "dontAsk", "--input-format", "stream-json", "--output-format", "stream-json",
 		"--include-partial-messages", "--no-session-persistence", "--disable-slash-commands", "--no-chrome",

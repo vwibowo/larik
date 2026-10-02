@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,10 +16,17 @@ import (
 )
 
 func fakeClaude(t *testing.T, auth string) string {
+	return fakeClaudeWith(t, auth, strings.Join(isolationFlags, " "))
+}
+
+// fakeClaudeWith is a fake CLI whose help also lists extra flags. Run
+// records its arguments, one per line, in $ARGS_FILE when set.
+func fakeClaudeWith(t *testing.T, auth, extra string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "claude")
-	help := strings.Join(requiredFlags, " ") + " --max-turns"
+	help := strings.Join(requiredFlags, " ") + " --max-turns " + extra
 	script := `#!/bin/sh
+if [ -n "$ARGS_FILE" ]; then printf '%s\n' "$@" > "$ARGS_FILE"; fi
 case "$1" in
   --help) printf '%s\n' '` + help + `' ;;
   --version) printf '%s\n' 'test-1.0' ;;
@@ -53,6 +61,17 @@ func TestCheckClaudeCLIStates(t *testing.T) {
 	if got := wrongAuth.Check(ctx); got.State != string(StateWrongAuth) {
 		t.Fatalf("wrong-auth status = %+v", got)
 	}
+	if ready.Check(ctx).Isolation != "--restricted" {
+		t.Fatal("--restricted should be preferred when the CLI has it")
+	}
+	older := &Runtime{Executable: fakeClaudeWith(t, `{"loggedIn":true,"authMethod":"oauth","apiProvider":"firstParty"}`, "--safe-mode")}
+	if got := older.Check(ctx); !got.Ready() || got.Isolation != "--safe-mode" {
+		t.Fatalf("a CLI without --restricted should fall back to --safe-mode: %+v", got)
+	}
+	neither := &Runtime{Executable: fakeClaudeWith(t, `{"loggedIn":true,"authMethod":"oauth","apiProvider":"firstParty"}`, "")}
+	if got := neither.Check(ctx); got.State != string(StateIncompatible) {
+		t.Fatalf("a CLI with neither isolation flag is incompatible: %+v", got)
+	}
 	missing := &Runtime{LookupPath: func(string) (string, error) { return "", os.ErrNotExist }}
 	if got := missing.Check(ctx); got.State != string(StateMissing) {
 		t.Fatalf("missing status = %+v", got)
@@ -68,8 +87,9 @@ func TestCheckClaudeCLIStates(t *testing.T) {
 
 func TestRuntimeStreamsTextAndUsage(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "parent-key")
+	argsFile := filepath.Join(t.TempDir(), "args")
 	runtime := &Runtime{Executable: fakeClaude(t, `{"loggedIn":true,"authMethod":"oauth","apiProvider":"firstParty"}`), Environ: func() []string {
-		return []string{"PATH=/usr/bin:/bin", "ANTHROPIC_API_KEY=child-must-not-have", "CLAUDE_CODE_USE_BEDROCK=1"}
+		return []string{"PATH=/usr/bin:/bin", "ANTHROPIC_API_KEY=child-must-not-have", "CLAUDE_CODE_USE_BEDROCK=1", "ARGS_FILE=" + argsFile}
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -94,6 +114,11 @@ func TestRuntimeStreamsTextAndUsage(t *testing.T) {
 	}
 	if text != "hello" || assistant == nil || assistant.Text() != "hello" || usage == nil || usage.Input != 7 || usage.Output != 2 {
 		t.Fatalf("text=%q assistant=%+v usage=%+v", text, assistant, usage)
+	}
+	// --safe-mode would also turn off the MCP server that serves Larik's tools.
+	args, _ := os.ReadFile(argsFile)
+	if lines := strings.Split(string(args), "\n"); !slices.Contains(lines, "--restricted") || slices.Contains(lines, "--safe-mode") {
+		t.Fatalf("the child should run with --restricted, not --safe-mode: %q", args)
 	}
 }
 
