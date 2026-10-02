@@ -5,7 +5,10 @@
 /dist/
 AGENTS.md
 .DS_Store
-/benchmarks/
+website/node_modules
+website/package.json
+website/package_lock.json
+benchmarks
 
 # Local OpenCode/Larik comparison runs and reports.
 /docs/opencode-comparison.md
