@@ -10,6 +10,10 @@ website/package.json
 website/package_lock.json
 benchmarks
 
+# A literal "~" directory at the repo root makes repo-relative paths
+# indistinguishable from $HOME paths in tool output. Never commit one.
+/~/
+
 # Local OpenCode/Larik comparison runs and reports.
 /docs/opencode-comparison.md
 /docs/opencode-expanded.md
