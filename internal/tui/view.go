@@ -114,6 +114,9 @@ func (m *model) View() tea.View {
 				if i < len(left) {
 					l = ansi.Truncate(left[i], conversationWidth, " ")
 				}
+				// Keep the sidebar anchored to the right edge even when the
+				// conversation row is shorter than its column.
+				l += strings.Repeat(" ", max(conversationWidth-lipgloss.Width(l), 0))
 				if i < len(right) {
 					r = right[i]
 				}

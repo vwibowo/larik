@@ -26,6 +26,27 @@ func TestConversationWrapsOnceAndRewrapsOnResize(t *testing.T) {
 	}
 }
 
+func TestSidebarStaysAnchoredWithShortConversation(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.height = 24
+	m.showInfo = true
+	m.appendOutput("short conversation")
+
+	found := false
+	for _, line := range strings.Split(plain(m.View().Content), "\n") {
+		if strings.Contains(line, "F2 to hide") {
+			found = true
+			if lipgloss.Width(line) != m.width {
+				t.Fatalf("sidebar should stay anchored at the right edge: width=%d, row=%d, %q", m.width, lipgloss.Width(line), line)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("rendered sidebar is missing its hide hint")
+	}
+}
+
 func TestSidebarKeepsHeightWhileResponseStreams(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(120)
