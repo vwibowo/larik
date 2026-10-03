@@ -103,21 +103,31 @@ func chrome(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("starts Chrome")
 	}
+	var path string
 	for _, p := range []string{
 		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 		"/Applications/Chromium.app/Contents/MacOS/Chromium",
 	} {
 		if _, err := os.Stat(p); err == nil {
-			return p
+			path = p
+			break
 		}
 	}
-	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
-		if p, err := exec.LookPath(name); err == nil {
-			return p
+	if path == "" {
+		for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+			if p, err := exec.LookPath(name); err == nil {
+				path = p
+				break
+			}
 		}
 	}
-	t.Skip("no Chrome or Chromium installed")
-	return ""
+	if path == "" {
+		t.Skip("no Chrome or Chromium installed")
+	}
+	if err := CheckAvailable(Options{Headless: true, ChromePath: path}); err != nil {
+		t.Skipf("Chrome/Chromium is not usable in this environment: %v", err)
+	}
+	return path
 }
 
 func newSession(t *testing.T) (*Session, *httptest.Server) {

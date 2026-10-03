@@ -21,6 +21,30 @@ import (
 
 func plain(s string) string { return ansi.Strip(s) }
 
+func TestWrapLiveTailBoundsLargeStreamingResponses(t *testing.T) {
+	short := "first line\nsecond line"
+	if got, want := wrapLiveTail(short, 20, 5), wrap(short, 20); got != want {
+		t.Fatalf("short stream = %q, want %q", got, want)
+	}
+
+	old := strings.Repeat("old line that should scroll away\n", 300)
+	got := wrapLiveTail(old+"latest visible text", 20, 5)
+	if !strings.Contains(got, "latest visible text") {
+		t.Fatalf("tail lost latest text: %q", got)
+	}
+	if strings.Count(got, "old line") >= 300 {
+		t.Fatalf("tail was not bounded: %q", got)
+	}
+	if lipgloss.Height(got) > 5 {
+		t.Fatalf("tail has %d rows, want at most 5: %q", lipgloss.Height(got), got)
+	}
+
+	ansiText := "before \x1b[31mred\x1b[0m after"
+	if got, want := wrapLiveTail(ansiText, 20, 5), wrap(ansiText, 20); got != want {
+		t.Fatalf("ANSI stream should use the full-wrap path: %q, want %q", got, want)
+	}
+}
+
 func TestSessionInfoSidebarTogglePersistsWhileTypingAndResponding(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(120)

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -384,7 +385,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 	}
 	sections = append(sections, sec)
 	if m.sidebarStatus != nil && len(m.sidebarStatus.lines) > 0 {
-		custom := []string{}
+		custom := []string{head("Custom", "")}
 		for _, line := range m.sidebarStatus.lines {
 			custom = append(custom, fit(line))
 		}
@@ -640,7 +641,7 @@ func (m *model) liveView(widths ...int) string {
 	}
 	if s := m.stream.String(); s != "" {
 		limit := max(m.height-12, 5)
-		b = append(b, lastLines(wrap(s, width-2), limit))
+		b = append(b, wrapLiveTail(s, width-2, limit))
 	}
 	if m.running && m.width < 64 {
 		b = append(b, m.liveTodos()...)
@@ -1724,6 +1725,29 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// wrapLiveTail wraps only the part of a streaming response that can fit in
+// the visible live area. Re-wrapping the complete response on every token
+// makes rendering increasingly expensive as the response grows. ANSI output
+// is kept on the conservative full-wrap path because a cut can otherwise
+// separate a style sequence from its text.
+func wrapLiveTail(s string, width, lines int) string {
+	width = max(width, 1)
+	lines = max(lines, 1)
+	maxBytes := max(width*(lines+2)*4, 4096)
+	if len(s) <= maxBytes || strings.IndexByte(s, '\x1b') >= 0 {
+		return lastLines(wrap(s, width), lines)
+	}
+
+	start := len(s) - maxBytes
+	for start > 0 && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	if nl := strings.IndexByte(s[start:], '\n'); nl >= 0 {
+		start += nl + 1
+	}
+	return lastLines(wrap("…"+s[start:], width), lines)
 }
 
 func truncateLines(s string, n int) string {

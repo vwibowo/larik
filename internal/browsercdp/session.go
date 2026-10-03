@@ -41,9 +41,11 @@ type Options struct {
 }
 
 const (
-	actionTimeout = 30 * time.Second
-	maxConsole    = 200
-	maxRequests   = 300
+	actionTimeout         = 30 * time.Second
+	browserStartupTimeout = 12 * time.Second
+	browserProbeTimeout   = 5 * time.Second
+	maxConsole            = 200
+	maxRequests           = 300
 )
 
 // Session is one Chrome process and its tabs. Each agent has its own tabs
@@ -58,6 +60,10 @@ type Session struct {
 	cancelRoot  context.CancelFunc
 	tabs        []*tab
 	active      map[string]*tab // owner -> its active tab
+
+	// startupTimeout bounds Chrome launch and the initial DevTools guard.
+	// The availability probe overrides this with a shorter timeout.
+	startupTimeout time.Duration
 
 	// tempProfile is a throwaway profile used when ProfileDir is taken by
 	// another Chrome; it's removed on shutdown.
@@ -137,7 +143,9 @@ func (t *tab) log(s string) {
 	}
 }
 
-func New(opts Options) *Session { return &Session{opts: opts} }
+func New(opts Options) *Session {
+	return &Session{opts: opts, startupTimeout: browserStartupTimeout}
+}
 
 // CheckAvailable verifies Chrome can actually start and speak DevTools without
 // opening a visible window or touching the user's persistent browser profile.
@@ -146,6 +154,7 @@ func CheckAvailable(opts Options) error {
 	opts.ProfileDir = ""
 	opts.DownloadDir = ""
 	s := New(opts)
+	s.startupTimeout = browserProbeTimeout
 	defer s.Close()
 	return s.start()
 }
@@ -235,7 +244,11 @@ func (s *Session) launch(profile string) error {
 	root, cancelRoot := chromedp.NewContext(allocCtx)
 	t := &tab{ctx: root}
 	s.watch(t)
-	startupCtx, cancelStartup := context.WithTimeout(root, 12*time.Second)
+	startupTimeout := s.startupTimeout
+	if startupTimeout <= 0 {
+		startupTimeout = browserStartupTimeout
+	}
+	startupCtx, cancelStartup := context.WithTimeout(root, startupTimeout)
 	err := chromedp.Run(startupCtx, s.guard())
 	cancelStartup()
 	if err != nil {
