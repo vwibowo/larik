@@ -214,7 +214,7 @@ echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq 
 
 | Command                                          | What it does                                                                                                                                                                                                                                                             |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/model [provider/model]`                        | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches                                                                                                                                                                             |
+| `/model [provider/model]`                        | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches. A model-specific execution setting applies from the next fresh context                                                                                                                                                                             |
 | `/connect [provider]`                            | Setup wizard: choose a provider, connect it, pick a model, save                                                                                                                                                                                                          |
 | `/providers`                                     | Connected or detected providers with status, plus a NVIDIA NIM connect shortcut; `enter` edit/connect, `t` test, `d` remove, `a` add                                                                                                                                     |
 | `/routing [role=provider/model]`                 | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them                                                                                                                                                                     |
@@ -295,7 +295,7 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 
 The check is a model's judgment, not a guarantee. It reduces how often you're asked; it doesn't replace the sandbox or deny rules for things that must never happen.
 
-**Leaving plan mode.** In plan mode the model is told it is planning, and when the plan is ready it calls `exit_plan_mode`. Larik prints the plan in the conversation and asks: **Yes, and accept edits**, **Yes, but ask before each edit**, or **No, keep planning**, which lets you say what to change. Approving switches the mode for this session only; your saved default stays as it is. In `larik -p` plan mode can't end, so the model gives the plan as its answer.
+**Leaving plan mode.** In plan mode the model is told it is planning. `bash` is blocked, even for apparently read-only commands (including graphify queries); calling it from `run_code` is blocked too. Use `read`, `grep`, and `glob` to explore instead. When the plan is ready it calls `exit_plan_mode`. Larik prints the plan in the conversation and asks: **Yes, and accept edits**, **Yes, but ask before each edit**, or **No, keep planning**, which lets you say what to change. Approving switches the mode for this session only; your saved default stays as it is. In `larik -p` plan mode can't end, so the model gives the plan as its answer.
 
 Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
 
@@ -456,7 +456,7 @@ Loosening the sandbox (enabling network, allowing domains, adding writable paths
 ./larik serve --model ollama/qwen3-coder --mode accept-edits   # defaults for new sessions
 ```
 
-On startup the server prints one JSON line to stdout, `{"url": "...", "token": "..."}`, for programs that launch it.
+On startup the server prints one JSON line to stdout, `{"url": "...", "token": "..."}`, for programs that launch it. JSON request bodies must contain exactly one value; empty bodies are rejected.
 
 **Auth and safety:**
 
@@ -481,7 +481,7 @@ curl -s -XPOST $U/v1/sessions/$ID/prompt -H "Authorization: Bearer $T" \
 | `GET /v1/sessions`                                         | Sessions in this directory, with `loaded`/`busy` flags                                                                                                                    |
 | `POST /v1/sessions`                                        | New session `{model, effort, mode}`, or load one with `{resume: id}` / `{continue: true}`                                                                                 |
 | `GET /v1/sessions/{id}`                                    | Model, mode, busy, usage, pending permissions, running tasks                                                                                                              |
-| `PATCH /v1/sessions/{id}`                                  | Change `model`, `effort` or `mode`                                                                                                                                        |
+| `PATCH /v1/sessions/{id}`                                  | Change `model`, `effort` or `mode`; model/effort changes return 409 while running, but mode can change during a run |
 | `DELETE /v1/sessions/{id}`                                 | Stop and unload (the transcript stays on disk)                                                                                                                            |
 | `GET /v1/sessions/{id}/messages`                           | Full transcript (works for unloaded sessions too)                                                                                                                         |
 | `POST /v1/sessions/{id}/fork`                              | Branch into a new loaded session. `{at: i}` keeps the messages before index `i` (which must be a prompt) and returns that prompt's text; with no `at`, everything is kept |

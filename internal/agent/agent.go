@@ -253,8 +253,15 @@ func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRunti
 	defer a.mu.Unlock()
 	a.opts.Provider, a.opts.Model = p, model
 	if a.opts.ExecutionFor != nil && p != nil {
-		a.opts.Execution = a.opts.ExecutionFor(p.Name(), model)
-		a.nextExecution = nil
+		exec := a.opts.ExecutionFor(p.Name(), model)
+		if len(a.messages) == 0 {
+			a.opts.Execution = exec
+			a.nextExecution = nil
+		} else if exec == a.opts.Execution {
+			a.nextExecution = nil
+		} else {
+			a.nextExecution = &exec
+		}
 	}
 	a.opts.Runtime = nil
 	if len(runtime) > 0 {

@@ -44,8 +44,10 @@ func TestExitPlanModeApproved(t *testing.T) {
 	if len(asked) != 1 || asked[0].SuggestedRule != "" {
 		t.Fatalf("the plan should be put to the user once, with no rule to save: %+v", asked)
 	}
-	if !strings.Contains(fp.requests[0].Messages[0].Text(), "Plan mode is on") {
-		t.Error("the model should be told plan mode is on")
+	note := fp.requests[0].Messages[0].Text()
+	if !strings.Contains(note, "Plan mode is on") || !strings.Contains(note, "Bash is blocked") ||
+		!strings.Contains(note, "including graphify queries") || !strings.Contains(note, "do not retry") {
+		t.Errorf("the model should be told to use read-only tools, not bash: %q", note)
 	}
 	if got := a.Perms().Mode(); got != permission.ModeAcceptEdits {
 		t.Fatalf("mode after approval = %s", got)

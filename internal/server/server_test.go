@@ -223,6 +223,32 @@ func TestAuthAndHost(t *testing.T) {
 	}
 }
 
+func TestEmptyServerTokenIsNotAccepted(t *testing.T) {
+	s := New(nil, Options{})
+	req := httptest.NewRequest("GET", "http://localhost/v1/info", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("empty token: status %d, want 401", w.Code)
+	}
+}
+
+func TestJSONBodyRequiresExactlyOneValue(t *testing.T) {
+	h := newHarness(t)
+	for _, body := range []string{"", "{}{}", "{} trailing"} {
+		req, _ := http.NewRequest("POST", h.url+"/v1/sessions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("body %q: status %d, want 400", body, resp.StatusCode)
+		}
+	}
+}
+
 func TestPromptWait(t *testing.T) {
 	h := newHarness(t)
 	st := h.create(map[string]any{})
@@ -274,9 +300,16 @@ func TestPermissionOverSSE(t *testing.T) {
 		t.Fatalf("events: %v %+v", kinds(evs), perm)
 	}
 
-	// A second prompt while busy is refused.
+	// A second prompt or model change while busy is refused; mode changes
+	// remain available to resolve permission requests.
 	if code := h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "hello"}, nil); code != http.StatusConflict {
 		t.Errorf("busy prompt: %d", code)
+	}
+	if code := h.do("PATCH", "/v1/sessions/"+st.ID, map[string]any{"model": "other"}, nil); code != http.StatusConflict {
+		t.Errorf("busy model change: %d", code)
+	}
+	if code := h.do("PATCH", "/v1/sessions/"+st.ID, map[string]any{"mode": "accept-edits"}, nil); code != http.StatusOK {
+		t.Errorf("busy mode change: %d", code)
 	}
 	var pending struct{ Permissions []Event }
 	h.do("GET", "/v1/sessions/"+st.ID+"/permissions", nil, &pending)

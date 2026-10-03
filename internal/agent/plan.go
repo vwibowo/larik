@@ -57,9 +57,10 @@ func PlanOf(input json.RawMessage) string {
 // Notes that tell the model about plan mode, prepended to user messages
 // rather than the system prompt so the cached prefix stays the same.
 const (
-	planModeNote = "Plan mode is on: explore and plan with read-only tools, and don't change anything (edits and commands that " +
-		"modify state are denied). When the plan is ready, present it with exit_plan_mode for the user's approval; if the request " +
-		"is a question rather than a change, just answer it."
+	planModeNote = "Plan mode is on: explore and plan with read-only tools, and don't change anything. " +
+		"Bash is blocked even for commands that look read-only (including graphify queries); wrapping bash in run_code does not bypass this. " +
+		"Use read, grep, and glob instead, and do not retry a denied command. When the plan is ready, present it with " +
+		"exit_plan_mode for the user's approval; if the request is a question rather than a change, just answer it."
 	planEndedNote = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
 )
 

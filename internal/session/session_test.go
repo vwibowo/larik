@@ -255,6 +255,55 @@ func TestTornLastLineDoesNotEatNextEntry(t *testing.T) {
 	}
 }
 
+func TestMalformedCompleteLastLineIsRejected(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	f, err := os.OpenFile(s.Path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, "not JSON")
+	f.Close()
+	if _, err := Load(s.Path); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("complete malformed line: %v", err)
+	}
+}
+
+func TestMalformedMiddleLineIsNotSilentlySkipped(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AppendMessage(llm.UserText("first"), nil)
+	s.Close()
+	f, err := os.OpenFile(s.Path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, "not JSON")
+	entry := Entry{Type: EntryMessage, Message: ptrMessage(llm.UserText("second"))}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, string(data))
+	f.Close()
+	if _, err := Load(s.Path); err == nil || !strings.Contains(err.Error(), "line 3") {
+		t.Fatalf("load corrupted session: %v", err)
+	}
+	if _, _, err := Open(s.Path); err == nil {
+		t.Fatal("opened corrupted session for appending")
+	}
+	if _, _, err := Fork(t.TempDir(), s.Path, -1); err == nil {
+		t.Fatal("forked corrupted session")
+	}
+}
+
+func ptrMessage(m llm.Message) *llm.Message { return &m }
+
 func TestGeneratedMessagesAreNotPrompts(t *testing.T) {
 	msgs := []llm.Message{
 		text(llm.RoleUser, "fix the bug"),

@@ -110,7 +110,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		if got == "" && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events") {
 			got = r.URL.Query().Get("token") // EventSource can't set headers
 		}
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.Token)) != 1 {
+		if s.opts.Token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.Token)) != 1 {
 			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
 			return
 		}
@@ -419,6 +419,12 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, l *live) {
 			return
 		}
 	}
+	l.mu.Lock()
+	if l.closed || ((req.Model != nil || req.Effort != nil) && l.busy) {
+		l.mu.Unlock()
+		writeErr(w, http.StatusConflict, "cannot change model or effort while the session is running or closed")
+		return
+	}
 	if req.Model != nil {
 		l.a.SetModel(res.Provider, res.Model, res.Runtime)
 	}
@@ -428,6 +434,7 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, l *live) {
 	if req.Mode != nil {
 		l.a.Perms().SetMode(mode)
 	}
+	l.mu.Unlock()
 	writeJSON(w, http.StatusOK, s.describe(l))
 }
 
@@ -746,7 +753,15 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return false
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
 		writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}

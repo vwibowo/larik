@@ -28,7 +28,7 @@ classDiagram
     class Entry {
         ID string
         ParentID string
-        Type meta, message, compaction, usage
+        Type meta, message, compaction, usage, recovery
         Time
         Message *llm.Message
         Usage *llm.Usage
@@ -57,8 +57,9 @@ classDiagram
 | `message` | Every user or assistant message, with usage on assistant messages | Appended to both `Messages` (the context) and `All` (display history) |
 | `compaction` | After a successful compaction | `Messages` is reset to the single summary message, which names this file so the model can grep it; `All` keeps everything |
 | `usage` | Spend made on this session's behalf outside its transcript (subagents) | Added to usage and cost |
+| `recovery` | Resuming after a torn final line | Marks the preceding incomplete line as recoverable; has no effect on messages |
 
-Every entry has an `id` and the `parent_id` of the previous entry, so the file is also a linked list. `read` tolerates a torn last line after a crash.
+Every entry has an `id` and the `parent_id` of the previous entry, so the file is also a linked list. `read` tolerates a torn last line after a crash. Opening it for appending adds a `recovery` entry after the incomplete line; other malformed lines cause loading and forking to fail rather than silently dropping history.
 
 **Why append-only?** Three reasons: a crash can't corrupt earlier history; provider prompt caches and thinking-block rules depend on earlier messages never changing; and forking, resuming and inspecting the transcript all read the same simple file. Operations that feel like edits are expressed as new entries: compaction adds a summary, `/undo` adds a note to the next message, `/clear` just starts a fresh in-memory context while the file continues.
 

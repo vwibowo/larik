@@ -145,6 +145,26 @@ func TestExecutionChangeWaitsForClear(t *testing.T) {
 	}
 }
 
+func TestModelSwitchKeepsToolsUntilFreshContext(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(llm.TextBlock("first")), assistant(llm.TextBlock("second")), assistant(llm.TextBlock("third")))
+	a.opts.ExecutionFor = strongCode
+	drain(a.Run(context.Background(), "first"), PermissionReply{})
+	a.SetModel(fp, "strong")
+	if a.Execution() != tools.ExecTools {
+		t.Fatal("model switch changed tools mid-context")
+	}
+	drain(a.Run(context.Background(), "second"), PermissionReply{})
+	if len(fp.requests[0].Tools) != len(fp.requests[1].Tools) {
+		t.Fatal("tool specs changed mid-context")
+	}
+	a.Clear()
+	drain(a.Run(context.Background(), "third"), PermissionReply{})
+	if a.Execution() != tools.ExecCode || len(fp.requests[2].Tools) != 1 || fp.requests[2].Tools[0].Name != tools.CodeToolName {
+		t.Fatalf("fresh context tools = %+v", fp.requests[2].Tools)
+	}
+}
+
 func TestSubagentsInheritExecution(t *testing.T) {
 	parent := New(Options{Provider: &fakeProvider{}, Model: "m", Cwd: t.TempDir(), Tools: tools.Default(), Execution: tools.ExecHybrid})
 	child := parent.Spawn(SpawnOptions{Type: "worker", Provider: &fakeProvider{}, Model: "m", Tools: tools.Default()})

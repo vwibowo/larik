@@ -31,7 +31,8 @@ const (
 	EntryMeta       EntryType = "meta"
 	EntryMessage    EntryType = "message"
 	EntryCompaction EntryType = "compaction"
-	EntryUsage      EntryType = "usage" // spend not tied to a message, e.g. subagents
+	EntryUsage      EntryType = "usage"    // spend not tied to a message, e.g. subagents
+	EntryRecovery   EntryType = "recovery" // marks a torn line repaired on resume
 )
 
 type Entry struct {
@@ -60,11 +61,12 @@ type Session struct {
 	ID   string
 	Path string
 
-	mu  sync.Mutex
-	f   *os.File
-	tip string
-	seq int
-	buf bytes.Buffer // reused for each entry, written in one call
+	mu   sync.Mutex
+	f    *os.File
+	tip  string
+	seq  int
+	torn bool         // read saw an incomplete final line
+	buf  bytes.Buffer // reused for each entry, written in one call
 }
 
 // Dir returns a collision-resistant sessions directory for a working directory.
@@ -166,6 +168,12 @@ func Open(path string) (*Session, *State, error) {
 			return nil, nil, err
 		}
 	}
+	if s.torn {
+		if err := s.append(Entry{Type: EntryRecovery}); err != nil {
+			f.Close()
+			return nil, nil, err
+		}
+	}
 	return s, st, nil
 }
 
@@ -203,6 +211,49 @@ func Load(path string) (*State, error) {
 	return (&Session{Path: path}).read()
 }
 
+// scanEntries accepts a torn final line only until Open repairs it with a
+// recovery entry. An invalid line elsewhere is corruption, not a missing turn.
+func scanEntries(path string, r io.Reader, visit func(Entry)) (bool, error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 1024*1024), 256*1024*1024)
+	line, badLine := 0, 0
+	var badErr error
+	for sc.Scan() {
+		line++
+		var e Entry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			if badErr != nil {
+				return false, fmt.Errorf("session line %d: %w", badLine, badErr)
+			}
+			badLine, badErr = line, err
+			continue
+		}
+		if badErr != nil {
+			if e.Type != EntryRecovery {
+				return false, fmt.Errorf("session line %d: %w", badLine, badErr)
+			}
+			badErr = nil
+		} else if e.Type == EntryRecovery {
+			return false, fmt.Errorf("session line %d: unexpected recovery entry", line)
+		}
+		visit(e)
+	}
+	if err := sc.Err(); err != nil {
+		return false, err
+	}
+	if badErr != nil {
+		torn, err := endsTorn(path)
+		if err != nil {
+			return false, err
+		}
+		if !torn {
+			return false, fmt.Errorf("session line %d: %w", badLine, badErr)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func (s *Session) read() (*State, error) {
 	f, err := os.Open(s.Path)
 	if err != nil {
@@ -210,13 +261,7 @@ func (s *Session) read() (*State, error) {
 	}
 	defer f.Close()
 	st := &State{}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1024*1024), 256*1024*1024)
-	for sc.Scan() {
-		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
-			continue // tolerate a torn final line after a crash
-		}
+	torn, err := scanEntries(s.Path, f, func(e Entry) {
 		s.tip = e.ID
 		s.seq++
 		switch e.Type {
@@ -226,7 +271,7 @@ func (s *Session) read() (*State, error) {
 			}
 		case EntryMessage:
 			if e.Message == nil {
-				continue
+				return
 			}
 			st.Messages = llm.Append(st.Messages, *e.Message)
 			st.All = append(st.All, *e.Message)
@@ -240,10 +285,11 @@ func (s *Session) read() (*State, error) {
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}
 		}
-	}
-	if err := sc.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
+	s.torn = torn
 	return st, nil
 }
 
@@ -441,13 +487,7 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 		entries []Entry
 		msgs    []llm.Message
 	)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1024*1024), 256*1024*1024)
-	for sc.Scan() {
-		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) != nil {
-			continue
-		}
+	_, err = scanEntries(src, f, func(e Entry) {
 		switch e.Type {
 		case EntryMeta:
 			if e.Meta != nil {
@@ -461,8 +501,8 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 		case EntryCompaction:
 			entries = append(entries, e)
 		}
-	}
-	if err := sc.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, nil, err
 	}
 	if keep < 0 {
