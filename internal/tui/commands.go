@@ -162,7 +162,8 @@ func (m *model) command(line string) tea.Cmd {
 		m.stats = m.agent.Stats()
 		m.todos = nil // the model no longer sees it
 		m.todoCompletionPrinted = false
-		return info("context cleared")
+		m.resetConversation() // what is on screen matches what the model sees
+		return m.println(m.st.dim.Render("── context cleared ──"))
 
 	case "/init":
 		if !m.idle() {

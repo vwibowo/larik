@@ -46,6 +46,7 @@ func (m *model) rewrapConversationWidth(width int) {
 func (m *model) resetConversation() {
 	m.outputs, m.outputBytes, m.convLines = nil, 0, nil
 	m.setConversation()
+	m.view.GotoTop() // a scrolled-up viewport would sit past the empty content
 }
 
 func (m *model) setConversation() {

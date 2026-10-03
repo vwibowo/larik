@@ -39,6 +39,25 @@ func TestConversationDropsOldestPastCap(t *testing.T) {
 	}
 }
 
+func TestClearResetsTheTranscriptView(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	m.height = 24
+	m.Update(outputMsg("an old reply"))
+	divider := printed(m.command("/clear"))
+	if m.outputs != nil || m.outputBytes != 0 || m.convLines != nil {
+		t.Fatalf("/clear should drop the printed conversation: %d outputs, %d bytes, %d lines", len(m.outputs), m.outputBytes, len(m.convLines))
+	}
+	m.Update(outputMsg(divider))
+	view := plain(m.View().Content)
+	if strings.Contains(view, "an old reply") {
+		t.Fatalf("the old transcript should be gone after /clear:\n%s", view)
+	}
+	if !strings.Contains(view, "context cleared") {
+		t.Fatalf("/clear should print its divider:\n%s", view)
+	}
+}
+
 func TestPermissionPromptKeepsConversationVisible(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(80)

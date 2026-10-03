@@ -27,7 +27,7 @@ var commands = []command{
 	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
 	{"/routing", "[role=provider/model]", "cheaper models for subagents: roles, fallbacks and a session budget", "model and mode", ""},
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
-	{"/clear", "", "start a fresh context (history stays in the session file)", "conversation", ""},
+	{"/clear", "", "fresh context, clears the view (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
 	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it", "conversation", ""},
 	{"/todos", "", "the model's task list for this work", "conversation", ""},
