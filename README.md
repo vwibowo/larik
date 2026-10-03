@@ -186,7 +186,7 @@ Teal is kept for Larik's own chrome: the model marker, the spinner, headings and
 
 ### Status line
 
-`status_line` replaces the footer's model, context and cost with a command's output. The permission mode stays on the left:
+`status_line` adds a command's output to the left side of the footer while keeping Larik's model, context, cost and other safety information on the right. The permission mode stays at the start:
 
 ```json
 { "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
@@ -196,9 +196,11 @@ The command gets the session's state as JSON on stdin, in the form Claude Code g
 
 ```sh
 #!/bin/sh
-in=$(cat)
-branch=$(git branch --show-current 2>/dev/null)
-echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq -r .context_window.used_percentage)% ctx"
+cat >/dev/null # consume the session JSON
+git_status=$(git status --short 2>/dev/null | paste -sd ' ' -)
+[ -n "$git_status" ] || git_status=clean
+commit=$(git log -1 --format=%s 2>/dev/null || echo 'no commit')
+printf 'git: %.100s\nHEAD: %.100s\n' "$git_status" "$commit"
 ```
 
 ### Custom sidebar
@@ -215,7 +217,7 @@ The right-hand `/info` sidebar can show your own live information below Larik's 
 }
 ```
 
-For example, a script can show Git changes and a small activity animation:
+For example, show the current activity and the changed paths in the sidebar (the footer example above shows a compact Git summary and the HEAD commit subject):
 
 ```sh
 #!/bin/sh
@@ -226,11 +228,16 @@ case "$activity" in
   thinking) frame='◓' ;;
   *) frame='○' ;;
 esac
-changes=$(git status --short 2>/dev/null | wc -l | tr -d ' ')
-printf '%s %s\nGit changes: %s\n' "$frame" "$activity" "${changes:-0}"
+printf '%s Activity: %s\n' "$frame" "$activity"
+changes=$(git status --short 2>/dev/null)
+if [ -n "$changes" ]; then
+  printf 'Git status\n%s\n' "$changes"
+else
+  printf 'Git status: clean\n'
+fi
 ```
 
-`refresh_interval_ms` may be set from 300 to 60000; the default is 1000. Both custom commands are executed only from personal config, never from shared project settings. The footer is already customizable with [`status_line`](#status-line), so you can put Git state there instead if you prefer the bottom row.
+`refresh_interval_ms` may be set from 300 to 60000; the default is 1000. Both custom commands are executed only from personal config, never from shared project settings. The footer command adds Git state to the left while Larik keeps its built-in session information on the right.
 
 ### Composer
 

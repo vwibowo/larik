@@ -12,14 +12,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-
 	"larik/internal/procgroup"
 )
 
-// The status_line setting: a command whose output replaces the footer's
-// model, context and cost. It runs again whenever what it's given
-// changes, at most every statusMinGap, one run at a time.
+// The status_line setting: a command whose output is shown on the left side
+// of the footer. It runs again whenever what it's given changes, at most every
+// statusMinGap, one run at a time.
 
 const (
 	statusMinGap    = 300 * time.Millisecond
@@ -280,17 +278,4 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		_, _ = b.Buffer.Write(p)
 	}
 	return n, nil
-}
-
-// customStatus is the footer with the command's output: the mode chip,
-// which is always shown, then its first line; further lines below.
-func (m *model) customStatus(modeChip string) string {
-	lines := make([]string, len(m.status.lines))
-	for i, l := range m.status.lines {
-		if i == 0 {
-			l = modeChip + " " + l
-		}
-		lines[i] = ansi.Truncate(l, max(m.width, 1), "…")
-	}
-	return strings.Join(lines, "\n")
 }

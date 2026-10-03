@@ -49,6 +49,11 @@ func TestStatusLineCommand(t *testing.T) {
 	if len(lines) != 2 || !strings.Contains(lines[0], "main · ok") || lines[1] != "second line" {
 		t.Fatalf("footer = %q", lines)
 	}
+	for _, want := range []string{"◆ m", "ollama"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("custom footer should keep built-in right-side information %q: %q", want, lines[0])
+		}
+	}
 	if !strings.Contains(lines[0], modeLabels[m.agent.Perms().Mode()]) {
 		t.Errorf("the mode chip must stay: %q", lines[0])
 	}

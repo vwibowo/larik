@@ -384,7 +384,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 	}
 	sections = append(sections, sec)
 	if m.sidebarStatus != nil && len(m.sidebarStatus.lines) > 0 {
-		custom := []string{head("Custom", "")}
+		custom := []string{}
 		for _, line := range m.sidebarStatus.lines {
 			custom = append(custom, fit(line))
 		}
@@ -1076,8 +1076,9 @@ func (m *model) statusLine() string {
 	if m.sess != nil && m.sess.Trace() != nil {
 		modeChip += " " + m.st.err.Render("● rec")
 	}
+	var customLines []string
 	if m.status != nil && len(m.status.lines) > 0 && !m.quitArmed {
-		return m.customStatus(modeChip)
+		customLines = m.status.lines
 	}
 
 	model := m.st.accent.Render("◆ ") + m.st.user.Render(m.agent.Model())
@@ -1130,7 +1131,9 @@ func (m *model) statusLine() string {
 	sep := m.st.dim.Render(" · ")
 	build := func(hint, withProvider, withBar, withTokens, withSandbox bool) string {
 		left := modeChip
-		if k := m.keys.hint(actCycleMode); hint && k != "" {
+		if len(customLines) > 0 {
+			left += " " + customLines[0]
+		} else if k := m.keys.hint(actCycleMode); hint && k != "" {
 			left += m.st.dim.Render(" " + k)
 		}
 		parts := []string{model}
@@ -1158,7 +1161,13 @@ func (m *model) statusLine() string {
 		if gap < 2 {
 			return ""
 		}
-		return left + strings.Repeat(" ", gap) + right
+		line := left + strings.Repeat(" ", gap) + right
+		if len(customLines) > 1 {
+			for _, extra := range customLines[1:] {
+				line += "\n" + ansi.Truncate(extra, max(m.width, 1), "…")
+			}
+		}
+		return line
 	}
 	// Hints go first when the terminal is narrow, then the token counts, the
 	// bar, the provider and finally the sandbox state.
@@ -1173,6 +1182,11 @@ func (m *model) statusLine() string {
 		if line := build(v[0], v[1], v[2], v[3], v[4]); line != "" {
 			return line
 		}
+	}
+	if len(customLines) > 0 {
+		// Keep Larik's right-hand status visible even when the custom first line
+		// is too wide for the narrowest built-in layout.
+		return modeChip + "\n" + ansi.Truncate(customLines[0], max(m.width, 1), "…") + "\n" + model + provider
 	}
 	return modeChip + "\n" + model + provider
 }
