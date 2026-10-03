@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestMarkdownHasNoBlankLinesAroundHeadingsAndCode(t *testing.T) {
+func TestMarkdownSeparatesHeadingsAndCodeForReadability(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(80)
 	md := "Intro text.\n\n## 8. Switch\n\n```go\npackage main\n\nfunc main() {}\n```\n\nAfter the code.\n\nSecond paragraph."
@@ -15,12 +15,15 @@ func TestMarkdownHasNoBlankLinesAroundHeadingsAndCode(t *testing.T) {
 	}
 	want := []string{
 		"Intro text.",
+		"", // separate prose from the section heading
 		"## 8. Switch",
+		"", // separate headings from code
 		"package main",
 		"", // blank lines inside code stay
 		"func main() {}",
+		"", // separate code from following prose
 		"After the code.",
-		"",
+		"", // prose paragraph spacing is preserved
 		"Second paragraph.",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

@@ -1192,23 +1192,29 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 	return strings.Join(out, "\n")
 }
 
-// renderMarkdown renders headings, code blocks and prose apart and joins
-// them without glamour's blank lines; only blank lines between prose
-// paragraphs remain.
+// renderMarkdown renders headings, code blocks and prose apart. It keeps
+// prose compact while giving headings and code blocks a blank line of
+// breathing room between surrounding content.
 func (m *model) renderMarkdown(s string) string {
 	if m.md == nil {
 		return s
 	}
 	var b strings.Builder
+	var previous int
 	for i, seg := range splitMarkdown(s) {
 		r, err := m.md.Render(seg.text)
 		if err != nil {
 			return s
 		}
 		if i > 0 {
-			b.WriteString("\n")
+			if previous != mdProse || seg.kind != mdProse {
+				b.WriteString("\n\n")
+			} else {
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString(trimBlankLines(r))
+		previous = seg.kind
 	}
 	return b.String()
 }
