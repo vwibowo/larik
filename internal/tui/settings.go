@@ -111,12 +111,21 @@ var settingSpecs = []settingSpec{
 			m.previewTheme(v)
 		},
 	},
-	toggle("verbose", "Verbose output", "appearance",
-		(*config.Config).VerboseOn,
-		func(m *model, on bool) {
-			m.opts.Config.Verbose = &on
-			m.verbose, m.showThinking = on, on
-		}),
+	{
+		key: "appearance", title: "Message appearance", section: "appearance", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "compact", label: "Compact", desc: "group successful tool activity into a summary after each reply"},
+			{value: "default", label: "Default", desc: "show tool activity as it happens"},
+			{value: "verbose", label: "Verbose", desc: "show expanded tool output and thinking"},
+		},
+		get: func(m *model) string { return m.appearance }, store: orEmpty("default"),
+		set: func(m *model, v string) {
+			m.opts.Config.Appearance = v
+			m.appearance = v
+			m.verbose = v == "verbose"
+			m.showThinking = m.verbose
+		},
+	},
 	toggle("spinner_tips", "Spinner tips", "appearance",
 		(*config.Config).TipsOn,
 		func(m *model, on bool) {

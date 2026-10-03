@@ -537,7 +537,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
   "effort": "high",
   "mode": "default",
   "theme": "auto",
-  "verbose": false,
+  "appearance": "default",
   "spinner_tips": true,
   "auto_compact": true,
   "notifications": "off",
@@ -568,7 +568,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 Personal settings, all editable from `/config` (which changes only the key you edit):
 
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`. Both themes use a teal accent and leave the background transparent, so your terminal's own background shows through; only diff lines keep a faint green or red tint.
-- `verbose`: show tool output (up to 40 lines) and thinking in full. `ctrl+o` still toggles thinking.
+- `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
 - `debug` and `debug_retention_days` (not in `/config`): see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).

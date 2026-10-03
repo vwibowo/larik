@@ -1111,6 +1111,29 @@ func (m *model) renderMarkdown(s string) string {
 	return b.String()
 }
 
+func (m *model) compactToolSummary() string {
+	if len(m.compactTools) == 0 {
+		return ""
+	}
+	counts := make(map[string]int)
+	var order []string
+	for _, e := range m.compactTools {
+		name := e.ToolName
+		if name == "multi_edit" {
+			name = "edit"
+		}
+		if _, ok := counts[name]; !ok {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[name], plural(counts[name], name+" call")))
+	}
+	return m.st.dim.Render("✓ Finished · " + plural(len(m.compactTools), "tool") + " used: " + strings.Join(parts, ", "))
+}
+
 func (m *model) renderToolCard(e agent.Event) string {
 	bullet := m.st.ok.Render("●")
 	if e.IsError {

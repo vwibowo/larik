@@ -85,7 +85,9 @@ type Config struct {
 	AutoCompact *bool `json:"auto_compact,omitempty"`
 	// TokenSaver filters recognized bash output before it enters model context.
 	TokenSaver *bool `json:"token_saver,omitempty"`
-	// Verbose shows tool output and thinking in full in the TUI.
+	// Appearance controls how much tool activity the TUI displays.
+	Appearance string `json:"appearance,omitempty"`
+	// Verbose is the legacy switch for full tool output and thinking.
 	Verbose *bool `json:"verbose,omitempty"`
 	// Notifications alerts an unfocused terminal when larik needs you:
 	// "off" (the default), "bell" or "desktop".
@@ -461,6 +463,13 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if o.Language != "" {
 		c.Language = o.Language
+	}
+	if o.Appearance != "" {
+		if o.Appearance == "compact" || o.Appearance == "default" || o.Appearance == "verbose" {
+			c.Appearance = o.Appearance
+		} else if trusted {
+			return fmt.Errorf("%s: appearance must be compact, default, or verbose", path)
+		}
 	}
 	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
 		if *b.src != nil {

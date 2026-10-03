@@ -168,12 +168,14 @@ type model struct {
 	settings     *settingsPanel  // the /config screen, when open
 
 	// Settings from /config.
-	verbose bool   // tool output in full
-	tips    bool   // a tip under the spinner
-	mouse   bool   // wheel scrolling; off leaves text selection to the terminal
-	tip     string // the tip for the running turn
-	notify  string // off, bell or desktop
-	focused bool   // terminal has focus; notifications only go out without it
+	verbose      bool   // tool output in full
+	appearance   string // compact, default, or verbose
+	compactTools []agent.Event
+	tips         bool   // a tip under the spinner
+	mouse        bool   // wheel scrolling; off leaves text selection to the terminal
+	tip          string // the tip for the running turn
+	notify       string // off, bell or desktop
+	focused      bool   // terminal has focus; notifications only go out without it
 	// focusKnown is set once the terminal reports focus at all; until
 	// then (or never, in terminals without focus events) alerts go out.
 	focusKnown bool
@@ -257,7 +259,16 @@ func newModel(opts Options) *model {
 	}
 	var bindings map[string]config.KeyList
 	if c := opts.Config; c != nil {
-		m.verbose, m.tips, m.notify, m.mouse = c.VerboseOn(), c.TipsOn(), c.Notifications, c.MouseOn()
+		m.appearance = c.Appearance
+		if m.appearance == "" {
+			if c.VerboseOn() {
+				m.appearance = "verbose"
+			} else {
+				m.appearance = "default"
+			}
+		}
+		m.verbose = m.appearance == "verbose"
+		m.tips, m.notify, m.mouse = c.TipsOn(), c.Notifications, c.MouseOn()
 		if m.notify == "" {
 			m.notify = "off"
 		}
@@ -452,6 +463,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if time.Since(m.turnStart) >= longTurn {
 			alert = m.alert("finished")
 		}
+		m.compactTools = nil
 		m.running, m.cancel, m.events = false, nil, nil
 		m.dropForegroundPerms()
 		m.resetStream()
@@ -921,6 +933,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		// The card names the model the task ran on, so it is rendered before
 		// that is forgotten.
 		card := m.renderToolCard(e)
+		if m.appearance == "compact" && !e.IsError && e.ToolName != permission.ExitPlanTool {
+			m.compactTools = append(m.compactTools, e)
+		}
 		if e.Agent != "" {
 			if m.taskCalls == nil {
 				m.taskCalls = make(map[string]int)
@@ -935,7 +950,10 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 				break
 			}
 		}
-		return m.println(card)
+		if m.appearance != "compact" || e.IsError || e.ToolName == permission.ExitPlanTool {
+			return m.println(card)
+		}
+		return nil
 	case agent.EvPermission:
 		// A plan goes into the conversation, where it can be scrolled and
 		// stays for reference; the prompt only asks about it.
@@ -973,6 +991,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvError:
 		return m.println(m.st.err.Render("✗ " + e.Text))
 	case agent.EvDone:
+		if e.StopReason != "interrupted" && m.appearance == "compact" && len(m.compactTools) > 0 {
+			return m.println(m.compactToolSummary())
+		}
 		if e.StopReason == "interrupted" {
 			var cmds []tea.Cmd
 			if partial := strings.TrimSpace(m.stream.String()); partial != "" {

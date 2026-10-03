@@ -102,13 +102,16 @@ func TestConfigPanelPreviewsAndSaves(t *testing.T) {
 func TestConfigPanelToggleAndText(t *testing.T) {
 	m := testModel(t)
 	m.command("/config")
-	selectSetting(t, m, "verbose")
-	m.Update(press(tea.KeySpace))
-	if !m.verbose || !m.showThinking || m.settings.values != nil {
-		t.Fatal("space on a toggle should flip it at once")
+	selectSetting(t, m, "appearance")
+	m.Update(press(tea.KeyEnter))
+	m.Update(press(tea.KeyDown))
+	m.Update(press(tea.KeyDown))
+	m.Update(press(tea.KeyEnter))
+	if !m.verbose || !m.showThinking || m.opts.Config.Appearance != "verbose" {
+		t.Fatal("verbose appearance should apply")
 	}
-	if !strings.Contains(savedConfig(t, m), `"verbose": true`) {
-		t.Fatalf("verbose should be saved: %s", savedConfig(t, m))
+	if !strings.Contains(savedConfig(t, m), `"appearance": "verbose"`) {
+		t.Fatalf("appearance should be saved: %s", savedConfig(t, m))
 	}
 
 	selectSetting(t, m, "language")
@@ -178,6 +181,18 @@ func TestUndoHistorySetting(t *testing.T) {
 	m.command("/config checkpoint_retention_days=7")
 	if strings.Contains(savedConfig(t, m), "checkpoint_retention_days") {
 		t.Fatal("the default should remove the key")
+	}
+}
+
+func TestAppearanceCompactGroupsTools(t *testing.T) {
+	m := testModel(t)
+	m.appearance = "compact"
+	e := agent.Event{Kind: agent.EvToolEnd, ToolID: "1", ToolName: "read", Input: []byte("{}"), Output: "a\nb"}
+	if cmd := m.handleEvent(e); cmd != nil {
+		t.Fatal("successful tool cards should be deferred in compact mode")
+	}
+	if !strings.Contains(plain(m.compactToolSummary()), "Finished") || !strings.Contains(plain(m.compactToolSummary()), "read call") {
+		t.Fatalf("summary = %v", m.outputs)
 	}
 }
 

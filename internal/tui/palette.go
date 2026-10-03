@@ -48,7 +48,7 @@ var commands = []command{
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
-	{"/config", "[key=value]", "settings: theme, verbose, tips, mouse, auto-compact, notifications, language, undo history, defaults", "other", ""},
+	{"/config", "[key=value]", "settings: theme, appearance, tips, mouse, auto-compact, notifications, language, undo history, defaults", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
 	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},
 	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},
