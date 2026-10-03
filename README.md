@@ -84,6 +84,28 @@ A larger window uses more memory for the model's KV cache. To change it, set `co
 
 Larik reads back the window Ollama actually loaded, uses it for the context percentage and compaction, and warns when a request fills it. It also warns if the chosen model can't call tools. Small models such as `qwen3:4b` handle simple read/edit/test loops but can be unreliable with delegation.
 
+### Local speech (STT and TTS)
+
+Larik can use any local server that implements the OpenAI audio API. Speech-to-text uses `POST /v1/audio/transcriptions`; text-to-speech uses `POST /v1/audio/speech`. Qwen3-ASR provides STT. TTS needs a separate TTS model such as Qwen3-TTS. The models and server are independent from Larik's chat model.
+
+Audio is disabled by default and is configured in your personal `~/.config/larik/config.json`:
+
+```json
+{
+  "audio": {
+    "enabled": true,
+    "stt": { "base_url": "http://127.0.0.1:8000/v1", "model": "Qwen3-ASR-1.7B", "language": "id" },
+    "tts": { "base_url": "http://127.0.0.1:8001/v1", "model": "Qwen3-TTS-0.6B", "voice": "default" },
+    "auto_speak": false
+  },
+  "keybindings": { "record_audio": "ctrl+space" }
+}
+```
+
+Press `ctrl+space` to start/stop recording. The TUI shows an animated microphone indicator while recording and keeps the stop hint visible. The transcript is inserted into the composer for review. Set the optional STT `language` to an ISO-639-1 code such as `id` to guide language detection and transcription; compatible servers that return a JSON transcription object are normalized to its `text` field. Use `/stt-language id` or `/stt-language en` to switch between Indonesian and English; `/stt-language` shows the current setting. Use `/speak` to synthesize the latest assistant reply, or `/speak some text` for explicit text. Set `auto_speak` to `true` to play every completed top-level reply. Recording uses `ffmpeg` by default (macOS uses AVFoundation; Linux uses PulseAudio), and playback uses `afplay` on macOS or `ffplay` on Linux. Set `record_command` or `play_command` when your platform uses different commands; Larik appends the temporary WAV path as the final shell argument.
+
+Only personal settings can enable audio because it accesses the microphone, launches local processes, and sends recordings to the configured endpoint. A shared project settings file may disable it but cannot enable or configure it.
+
 ### Mixing cheap and strong models
 
 An agent spends most of its tokens reading: searching files, re-reading context, running routine edits. Those don't need your best model. Larik lets the main agent plan and review on a strong model while subagents do the volume work on cheap ones, across providers.
@@ -164,7 +186,7 @@ Normal mode supports:
 }
 ```
 
-Actions and their defaults: `submit` (enter), `newline` (shift+enter, alt+enter, ctrl+j), `interrupt` (esc), `quit` (ctrl+d on an empty input), `history_search` (ctrl+r), `external_editor` (ctrl+g), `paste_image` (ctrl+v), `cycle_mode` (shift+tab), `toggle_thinking` (ctrl+o), `model_picker` (alt+p), `shortcuts` (?), `scroll_up` (pgup), `scroll_down` (pgdown), `scroll_top` (ctrl+home), `scroll_bottom` (ctrl+end). Keys are written as Bubble Tea names them: `ctrl+`, `alt+`, `shift+` and `super+` in front of a character or `enter`, `tab`, `esc`, `space`, `up`, `pgup`, `f5` and so on. A key you give one action is taken from whichever action had it by default. `ctrl+c` can't be rebound, and a plain character can't be bound (it would stop you typing it) except to `shortcuts`. Keys inside pickers and permission prompts stay as they are. The banner lists entries that couldn't apply, and `?` and the hints across the interface show the keys as bound. Shared `.larik/settings.json` files can't rebind keys.
+Actions and their defaults: `submit` (enter), `newline` (shift+enter, alt+enter, ctrl+j), `interrupt` (esc), `quit` (ctrl+d on an empty input), `history_search` (ctrl+r), `external_editor` (ctrl+g), `paste_image` (ctrl+v), `record_audio` (ctrl+space), `cycle_mode` (shift+tab), `toggle_thinking` (ctrl+o), `model_picker` (alt+p), `shortcuts` (?), `scroll_up` (pgup), `scroll_down` (pgdown), `scroll_top` (ctrl+home), `scroll_bottom` (ctrl+end). Keys are written as Bubble Tea names them: `ctrl+`, `alt+`, `shift+` and `super+` in front of a character or `enter`, `tab`, `esc`, `space`, `up`, `pgup`, `f5` and so on. A key you give one action is taken from whichever action had it by default. `ctrl+c` can't be rebound, and a plain character can't be bound (it would stop you typing it) except to `shortcuts`. Keys inside pickers and permission prompts stay as they are. The banner lists entries that couldn't apply, and `?` and the hints across the interface show the keys as bound. Shared `.larik/settings.json` files can't rebind keys.
 
 ### Footer colors
 
@@ -966,6 +988,7 @@ internal/lsp        language server client, edit diagnostics, lsp tool
 internal/sandbox    Seatbelt / bubblewrap confinement for bash
 internal/web        web_fetch (HTML to Markdown) and web_search backends
 internal/browsercdp browser_* tools driving Chrome over the DevTools Protocol
+internal/audio       OpenAI-compatible local STT/TTS HTTP client and OS audio commands
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"larik/internal/agent"
+	"larik/internal/audio"
 	"larik/internal/browsercdp"
 	"larik/internal/checkpoint"
 	"larik/internal/config"
@@ -45,6 +46,8 @@ type App struct {
 	Memory *memory.Store
 	// Browser drives Chrome for the browser_* tools; nil unless enabled.
 	Browser *browsercdp.Session
+	// Audio is the optional local STT/TTS service used by interactive front ends.
+	Audio audio.Service
 
 	// Debug traces every session opened (debug setting, --debug or
 	// LARIK_DEBUG); /debug turns it on or off for one session.
@@ -98,6 +101,9 @@ func Setup(cwd, version string) (*App, error) {
 	if cfg.MemoryOn() {
 		a.Memory = memory.New(memory.Dir(cfg.DataDir, projectRoot), memory.UserDir(cfg.DataDir))
 		baseTools = append(baseTools, memory.Tool{S: a.Memory})
+	}
+	if cfg.Audio.Enabled {
+		a.Audio = audio.New(cfg.Audio)
 	}
 	if cfg.Browser.Enabled {
 		browserOpts := browsercdp.Options{

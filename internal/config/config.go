@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"larik/internal/audio"
 	"larik/internal/filelock"
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -159,6 +160,10 @@ type Config struct {
 	// Browser configures the browser_* tools. It launches a program, so
 	// only personal files may enable it; shared files may only disable it.
 	Browser BrowserConfig `json:"browser,omitempty"`
+	// Audio configures local microphone recording, OpenAI-compatible STT/TTS
+	// endpoints and local playback. It is personal-only because it launches
+	// processes and sends microphone data to a configured server.
+	Audio audio.Config `json:"audio,omitempty"`
 
 	// Sandbox configures the OS sandbox for bash. Shared project files may
 	// only tighten it (enable it); loosening needs a personal file.
@@ -359,6 +364,14 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.AutoMode.Model != "" {
 		c.AutoMode.Model = o.AutoMode.Model
+	}
+	var rawSections map[string]json.RawMessage
+	_ = json.Unmarshal(data, &rawSections)
+	if _, present := rawSections["audio"]; trusted && present {
+		c.Audio = o.Audio
+	} else if !trusted && present && !o.Audio.Enabled {
+		// Shared settings may disable audio, but may not enable or configure it.
+		c.Audio = audio.Config{}
 	}
 	if b := browserSection(data); b != nil {
 		if trusted {
@@ -800,6 +813,55 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 				raw[key] = value
 			}
 		}
+	})
+}
+
+// SetAudioSetting updates one personal audio setting without replacing the
+// other endpoint settings.
+func (c *Config) SetAudioSetting(key string, value any) error {
+	err := updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
+		a, _ := raw["audio"].(map[string]any)
+		if a == nil {
+			a = map[string]any{}
+		}
+		if value == nil || value == "" {
+			delete(a, key)
+		} else {
+			a[key] = value
+		}
+		if len(a) == 0 {
+			delete(raw, "audio")
+		} else {
+			raw["audio"] = a
+		}
+	})
+	if err == nil && key == "auto_speak" {
+		if v, ok := value.(bool); ok {
+			c.Audio.AutoSpeak = v
+		}
+	}
+	return err
+}
+
+// SetSTTLanguage updates the personal STT language without replacing the
+// other audio settings.
+func (c *Config) SetSTTLanguage(language string) error {
+	return updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
+		a, _ := raw["audio"].(map[string]any)
+		if a == nil {
+			a = map[string]any{}
+		}
+		stt, _ := a["stt"].(map[string]any)
+		if stt == nil {
+			stt = map[string]any{}
+		}
+		if language == "" {
+			delete(stt, "language")
+		} else {
+			stt["language"] = language
+		}
+		a["stt"] = stt
+		raw["audio"] = a
 	})
 }
 

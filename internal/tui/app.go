@@ -20,6 +20,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/app"
+	"larik/internal/audio"
 	"larik/internal/config"
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -56,6 +57,7 @@ type Options struct {
 	SandboxNote   string           // why there is no sandbox, if any
 	SearchNote    string           // why web_search is unavailable, if configured but broken
 	BrowserNote   string           // why browser tools are unavailable, if enabled but Chrome cannot launch
+	Audio         audio.Service
 }
 
 func Run(opts Options) error {
@@ -64,6 +66,12 @@ func Run(opts Options) error {
 	}
 	m := newModel(opts)
 	_, err := tea.NewProgram(m).Run()
+	if m.recording != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _ = m.recording.Stop(ctx)
+		cancel()
+		m.recording = nil
+	}
 	if m.traceView != nil {
 		m.traceView.Close()
 	}
@@ -213,6 +221,7 @@ type model struct {
 	// compactCancel is set while /compact runs. Compaction replaces the
 	// context when it finishes, so nothing else may use the agent then.
 	compactCancel context.CancelFunc
+	recording     audio.Recording
 }
 
 // Messages.
@@ -471,7 +480,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if !m.running && m.busyLabel == "" && m.agent.RunningBackground() == 0 {
+		if !m.running && m.recording == nil && m.busyLabel == "" && m.agent.RunningBackground() == 0 {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -522,6 +531,32 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-arm the listener concurrently: it blocks until the next
 		// background event, so it must not sit in the sequence.
 		return m, tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
+
+	case recordingStartedMsg:
+		m.busyLabel = ""
+		if msg.err != nil {
+			return m, m.println(m.st.err.Render("recording: " + msg.err.Error()))
+		}
+		m.recording = msg.recording
+		return m, tea.Batch(m.println(m.st.dim.Render("🎙 Recording… press "+m.keyHint(actRecord, "again")+" to transcribe")), m.spin.Tick)
+
+	case transcriptionDoneMsg:
+		m.busyLabel = ""
+		if msg.err != nil {
+			return m, m.println(m.st.err.Render("transcription: " + msg.err.Error()))
+		}
+		if strings.TrimSpace(msg.text) != "" {
+			m.input.SetValue(strings.TrimSpace(m.input.Value() + " " + strings.TrimSpace(msg.text)))
+			return m, m.syncComposer()
+		}
+		return m, m.println(m.st.warn.Render("transcription returned no text"))
+
+	case speechDoneMsg:
+		m.busyLabel = ""
+		if msg.err != nil {
+			return m, m.println(m.st.err.Render("speech: " + msg.err.Error()))
+		}
+		return m, m.println(m.st.dim.Render("✓ Finished speaking"))
 
 	case compactedMsg:
 		if m.compactCancel != nil {
@@ -776,6 +811,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.openEditor()
 	case actPasteImage:
 		return m, m.pasteImage()
+	case actRecord:
+		return m, m.toggleRecording()
 	case actCycleMode:
 		return m, m.cycleMode()
 	case actToggleThinking:
@@ -947,7 +984,11 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		if out == "" {
 			return nil
 		}
-		return m.println(out)
+		shown := m.println(out)
+		if e.Agent == "" && m.opts.Config != nil && m.opts.Config.Audio.AutoSpeak {
+			return tea.Batch(shown, m.speak(m.lastReply))
+		}
+		return shown
 	case agent.EvToolStart:
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:

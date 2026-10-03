@@ -9,8 +9,9 @@ Dependencies point one way: from the entry point, through `app`, into `agent`, a
 ```mermaid
 flowchart TD
     main["cmd/larik"] --> tui & headless & server & app & trace
-    tui["tui"] --> app & agent & trace & clipboard
+    tui["tui"] --> app & agent & trace & clipboard & audio
     headless["headless"] --> agent
+    audio["audio"] --> config-independent local HTTP + OS audio commands
     server["server"] --> app & agent
     app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks & trace
     subagent["subagent"] --> agent & worktree

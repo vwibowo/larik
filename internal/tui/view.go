@@ -79,7 +79,7 @@ func (m *model) View() tea.View {
 	// The live view sits below the conversation. When the sidebar is visible,
 	// both share its stable-height column layout.
 	var live []string
-	if m.running || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
+	if m.running || m.recording != nil || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
 		if s := m.liveView(conversationWidth); s != "" {
 			live = strings.Split(s, "\n")
 		}
@@ -635,6 +635,9 @@ func (m *model) liveView(widths ...int) string {
 		width = widths[0]
 	}
 	var b []string
+	if m.recording != nil {
+		b = append(b, m.st.accent.Render(m.spin.View()+" 🎙 Recording…")+m.st.dim.Render(" · "+m.keyHint(actRecord, "to transcribe")))
+	}
 	thinkingNow := m.thinking.Len() > 0 && m.stream.Len() == 0 && m.calling == ""
 	if thinkingNow && m.showThinking {
 		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), width-4), 8)))
@@ -663,6 +666,8 @@ func (m *model) liveView(widths ...int) string {
 	switch {
 	case m.perm != nil:
 		label = "Waiting for your answer…"
+	case m.busyLabel == "Transcribing…":
+		label = "⏳ Transcribing…"
 	case m.busyLabel != "":
 		label = m.busyLabel
 	case !m.running && len(tasks) > 0:

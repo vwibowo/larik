@@ -23,6 +23,7 @@ const (
 	actHistorySearch  = "history_search"
 	actExternalEditor = "external_editor"
 	actPasteImage     = "paste_image"
+	actRecord         = "record_audio"
 	actCycleMode      = "cycle_mode"
 	actToggleThinking = "toggle_thinking"
 	actModelPicker    = "model_picker"
@@ -46,6 +47,7 @@ var defaultKeys = []struct {
 	{actHistorySearch, []string{"ctrl+r"}},
 	{actExternalEditor, []string{"ctrl+g"}},
 	{actPasteImage, []string{"ctrl+v"}},
+	{actRecord, []string{"ctrl+space"}},
 	{actCycleMode, []string{"shift+tab"}},
 	{actToggleThinking, []string{"ctrl+o"}},
 	{actModelPicker, []string{"alt+p"}},

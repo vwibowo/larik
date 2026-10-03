@@ -184,6 +184,7 @@ func run() error {
 		SandboxNote:   a.SandboxNote,
 		SearchNote:    a.SearchNote,
 		BrowserNote:   a.BrowserNote,
+		Audio:         a.Audio,
 		Version:       version,
 	})
 }

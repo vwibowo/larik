@@ -139,6 +139,12 @@ var settingSpecs = []settingSpec{
 			m.mouse = on
 		}),
 	{
+		key: "audio_auto_speak", title: "Speak replies", section: "audio", kind: kindToggle,
+		get:   func(m *model) string { return onOff(m.opts.Config.Audio.AutoSpeak) },
+		store: func(v string) any { return v == "on" },
+		set:   func(m *model, v string) { on := v == "on"; m.opts.Config.Audio.AutoSpeak = on },
+	},
+	{
 		key: "editor_mode", title: "Editor mode", section: "appearance", kind: kindChoice,
 		choices: []settingChoice{
 			{value: "normal", label: "Normal", desc: "type and edit as usual"},
@@ -430,8 +436,14 @@ func (m *model) saveSetting(key, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := m.opts.Config.SetUserSetting(spec.key, spec.store(v)); err != nil {
-		return "", fmt.Errorf("couldn't save: %w", err)
+	var saveErr error
+	if spec.key == "audio_auto_speak" {
+		saveErr = m.opts.Config.SetAudioSetting("auto_speak", spec.store(v))
+	} else {
+		saveErr = m.opts.Config.SetUserSetting(spec.key, spec.store(v))
+	}
+	if saveErr != nil {
+		return "", fmt.Errorf("couldn't save: %w", saveErr)
 	}
 	spec.set(m, v)
 	shown := spec.label(v)

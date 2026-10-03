@@ -32,6 +32,8 @@ var commands = []command{
 	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it", "conversation", ""},
 	{"/todos", "", "the model's task list for this work", "conversation", ""},
 	{"/copy", "", "copy the last reply to the clipboard", "conversation", ""},
+	{"/speak", "[text]", "synthesize and play text with the local TTS service", "conversation", ""},
+	{"/stt-language", "[id|en]", "set or show the speech-to-text language", "conversation", ""},
 	{"/init", "[focus]", "study the project and write AGENTS.md, or improve the existing one", "conversation", ""},
 	{"/export", "[file]", "save this session as Markdown (default: larik-<session>.md here)", "sessions", ""},
 	{"/cost", "", "token usage and cost for this session", "conversation", ""},
@@ -69,8 +71,8 @@ var helpText = func() string {
 	b.WriteString(`
 Keys
   enter send · shift+enter / alt+enter / ctrl+j newline · esc interrupt
-  @path attach a file · !cmd run a shell command · ↑/↓ history · ctrl+r search history · ctrl+g $EDITOR · ctrl+v paste image
-  / command palette · ? shortcuts · F2 session info · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking
+  @path attach a file · !cmd run a shell command · ↑/↓ history · ctrl+r search history · ctrl+g $EDITOR · ctrl+v paste image · ctrl+space record audio
+  / command palette · ? shortcuts · F2 session info · shift+tab cycle permission mode · alt+p switch model · ctrl+o show thinking · ctrl+space record audio
   ctrl+c clear input / interrupt / quit`)
 	return b.String()
 }()

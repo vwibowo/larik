@@ -18,6 +18,37 @@ import (
 
 var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModeAuto, permission.ModePlan}
 
+func (m *model) sttLanguageCommand(arg string, info, fail func(string) tea.Cmd) tea.Cmd {
+	if m.opts.Config == nil {
+		return fail("audio configuration is unavailable")
+	}
+	if strings.TrimSpace(arg) == "" {
+		language := m.opts.Config.Audio.STT.Language
+		if language == "" {
+			language = "auto"
+		}
+		return info("STT language: " + language)
+	}
+
+	var language string
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "id", "indonesian", "indonesia":
+		language = "id"
+	case "en", "english", "inggris":
+		language = "en"
+	default:
+		return fail("STT language must be id/indonesian or en/english")
+	}
+	if err := m.opts.Config.SetSTTLanguage(language); err != nil {
+		return fail("couldn't save STT language: " + err.Error())
+	}
+	m.opts.Config.Audio.STT.Language = language
+	if m.opts.Audio != nil {
+		m.opts.Audio.SetSTTLanguage(language)
+	}
+	return info("STT language set to " + language + " · saved as default")
+}
+
 func (m *model) cycleMode() tea.Cmd {
 	perms := m.agent.Perms()
 	cur := perms.Mode()
@@ -177,6 +208,15 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/copy":
 		return m.copyReply()
+
+	case "/speak":
+		if arg == "" {
+			arg = m.lastReply
+		}
+		return m.speak(arg)
+
+	case "/stt-language":
+		return m.sttLanguageCommand(arg, info, fail)
 
 	case "/debug":
 		return m.debugCommand(arg)
