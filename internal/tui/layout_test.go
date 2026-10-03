@@ -26,6 +26,50 @@ func TestConversationWrapsOnceAndRewrapsOnResize(t *testing.T) {
 	}
 }
 
+func TestSidebarKeepsHeightWhileResponseStreams(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.height = 24
+	m.showInfo = true
+	m.appendOutput(strings.Repeat("history line\n", 50))
+
+	plainLines := func() []string {
+		return strings.Split(plain(m.View().Content), "\n")
+	}
+	before := plainLines()
+	if len(before) != m.height {
+		t.Fatalf("idle view has %d rows, want %d", len(before), m.height)
+	}
+	var hintRow int
+	for i, line := range before {
+		if strings.Contains(line, "F2 to hide") {
+			hintRow = i
+		}
+	}
+
+	m.running = true
+	m.stream.WriteString(strings.Repeat("long response ", 1000))
+	after := plainLines()
+	if len(after) != m.height {
+		t.Fatalf("streaming view has %d rows, want %d", len(after), m.height)
+	}
+	streamHintRow := -1
+	for i, line := range after {
+		if strings.Contains(line, "F2 to hide") {
+			streamHintRow = i
+		}
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("streaming row exceeds terminal width (%d > %d): %q", w, m.width, line)
+		}
+	}
+	if streamHintRow != hintRow {
+		t.Fatalf("sidebar height changed while streaming: hint row %d -> %d", hintRow, streamHintRow)
+	}
+	if !strings.Contains(strings.Join(after, "\n"), "long response") {
+		t.Fatal("streaming response is missing from the conversation column")
+	}
+}
+
 func TestConversationDropsOldestPastCap(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(80)

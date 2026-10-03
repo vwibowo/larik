@@ -74,11 +74,11 @@ func (m *model) View() tea.View {
 		}
 	}
 
-	// The live view sits under the conversation rather than inside it, so a
-	// spinner tick doesn't re-layout the whole conversation.
+	// The live view sits below the conversation. When the sidebar is visible,
+	// both share its stable-height column layout.
 	var live []string
 	if m.running || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
-		if s := m.liveView(); s != "" {
+		if s := m.liveView(conversationWidth); s != "" {
 			live = strings.Split(s, "\n")
 		}
 	}
@@ -96,14 +96,23 @@ func (m *model) View() tea.View {
 		m.view.GotoBottom()
 	}
 	var rows []string
-	if viewRows > 0 {
-		conversation := m.view.View()
+	if viewRows > 0 || showSidebar && room > panelRows {
+		conversation := ""
+		if viewRows > 0 {
+			conversation = m.view.View()
+		}
 		if showSidebar {
-			left := strings.Split(conversation, "\n")
-			right := strings.Split(m.sessionSidebar(sidebarWidth, viewRows), "\n")
-			for i := range left {
-				l := ansi.Truncate(left[i], conversationWidth, " ")
-				r := ""
+			var left []string
+			if conversation != "" {
+				left = strings.Split(conversation, "\n")
+			}
+			left = append(left, live...)
+			right := strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
+			for i := 0; i < max(len(left), len(right)); i++ {
+				l, r := "", ""
+				if i < len(left) {
+					l = ansi.Truncate(left[i], conversationWidth, " ")
+				}
 				if i < len(right) {
 					r = right[i]
 				}
@@ -116,7 +125,9 @@ func (m *model) View() tea.View {
 			rows = append(rows, conversation)
 		}
 	}
-	rows = append(rows, live...)
+	if !showSidebar {
+		rows = append(rows, live...)
+	}
 	m.panelTop, m.panelRows = viewRows+liveRows, panelRows
 	if panelRows > 0 {
 		rows = append(rows, panelText)
@@ -582,20 +593,24 @@ func (m *model) hasPickerPanel() bool {
 
 // liveView shows the in-flight response, clipped to the screen, and a
 // status line with what the model is doing and for how long.
-func (m *model) liveView() string {
+func (m *model) liveView(widths ...int) string {
+	width := m.width
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b []string
 	thinkingNow := m.thinking.Len() > 0 && m.stream.Len() == 0 && m.calling == ""
 	if thinkingNow && m.showThinking {
-		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), m.width-4), 8)))
+		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), width-4), 8)))
 	}
 	if s := m.stream.String(); s != "" {
 		limit := max(m.height-12, 5)
-		b = append(b, lastLines(wrap(s, m.width-2), limit))
+		b = append(b, lastLines(wrap(s, width-2), limit))
 	}
 	if m.running && m.width < 64 {
 		b = append(b, m.liveTodos()...)
 	}
-	tasks := m.taskRows()
+	tasks := m.taskRows(width)
 	b = append(b, tasks...)
 	for _, t := range m.tools {
 		if len(tasks) > 0 && (t.name == "task" || t.agent != "") {
@@ -655,6 +670,11 @@ func (m *model) liveView() string {
 	}
 	if len(m.queue) > 0 {
 		b = append(b, m.st.dim.Render(fmt.Sprintf("⧗ %d message(s) queued, sent when this turn ends", len(m.queue))))
+	}
+	if width < m.width {
+		for i, line := range b {
+			b[i] = ansi.Truncate(line, max(width-2, 1), "…")
+		}
 	}
 	return strings.Join(b, "\n")
 }
@@ -754,7 +774,7 @@ func (m *model) taskAgentModel(label string) string {
 
 // taskRows gives each parallel subagent its own live row. A tool-call count
 // reflects observed work; it is not a percentage of an unknown total.
-func (m *model) taskRows() []string {
+func (m *model) taskRows(width int) []string {
 	running := m.runningTasks()
 	if len(running) == 0 {
 		return nil
@@ -790,7 +810,7 @@ func (m *model) taskRows() []string {
 		if waiting {
 			style = m.st.warn
 		}
-		rows = append(rows, style.Render(ansi.Truncate(line, max(m.width-2, 10), "…")))
+		rows = append(rows, style.Render(ansi.Truncate(line, max(width-2, 10), "…")))
 	}
 	if len(running) > limit {
 		rows = append(rows, m.st.dim.Render(fmt.Sprintf("  … +%d subagents", len(running)-limit)))
