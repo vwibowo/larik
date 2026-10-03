@@ -156,7 +156,22 @@ func CheckAvailable(opts Options) error {
 	s := New(opts)
 	s.startupTimeout = browserProbeTimeout
 	defer s.Close()
-	return s.start()
+	if err := s.start(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.root, browserProbeTimeout)
+	defer cancel()
+	var title string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate("data:text/html,<title>larik</title>"),
+		chromedp.Title(&title),
+	); err != nil {
+		return fmt.Errorf("browser probe page failed: %w", err)
+	}
+	if title != "larik" {
+		return fmt.Errorf("browser probe returned unexpected title %q", title)
+	}
+	return nil
 }
 
 // Close quits Chrome, if it was started.
