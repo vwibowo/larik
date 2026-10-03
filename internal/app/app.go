@@ -56,6 +56,7 @@ type App struct {
 	// Warnings for front ends to surface.
 	SandboxNote string
 	SearchNote  string
+	BrowserNote string
 
 	tools []tools.Tool
 }
@@ -99,14 +100,20 @@ func Setup(cwd, version string) (*App, error) {
 		baseTools = append(baseTools, memory.Tool{S: a.Memory})
 	}
 	if cfg.Browser.Enabled {
-		// Chrome starts on the first browser_* call, not here.
-		a.Browser = browsercdp.New(browsercdp.Options{
-			Headless:    cfg.Browser.Headless,
-			ChromePath:  cfg.Browser.ChromePath,
+		browserOpts := browsercdp.Options{
+			Headless: cfg.Browser.Headless, ChromePath: cfg.Browser.ChromePath,
 			ProfileDir:  filepath.Join(cfg.DataDir, "browser-profile"),
 			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
-		})
-		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
+		}
+		// Check launchability before advertising browser tools. The probe is
+		// headless and uses a temporary profile, so it does not steal focus or
+		// collide with a Chrome window owned by the user or another app.
+		if err := browsercdp.CheckAvailable(browserOpts); err != nil {
+			a.BrowserNote = "browser tools disabled: " + err.Error()
+		} else {
+			a.Browser = browsercdp.New(browserOpts)
+			baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
+		}
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))

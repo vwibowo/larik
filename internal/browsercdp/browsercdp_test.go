@@ -91,6 +91,13 @@ Promise.allSettled([fetch('/data.json').then(r => r.json()), fetch('/missing'), 
 <button onclick="setTimeout(() => { document.getElementById('h').textContent = 'Quick result' }, 150); setTimeout(() => { document.body.append('Results ready') }, 1200)">Search</button>`,
 }
 
+func TestCheckAvailableRejectsMissingChrome(t *testing.T) {
+	err := CheckAvailable(Options{ChromePath: filepath.Join(t.TempDir(), "missing-chrome")})
+	if err == nil || !strings.Contains(err.Error(), "starting Chrome") {
+		t.Fatalf("missing Chrome should fail preflight with a startup error, got %v", err)
+	}
+}
+
 func chrome(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {

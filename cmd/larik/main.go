@@ -146,6 +146,9 @@ func run() error {
 		if a.SearchNote != "" {
 			fmt.Fprintln(os.Stderr, "! web_search disabled: "+a.SearchNote)
 		}
+		if a.BrowserNote != "" {
+			fmt.Fprintln(os.Stderr, "! "+a.BrowserNote)
+		}
 		if a.SandboxNote != "" {
 			fmt.Fprintln(os.Stderr, "! "+a.SandboxNote)
 		}
@@ -180,6 +183,7 @@ func run() error {
 		Sandbox:       a.Sandbox,
 		SandboxNote:   a.SandboxNote,
 		SearchNote:    a.SearchNote,
+		BrowserNote:   a.BrowserNote,
 		Version:       version,
 	})
 }

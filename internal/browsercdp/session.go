@@ -139,6 +139,17 @@ func (t *tab) log(s string) {
 
 func New(opts Options) *Session { return &Session{opts: opts} }
 
+// CheckAvailable verifies Chrome can actually start and speak DevTools without
+// opening a visible window or touching the user's persistent browser profile.
+func CheckAvailable(opts Options) error {
+	opts.Headless = true
+	opts.ProfileDir = ""
+	opts.DownloadDir = ""
+	s := New(opts)
+	defer s.Close()
+	return s.start()
+}
+
 // Close quits Chrome, if it was started.
 func (s *Session) Close() {
 	if s == nil {
@@ -224,7 +235,10 @@ func (s *Session) launch(profile string) error {
 	root, cancelRoot := chromedp.NewContext(allocCtx)
 	t := &tab{ctx: root}
 	s.watch(t)
-	if err := chromedp.Run(root, s.guard()); err != nil {
+	startupCtx, cancelStartup := context.WithTimeout(root, 12*time.Second)
+	err := chromedp.Run(startupCtx, s.guard())
+	cancelStartup()
+	if err != nil {
 		cancelRoot()
 		cancelAlloc()
 		if s.tempProfile != "" {

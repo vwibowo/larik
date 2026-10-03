@@ -373,7 +373,7 @@ For pages that need JavaScript, a sign-in or clicking through, Larik can drive a
 { "browser": { "enabled": true } }
 ```
 
-Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. Chrome starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions. If another larik session already has that profile open, the browser starts with a temporary one instead, and the model is told its sign-ins aren't there.
+Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. When browser support is enabled, Larik first checks that Chrome can start headlessly with a temporary profile; if the check fails, browser tools are disabled for that run and the TUI shows a warning instead of letting the model repeatedly hit a startup error. Chrome then starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions. If another larik session already has that profile open, the browser starts with a temporary one instead, and the model is told its sign-ins aren't there.
 
 The model gets these tools:
 

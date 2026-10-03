@@ -55,6 +55,7 @@ type Options struct {
 	Sandbox       *sandbox.Sandbox // nil when unavailable or disabled
 	SandboxNote   string           // why there is no sandbox, if any
 	SearchNote    string           // why web_search is unavailable, if configured but broken
+	BrowserNote   string           // why browser tools are unavailable, if enabled but Chrome cannot launch
 }
 
 func Run(opts Options) error {

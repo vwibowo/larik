@@ -1435,6 +1435,9 @@ func (m *model) printBanner() tea.Cmd {
 	if m.opts.SearchNote != "" {
 		warn("web_search disabled: " + m.opts.SearchNote)
 	}
+	if m.opts.BrowserNote != "" {
+		warn(m.opts.BrowserNote)
+	}
 	if !m.opts.Config.ProjectHooksApproved() {
 		warn("project hooks in .larik/settings.json are not approved yet · review with /hooks")
 	}
