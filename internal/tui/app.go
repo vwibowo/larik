@@ -359,7 +359,7 @@ func (m *model) Init() tea.Cmd {
 	}
 	// The background listener blocks until an event arrives, so it runs
 	// alongside the startup sequence rather than inside it.
-	return tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
+	return tea.Batch(m.waitBackground(), tea.Sequence(cmds...), checkVersion(m.opts.Version))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -379,6 +379,12 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case projectInfoMsg:
 		m.project, m.projectLoading = msg.info, false
 		return m, nil
+
+	case versionUpdateMsg:
+		if msg.version == "" {
+			return m, nil
+		}
+		return m, m.println(m.st.warn.Render("  ! update available: " + msg.version + " (current v" + strings.TrimPrefix(m.opts.Version, "v") + ")"))
 
 	case outputMsg:
 		m.appendOutput(string(msg))

@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **The startup banner checks for new releases.** When a newer version is available, Larik shows a non-blocking update notice; offline or failed checks are ignored.
 - **The `/info` sidebar now shows project and turn health.** See the current Git branch and changed-file summary, session tokens/cost/context, and per-turn model time, tool time, average TTFT and request steps. Account-level provider quota/reset balances are not yet exposed by the provider adapters.
 - **The footer says how big the context window is.** `ctx` now reads `ctx ▰▰▰▱▱▱▱▱▱▱ 31% · 62k/200k`: the share of the model's context window in use, the tokens in it and the window's size. It shows from the start of a session instead of only after the first response, and the counts are the first thing dropped on a narrow terminal. See [Footer colors](/docs/commands/#footer-colors).
 - **Your messages stand out from the model's.** A prompt of yours carries a teal bar down its left edge, on every line of a long one, so the conversation is easy to read back.
