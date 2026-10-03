@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/agent"
+	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/permission"
@@ -180,8 +181,14 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 	head := func(title, summary string) string {
 		return fit(spread(m.st.accent.Render(title), m.st.dim.Render(summary), width))
 	}
+	// row is always exactly one line: the right side is shortened first, then
+	// the left, keeping a gap of at least two so spread never falls back to
+	// two lines. A wrapped row would silently eat one of the column's rows.
 	row := func(left, right string) string {
-		left = ansi.Truncate(left, max(width-lipgloss.Width(right)-1, 1), "…")
+		if lipgloss.Width(right) > width-3 {
+			right = ansi.Truncate(right, max(width-3, 1), "…")
+		}
+		left = ansi.Truncate(left, max(width-lipgloss.Width(right)-2, 1), "…")
 		return fit(spread(left, right, width))
 	}
 	var sections [][]string
@@ -202,7 +209,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		sections = append(sections, sec)
 	}
 
-	sections = append(sections, m.agentSection(head, row, fit))
+	sections = append(sections, m.agentSection(width, head, row, fit))
 
 	var mcpRows []string
 	if m.opts.MCP != nil {
@@ -264,7 +271,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 // agentSection is the sidebar's Agents block: the subagents running in
 // parallel and the model each one uses, or, when none is running, the
 // routing a delegated task would take.
-func (m *model) agentSection(head, row func(left, right string) string, fit func(string) string) []string {
+func (m *model) agentSection(width int, head, row func(left, right string) string, fit func(string) string) []string {
 	running := m.runningTasks()
 	summary := "idle"
 	if len(running) > 0 {
@@ -276,7 +283,9 @@ func (m *model) agentSection(head, row func(left, right string) string, fit func
 		if t.id != "" {
 			name = t.id + " " + name
 		}
-		model, style := m.taskAgentModel(t.label), m.st.dim
+		// A third of the column at most: what a subagent is working on tells
+		// its row apart better than the model's full spec does.
+		model, style := shortSpec(m.taskAgentModel(t.label), max(width/3, 8)), m.st.dim
 		if m.perm != nil && taskMatches(t.label, m.perm.Agent) {
 			style = m.st.warn
 			model += " ⏸"
@@ -289,21 +298,73 @@ func (m *model) agentSection(head, row func(left, right string) string, fit func
 	// Nothing in flight: show where delegated work would go.
 	if cfg := m.opts.Config; cfg != nil {
 		r := cfg.Routing()
-		for _, name := range providers.RoleNames(cfg) {
-			spec := r.Roles[name]
-			if spec == "" {
-				continue
+		for _, role := range providers.RoleNames(cfg) {
+			if spec := r.Roles[role]; spec != "" {
+				sec = append(sec, m.roleRow(width, role, spec, r.Options[role], row))
 			}
-			if note := optionNote(r.Options[name]); note != "" {
-				name += m.st.warn.Render(" [" + note + "]")
-			}
-			sec = append(sec, row(name, m.st.dim.Render(spec)))
 		}
 	}
 	if len(sec) == 1 {
 		sec = append(sec, m.st.dim.Render(fit("every role on the main model · /routing")))
 	}
 	return sec
+}
+
+// roleRow is one configured role in the Agents section: the role, the model
+// it routes to, and badges for its options. The column is narrow, so what
+// matters most keeps its room: the role name, then the model, then the
+// badges, which are dropped when all three won't fit.
+func (m *model) roleRow(width int, role, spec string, opt config.RoleOption, row func(left, right string) string) string {
+	badge := roleBadges(opt)
+	fitModel := func(label string) string {
+		return shortSpec(spec, max(width-lipgloss.Width(label)-2, 8))
+	}
+	label := role
+	if badge != "" {
+		label += " " + badge
+	}
+	model := fitModel(label)
+	if badge != "" && lipgloss.Width(label)+lipgloss.Width(model)+2 > width {
+		badge, label = "", role
+		model = fitModel(label)
+	}
+	if badge != "" {
+		label = role + " " + m.st.warn.Render(badge)
+	}
+	return row(label, m.st.dim.Render(model))
+}
+
+// roleBadges marks a role's options in the width of a glyph each: a git
+// worktree and a reduced context. The turn cap stays in /routing, which has
+// room to spell it out.
+func roleBadges(o config.RoleOption) string {
+	badge := ""
+	if o.Isolation == "worktree" {
+		badge += "⎇"
+	}
+	if o.Context == "minimal" {
+		badge += "▽"
+	}
+	return badge
+}
+
+// shortSpec fits a "provider/model" spec into width columns: whole when it
+// fits, then without its leading segments, and finally with its tail kept,
+// because the model name is what tells one row from another.
+func shortSpec(spec string, width int) string {
+	width = max(width, 4)
+	short := spec
+	for lipgloss.Width(short) > width {
+		_, after, ok := strings.Cut(short, "/")
+		if !ok || after == "" {
+			break
+		}
+		short = after
+	}
+	if w := lipgloss.Width(short); w > width {
+		short = "…" + ansi.TruncateLeft(short, w-width+1, "")
+	}
+	return short
 }
 
 // joinSections puts a rule between sections.

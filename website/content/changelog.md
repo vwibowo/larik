@@ -8,6 +8,10 @@
 - **Your messages stand out from the model's.** A prompt of yours carries a teal bar down its left edge, on every line of a long one, so the conversation is easy to read back.
 - **You can see which model each parallel agent runs on.** A running subagent's live row names its model, and the `/info` sidebar has an **Agents** section listing the subagents at work with their models (amber while one waits for your answer), or, when none is running, the routing a delegated task would take. The finished `task` card names the model too.
 
+### Fixed
+
+- **Sidebar rows no longer wrap.** A row whose label had to be shortened (a long MCP server name, a model spec in the new **Agents** section) was pushed onto a second line, which silently cost the sidebar one of its rows. Rows now always fit on one line, and a model spec too long for the column loses its provider prefix before its model name.
+
 ## v0.7.0
 
 <p class="release-meta"><time datetime="2026-10-03">October 3, 2026</time></p>

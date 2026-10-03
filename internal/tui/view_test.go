@@ -184,11 +184,17 @@ func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
 	// Idle: the routing a delegated task would take.
 	m.opts.Config.Roles = map[string]string{"worker": "ollama/cheap"}
 	m.opts.Config.RoleOptions = map[string]config.RoleOption{"worker": {Isolation: "worktree"}}
+	m.opts.Config.Roles["compact"] = "nvidia-nim/nvidia/nemotron-3.5-lightning"
 	idle := plain(m.sessionSidebar(44, 24))
-	for _, want := range []string{"Agents", "idle", "worker", "ollama/cheap", "worktree"} {
+	// "⎇" marks the worktree option; a spec too long for the column keeps
+	// the model name, which is what tells the rows apart.
+	for _, want := range []string{"Agents", "idle", "worker", "ollama/cheap", "⎇", "nemotron-3.5-lightning"} {
 		if !strings.Contains(idle, want) {
 			t.Errorf("idle sidebar lacks %q: %q", want, idle)
 		}
+	}
+	if strings.Contains(idle, "nvidia-nim") {
+		t.Errorf("a long spec should lose its provider prefix, not its model: %q", idle)
 	}
 
 	// Running: one row per subagent, naming the model it runs on.
@@ -210,6 +216,73 @@ func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
 	m.taskModels = nil
 	if got := plain(m.sessionSidebar(44, 24)); !strings.Contains(got, "explore: find UI") || !strings.Contains(got, " m ") {
 		t.Errorf("an inherited role should show the main model: %q", got)
+	}
+}
+
+// A sidebar row that wraps onto a second line silently eats one of the
+// column's rows, and the box pads the halves so the width check above still
+// passes. Every row has to be one line that fits.
+func TestSidebarRowsNeverWrap(t *testing.T) {
+	m := testModel(t)
+	m.opts.Config.Roles = map[string]string{
+		"smart":   "codex/gpt-6-sol",
+		"worker":  "codex/gpt-6-luna",
+		"explore": "claude-code-cli/sonnet",
+		"compact": "nvidia-nim/nvidia/nemotron-3.5-lightning",
+	}
+	m.opts.Config.RoleOptions = map[string]config.RoleOption{
+		"worker":  {Isolation: "worktree", Context: "minimal", MaxTurns: 12},
+		"explore": {Context: "minimal"},
+	}
+	check := func(width int, what string) {
+		t.Helper()
+		for _, sec := range m.sessionSections(width, 3) {
+			for _, r := range sec {
+				if strings.Contains(r, "\n") {
+					t.Errorf("%s at width %d: row wrapped: %q", what, width, plain(r))
+				}
+				if w := lipgloss.Width(r); w > width {
+					t.Errorf("%s at width %d: row is %d columns: %q", what, width, w, plain(r))
+				}
+			}
+		}
+	}
+	// The narrowest and widest sidebar: min(max(width/3, 30), 44) less its
+	// border, padding and the gap before the conversation.
+	for _, width := range []int{25, 39} {
+		check(width, "idle")
+	}
+
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "one", ToolName: "task",
+		Input: []byte(`{"subagent_type":"explore","description":"track down why the sidebar layout wraps"}`)})
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "child", ToolName: "read",
+		Agent: "explore: track down why the sidebar layout wraps", Model: "nvidia-nim/nvidia/nemotron-3.5-lightning",
+		Input: []byte(`{"path":"view.go"}`)})
+	for _, width := range []int{25, 39} {
+		check(width, "running")
+	}
+}
+
+// A spec is shortened from the left: the model name tells rows apart, the
+// provider prefix repeats down the column.
+func TestShortSpecKeepsTheModelName(t *testing.T) {
+	for _, c := range []struct {
+		spec  string
+		width int
+		want  string
+	}{
+		{"codex/gpt-6-sol", 20, "codex/gpt-6-sol"},            // fits whole
+		{"claude-code-cli/sonnet", 12, "sonnet"},              // provider dropped
+		{"nvidia-nim/nvidia/nemotron", 20, "nvidia/nemotron"}, // only as many leading segments as it takes
+		{"nvidia-nim/nvidia/nemotron", 10, "nemotron"},        // all of them
+		{"nemotron-3.5-lightning", 12, "…5-lightning"},        // nothing left to drop, so keep the tail
+	} {
+		if got := shortSpec(c.spec, c.width); got != c.want {
+			t.Errorf("shortSpec(%q, %d) = %q, want %q", c.spec, c.width, got, c.want)
+		}
+		if w := lipgloss.Width(shortSpec(c.spec, c.width)); w > c.width {
+			t.Errorf("shortSpec(%q, %d) is %d columns", c.spec, c.width, w)
+		}
 	}
 }
 
