@@ -396,7 +396,8 @@ func (m *model) agentSection(width int, head, row func(left, right string) strin
 	}
 	sec := []string{head("Agents", summary)}
 	if m.opts.Agents != nil && !m.taskToolAvailable() {
-		sec = append(sec, m.st.warn.Render(fit("agents unavailable · tools/hybrid")))
+		sec = append(sec, m.st.dim.Render(fit("Agents unavailable")))
+		sec = append(sec, m.st.dim.Render(fit("Use execution mode: tools/hybrid")))
 		return sec
 	}
 	for _, t := range running {
