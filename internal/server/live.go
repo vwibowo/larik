@@ -105,7 +105,7 @@ func (l *live) prompt(text string) error {
 	if l.busy {
 		return errBusy
 	}
-	ctx := l.startLocked()
+	ctx := l.startLocked(context.Background())
 	l.bus.publish(Event{Session: l.id, Event: agent.Event{Kind: EvUserMessage, Text: text}})
 	go l.loop(ctx, l.a.Run(ctx, text))
 	return nil
@@ -119,17 +119,25 @@ func (l *live) deliverNotifications() {
 	if l.busy || l.closed || l.a.PendingNotifications() == 0 {
 		return
 	}
-	ctx := l.startLocked()
+	ctx := l.startLocked(context.Background())
 	go l.loop(ctx, nil)
 }
 
-// startLocked marks the session busy; l.mu must be held.
-func (l *live) startLocked() context.Context {
-	ctx, cancel := context.WithCancel(context.Background())
+// startLocked marks the session busy; l.mu must be held. A prompt has
+// no request lifetime, while an idle operation inherits its caller's context.
+func (l *live) startLocked(parent context.Context) context.Context {
+	ctx, cancel := context.WithCancel(parent)
 	l.busy, l.cancel = true, cancel
 	l.runs.Add(1)
 	l.status(true)
 	return ctx
+}
+
+// endLocked clears the run state; l.mu must be held.
+func (l *live) endLocked() {
+	l.busy = false
+	l.cancel()
+	l.cancel = nil
 }
 
 // loop drains a turn, then keeps delivering background results that
@@ -152,9 +160,7 @@ func (l *live) loop(ctx context.Context, ch <-chan agent.Event) {
 			l.mu.Unlock()
 			continue // a task finished after RunNotifications looked
 		}
-		l.busy = false
-		l.cancel()
-		l.cancel = nil
+		l.endLocked()
 		l.expire(false)
 		l.status(false)
 		l.mu.Unlock()
@@ -185,17 +191,13 @@ func (l *live) idleDo(parent context.Context, fn func(ctx context.Context) error
 		l.mu.Unlock()
 		return errBusy
 	}
-	ctx, cancel := context.WithCancel(parent)
-	l.busy, l.cancel = true, cancel
-	l.runs.Add(1)
-	l.status(true)
+	ctx := l.startLocked(parent)
 	l.mu.Unlock()
 
 	err := fn(ctx)
 
 	l.mu.Lock()
-	l.busy, l.cancel = false, nil
-	cancel()
+	l.endLocked()
 	l.status(false)
 	l.runs.Done()
 	l.mu.Unlock()

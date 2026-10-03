@@ -143,24 +143,9 @@ func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) er
 	if err != nil {
 		return err
 	}
-	var files []string
-	err = WalkFiles(ctx, root, func(path string) error {
-		if in.Glob != "" {
-			if ok, _ := doublestar.Match(in.Glob, filepath.Base(path)); !ok {
-				if ok, _ := doublestar.Match(in.Glob, path); !ok {
-					return nil
-				}
-			}
-		}
-		files = append(files, path)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
 	workers := runtime.GOMAXPROCS(0)
-	for start := 0; start < len(files); start += 4 * workers {
-		batch := files[start:min(start+4*workers, len(files))]
+	batch := make([]string, 0, 4*workers)
+	flush := func() error {
 		found := make([][]string, len(batch))
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, workers)
@@ -176,15 +161,34 @@ func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) er
 		for _, lines := range found {
 			for _, line := range lines {
 				if !out.add(line) {
+					return fs.SkipAll // WalkFiles translates this to a successful early stop
+				}
+			}
+		}
+		batch = batch[:0]
+		return ctx.Err()
+	}
+	err = WalkFiles(ctx, root, func(path string) error {
+		if in.Glob != "" {
+			if ok, _ := doublestar.Match(in.Glob, filepath.Base(path)); !ok {
+				if ok, _ := doublestar.Match(in.Glob, path); !ok {
 					return nil
 				}
 			}
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+		batch = append(batch, path)
+		if len(batch) == cap(batch) {
+			return flush()
 		}
+		return nil
+	})
+	if errors.Is(err, fs.SkipAll) || out.full {
+		return nil
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return flush()
 }
 
 // grepFile returns path's matching lines as path:line:text, at most 50 as

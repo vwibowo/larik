@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -20,6 +19,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"larik/internal/llm"
+	"larik/internal/llm/openaisdk"
 )
 
 // Preset is a well-known endpoint. KeyEnv may be empty for local servers.
@@ -332,13 +332,8 @@ func (p *Provider) messages(req llm.Request) []map[string]any {
 }
 
 func convertErr(err error) error {
-	var apiErr *sdk.Error
-	if errors.As(err, &apiErr) {
+	return openaisdk.ConvertError(err, func(apiErr *sdk.Error) bool {
 		body := strings.ToLower(apiErr.Error())
-		if apiErr.Code == "context_length_exceeded" || strings.Contains(body, "context length") || strings.Contains(body, "maximum context") {
-			return fmt.Errorf("%w: %v", llm.ErrContextOverflow, err)
-		}
-		return llm.ClassifyStatus(apiErr.StatusCode, err)
-	}
-	return err
+		return apiErr.Code == "context_length_exceeded" || strings.Contains(body, "context length") || strings.Contains(body, "maximum context")
+	})
 }

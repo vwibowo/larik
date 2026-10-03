@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"larik/internal/llm"
+	"larik/internal/llm/openaisdk"
 )
 
 const Name = "openai"
@@ -317,12 +318,7 @@ func classifyMessage(code, message string) error {
 }
 
 func convertErr(err error) error {
-	var apiErr *sdk.Error
-	if errors.As(err, &apiErr) {
-		if apiErr.Code == "context_length_exceeded" {
-			return fmt.Errorf("%w: %v", llm.ErrContextOverflow, err)
-		}
-		return llm.ClassifyStatus(apiErr.StatusCode, err)
-	}
-	return err
+	return openaisdk.ConvertError(err, func(apiErr *sdk.Error) bool {
+		return apiErr.Code == "context_length_exceeded"
+	})
 }

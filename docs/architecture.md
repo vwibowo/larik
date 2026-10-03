@@ -22,6 +22,8 @@ flowchart TD
     gemini["llm/gemini"] --> llm
     ollama["llm/ollama"] --> llm
     openaicompat["llm/openaicompat"] --> llm
+    openai & openaicompat --> openaisdk["llm/openaisdk: shared SDK plumbing"]
+    openaisdk --> llm
     mcp["mcp"] --> tools & config
     lsp["lsp"] --> tools
     skills["skills"] --> tools
@@ -31,6 +33,43 @@ flowchart TD
     trace["trace"] --> llm
     config["config"] --> permission & hooks & sandbox & lsp & web
 ```
+
+## Domain ownership and folder structure
+
+Larik keeps its core independent of the delivery mechanism. The folders below
+are package boundaries, not layers that must be copied into every feature. Keep
+an abstraction in its owning domain until two real implementations need to share
+it; `internal/app` composes the dependencies and is not imported by the core.
+
+```text
+cmd/larik/                         CLI entry points; selects a front end
+internal/app/                      composition root and session ownership
+internal/agent/                    core turns, events, tool authorization
+internal/llm/                      provider-neutral messages and contracts
+internal/llm/{anthropic,openai,openaicompat,gemini,ollama}/
+                                   model protocol adapters
+internal/llm/openaisdk/            shared OpenAI SDK error conversion
+internal/session/                  append-only transcript and branching
+internal/{permission,checkpoint}/ authorization and undo policy
+internal/{tools,subagent,worktree}/ execution capabilities
+internal/{config,sandbox,mcp,lsp,web,...}/ infrastructure adapters
+internal/{tui,headless,server}/    presentation adapters
+```
+
+Dependency rule: front ends and `app` may depend on the core; the core may
+depend on narrow capability contracts but never on a front end, provider SDK,
+or HTTP request type. The neutral `llm` package remains free of vendor SDKs.
+`openaisdk` is an adapter-side helper rather than a dependency of `llm`.
+Keep provider-specific error heuristics in each adapter. Avoid a new generic
+`core` package or a repository-wide rename: moving packages without changing
+ownership adds import churn without simplifying dependencies.
+
+Session lookup reads directory entries without parsing transcripts; listing
+still extracts titles and fork origins. The pure-Go grep fallback processes
+files in bounded, parallel batches in walk order, so it can stop once the
+output cap is reached without holding the whole path list. The TUI, headless,
+and server front ends retain their existing event, permission and cancellation
+contracts.
 
 Two leaf packages sit beside the loop rather than in it:
 

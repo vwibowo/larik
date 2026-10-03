@@ -390,26 +390,33 @@ func List(dir string) ([]Info, error) {
 
 // Find resolves a session id (or unique prefix) in dir.
 func Find(dir, id string) (string, error) {
-	infos, err := List(dir)
-	if err != nil {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
-	var match []Info
-	for _, in := range infos {
-		if in.ID == id {
-			return in.Path, nil
+	var match string
+	matches := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
 		}
-		if strings.HasPrefix(in.ID, id) {
-			match = append(match, in)
+		name := strings.TrimSuffix(entry.Name(), ".jsonl")
+		if name == id {
+			return filepath.Join(dir, entry.Name()), nil
+		}
+		if strings.HasPrefix(name, id) {
+			matches++
+			match = entry.Name()
 		}
 	}
-	switch len(match) {
+	switch matches {
 	case 0:
 		return "", fmt.Errorf("no session %q in %s", id, dir)
 	case 1:
-		return match[0].Path, nil
+		return filepath.Join(dir, match), nil
+	default:
+		return "", fmt.Errorf("session id %q is ambiguous", id)
 	}
-	return "", fmt.Errorf("session id %q is ambiguous", id)
 }
 
 // scan reads a session's title (first prompt) and fork origin.
