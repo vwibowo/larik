@@ -438,6 +438,9 @@ func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
 		return info("subagents are disabled")
 	}
 	var b strings.Builder
+	if !m.taskToolAvailable() {
+		b.WriteString("delegation unavailable in code execution; switch to tools or hybrid\n\n")
+	}
 	for _, d := range set.List() {
 		tools, model := "all tools", "inherits model"
 		if d.Tools != nil {

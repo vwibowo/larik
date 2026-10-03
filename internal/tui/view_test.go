@@ -15,6 +15,7 @@ import (
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 )
 
@@ -244,6 +245,20 @@ func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
 // A sidebar row that wraps onto a second line silently eats one of the
 // column's rows, and the box pads the halves so the width check above still
 // passes. Every row has to be one line that fits.
+func TestAgentsSectionExplainsUnavailableDelegation(t *testing.T) {
+	m := testModel(t)
+	m.opts.Agents = subagent.Discover(nil)
+	m.agent.SetExecution(tools.ExecCode)
+
+	got := plain(m.sessionSidebar(44, 24))
+	if !strings.Contains(got, "agents unavailable") || !strings.Contains(got, "tools/hybrid") {
+		t.Fatalf("sidebar should explain why configured agents cannot run: %q", got)
+	}
+	if strings.Contains(got, "every role on the main model") {
+		t.Fatalf("sidebar should not advertise routing when delegation is unavailable: %q", got)
+	}
+}
+
 func TestSidebarRowsNeverWrap(t *testing.T) {
 	m := testModel(t)
 	m.opts.Config.Roles = map[string]string{

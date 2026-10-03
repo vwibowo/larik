@@ -20,6 +20,7 @@ import (
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 )
 
@@ -391,6 +392,10 @@ func (m *model) agentSection(width int, head, row func(left, right string) strin
 		summary = fmt.Sprintf("%d running", len(running))
 	}
 	sec := []string{head("Agents", summary)}
+	if m.opts.Agents != nil && !m.taskToolAvailable() {
+		sec = append(sec, m.st.warn.Render(fit("agents unavailable · tools/hybrid")))
+		return sec
+	}
 	for _, t := range running {
 		name := t.label
 		if t.id != "" {
@@ -421,6 +426,17 @@ func (m *model) agentSection(width int, head, row func(left, right string) strin
 		sec = append(sec, m.st.dim.Render(fit("every role on the main model · /routing")))
 	}
 	return sec
+}
+
+// taskToolAvailable reports whether the current model can invoke subagents
+// through the conversational task tool. Code execution intentionally hides
+// task from the model because scripts cannot recursively delegate work.
+func (m *model) taskToolAvailable() bool {
+	if m.agent == nil || m.agent.Execution() == tools.ExecCode {
+		return false
+	}
+	_, ok := m.agent.Tools().Get(subagent.ToolName)
+	return ok
 }
 
 // roleRow is one configured role in the Agents section: the role, the model
