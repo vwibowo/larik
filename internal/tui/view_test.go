@@ -105,7 +105,7 @@ func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 
 	m.width = 120
 	wide := plain(m.statusLine())
-	for _, want := range []string{"default", "shift+tab", "◆ m ollama", "effort high", "▰▰▰▱", "31%"} {
+	for _, want := range []string{"default", "shift+tab", "◆ m ollama", "effort high", "▰▰▰▱", "31%", "310/1k"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide footer lacks %q: %q", want, wide)
 		}
@@ -113,16 +113,103 @@ func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 
 	m.width = 50
 	narrow := plain(m.statusLine())
-	if strings.Contains(narrow, "shift+tab") || strings.Contains(narrow, "▰") || strings.Contains(narrow, "\n") {
-		t.Errorf("narrow footer should drop hints and the bar and stay on one line: %q", narrow)
+	if strings.Contains(narrow, "shift+tab") || strings.Contains(narrow, "▰") || strings.Contains(narrow, "310/1k") || strings.Contains(narrow, "\n") {
+		t.Errorf("narrow footer should drop hints, the token counts and the bar and stay on one line: %q", narrow)
 	}
 	if !strings.Contains(narrow, "31%") || lipgloss.Width(narrow) > 50 {
 		t.Errorf("narrow footer should keep the percentage and fit: %q", narrow)
 	}
 
+	// The token counts go before the bar, which goes before the provider.
+	m.width = 74
+	for _, want := range []string{"▰▰▰▱", "31%", "ollama"} {
+		if got := plain(m.statusLine()); !strings.Contains(got, want) {
+			t.Errorf("footer at 74 columns lacks %q: %q", want, got)
+		}
+	}
+	if got := plain(m.statusLine()); strings.Contains(got, "310/1k") {
+		t.Errorf("footer at 74 columns should have dropped the token counts: %q", got)
+	}
+
 	m.agent.Perms().SetMode(permission.ModeYolo)
 	if !strings.Contains(plain(m.statusLine()), "⚠ yolo") {
 		t.Error("yolo should show in the mode chip")
+	}
+}
+
+// The window is known from the catalog or a probe before the first
+// response, so the footer shows it right away.
+func TestFooterShowsContextWindowBeforeAnyResponse(t *testing.T) {
+	m := testModel(t)
+	m.width = 120
+	m.stats = agent.UsageInfo{ContextWindow: 200_000}
+	got := plain(m.statusLine())
+	for _, want := range []string{"ctx", "0%", "0/200k"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("footer lacks %q before the first response: %q", want, got)
+		}
+	}
+	m.stats = agent.UsageInfo{ContextWindow: 1_000_000, ContextTokens: 62_300}
+	if got := plain(m.statusLine()); !strings.Contains(got, "62k/1M") {
+		t.Errorf("footer should read used tokens over the window: %q", got)
+	}
+}
+
+// Your own messages carry a gutter on every line, wrapped ones included, so
+// they are told apart from the model's replies.
+func TestUserMessageGutterOnEveryLine(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(40)
+	m.convWidth = 40
+	got := plain(m.renderUserMessage("this prompt is long enough that it has to wrap over several rows\nand it has a hard newline too"))
+	lines := strings.Split(got, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected a wrapped message, got %q", got)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "▌ ") {
+			t.Errorf("line without a gutter: %q in %q", l, got)
+		}
+		if lipgloss.Width(l) > 40 {
+			t.Errorf("line overflows the conversation: %q", l)
+		}
+	}
+}
+
+func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.height = 30
+
+	// Idle: the routing a delegated task would take.
+	m.opts.Config.Roles = map[string]string{"worker": "ollama/cheap"}
+	m.opts.Config.RoleOptions = map[string]config.RoleOption{"worker": {Isolation: "worktree"}}
+	idle := plain(m.sessionSidebar(44, 24))
+	for _, want := range []string{"Agents", "idle", "worker", "ollama/cheap", "worktree"} {
+		if !strings.Contains(idle, want) {
+			t.Errorf("idle sidebar lacks %q: %q", want, idle)
+		}
+	}
+
+	// Running: one row per subagent, naming the model it runs on.
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "one", ToolName: "task",
+		Input: []byte(`{"subagent_type":"explore","description":"find UI"}`)})
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "child", ToolName: "read",
+		Agent: "explore: find UI · haiku-4-5", Model: "haiku-4-5", Input: []byte(`{"path":"view.go"}`)})
+	busy := plain(m.sessionSidebar(44, 24))
+	for _, want := range []string{"1 running", "explore: find UI", "haiku-4-5"} {
+		if !strings.Contains(busy, want) {
+			t.Errorf("busy sidebar lacks %q: %q", want, busy)
+		}
+	}
+	if strings.Contains(busy, "ollama/cheap") {
+		t.Errorf("running subagents should replace the routing list: %q", busy)
+	}
+
+	// A role that inherits runs on the main model, which is what to show.
+	m.taskModels = nil
+	if got := plain(m.sessionSidebar(44, 24)); !strings.Contains(got, "explore: find UI") || !strings.Contains(got, " m ") {
+		t.Errorf("an inherited role should show the main model: %q", got)
 	}
 }
 
@@ -403,9 +490,10 @@ func TestParallelSubagentRowsTrackActivity(t *testing.T) {
 	second := []byte(`{"subagent_type":"general-purpose","description":"write tests"}`)
 	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "one", ToolName: "task", Input: first})
 	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "two", ToolName: "task", Input: second})
-	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "child", ToolName: "read", Agent: "explore: find UI", Input: []byte(`{"path":"view.go"}`)})
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "child", ToolName: "read", Agent: "explore: find UI", Model: "haiku-4-5", Input: []byte(`{"path":"view.go"}`)})
 	view := plain(m.liveView())
-	for _, want := range []string{"Subagents (2 running)", "explore: find UI", "general-purpose: write tests", "read(view.go)", "0 tools"} {
+	// The row names the model each subagent runs on; one inherits the main model.
+	for _, want := range []string{"Subagents (2 running)", "explore: find UI · haiku-4-5", "general-purpose: write tests · m", "read(view.go)", "0 tools"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q in %q", want, view)
 		}

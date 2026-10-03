@@ -36,6 +36,9 @@ type Event struct {
 	// Agent labels events forwarded from a subagent ("explore: find auth");
 	// empty for the main agent.
 	Agent string `json:"agent,omitempty"`
+	// Model is the model a forwarded subagent event ran on, so a front end
+	// can show which tier is doing the work; empty for the main agent.
+	Model string `json:"model,omitempty"`
 
 	Text string `json:"text,omitempty"` // deltas, notices, errors
 

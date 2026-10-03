@@ -651,8 +651,11 @@ func humanBytes(n int64) string {
 }
 
 func humanTokens(n int) string {
-	if n >= 1_000_000 {
+	switch {
+	case n >= 1_000_000:
 		return fmt.Sprintf("%gM", float64(n/100_000)/10)
+	case n < 1000:
+		return fmt.Sprintf("%d", n) // a count below a thousand would read "0k"
 	}
 	return fmt.Sprintf("%dk", n/1000)
 }

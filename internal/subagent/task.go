@@ -284,7 +284,7 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 			", checked out from commit " + wt.Base + ". Your working directory is " + cwd + " (this replaces the working directory mentioned above). " +
 			"Read and edit files only inside the worktree; never touch the original checkout at " + t.Repo + ". " +
 			"You may commit your work on this branch; anything left uncommitted is committed for you when you finish.\n</worktree>"
-		emit(agent.Event{Kind: agent.EvNotice, Agent: label, Text: "working in worktree " + wt.Path + " (branch " + wt.Branch + ")"})
+		emit(agent.Event{Kind: agent.EvNotice, Agent: label, Model: model, Text: "working in worktree " + wt.Path + " (branch " + wt.Branch + ")"})
 	}
 	spawn.Tools = childTools(parent.Tools(), def, c.worktree)
 
@@ -309,11 +309,11 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 			if e.Kind == agent.EvToolEnd {
 				calls++
 			}
-			e.Agent = label
+			e.Agent, e.Model = label, model
 			emit(e)
 		case agent.EvError:
 			failure = e.Text
-			e.Agent = label
+			e.Agent, e.Model = label, model
 			emit(e)
 		case agent.EvUsage:
 			used := e.Usage.Model

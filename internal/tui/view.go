@@ -18,6 +18,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/permission"
+	"larik/internal/providers"
 	"larik/internal/tools"
 )
 
@@ -201,6 +202,8 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		sections = append(sections, sec)
 	}
 
+	sections = append(sections, m.agentSection(head, row, fit))
+
 	var mcpRows []string
 	if m.opts.MCP != nil {
 		statuses := m.opts.MCP.Statuses()
@@ -256,6 +259,51 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		sec = append(sec, m.st.dim.Render(fit("none used yet · / to browse")))
 	}
 	return append(sections, sec)
+}
+
+// agentSection is the sidebar's Agents block: the subagents running in
+// parallel and the model each one uses, or, when none is running, the
+// routing a delegated task would take.
+func (m *model) agentSection(head, row func(left, right string) string, fit func(string) string) []string {
+	running := m.runningTasks()
+	summary := "idle"
+	if len(running) > 0 {
+		summary = fmt.Sprintf("%d running", len(running))
+	}
+	sec := []string{head("Agents", summary)}
+	for _, t := range running {
+		name := t.label
+		if t.id != "" {
+			name = t.id + " " + name
+		}
+		model, style := m.taskAgentModel(t.label), m.st.dim
+		if m.perm != nil && taskMatches(t.label, m.perm.Agent) {
+			style = m.st.warn
+			model += " ⏸"
+		}
+		sec = append(sec, row(style.Render("↳ "+name), style.Render(model)))
+	}
+	if len(running) > 0 {
+		return sec
+	}
+	// Nothing in flight: show where delegated work would go.
+	if cfg := m.opts.Config; cfg != nil {
+		r := cfg.Routing()
+		for _, name := range providers.RoleNames(cfg) {
+			spec := r.Roles[name]
+			if spec == "" {
+				continue
+			}
+			if note := optionNote(r.Options[name]); note != "" {
+				name += m.st.warn.Render(" [" + note + "]")
+			}
+			sec = append(sec, row(name, m.st.dim.Render(spec)))
+		}
+	}
+	if len(sec) == 1 {
+		sec = append(sec, m.st.dim.Render(fit("every role on the main model · /routing")))
+	}
+	return sec
 }
 
 // joinSections puts a rule between sections.
@@ -479,16 +527,34 @@ func (m *model) clearTaskCalls(label string) {
 			delete(m.taskCalls, name)
 		}
 	}
+	for name := range m.taskModels {
+		if taskMatches(label, name) {
+			delete(m.taskModels, name)
+		}
+	}
 }
 
-// taskRows gives each parallel subagent its own live row. A tool-call count
-// reflects observed work; it is not a percentage of an unknown total.
-func (m *model) taskRows() []string {
-	type task struct {
-		label, id string
-		started   time.Time
+// taskModel is the model subagents on label ran on, or "" when none has
+// reported one yet.
+func (m *model) taskModel(label string) string {
+	for name, model := range m.taskModels {
+		if taskMatches(label, name) {
+			return model
+		}
 	}
-	var running []task
+	return ""
+}
+
+// runningTask is one subagent at work, for the live rows and the sidebar.
+type runningTask struct {
+	label, id string
+	started   time.Time
+}
+
+// runningTasks lists the subagents at work: foreground task calls plus
+// background tasks, without counting a background task twice.
+func (m *model) runningTasks() []runningTask {
+	var running []runningTask
 	background := m.agent.BackgroundTasks()
 	for _, t := range m.tools {
 		if t.name != "task" {
@@ -504,13 +570,29 @@ func (m *model) taskRows() []string {
 				continue
 			}
 		}
-		running = append(running, task{label: label, started: t.started})
+		running = append(running, runningTask{label: label, started: t.started})
 	}
 	for _, bg := range background {
 		if bg.Status == agent.BgRunning {
-			running = append(running, task{label: bg.Label, id: bg.ID, started: bg.Started})
+			running = append(running, runningTask{label: bg.Label, id: bg.ID, started: bg.Started})
 		}
 	}
+	return running
+}
+
+// taskAgentModel is the model a running subagent uses: the one it reported,
+// or the main model, which is what a role that inherits actually runs on.
+func (m *model) taskAgentModel(label string) string {
+	if model := m.taskModel(label); model != "" {
+		return model
+	}
+	return m.agent.Model()
+}
+
+// taskRows gives each parallel subagent its own live row. A tool-call count
+// reflects observed work; it is not a percentage of an unknown total.
+func (m *model) taskRows() []string {
+	running := m.runningTasks()
 	if len(running) == 0 {
 		return nil
 	}
@@ -540,7 +622,7 @@ func (m *model) taskRows() []string {
 		if !task.started.IsZero() {
 			age = elapsed(time.Since(task.started))
 		}
-		line := fmt.Sprintf("  ↳ %s · %s · %s · %s", name, age, plural(calls, "tool"), activity)
+		line := fmt.Sprintf("  ↳ %s · %s · %s · %s · %s", name, m.taskAgentModel(task.label), age, plural(calls, "tool"), activity)
 		style := m.st.dim
 		if waiting {
 			style = m.st.warn
@@ -796,9 +878,13 @@ func (m *model) statusLine() string {
 			sandbox = m.st.err.Bold(true).Render("⚠ no sandbox")
 		}
 	}
-	ctxPct, ctxBar := "", "" // "31%", "▰▰▰▱▱▱▱▱▱▱ "
-	if m.stats.ContextWindow > 0 && m.stats.ContextTokens > 0 {
-		pct := min(m.stats.ContextTokens*100/m.stats.ContextWindow, 100)
+	// "31%", "▰▰▰▱▱▱▱▱▱▱ " and "62k/1.0M": how much of the model's context
+	// window is in use. The window is known before the first response, so it
+	// shows from the start.
+	ctxPct, ctxBar, ctxTokens := "", "", ""
+	if w := m.stats.ContextWindow; w > 0 {
+		used := max(m.stats.ContextTokens, 0)
+		pct := min(used*100/w, 100)
 		style := m.st.accent
 		switch {
 		case pct >= 90:
@@ -810,6 +896,7 @@ func (m *model) statusLine() string {
 		full := (pct*cells + 50) / 100
 		ctxBar = style.Render(strings.Repeat("▰", full)) + m.st.dim.Render(strings.Repeat("▱", cells-full)) + " "
 		ctxPct = style.Render(fmt.Sprintf("%d%%", pct))
+		ctxTokens = m.st.dim.Render(humanTokens(used) + "/" + humanTokens(w))
 	}
 	var tail []string
 	if m.stats.CostUSD > 0 {
@@ -823,7 +910,7 @@ func (m *model) statusLine() string {
 	}
 
 	sep := m.st.dim.Render(" · ")
-	build := func(hint, withProvider, withBar, withSandbox bool) string {
+	build := func(hint, withProvider, withBar, withTokens, withSandbox bool) string {
 		left := modeChip
 		if k := m.keys.hint(actCycleMode); hint && k != "" {
 			left += m.st.dim.Render(" " + k)
@@ -837,9 +924,13 @@ func (m *model) statusLine() string {
 		}
 		parts = append(parts, extra...)
 		if ctxPct != "" {
-			ctx := m.st.dim.Render("ctx ") + ctxPct
+			ctx := m.st.dim.Render("ctx ")
 			if withBar {
-				ctx = m.st.dim.Render("ctx ") + ctxBar + ctxPct
+				ctx += ctxBar
+			}
+			ctx += ctxPct
+			if withTokens {
+				ctx += sep + ctxTokens
 			}
 			parts = append(parts, ctx)
 		}
@@ -851,8 +942,17 @@ func (m *model) statusLine() string {
 		}
 		return left + strings.Repeat(" ", gap) + right
 	}
-	for _, v := range [][4]bool{{true, true, true, true}, {false, true, true, true}, {false, true, false, true}, {false, false, false, true}, {false, false, false, false}} {
-		if line := build(v[0], v[1], v[2], v[3]); line != "" {
+	// Hints go first when the terminal is narrow, then the token counts, the
+	// bar, the provider and finally the sandbox state.
+	for _, v := range [][5]bool{
+		{true, true, true, true, true},
+		{false, true, true, true, true},
+		{false, true, true, false, true},
+		{false, true, false, false, true},
+		{false, false, false, false, true},
+		{false, false, false, false, false},
+	} {
+		if line := build(v[0], v[1], v[2], v[3], v[4]); line != "" {
 			return line
 		}
 	}
@@ -880,6 +980,23 @@ func (m *model) costText() string {
 		return m.st.warn.Render(text)
 	}
 	return text
+}
+
+// renderUserMessage formats one of your prompts for the conversation. Every
+// line carries an accent gutter, soft-wrapped ones included, so your messages
+// are told apart from the model's replies at a glance. Wrapping happens here
+// because the gutter has to survive it; appendOutput leaves wrapped lines be.
+func (m *model) renderUserMessage(text string) string {
+	width := m.convWidth
+	if width <= 0 {
+		width = m.width
+	}
+	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), max(width-2, 10)), "\n")
+	gutter := m.st.accent.Render("▌ ")
+	for i, l := range lines {
+		lines[i] = gutter + m.st.user.Render(l)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderAssistant formats a finished assistant message for scrollback.
@@ -939,6 +1056,13 @@ func (m *model) renderToolCard(e agent.Event) string {
 		bullet = m.st.err.Render("●")
 	}
 	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input, m.shortPaths))
+	// Name the model a finished top-level task ran on; nested events already
+	// carry it in their subagent label.
+	if e.Agent == "" && e.ToolName == "task" {
+		if model := m.taskModel(taskLabel(e.Input)); model != "" {
+			head += m.st.dim.Render("  " + model)
+		}
+	}
 	e.Output, e.Display = m.shortPaths(e.Output), m.shortPaths(e.Display)
 	var body string
 	switch {
@@ -1303,7 +1427,7 @@ func (m *model) printHistory(label string) tea.Cmd {
 		switch msg.Role {
 		case llm.RoleUser:
 			if t := strings.TrimSpace(msg.Text()); t != "" {
-				b = append(b, "\n"+m.st.user.Render("› "+indentAfterFirst(t, "  ")))
+				b = append(b, "\n"+m.renderUserMessage(t))
 			}
 		case llm.RoleAssistant:
 			if out := m.renderAssistant(msg, 0); out != "" {

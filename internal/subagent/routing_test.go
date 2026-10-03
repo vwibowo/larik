@@ -97,6 +97,42 @@ func TestTaskModelRoleRunsOnCheaperModel(t *testing.T) {
 	}
 }
 
+// Forwarded child events name the model the subagent ran on, so a front end
+// can show which tier is doing the work.
+func TestForwardedEventsCarryTheSubagentModel(t *testing.T) {
+	main := &funcProvider{}
+	cheap := &funcProvider{respond: func(req llm.Request) llm.Message {
+		if res := toolResults(req); len(res) > 0 {
+			return text("found it")
+		}
+		return llm.Message{Blocks: []llm.Block{use("c1", "grep", `{"pattern":"package"}`)}}
+	}}
+	main.respond = func(req llm.Request) llm.Message {
+		if res := toolResults(req); len(res) > 0 {
+			return text("ok: " + res[0].Content)
+		}
+		return llm.Message{Blocks: []llm.Block{use("p1", "task", `{"description":"find it","prompt":"Where is it?","subagent_type":"explore","model":"worker"}`)}}
+	}
+	a, _, _ := newParent(t, main, permission.ModeDefault)
+	withRoles(t, a, []Role{{Name: "worker", Spec: "groq/llama-4-scout"}}, func(string) (llm.Provider, string, error) {
+		return namedProvider{cheap, "groq"}, "llama-4-scout", nil
+	})
+
+	forwarded := 0
+	for _, e := range drain(a.Run(context.Background(), "find it"), true) {
+		if e.Agent == "" {
+			continue
+		}
+		forwarded++
+		if e.Model != "llama-4-scout" {
+			t.Errorf("forwarded %s event carries model %q, want the subagent's", e.Kind, e.Model)
+		}
+	}
+	if forwarded == 0 {
+		t.Fatal("no child events were forwarded")
+	}
+}
+
 func TestTaskModelPrecedence(t *testing.T) {
 	parentP := &funcProvider{respond: func(llm.Request) llm.Message { return text("x") }}
 	parent := agent.New(agent.Options{Provider: parentP, Model: "main-model", Tools: tools.NewRegistry()})

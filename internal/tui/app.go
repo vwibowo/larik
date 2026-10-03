@@ -129,10 +129,11 @@ type model struct {
 	thinking     strings.Builder
 	calling      string // tool the model is currently writing a call for
 	tools        []toolRun
-	taskCalls    map[string]int  // completed calls by active subagent label
-	perm         *agent.Event    // permission prompt being shown
-	permQueue    []agent.Event   // further prompts (parallel subagents)
-	permFeedback *textarea.Model // denial feedback, when the third option is selected
+	taskCalls    map[string]int    // completed calls by active subagent label
+	taskModels   map[string]string // model each active subagent runs on, by label
+	perm         *agent.Event      // permission prompt being shown
+	permQueue    []agent.Event     // further prompts (parallel subagents)
+	permFeedback *textarea.Model   // denial feedback, when the third option is selected
 	// bgReplies marks prompts from background tasks, which must survive
 	// the end of the foreground turn.
 	bgReplies map[chan<- agent.PermissionReply]bool
@@ -819,7 +820,7 @@ func (m *model) submit(text string) tea.Cmd {
 	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
-		m.println("\n"+m.st.user.Render("› "+indentAfterFirst(text, "  "))),
+		m.println("\n"+m.renderUserMessage(text)),
 		tea.Batch(m.waitEvent(), m.spin.Tick),
 	)
 }
@@ -868,6 +869,14 @@ func (m *model) toggleThinking() tea.Cmd {
 }
 
 func (m *model) handleEvent(e agent.Event) tea.Cmd {
+	// Remember which model a subagent runs on, so the live rows and the
+	// sidebar can show which tier is doing the work.
+	if e.Agent != "" && e.Model != "" {
+		if m.taskModels == nil {
+			m.taskModels = make(map[string]string)
+		}
+		m.taskModels[e.Agent] = e.Model
+	}
 	switch e.Kind {
 	case agent.EvTextDelta:
 		m.doneThinking()
@@ -909,6 +918,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		if m.updateTodos(e) {
 			return m.println(m.completedTodosCard())
 		}
+		// The card names the model the task ran on, so it is rendered before
+		// that is forgotten.
+		card := m.renderToolCard(e)
 		if e.Agent != "" {
 			if m.taskCalls == nil {
 				m.taskCalls = make(map[string]int)
@@ -923,7 +935,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 				break
 			}
 		}
-		return m.println(m.renderToolCard(e))
+		return m.println(card)
 	case agent.EvPermission:
 		// A plan goes into the conversation, where it can be scrolled and
 		// stays for reference; the prompt only asks about it.
