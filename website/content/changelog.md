@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Customize the TUI footer and sidebar.** Use personal `status_line` and `sidebar` commands to show project-specific information, Git state, or activity-aware text; the sidebar script receives session/activity data and refreshes while the panel is open. See [Custom sidebar](/#custom-sidebar) and [Extensibility](/docs/extensibility/#custom-tui-panels).
+
 ### Changed
 
 - **The startup banner checks for new releases.** When a newer version is available, Larik shows a non-blocking update notice; offline or failed checks are ignored.

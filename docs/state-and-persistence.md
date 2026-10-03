@@ -145,7 +145,7 @@ Each layer is marked **trusted** (personal: only you write it) or not (shared: a
 | LSP servers | may add commands | may only disable |
 | Web search backend | honored | ignored (it would receive every query); may only disable web tools |
 | Debug recording and trace retention | honored | ignored (traces hold prompts and file contents) |
-| Status line command, key bindings and editor mode | honored | ignored (the status line runs a command; the others are how you type) |
+| Status line and sidebar commands, key bindings and editor mode | honored | ignored (the TUI commands execute; the others are how you type) |
 | Approvals themselves | read from private project settings only | ignored |
 
 The approvals are pinned to a content hash (`MCPServer.Hash`, `hooks.Config.Hash`), so a later commit that changes the command or URL silently loses its approval instead of inheriting it. See [security](security.md#trust-boundaries).

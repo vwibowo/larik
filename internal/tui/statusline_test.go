@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -63,6 +64,56 @@ func TestStatusLineCommand(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if !strings.Contains(plain(m.statusLine()), "ctrl+c again to quit") {
 		t.Error("the quit warning should show over the custom status line")
+	}
+}
+
+func TestCustomSidebarCommandRendersInSidebar(t *testing.T) {
+	m := testModel(t)
+	m.sidebarStatus = newStatusCmd("printf 'git: 2 changed\\nactivity: responding\\n'", 300)
+	lines, err := runStatusLimit(m.sidebarStatus.command, m.opts.Config.Cwd, m.statusPayload(), sidebarMaxLines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.statusDone(statusDoneMsg{lines: lines, sidebar: true})
+	m.setWidth(120)
+	got := plain(m.sessionSidebar(44, 30))
+	for _, want := range []string{"Custom", "git: 2 changed", "activity: responding"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("custom sidebar missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestStatusLinesHaveOutputLimit(t *testing.T) {
+	if got := statusLinesLimit("a\nb\nc\nd", 2); len(got) != 2 || got[1] != "b" {
+		t.Fatalf("limited lines = %q", got)
+	}
+}
+
+func TestCustomSidebarPollsForExternalChanges(t *testing.T) {
+	m := testModel(t)
+	file := filepath.Join(t.TempDir(), "state.txt")
+	if err := os.WriteFile(file, []byte("idle\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.showInfo = true
+	m.sidebarStatus = newStatusCmd("cat "+file, 300)
+	first := m.refreshStatus()().(statusDoneMsg)
+	m.statusDone(first)
+	if got := strings.Join(m.sidebarStatus.lines, "\n"); got != "idle" {
+		t.Fatalf("initial sidebar output = %q", got)
+	}
+	if err := os.WriteFile(file, []byte("changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if cmd := m.refreshStatus(); cmd != nil {
+		t.Fatal("sidebar should respect its poll interval")
+	}
+	m.sidebarStatus.ended = time.Now().Add(-m.sidebarStatus.interval)
+	second := m.refreshStatus()().(statusDoneMsg)
+	m.statusDone(second)
+	if got := strings.Join(m.sidebarStatus.lines, "\n"); got != "changed" {
+		t.Fatalf("refreshed sidebar output = %q", got)
 	}
 }
 

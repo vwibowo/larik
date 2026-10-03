@@ -1,6 +1,6 @@
 # Extensibility
 
-Larik has six extension mechanisms. All of them plug into the same two seams: they either **add tools** to the registry, or **run at points in the loop**.
+Larik has seven extension mechanisms. Most either **add tools** to the registry or **run at points in the loop**; the TUI panels customize what you see without adding model tools.
 
 | Mechanism | Seam | Configured by | Package |
 |---|---|---|---|
@@ -10,6 +10,30 @@ Larik has six extension mechanisms. All of them plug into the same two seams: th
 | Hooks | lifecycle points in the loop | `hooks` in settings | [hooks](../internal/hooks) |
 | Language servers | edit/write results + the `lsp` tool | `lsp` in settings, or on `PATH` | [lsp](../internal/lsp) |
 | Web | `web_fetch`, `web_search` tools | env keys, `web` in settings | [web](../internal/web) |
+| TUI panels | footer status line + `/info` sidebar display | `status_line`, `sidebar` commands | [tui](../internal/tui) |
+
+## Custom TUI panels
+
+The TUI has two display-only customization points. `status_line` replaces the footer's model/context/cost area while keeping Larik's permission-mode chip; `sidebar` adds command output below the built-in `/info` sections. Both commands receive the session JSON on stdin and may inspect the project (for example, to show Git changes). The payload includes Larik's `larik.activity`, `larik.active_tool`, `larik.turn_running` and `larik.background_tasks` fields, so a script can render activity-specific text or a simple animation.
+
+Configure them in personal settings only, since each setting runs a shell command:
+
+```json
+{
+  "status_line": {
+    "type": "command",
+    "command": "~/.config/larik/status.sh",
+    "refresh_interval_ms": 1000
+  },
+  "sidebar": {
+    "type": "command",
+    "command": "~/.config/larik/sidebar.sh",
+    "refresh_interval_ms": 1000
+  }
+}
+```
+
+The interval defaults to one second and accepts 300–60000 milliseconds. Commands run when session state changes and are polled at that interval; they have a five-second timeout. The sidebar command runs only while the sidebar is open. Footer output is limited to three lines and sidebar output to twelve lines, with output bytes capped. A shared `.larik/settings.json` cannot cause these commands to execute. These hooks customize displayed information; they do not add interactive TUI widgets or model tools. Use MCP or Larik's tool extension points for actions. See [Custom sidebar](../README.md#custom-sidebar) and [Status line](../README.md#status-line) for examples.
 
 ## Subagents
 

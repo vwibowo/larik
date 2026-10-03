@@ -101,8 +101,10 @@ type Config struct {
 	// Nil means on.
 	Mouse *bool `json:"mouse,omitempty"`
 	// StatusLine runs a command whose output becomes the TUI footer.
-	// Honored only from personal files, since it runs a command.
+	// Sidebar runs a command whose output is shown in the TUI sidebar. Both
+	// run arbitrary commands and are honored only from personal files.
 	StatusLine *StatusLine `json:"status_line,omitempty"`
+	Sidebar    *StatusLine `json:"sidebar,omitempty"`
 	// Keybindings rebind TUI actions: action name to one key or a list;
 	// an empty list unbinds. Honored only from personal files.
 	Keybindings map[string]KeyList `json:"keybindings,omitempty"`
@@ -176,13 +178,15 @@ type Config struct {
 	Cwd       string `json:"-"`
 }
 
-// StatusLine is a command whose output replaces the footer's model,
-// context and cost. It gets the session's state as JSON on stdin, in
-// Claude Code's statusLine form, so the same scripts work.
+// StatusLine configures a command-backed TUI display. It gets the session's
+// state as JSON on stdin, in Claude Code's statusLine form, so the same scripts work.
 type StatusLine struct {
 	// Type is "command", the only kind, and may be left out.
 	Type    string `json:"type,omitempty"`
 	Command string `json:"command"`
+	// RefreshIntervalMS polls for external changes and animation; zero defaults
+	// to one second. Values are bounded from 300 ms to 60 seconds.
+	RefreshIntervalMS int `json:"refresh_interval_ms,omitempty"`
 }
 
 // KeyList is one key ("ctrl+e") or several.
@@ -476,16 +480,27 @@ func (c *Config) merge(path string, trusted bool) error {
 			*b.dst = *b.src
 		}
 	}
-	for _, sl := range []*StatusLine{o.StatusLineCompat, o.StatusLine} {
+	for _, item := range []struct {
+		key      string
+		src, dst **StatusLine
+	}{
+		{"status_line", &o.StatusLineCompat, &c.StatusLine},
+		{"status_line", &o.StatusLine, &c.StatusLine},
+		{"sidebar", &o.Sidebar, &c.Sidebar},
+	} {
+		sl := *item.src
 		if sl == nil || !trusted {
-			continue // a shared file can't make Larik run a command
+			continue // shared files cannot make Larik run a command
 		}
 		if sl.Type != "" && sl.Type != "command" {
-			return fmt.Errorf("%s: status_line.type must be \"command\"", path)
+			return fmt.Errorf("%s: %s.type must be \"command\"", path, item.key)
 		}
-		c.StatusLine = sl
+		if sl.RefreshIntervalMS != 0 && (sl.RefreshIntervalMS < 300 || sl.RefreshIntervalMS > 60000) {
+			return fmt.Errorf("%s: %s.refresh_interval_ms must be between 300 and 60000", path, item.key)
+		}
+		*item.dst = sl
 		if strings.TrimSpace(sl.Command) == "" {
-			c.StatusLine = nil // a later file can switch it off
+			*item.dst = nil // a later file can switch it off
 		}
 	}
 	if trusted && o.EditorMode != "" {

@@ -98,11 +98,12 @@ type model struct {
 	width    int
 	height   int
 
-	input   textarea.Model
-	keys    keymap   // the keybindings setting applied to the defaults
-	keyWarn []string // keybindings that couldn't apply, for the banner
-	status  *statusCmd
-	vim     *vimEditor // nil unless editor_mode is vim
+	input         textarea.Model
+	keys          keymap   // the keybindings setting applied to the defaults
+	keyWarn       []string // keybindings that couldn't apply, for the banner
+	status        *statusCmd
+	sidebarStatus *statusCmd
+	vim           *vimEditor // nil unless editor_mode is vim
 	// traceView serves traceDir to the browser once /trace opened it.
 	traceView *viewer.Server
 	traceDir  string
@@ -283,7 +284,10 @@ func newModel(opts Options) *model {
 			m.vim = newVim()
 		}
 		if c.StatusLine != nil {
-			m.status = &statusCmd{command: c.StatusLine.Command}
+			m.status = newStatusCmd(c.StatusLine.Command, c.StatusLine.RefreshIntervalMS)
+		}
+		if c.Sidebar != nil {
+			m.sidebarStatus = newStatusCmd(c.Sidebar.Command, c.Sidebar.RefreshIntervalMS)
 		}
 	}
 	m.keys, m.keyWarn = newKeymap(bindings)
@@ -359,7 +363,7 @@ func (m *model) Init() tea.Cmd {
 	}
 	// The background listener blocks until an event arrives, so it runs
 	// alongside the startup sequence rather than inside it.
-	return tea.Batch(m.waitBackground(), tea.Sequence(cmds...), checkVersion(m.opts.Version))
+	return tea.Batch(m.waitBackground(), m.statusTick(), tea.Sequence(cmds...), checkVersion(m.opts.Version))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -375,6 +379,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statusDoneMsg:
 		return m, m.statusDone(msg)
+
+	case statusTickMsg:
+		return m, m.statusTick()
 
 	case projectInfoMsg:
 		m.project, m.projectLoading = msg.info, false

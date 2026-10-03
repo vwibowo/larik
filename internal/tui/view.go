@@ -382,7 +382,15 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 			sec = append(sec, m.st.dim.Render(fit("none used yet · / to browse")))
 		}
 	}
-	return append(sections, sec)
+	sections = append(sections, sec)
+	if m.sidebarStatus != nil && len(m.sidebarStatus.lines) > 0 {
+		custom := []string{head("Custom", "")}
+		for _, line := range m.sidebarStatus.lines {
+			custom = append(custom, fit(line))
+		}
+		sections = append(sections, custom)
+	}
+	return sections
 }
 
 // agentSection is the sidebar's Agents block: the subagents running in
@@ -531,6 +539,13 @@ func (m *model) sessionSidebar(width, height int) string {
 		// Shrink the task list before cutting the rest.
 		taskLimit = max(taskLimit-(len(rows)+1-room), 2)
 		rows = m.joinSections(m.sessionSections(inner, taskLimit), inner)
+	}
+	if len(rows)+1 > room && m.sidebarStatus != nil && len(m.sidebarStatus.lines) > 0 {
+		// Preserve the custom panel at the bottom when space is tight; trim
+		// built-in detail rows first. The section separator is part of its tail.
+		keepCustom := min(len(m.sidebarStatus.lines)+2, len(rows))
+		keepBuiltins := max(room-1-keepCustom, 0)
+		rows = append(rows[:keepBuiltins], rows[len(rows)-keepCustom:]...)
 	}
 	if len(rows)+1 > room {
 		keep := max(room-2, 0)

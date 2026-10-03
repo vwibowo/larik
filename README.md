@@ -192,7 +192,7 @@ Teal is kept for Larik's own chrome: the model marker, the spinner, headings and
 { "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
 ```
 
-The command gets the session's state as JSON on stdin, in the form Claude Code gives its `statusLine` command, so the same scripts work: `session_id`, `transcript_path`, `cwd`, `model.id`, `model.display_name`, `workspace.current_dir`, `version`, `cost.total_cost_usd`, and `context_window` (`context_window_size`, `used_tokens`, `used_percentage`). Larik's own fields are under `larik`: `provider`, `effort`, `permission_mode`, `background_tasks` and `turn_running`. Claude Code's `statusLine` key is read too. Up to three lines of output are shown, with their ANSI colors. The command runs in the project directory when that state changes, at most every 300 ms, and is stopped after 5 seconds. If it fails, the default footer stays and the error is shown once. It runs a command, so it's honored only from personal settings. For example:
+The command gets the session's state as JSON on stdin, in the form Claude Code gives its `statusLine` command, so the same scripts work. The payload includes `session_id`, `transcript_path`, `cwd`, `model.id`, `model.display_name`, `workspace.current_dir`, `version`, `cost.total_cost_usd`, and `context_window` (`context_window_size`, `used_tokens`, `used_percentage`). Larik's own fields are under `larik`: `provider`, `effort`, `permission_mode`, `background_tasks`, `turn_running`, `activity` and `active_tool`. Set `refresh_interval_ms` from 300 to 60000 to poll for external changes or simple animation (default 1000). Claude Code's `statusLine` key is read too. Up to three lines of output are shown, with their ANSI colors. The command runs in the project directory when that state changes and is polled at the configured interval (default 1 second; minimum 300 ms); each run is stopped after 5 seconds. If it fails, the default footer stays and the error is shown once. It runs a command, so it's honored only from personal settings. For example:
 
 ```sh
 #!/bin/sh
@@ -200,6 +200,37 @@ in=$(cat)
 branch=$(git branch --show-current 2>/dev/null)
 echo "$(echo "$in" | jq -r .model.id) · ${branch:-no git} · $(echo "$in" | jq -r .context_window.used_percentage)% ctx"
 ```
+
+### Custom sidebar
+
+The right-hand `/info` sidebar can show your own live information below Larik's built-in sections. Configure a personal command; it receives the same session JSON as `status_line`, including `larik.activity` (`idle`, `thinking`, `working` or `responding`), `larik.active_tool`, `larik.turn_running` and `larik.background_tasks`. Its output is shown as plain display content (up to 12 lines); it is refreshed while the sidebar is open, when session state changes, and at the poll interval. This is for information and visual status—not interactive tools. Use MCP or built-in tools to add actions.
+
+```json
+{
+  "sidebar": {
+    "type": "command",
+    "command": "~/.config/larik/sidebar.sh",
+    "refresh_interval_ms": 1000
+  }
+}
+```
+
+For example, a script can show Git changes and a small activity animation:
+
+```sh
+#!/bin/sh
+in=$(cat)
+activity=$(printf '%s' "$in" | jq -r .larik.activity)
+case "$activity" in
+  working|responding) frame='◐' ;;
+  thinking) frame='◓' ;;
+  *) frame='○' ;;
+esac
+changes=$(git status --short 2>/dev/null | wc -l | tr -d ' ')
+printf '%s %s\nGit changes: %s\n' "$frame" "$activity" "${changes:-0}"
+```
+
+`refresh_interval_ms` may be set from 300 to 60000; the default is 1000. Both custom commands are executed only from personal config, never from shared project settings. The footer is already customizable with [`status_line`](#status-line), so you can put Git state there instead if you prefer the bottom row.
 
 ### Composer
 

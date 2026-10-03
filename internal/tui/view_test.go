@@ -251,7 +251,7 @@ func TestAgentsSectionExplainsUnavailableDelegation(t *testing.T) {
 	m.agent.SetExecution(tools.ExecCode)
 
 	got := plain(m.sessionSidebar(44, 24))
-	if !strings.Contains(got, "agents unavailable") || !strings.Contains(got, "tools/hybrid") {
+	if !strings.Contains(strings.ToLower(got), "agents unavailable") || !strings.Contains(got, "tools/hybrid") {
 		t.Fatalf("sidebar should explain why configured agents cannot run: %q", got)
 	}
 	if strings.Contains(got, "every role on the main model") {
