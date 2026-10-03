@@ -20,7 +20,9 @@ func TestModelPickerEffortsFollowSelection(t *testing.T) {
 			{ID: "plain", Chat: true, CapsKnown: true},
 		}},
 	}
-	m.openModelPicker()
+	if cmd := m.openModelPicker(); cmd != nil {
+		t.Fatal("opening picker with cached models should not relist providers")
+	}
 	mp := m.mpick
 	selectModel := func(id string) {
 		t.Helper()

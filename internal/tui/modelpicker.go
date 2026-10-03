@@ -125,6 +125,9 @@ func (m *model) openModelPicker() tea.Cmd {
 	m.mpick = mp
 	m.buildModelList()
 	mp.syncEffort(m, m.agent.Effort())
+	if m.modelLists != nil {
+		return nil
+	}
 	return m.loadModels()
 }
 
