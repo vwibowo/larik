@@ -237,6 +237,13 @@ func (w *wizard) enterConnect(c providers.Choice, custom bool) tea.Cmd {
 		w.newField("API key", "", "optional", true)
 	case c.Local:
 		w.newField("Base URL", providers.EndpointFor(w.cfg, c.Name).BaseURL, c.BaseURL, false)
+	case c.Catwalk:
+		w.newField("Base URL", providers.EndpointFor(w.cfg, c.Name).BaseURL, "confirm the provider API URL", false)
+		keyHint := "paste the provider API key"
+		if c.KeyEnv != "" {
+			keyHint += ", or leave blank to use $" + c.KeyEnv
+		}
+		w.newField("API key", "", keyHint, true)
 	case c.SignIn:
 		if chatgpt.SignedIn(chatgpt.Path(w.cfg.ConfigDir)) {
 			w.savedKey, w.useSaved = keySource(w.cfg, c), true
@@ -370,7 +377,7 @@ func (w *wizard) connectKey(msg tea.KeyPressMsg) tea.Cmd {
 		w.step, w.err = wizProvider, ""
 		return nil
 	case "enter":
-		if w.custom && w.focus < len(w.fields)-1 {
+		if (w.custom || w.choice.Catwalk) && w.focus < len(w.fields)-1 {
 			w.focus++
 			return w.focusField()
 		}
@@ -429,6 +436,23 @@ func (w *wizard) test() tea.Cmd {
 		}
 		pc = config.ProviderConfig{Type: "openai-compatible", BaseURL: val(1), APIKey: val(2)}
 		w.choice.Name = name
+	case w.choice.Catwalk:
+		baseURL := val(0)
+		if err := checkURL(baseURL); err != nil {
+			w.err = "base URL: " + err.Error()
+			return nil
+		}
+		pc.Type, pc.BaseURL = w.choice.Type, baseURL
+		pc.APIKeyEnv = w.choice.KeyEnv
+		if key := val(1); key != "" {
+			pc.APIKey, pc.APIKeyEnv = key, ""
+		} else if providers.EndpointOf(name, pc).Key == "" {
+			w.err = "paste an API key"
+			if w.choice.KeyEnv != "" {
+				w.err += ", or set $" + w.choice.KeyEnv + " and start larik again"
+			}
+			return nil
+		}
 	case w.choice.SignIn:
 		if !w.useSaved {
 			return w.startLogin()
@@ -964,6 +988,15 @@ func (w *wizard) connectView(st styles, width int) ([]string, string) {
 		if strings.TrimSpace(w.fields[0].Value()) == c.BaseURL {
 			body = append(body, st.dim.Render("  the "+c.Title+" default · no API key needed"))
 		}
+	case c.Catwalk:
+		for i, f := range w.fields {
+			label := st.dim.Render(w.labels[i])
+			if i == w.focus {
+				label = st.user.Render(w.labels[i])
+			}
+			body = append(body, label, "  "+f.View())
+		}
+		body = append(body, st.dim.Render("Confirm the endpoint before sending your key."))
 	case c.SignIn:
 		body = append(body, w.signInView(st)...)
 		hint = "enter sign in · esc back"

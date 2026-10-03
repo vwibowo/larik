@@ -219,8 +219,8 @@ func (m *model) buildModelList() {
 		if c.Local || slices.Contains(names, c.Name) {
 			continue
 		}
-		switch c.Name {
-		case "anthropic", "openai", "gemini", providers.Codex, "nvidia-nim":
+		switch {
+		case c.Catwalk, c.Name == "anthropic", c.Name == "openai", c.Name == "gemini", c.Name == providers.Codex, c.Name == "nvidia-nim":
 			items = append(items, pickItem{section: "not set up", label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{c.Name}})
 		}
 	}

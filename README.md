@@ -645,7 +645,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `stall_timeout`: how many seconds a model server may send nothing before Larik stops the request, reports it, and switches to the fallback model if there is one. Default 300, or 900 for local servers (Ollama, LM Studio, `openai-compatible`), which may still be loading the model. Set it per provider with `"providers": {"ollama": {"stall_timeout": 1800}}`; a negative value waits forever. Keep-alives from the server count as activity, so a model that is thinking isn't cut off.
 - `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from personal settings.
 
-`models` entries override the built-in catalog. The catalog drives context percentage, compaction, and cost.
+`models` entries override Larik's built-in catalog. On first setup per process, Larik makes a best-effort, 500 ms-bounded request to the public [Catwalk catalog](https://catwalk.charm.land/v2/providers). It fills missing context windows, output limits, and list prices, and offers providers whose API type Larik supports in `/providers`, `/model`, and the setup wizard. Connecting one is always an explicit user action; confirm its endpoint and save it to personal settings. Existing built-in and user-configured metadata takes precedence, and the built-in catalog remains available offline. Catwalk does not contain account-specific usage or quota data; `/cost` reports usage received from model responses.
 
 ## MCP servers
 

@@ -166,6 +166,8 @@ Gemini uses `Provider: "gemini-display"` for thought summaries so they are never
 
 `nvidia-nim` uses `https://integrate.api.nvidia.com/v1` and `NVIDIA_API_KEY` for NVIDIA's hosted catalog. [Developer access](https://docs.api.nvidia.com/nim/docs/product) is for prototyping, research, development, and testing. A self-hosted NIM endpoint can use a custom OpenAI-compatible provider.
 
+Larik also reads the public [Catwalk catalog](https://catwalk.charm.land/v2/providers) once per process, with a 500 ms timeout. It fills gaps in model metadata (context window, maximum output, and list prices) and offers providers in `/providers`, `/model`, and the setup wizard when their protocol maps to an adapter Larik supports (Anthropic, OpenAI, Gemini, or OpenAI-compatible). A connection is not made just by loading catalog data: the user selects it, confirms or edits its API URL, and saves its type, URL, and key reference in personal settings. Unsupported protocols, invalid provider IDs, and entries that shadow a built-in provider are excluded. Existing built-in and user-configured catalog records win over Catwalk; model enumeration for a configured endpoint still comes from that endpoint's own model-list API. If Catwalk is offline or malformed, Larik continues with its built-in providers and catalog; already-connected providers remain resolvable from their saved configuration. Catwalk contains public provider/model metadata, not the signed-in user's remaining credits, subscription quota, or live rate-limit state. Those remain provider-specific runtime information.
+
 ## Roles and fallbacks
 
 `Resolve` also accepts a **role** name ([routing.go](../internal/providers/routing.go)):

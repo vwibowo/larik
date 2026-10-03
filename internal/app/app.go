@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"larik/internal/agent"
 	"larik/internal/audio"
@@ -29,6 +31,25 @@ import (
 	"larik/internal/trace"
 	"larik/internal/web"
 )
+
+var catwalkOnce sync.Once
+
+func loadCatwalkCatalog() {
+	catwalkOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		catwalkProviders, err := llm.FetchCatwalk(ctx, nil, "")
+		if err != nil {
+			return // built-in providers and catalog remain available offline
+		}
+		providers.SetCatwalkProviders(catwalkProviders)
+		for id, info := range llm.CatalogEntries(catwalkProviders) {
+			if _, exists := llm.Catalog[id]; !exists {
+				llm.Catalog[id] = info
+			}
+		}
+	})
+}
 
 // App holds everything shared by the sessions of one project directory.
 type App struct {
@@ -67,6 +88,9 @@ type App struct {
 // Setup loads config for cwd and starts the shared services. Call Close
 // when done.
 func Setup(cwd, version string) (*App, error) {
+	// Catwalk metadata is best-effort and time-bounded. Load it before the
+	// user's config so explicit per-model metadata always wins.
+	loadCatwalkCatalog()
 	cfg, err := config.Load(cwd)
 	if err != nil {
 		return nil, err

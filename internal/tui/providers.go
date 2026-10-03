@@ -104,12 +104,11 @@ func (m *model) buildProviders() {
 		}
 		items = append(items, pickItem{label: label, detail: endpointSummary(providers.EndpointFor(cfg, n)), note: status, noteOK: ok, noteWarn: warn, value: pickProvider{n}})
 	}
-	for _, name := range []string{"nvidia-nim"} {
-		if slices.Contains(names, name) {
+	for _, c := range providers.Choices() {
+		if (!c.Catwalk && c.Name != "nvidia-nim") || slices.Contains(names, c.Name) {
 			continue
 		}
-		c, _ := providers.ChoiceFor(name)
-		items = append(items, pickItem{label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{name}})
+		items = append(items, pickItem{label: "+ Connect " + c.Title + "…", detail: c.Desc, value: pickConnect{c.Name}})
 	}
 	items = append(items, pickItem{label: "+ Add provider…", detail: "setup wizard: cloud, local or custom", value: pickAdd{}})
 	prev, had := pm.list.selected()

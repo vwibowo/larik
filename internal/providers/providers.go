@@ -177,8 +177,7 @@ func split(cfg *config.Config, spec string) (provider, model string) {
 }
 
 func isBuiltin(name string) bool {
-	switch name {
-	case anthropic.Name, openai.Name, gemini.Name, Codex, ClaudeCLI:
+	if _, ok := ChoiceFor(name); ok {
 		return true
 	}
 	_, ok := openaicompat.Presets[name]
@@ -187,9 +186,9 @@ func isBuiltin(name string) bool {
 
 // Names lists the built-in provider names for help text.
 func Names() []string {
-	names := []string{anthropic.Name, openai.Name, gemini.Name, Codex, ClaudeCLI}
-	for n := range openaicompat.Presets {
-		names = append(names, n)
+	names := make([]string, 0, len(Choices()))
+	for _, c := range Choices() {
+		names = append(names, c.Name)
 	}
 	return names
 }

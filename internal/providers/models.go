@@ -32,9 +32,11 @@ type Choice struct {
 	Desc    string
 	KeyEnv  string // environment variable holding its key; empty for local servers
 	BaseURL string // default endpoint
+	Type    string // adapter type for catalog-discovered providers
 	Local   bool
 	SignIn  bool // authenticates by signing in (ChatGPT) instead of a key
 	CLI     bool // authenticates through an installed vendor CLI
+	Catwalk bool // discovered in Catwalk; endpoint must be confirmed by the user
 }
 
 // Codex runs OpenAI's Codex models on a ChatGPT plan, via sign-in.
@@ -42,8 +44,23 @@ const Codex = "codex"
 
 const ClaudeCLI = "claude-code-cli"
 
-// Choices lists the built-in providers in the order the wizard shows them.
+// Choices lists built-in providers followed by supported Catwalk entries.
 func Choices() []Choice {
+	cs := builtinChoices()
+	seen := make(map[string]bool, len(cs))
+	for _, c := range cs {
+		seen[c.Name] = true
+	}
+	for _, c := range discoveredChoices() {
+		if !seen[c.Name] {
+			cs = append(cs, c)
+			seen[c.Name] = true
+		}
+	}
+	return cs
+}
+
+func builtinChoices() []Choice {
 	cs := []Choice{
 		{Name: anthropic.Name, Title: "Anthropic", Desc: "Claude models", KeyEnv: "ANTHROPIC_API_KEY", BaseURL: "https://api.anthropic.com"},
 		{Name: openai.Name, Title: "OpenAI", Desc: "GPT models", KeyEnv: "OPENAI_API_KEY", BaseURL: "https://api.openai.com/v1"},
@@ -121,17 +138,31 @@ func EndpointOf(name string, pc config.ProviderConfig) Endpoint {
 	kind := pc.Type
 	if kind == "" {
 		kind = name
+		if c, ok := ChoiceFor(name); ok && c.Type != "" {
+			kind = c.Type
+		}
 	}
 	e := Endpoint{Name: name, Kind: kind, BaseURL: pc.BaseURL, Key: pc.APIKey}
 	if e.Key == "" && pc.APIKeyEnv != "" {
 		e.Key = os.Getenv(pc.APIKeyEnv)
 	}
 	if e.Key == "" {
-		e.Key = EnvKey(kind)
+		e.Key = EnvKey(name)
+		if e.Key == "" && kind != name {
+			e.Key = EnvKey(kind)
+		}
 	}
 	if e.BaseURL == "" {
-		if c, ok := ChoiceFor(kind); ok {
-			e.BaseURL = c.BaseURL
+		choice, hasChoice := ChoiceFor(name)
+		if hasChoice {
+			e.BaseURL = choice.BaseURL
+		}
+		// A Catwalk entry with an unresolved endpoint must be configured by
+		// the user. Never fall through to another provider's default URL.
+		if e.BaseURL == "" && (!hasChoice || !choice.Catwalk) {
+			if c, ok := ChoiceFor(kind); ok {
+				e.BaseURL = c.BaseURL
+			}
 		}
 	}
 	return e
@@ -479,8 +510,10 @@ func Usable(cfg *config.Config) []string {
 		}
 	}
 	for _, c := range Choices() {
+		_, configured := cfg.Providers[c.Name]
 		signedIn := c.SignIn && chatgpt.SignedIn(chatgpt.Path(cfg.ConfigDir))
-		if _, ok := cfg.Providers[c.Name]; ok || c.Local || c.CLI || EnvKey(c.Name) != "" || signedIn {
+		keyReady := EnvKey(c.Name) != "" && (!c.Catwalk || c.BaseURL != "")
+		if configured || c.Local || c.CLI || keyReady || signedIn {
 			add(c.Name)
 		}
 	}
