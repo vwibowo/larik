@@ -96,6 +96,7 @@ Audio is disabled by default and is configured in your personal `~/.config/larik
     "enabled": true,
     "stt": { "base_url": "http://127.0.0.1:8000/v1", "model": "Qwen3-ASR-1.7B", "language": "id" },
     "tts": { "base_url": "http://127.0.0.1:8001/v1", "model": "Qwen3-TTS-0.6B", "voice": "default" },
+    "max_duration_seconds": 120,
     "auto_speak": false
   },
   "keybindings": { "record_audio": "ctrl+space" }
@@ -104,7 +105,7 @@ Audio is disabled by default and is configured in your personal `~/.config/larik
 
 Press `ctrl+space` to start/stop recording. The TUI shows an animated microphone indicator while recording and keeps the stop hint visible. The transcript is inserted into the composer for review. Set the optional STT `language` to an ISO-639-1 code such as `id` to guide language detection and transcription; compatible servers that return a JSON transcription object are normalized to its `text` field. Use `/stt-language id` or `/stt-language en` to switch between Indonesian and English; `/stt-language` shows the current setting. Use `/speak` to synthesize the latest assistant reply, or `/speak some text` for explicit text. Set `auto_speak` to `true` to play every completed top-level reply. Recording uses `ffmpeg` by default (macOS uses AVFoundation; Linux uses PulseAudio), and playback uses `afplay` on macOS or `ffplay` on Linux. Set `record_command` or `play_command` when your platform uses different commands; Larik appends the temporary WAV path as the final shell argument.
 
-Only personal settings can enable audio because it accesses the microphone, launches local processes, and sends recordings to the configured endpoint. A shared project settings file may disable it but cannot enable or configure it.
+For an endpoint that requires authentication, set `api_key` directly in personal settings or prefer `api_key_env` with an environment-variable name such as `LOCAL_AUDIO_API_KEY`; then export that variable before starting Larik. Omit both for an unauthenticated local server. `max_duration_seconds` limits how long one recording can run (the default is 120 seconds). Only personal settings can enable audio because it accesses the microphone, launches local processes, and sends recordings to the configured endpoint. A shared project settings file may disable it but cannot enable or configure it.
 
 ### Mixing cheap and strong models
 
@@ -292,6 +293,8 @@ fi
 | `/init [focus]`                                  | Study the project and write `AGENTS.md`, or improve the `AGENTS.md` or `CLAUDE.md` it has; works with `-p` too. Applies from the next fresh context                                                                                                                      |
 | `/export [file]`                                 | Save the whole session as Markdown (prompts, replies, tool calls and capped results; no thinking or attached file contents). Default `larik-<session>.md` here; never overwrites                                                                                         |
 | `/copy`                                          | Copy the last reply, as Markdown, to the clipboard (natively and through the terminal, so it works over SSH)                                                                                                                                                             |
+| `/speak [text]`                                  | Synthesize and play the latest assistant reply, or the supplied text, with the local TTS service                                                                                                                                                                      |
+| `/stt-language [id\|en]`                        | Show or save the speech-to-text language; use `id` for Indonesian or `en` for English                                                                                                                                                                               |
 | `/review [PR\|branch\|range] [focus]`             | Review code changes for bugs and report findings, without editing. With no argument: your uncommitted changes, or this branch's commits when the tree is clean. See [Reviewing changes](#reviewing-changes)                                                              |
 | `/security-review [PR\|branch\|range] [focus]`    | The same, looking for security vulnerabilities the changes introduce                                                                                                                                                                                                     |
 | `/vim`                                           | Switch vim editing of the prompt on or off; see [Vim mode](#vim-mode)                                                                                                                                                                                                    |
