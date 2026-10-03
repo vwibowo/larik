@@ -14,14 +14,14 @@ go test ./...
 
 ## Prepare a GitHub release
 
-The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. `v0.8.0` is the next planned version; the website continues to show the last published version until the new assets are uploaded.
+The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The current release candidate is `v0.9.0`; the website continues to show the last published version until the new assets are uploaded.
 
-1. Add this repository as `origin` if it is not configured yet (`git remote add origin <GitHub repository URL>`). Review and commit the changes you intend to publish; the script refuses a dirty checkout.
-2. Run `scripts/package-release.sh v0.8.0`. It runs `go test ./...`, builds the website to check links, and creates five archives plus `SHA256SUMS` in `dist/release/v0.8.0/`. The archives cover macOS and Linux on arm64 and amd64, plus Windows on amd64. Check the archives and checksums before publishing.
-3. Create and push the tag: `git tag -a v0.8.0 -m "Larik v0.8.0"`, then `git push origin main v0.8.0`. Upload the files in `dist/release/v0.8.0/` to a GitHub Release for that tag (for example, with `gh release create v0.8.0 dist/release/v0.8.0/* --verify-tag --generate-notes`).
-4. After every asset is available, change `website/site.json` to `v0.8.0` and fill each download URL with `https://github.com/<owner>/<repo>/releases/download/v0.8.0/<file>`, using the owner and repository from `origin`. Rename the Unreleased changelog entry to `v0.8.0`, add the publication date, rebuild the website, and commit and push those site changes. Until then, keep URLs pointed at the latest published version so visitors do not get broken downloads.
+1. Review and commit the changes intended for the release; the script refuses a dirty checkout. This repository keeps remotes and publishing under explicit manual control.
+2. Run `scripts/package-release.sh v0.9.0`. It runs `go test ./...`, builds the website to check links, and creates five archives plus `SHA256SUMS` in `dist/release/v0.9.0/`. The archives cover macOS and Linux on arm64 and amd64, plus Windows on amd64. Check the archives and checksums before publishing.
+3. After explicit confirmation, create and push the tag: `git tag -a v0.9.0 -m "Larik v0.9.0"`, then push the intended branch and tag. Upload the files in `dist/release/v0.9.0/` to a GitHub Release (for example, with `gh release create v0.9.0 dist/release/v0.9.0/* --verify-tag --generate-notes`).
+4. After every asset is available, change `website/site.json` to `v0.9.0` and fill each download URL with `https://github.com/<owner>/<repo>/releases/download/v0.9.0/<file>`, using the owner and repository from the configured GitHub remote. Rebuild the website and commit the published download metadata. Until then, keep URLs pointed at the latest published version so visitors do not get broken downloads.
 
-The script embeds `0.8.0` into each binary; a release binary prints `larik 0.8.0` with `--version`.
+The script embeds `0.9.0` into each binary; a release binary prints `larik 0.9.0` with `--version`.
 
 No test needs an API key or network access:
 

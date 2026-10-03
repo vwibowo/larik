@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.0
+
+<p class="release-meta"><time datetime="2026-10-03">October 3, 2026</time></p>
+
+### Added
+
+- **Local speech input and output.** Configure any OpenAI-compatible STT/TTS server for microphone transcription and assistant speech, with Qwen3-ASR and Qwen3-TTS documented as local options.
+- **Indonesian and English STT selection.** Use `/stt-language id` or `/stt-language en` to choose the transcription language and save it as a personal default.
+- **Interactive recording feedback.** `Ctrl+Space` starts and stops recording with an animated microphone indicator, a visible transcription hint, and a dedicated transcription status.
+
+### Changed
+
+- **STT responses are normalized.** OpenAI-compatible servers that return a JSON transcription object now contribute only its `text` field to the composer, while plain-text responses remain supported.
+- **Audio configuration is personal-only.** Microphone recording, local playback, and audio endpoints are kept out of shared project configuration.
+
+### Fixed
+
+- **`Ctrl+Space` recording dispatch.** The configured `record_audio` key now reaches the recording handler instead of being silently ignored.
+
 ## v0.8.0
 
 <p class="release-meta"><time datetime="2026-10-03">October 3, 2026</time></p>
