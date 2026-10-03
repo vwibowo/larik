@@ -137,12 +137,16 @@ type model struct {
 	permFeedback *textarea.Model   // denial feedback, when the third option is selected
 	// bgReplies marks prompts from background tasks, which must survive
 	// the end of the foreground turn.
-	bgReplies map[chan<- agent.PermissionReply]bool
-	permIdx   int
-	queue     []string
-	stats     agent.UsageInfo
-	turnStart time.Time // when the running turn began
-	turnChars int       // text and thinking streamed this turn, for a token estimate
+	bgReplies      map[chan<- agent.PermissionReply]bool
+	permIdx        int
+	queue          []string
+	stats          agent.UsageInfo
+	turnStats      turnStats
+	projectRoot    string
+	project        projectInfo
+	projectLoading bool
+	turnStart      time.Time // when the running turn began
+	turnChars      int       // text and thinking streamed this turn, for a token estimate
 	// thinkStart is when the in-flight message began thinking, and
 	// thinkDur how long it thought once it moved on.
 	thinkStart   time.Time
@@ -240,16 +244,17 @@ func newModel(opts Options) *model {
 	ta.Focus()
 
 	m := &model{
-		opts:      opts,
-		agent:     opts.Agent,
-		sess:      opts.Session,
-		bgStop:    make(chan struct{}),
-		input:     ta,
-		spin:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		view:      viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
-		panelView: viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
-		width:     80,
-		stats:     opts.Agent.Stats(),
+		opts:        opts,
+		agent:       opts.Agent,
+		sess:        opts.Session,
+		bgStop:      make(chan struct{}),
+		input:       ta,
+		spin:        spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		view:        viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
+		panelView:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
+		width:       80,
+		stats:       opts.Agent.Stats(),
+		projectRoot: projectRootFor(opts.Agent.Cwd()),
 
 		termDark: termDark,
 		focused:  true,
@@ -345,7 +350,7 @@ func (m *model) setWidth(w int) {
 }
 
 func (m *model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.printBanner()}
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.printBanner(), m.refreshProject()}
 	if len(m.opts.History) > 0 {
 		cmds = append(cmds, m.printHistory("resumed"))
 	}
@@ -370,6 +375,10 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statusDoneMsg:
 		return m, m.statusDone(msg)
+
+	case projectInfoMsg:
+		m.project, m.projectLoading = msg.info, false
+		return m, nil
 
 	case outputMsg:
 		m.appendOutput(string(msg))
@@ -398,7 +407,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shellDoneMsg:
-		return m, m.shellDone(msg)
+		return m, tea.Batch(m.shellDone(msg), m.refreshProject())
 
 	case imagePastedMsg:
 		return m, m.imagePasted(msg)
@@ -472,7 +481,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if next := m.nextQueued(); next != nil { // pending background results ride along with it
 			return m, next
 		}
-		return m, tea.Batch(alert, m.deliverBackground())
+		return m, tea.Batch(alert, m.deliverBackground(), m.refreshProject())
 
 	case bgEventMsg:
 		if msg.from != m.agent {
@@ -830,6 +839,7 @@ func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.turnStats = turnStats{}
 	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
@@ -928,6 +938,15 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvToolStart:
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:
+		for i, t := range m.tools {
+			if t.id == e.ToolID && t.agent == e.Agent {
+				if !t.started.IsZero() {
+					m.turnStats.ToolTime += time.Since(t.started)
+				}
+				m.tools = append(m.tools[:i], m.tools[i+1:]...)
+				break
+			}
+		}
 		if m.updateTodos(e) {
 			return m.println(m.completedTodosCard())
 		}
@@ -945,12 +964,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		} else if e.ToolName == "task" && !taskIsBackground(e.Input) {
 			m.clearTaskCalls(taskLabel(e.Input))
 		}
-		for i, t := range m.tools {
-			if t.id == e.ToolID && t.agent == e.Agent { // child ids can repeat the parent's
-				m.tools = append(m.tools[:i], m.tools[i+1:]...)
-				break
-			}
-		}
+
 		if m.appearance != "compact" || e.IsError || e.ToolName == permission.ExitPlanTool {
 			return m.println(card)
 		}
@@ -975,6 +989,12 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		return tea.Sequence(plan, m.alert(what))
 	case agent.EvUsage:
 		m.stats = *e.Usage
+		m.turnStats.Steps++
+		m.turnStats.ModelTime += time.Duration(e.Usage.RequestMS) * time.Millisecond
+		if e.Usage.TTFTMS > 0 {
+			m.turnStats.TTFTTotal += time.Duration(e.Usage.TTFTMS) * time.Millisecond
+			m.turnStats.TTFTCount++
+		}
 	case agent.EvCompacted:
 		return m.println(m.st.dim.Render("✓ Context compacted to stay within the model's window."))
 	case agent.EvNotice:
@@ -1143,6 +1163,7 @@ func (m *model) deliverBackground() tea.Cmd {
 	}
 	m.running, m.cancel, m.events = true, cancel, events
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.turnStats = turnStats{}
 	return tea.Sequence(
 		m.println("\n"+m.st.dim.Render("⚙ delivering background task results to the model")),
 		tea.Batch(m.waitEvent(), m.spin.Tick),

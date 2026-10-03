@@ -192,6 +192,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		return fit(spread(left, right, width))
 	}
 	var sections [][]string
+	compactSidebar := taskLimit > 0 && taskLimit <= 8
 
 	if m.opts.Sandbox == nil {
 		note := "! sandbox off"
@@ -201,10 +202,100 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		sections = append(sections, []string{m.st.warn.Render(fit(note))})
 	}
 
+	p := m.project
+	projectName := p.name
+	if projectName == "" {
+		projectName = "project"
+	}
+	projectRows := []string{head("Project", projectName)}
+	if p.available {
+		branch := p.branch
+		if branch == "" {
+			branch = "detached HEAD"
+		}
+		if p.ahead > 0 {
+			branch += fmt.Sprintf(" ↑%d", p.ahead)
+		}
+		if p.behind > 0 {
+			branch += fmt.Sprintf(" ↓%d", p.behind)
+		}
+		branchRow := m.st.dim.Render("⑂ " + branch)
+		if p.clean {
+			projectRows = append(projectRows, row(branchRow, "clean"))
+		} else {
+			projectRows = append(projectRows, row(branchRow, fmt.Sprintf("%d file · +%d/−%d", p.files, p.added, p.deleted)))
+		}
+	} else if p.err != "" {
+		projectRows = append(projectRows, fit(m.st.dim.Render("Git status unavailable")))
+	} else {
+		projectRows = append(projectRows, fit(m.st.dim.Render("checking…")))
+	}
+	sections = append(sections, projectRows)
+
+	provider := m.agent.ProviderName()
+	if provider == "" {
+		provider = "session"
+	}
+	usageRows := []string{head("Usage", provider)}
+	if m.stats.Total.Input+m.stats.Total.Output+m.stats.Total.CacheRead+m.stats.Total.CacheWrite == 0 {
+		usageRows = append(usageRows, fit(m.st.dim.Render("no usage yet")))
+	} else if compactSidebar {
+		tokens := humanTokens(m.stats.Total.Input+m.stats.Total.CacheRead+m.stats.Total.CacheWrite) + " in / " + humanTokens(m.stats.Total.Output) + " out"
+		context := "ctx —"
+		if m.stats.ContextWindow > 0 {
+			context = fmt.Sprintf("ctx %d%%", m.stats.ContextTokens*100/m.stats.ContextWindow)
+		}
+		usageRows = append(usageRows, row("Tokens", tokens), row("Cost · "+context, m.costText()))
+	} else {
+		usageRows = append(usageRows,
+			row("Input / output", humanTokens(m.stats.Total.Input+m.stats.Total.CacheRead+m.stats.Total.CacheWrite)+" / "+humanTokens(m.stats.Total.Output)),
+			row("Session cost", m.costText()),
+		)
+		if m.stats.ContextWindow > 0 {
+			percent := m.stats.ContextTokens * 100 / m.stats.ContextWindow
+			usageRows = append(usageRows, row("Context", fmt.Sprintf("%s / %s · %d%%", humanTokens(m.stats.ContextTokens), humanTokens(m.stats.ContextWindow), percent)))
+		}
+	}
+	sections = append(sections, usageRows)
+
+	metric := func(d time.Duration) string {
+		if d <= 0 {
+			return "—"
+		}
+		if d < time.Second {
+			return fmt.Sprintf("%dms", d.Milliseconds())
+		}
+		if d < time.Minute {
+			return fmt.Sprintf("%.1fs", d.Seconds())
+		}
+		return elapsed(d)
+	}
+	ttft := "—"
+	if m.turnStats.TTFTCount > 0 {
+		ttft = metric(m.turnStats.TTFTTotal / time.Duration(m.turnStats.TTFTCount))
+	}
+	turnRows := []string{head("Turn stats", "current turn")}
+	if compactSidebar {
+		turnRows = append(turnRows,
+			row("Model "+metric(m.turnStats.ModelTime), "Tool "+metric(m.turnStats.ToolTime)),
+			row("TTFT "+ttft, "Steps "+strconv.Itoa(m.turnStats.Steps)),
+		)
+	} else {
+		turnRows = append(turnRows,
+			row("Model time", metric(m.turnStats.ModelTime)),
+			row("Tool time", metric(m.turnStats.ToolTime)),
+			row("Avg TTFT", ttft),
+			row("Steps", strconv.Itoa(m.turnStats.Steps)),
+		)
+	}
+	sections = append(sections, turnRows)
+
 	if m.openTodos() {
 		sec := []string{head("Tasks", todoProgress(m.todos))}
-		for _, l := range m.todoLinesWidth(m.todos, taskLimit, max(width-2, 4)) {
-			sec = append(sec, fit(l))
+		if !compactSidebar {
+			for _, l := range m.todoLinesWidth(m.todos, taskLimit, max(width-2, 4)) {
+				sec = append(sec, fit(l))
+			}
 		}
 		sections = append(sections, sec)
 	}
@@ -232,7 +323,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 	if len(mcpRows) > 0 {
 		summary = fmt.Sprintf("%d active", len(mcpRows))
 	}
-	sections = append(sections, append([]string{head("MCP", summary)}, mcpRows...))
+	mcpSection := append([]string{head("MCP", summary)}, mcpRows...)
 
 	var lspRows []string
 	if m.opts.LSP != nil {
@@ -251,19 +342,30 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 	if len(lspRows) > 0 {
 		summary = fmt.Sprintf("%d active", len(lspRows))
 	}
-	sections = append(sections, append([]string{head("LSP", summary)}, lspRows...))
+	lspSection := append([]string{head("LSP", summary)}, lspRows...)
+	if compactSidebar && len(mcpRows) == 0 && len(lspRows) == 0 {
+		sections = append(sections, []string{row(m.st.dim.Render("MCP none"), m.st.dim.Render("LSP none"))})
+	} else {
+		sections = append(sections, mcpSection, lspSection)
+	}
 
 	var used []string
 	for name := range m.usedSkills {
 		used = append(used, name)
 	}
 	sort.Strings(used)
-	sec := []string{head("Skills", fmt.Sprintf("%d used · %d", len(used), len(m.opts.Skills.List())))}
-	for _, name := range used {
-		sec = append(sec, fit(m.st.ok.Render("✓ ")+"/"+name))
+	skillSummary := fmt.Sprintf("%d used · %d", len(used), len(m.opts.Skills.List()))
+	if compactSidebar && len(used) > 0 {
+		skillSummary = fmt.Sprintf("%d used · /%s", len(used), used[0])
 	}
-	if len(used) == 0 {
-		sec = append(sec, m.st.dim.Render(fit("none used yet · / to browse")))
+	sec := []string{head("Skills", skillSummary)}
+	if !compactSidebar {
+		for _, name := range used {
+			sec = append(sec, fit(m.st.ok.Render("✓ ")+"/"+name))
+		}
+		if len(used) == 0 {
+			sec = append(sec, m.st.dim.Render(fit("none used yet · / to browse")))
+		}
 	}
 	return append(sections, sec)
 }

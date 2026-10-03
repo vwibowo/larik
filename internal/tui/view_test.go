@@ -176,6 +176,28 @@ func TestUserMessageGutterOnEveryLine(t *testing.T) {
 	}
 }
 
+func TestSidebarShowsProjectUsageAndTurnMetrics(t *testing.T) {
+	m := testModel(t)
+	m.project = projectInfo{name: "larik-hardness", branch: "main", files: 1, added: 4, available: true}
+	m.stats = agent.UsageInfo{Model: "claude-sonnet", Total: llm.Usage{Input: 1200, Output: 340}, CostUSD: 0.02, ContextTokens: 1500, ContextWindow: 10000}
+	m.turnStats = turnStats{ModelTime: 7 * time.Second, ToolTime: 3500 * time.Millisecond, TTFTTotal: 10 * time.Second, TTFTCount: 1, Steps: 2}
+	var rows []string
+	for _, sec := range m.sessionSections(40, 12) {
+		rows = append(rows, sec...)
+	}
+	got := plain(strings.Join(rows, "\n"))
+	for _, want := range []string{"Project", "larik-hardness", "main", "1 file · +4/−0", "Usage", "Input / output", "Session cost", "Turn stats", "Model time", "Tool time", "Avg TTFT", "Steps"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sidebar missing %q:\n%s", want, got)
+		}
+	}
+	for _, row := range rows {
+		if lipgloss.Width(row) > 40 || strings.Contains(row, "\n") {
+			t.Errorf("sidebar row wraps or overflows: %q", plain(row))
+		}
+	}
+}
+
 func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(120)

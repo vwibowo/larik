@@ -89,4 +89,6 @@ type UsageInfo struct {
 	CostUSD       float64   `json:"cost_usd"`
 	ContextTokens int       `json:"context_tokens"`
 	ContextWindow int       `json:"context_window"`
+	RequestMS     int64     `json:"request_ms,omitempty"`
+	TTFTMS        int64     `json:"ttft_ms,omitempty"`
 }

@@ -858,7 +858,7 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 			usage := ev.Usage
 			traced(trace.Response{Message: &msg, Usage: &usage, CostUSD: llm.Lookup(msg.Model).Cost(ev.Usage), StopReason: string(ev.StopReason)})
 			a.probeWindow(ctx, provider, msg.Model, ev.Usage, emit)
-			a.recordUsage(msg.Model, ev.Usage, emit)
+			a.recordUsageMeasured(msg.Model, ev.Usage, time.Since(start), ttft, emit)
 			a.appendMessage(msg, &ev.Usage)
 			emit(Event{Kind: EvAssistant, Message: &msg})
 			return msg, ev.StopReason, nil
@@ -901,13 +901,17 @@ func (a *Agent) keepPartial(text string) {
 
 // recordUsage adds a request's usage, priced for the model that served it.
 func (a *Agent) recordUsage(model string, u llm.Usage, emit func(Event)) {
+	a.recordUsageMeasured(model, u, 0, 0, emit)
+}
+
+func (a *Agent) recordUsageMeasured(model string, u llm.Usage, requestTime, ttft time.Duration, emit func(Event)) {
 	a.mu.Lock()
 	info := llm.Lookup(model)
 	a.usage.Add(u)
 	a.cost += info.Cost(u)
 	a.addModelUsageLocked(model, u)
 	a.lastContext = u.ContextTokens() + u.Output
-	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
+	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), RequestMS: requestTime.Milliseconds(), TTFTMS: ttft.Milliseconds()}
 	a.mu.Unlock()
 	emit(Event{Kind: EvUsage, Usage: &ui})
 }

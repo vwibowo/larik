@@ -94,6 +94,15 @@ func kinds(evs []Event) []EventKind {
 	return out
 }
 
+func TestUsageEventCarriesRequestTiming(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeDefault)
+	var got Event
+	a.recordUsageMeasured("m", llm.Usage{Input: 100, Output: 10}, 2400*time.Millisecond, 350*time.Millisecond, func(e Event) { got = e })
+	if got.Kind != EvUsage || got.Usage == nil || got.Usage.RequestMS != 2400 || got.Usage.TTFTMS != 350 {
+		t.Fatalf("usage timing = %+v", got)
+	}
+}
+
 func TestWriteThenUndo(t *testing.T) {
 	a, fp, dir := setup(t, permission.ModeDefault,
 		assistant(toolUse("t1", "write", `{"path":"hello.txt","content":"hi\n"}`)),
