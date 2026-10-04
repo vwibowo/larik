@@ -263,9 +263,13 @@ func (s *Session) launch(profile string) error {
 	if startupTimeout <= 0 {
 		startupTimeout = browserStartupTimeout
 	}
-	startupCtx, cancelStartup := context.WithTimeout(root, startupTimeout)
-	err := chromedp.Run(startupCtx, s.guard())
-	cancelStartup()
+	// The first Run allocates Chrome using the context passed to it. Running it
+	// with a short-lived child context would kill Chrome as soon as that
+	// context is canceled, even after a successful launch. Bound startup by
+	// canceling the long-lived root only if the deadline expires.
+	stopStartupTimer := time.AfterFunc(startupTimeout, cancelRoot)
+	err := chromedp.Run(root, s.guard())
+	stopStartupTimer.Stop()
 	if err != nil {
 		cancelRoot()
 		cancelAlloc()

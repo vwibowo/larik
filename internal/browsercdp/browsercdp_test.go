@@ -125,6 +125,9 @@ func chrome(t *testing.T) string {
 		t.Skip("no Chrome or Chromium installed")
 	}
 	if err := CheckAvailable(Options{Headless: true, ChromePath: path}); err != nil {
+		if strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("Chrome started but its context was canceled during the availability probe: %v", err)
+		}
 		t.Skipf("Chrome/Chromium is not usable in this environment: %v", err)
 	}
 	return path
