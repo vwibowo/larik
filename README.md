@@ -113,15 +113,16 @@ An agent spends most of its tokens reading: searching files, re-reading context,
 
 Run `/routing` to set it up. The wizard lists the models of every provider you've connected, with prices, and offers presets:
 
-- **Balanced:** your current model stays in charge; the cheapest models it finds become `worker` and `explore`.
-- **Cheapest:** the lowest-priced capable model for every subagent.
-- **Local and plan first:** Ollama, LM Studio or your ChatGPT plan before paid APIs.
+- **Balanced:** your current model stays in charge; the cheapest models it finds become `worker` and `explore`. The main model proactively delegates broad searches and well-specified mechanical work, but keeps trivial steps local.
+- **Cheapest:** the lowest-priced capable models for every subagent, with aggressive delegation of separable routine work.
+- **Local and plan first:** Ollama, LM Studio or your ChatGPT plan before paid APIs, also with aggressive delegation.
 
 Then you can adjust each role, add fallbacks and set a budget. The result is saved as plain settings, for example for a student with a small Anthropic budget, a free Gemini key and Ollama:
 
 ```json
 {
   "model": "anthropic/claude-sonnet-5",
+  "delegation": "balanced",
   "roles": {
     "worker": "ollama/qwen3-coder",
     "explore": "gemini/gemini-3.8-flash"
@@ -139,7 +140,8 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 ```
 
 - **Roles:** `worker` runs the built-in `general-purpose` subagent, `explore` the read-only `explore` subagent. `smart` is a strong model the main agent can hand hard subproblems to, and `compact` summarizes the conversation when the context fills. An unset role uses the main model, so nothing changes until you set one. You can add roles of your own and use them in agent definitions (`model: reviewer`), in `--model` and in `/model`.
-- **Per task:** once a role has a model, the `task` tool gets a `model` input listing the roles with their prices. The main agent is told to send well-specified, mechanical work to cheap roles and keep design decisions, ambiguous debugging and final review for itself. Subagent rows show the model they ran on.
+- **Delegation policy:** `manual` keeps delegation optional, `balanced` proactively sends broad exploration and well-specified multi-step mechanical work to cheap roles while avoiding trivial handoffs, and `aggressive` delegates most separable searches, routine implementation, tests and boilerplate. The policy guides the main model; it is not a deterministic per-tool classifier. Change it with `p` in the wizard or `/routing policy=balanced`. Policy instructions are part of the cached tool prefix, so a change applies after `/clear` or in a new session. A shared project setting may make delegation less aggressive, but only personal settings can widen provider use.
+- **Per task:** once a role has a model, the `task` tool gets a `model` input listing the roles with their prices. Built-in `general-purpose` and `explore` agents already default to the `worker` and `explore` roles, so the main model need not select the role manually. Subagent rows show the model they ran on.
 - **Fallbacks:** when a model fails before answering with a rate limit, an exhausted quota, an auth problem, an outage or no response at all (see `stall_timeout`), Larik switches to the next model in its list and says so. It never switches once output has started. A model that failed is left alone for a minute (rate limits, server errors) or ten (a missing model, a bad key, no credit, a stopped server), so later requests don't pay for the same failure. Useful with free tiers that run out mid-session. Fallbacks can be keyed by role or by `provider/model`.
 - **Keeping cheap models on a leash:** small and mid-size models sometimes lose the thread. They create stray files, "clean up" by deleting things, or repeat one command forever. Three safeguards cover this, and the presets turn them on:
   - `role_options.<role>.isolation: "worktree"` runs that role's subagents in their own git worktree (see [Subagents](#subagents)). Their edits come back as a branch for the main agent to review and merge, so a bad run never touches your checkout. It applies unless the task or agent definition chooses otherwise; outside a git repository the subagent works in place, with a notice.
@@ -152,7 +154,8 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
 - **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free.
 - **Comparing models before you trust one:** `larik bench --models worker,anthropic/claude-haiku-4-5,ollama/qwen3-coder` runs a few small, self-checking coding tasks (fix a failing test, implement a stub, rename a symbol across files) against each model in its own throwaway directory, then reports pass/fail, cost, time, tokens and peak context — no separate judge model, `go test` (or an exact expected file) is the check. `--execution tools,hybrid,code` runs each setting side by side, `--runs 3` repeats each task and adds a table of medians and ranges, and `--keep-failed` keeps a failed run's directory with its transcript and every tool call (scripts' included) so you can see why. Use it to see whether a role you're about to add is actually good enough, not just cheap, and which [execution setting](#execution) suits it. See `larik bench -h`.
 - **Compaction:** the `compact` role is usually best left unset. With prompt caching, the main model re-reads the conversation at the cache price (for Opus, $0.50 per million tokens), which can cost less than a cheap model reading it all uncached.
-- **Quick edits:** `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap).
+- **Measuring the result:** `/cost` reports delegated task count, the subagents' token and cost share, and—when prices are known—an estimated saving from pricing the same tokens on the main model. That estimate is directional: a direct run might use a different number of tokens because each subagent starts with a fresh context and the main model must review its result. Delegating one read or one tiny edit can cost more; broad searches and repetitive work are where routing usually pays off.
+- **Quick edits:** `/routing policy=aggressive`, `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap).
 
 ## Keys and commands
 
@@ -278,7 +281,7 @@ fi
 | `/model [provider/model]`                        | Pick or switch models and reasoning effort (←/→); saves them as defaults for future launches. A model-specific execution setting applies from the next fresh context                                                                                                                                                                             |
 | `/connect [provider]`                            | Setup wizard: choose a provider, connect it, pick a model, save                                                                                                                                                                                                          |
 | `/providers`                                     | Connected or detected providers with status, plus a NVIDIA NIM connect shortcut; `enter` edit/connect, `t` test, `d` remove, `a` add                                                                                                                                     |
-| `/routing [role=provider/model]`                 | Setup wizard for cheaper subagent models, fallbacks and a session budget; `/routing show` lists them                                                                                                                                                                     |
+| `/routing [role=provider/model]`                 | Setup wizard for delegation policy, cheaper subagent models, fallbacks and a session budget; `/routing show` lists them                                                                                                                                                  |
 | `/keys`                                          | Keyboard shortcuts (also `?` on an empty prompt)                                                                                                                                                                                                                         |
 | `/info`                                          | Session sidebar: project and Git changes, session token/cost/context use, current-turn model/tool timings, tasks, agents, MCP/LSP and skills (also F2). Provider account quota/reset windows are not currently available.                                                                                                                                                                            |
 | `/config [key=value]`                            | Settings: theme, verbose output, spinner tips, mouse scrolling, auto-compact, token saver, execution, notifications, response language, undo history, default mode, effort and model. Saved to `~/.config/larik/config.json`; changes that need a fresh model context ask before clearing it |
@@ -314,6 +317,7 @@ fi
 | `/skills`                                        | List skills                                                                                                                                                                                                                                                              |
 | `/memory [add <text> \| show <name> \| delete <name>]` | List the notes Larik remembers across sessions, or add, read or delete one. See [Memory](#memory)                                                                                                                                                                  |
 | `/agents`                                        | List subagents                                                                                                                                                                                                                                                           |
+| `/browser [on\|off]`                             | Show browser-tool status or enable/disable them in your personal config; reloads app services with a fresh model context (asks first when context exists)                                                                                                              |
 | `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
@@ -377,13 +381,13 @@ The permission mode decides what Larik may do without asking. The execution sett
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `tools`  | The tools, one call per step. The default.                                                                                                |
 | `hybrid` | The tools plus `run_code`, and it picks per step: scripts for loops, chained lookups and filtering large output, direct calls otherwise.  |
-| `code`   | `run_code` for ordinary tools, plus `exit_plan_mode` for plan approval.                                                                  |
+| `code`   | `run_code` for ordinary tools, direct subagent management, plus `exit_plan_mode` for plan approval.                                      |
 
 `run_code` runs JavaScript in an embedded interpreter, in a separate process started from the Larik binary, with no file, network or process access of its own. When the [sandbox](#sandbox) is on, that process is also confined more strictly than bash commands: no writes, no network (not even localhost), no API keys in its environment, and no reading home or temp directories. A script can only call tools (`tools.read({path})`, `tools.call(name, args)`), and gets their text back. Only what the script prints returns to the model, so reading forty files to count something costs the context one summary instead of forty results.
 
 Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
 
-In `code` mode, the model cannot start or manage subagents, update its task list, load skills, or use memory. These conversation-level tools are unavailable to scripts; use `hybrid` or `tools` when you need them. Plan approval remains available directly. Changing execution in an existing conversation saves the choice for the next `/clear` or new session, so the tool list stays stable while that conversation is in context. A new conversation applies the choice immediately.
+In `code` mode, the model can call `task`, `task_wait` and `task_stop` directly, but scripts cannot invoke them and subagents still cannot start further subagents. Other conversation-level tools such as task-list updates, skills and memory remain unavailable; use `hybrid` or `tools` when you need them. Plan approval remains available directly. Changing execution in an existing conversation saves the choice for the next `/clear` or new session, so the tool list stays stable while that conversation is in context. A new conversation applies the choice immediately.
 
 The right setting depends on the model: a strong model writes reliable scripts, a small one may not. So it is set per model, with a default for the rest:
 
@@ -431,7 +435,7 @@ You can also set it explicitly:
 
 ### Browser
 
-For pages that need JavaScript, a sign-in or clicking through, Larik can drive a real Chrome window. It's off by default; turn it on in your personal config:
+For pages that need JavaScript, a sign-in or clicking through, Larik can drive a real Chrome window. It's off by default. In the TUI, use `/browser on` or `/browser off` to save the switch and reload with a fresh model context; `/browser` shows the status. The saved session transcript remains available, but the current model context is cleared. You can also turn it on in your personal config:
 
 ```json
 { "browser": { "enabled": true } }
@@ -642,7 +646,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `token_saver`: opt-in command-output filtering (`/config token_saver=true`). Recognized Git, search/listing, Go, Cargo, Node package-manager, and pytest output is shortened before entering model context. Unrecognized output and failures pass through. A `bash` call can set `raw_output: true`; `raw_output` retrieves the exact captured stdout/stderr by tool-call ID without rerunning the command. Raw output stays in private session files. The displayed byte savings are estimates for command output; use `/cost` to inspect actual session token usage and cost.
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.
 - `language`: what the model replies in, e.g. `"Indonesian"`. A change applies after `/clear` or in a new session, so the cached prompt stays valid.
-- `roles`, `fallbacks`, `budget` ("Model routing" and "Session budget" in `/config`): see [Mixing cheap and strong models](#mixing-cheap-and-strong-models).
+- `delegation`, `roles`, `fallbacks`, `role_options`, `budget` ("Model routing" and "Session budget" in `/config`): see [Mixing cheap and strong models](#mixing-cheap-and-strong-models).
 - `stall_timeout`: how many seconds a model server may send nothing before Larik stops the request, reports it, and switches to the fallback model if there is one. Default 300, or 900 for local servers (Ollama, LM Studio, `openai-compatible`), which may still be loading the model. Set it per provider with `"providers": {"ollama": {"stall_timeout": 1800}}`; a negative value waits forever. Keep-alives from the server count as activity, so a model that is thinking isn't cut off.
 - `checkpoint_retention_days` ("Undo history" in `/config`): how long `/undo` snapshots are kept, so `/undo` still works after resuming a session. Default 7; a negative value (`forever` in `/config`) keeps them forever. Old snapshots are deleted at startup, for every project, so this is honored only from personal settings.
 

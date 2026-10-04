@@ -32,6 +32,7 @@ const (
 	EntryMessage    EntryType = "message"
 	EntryCompaction EntryType = "compaction"
 	EntryUsage      EntryType = "usage"    // spend not tied to a message, e.g. subagents
+	EntryTask       EntryType = "task"     // a subagent task was started
 	EntryRecovery   EntryType = "recovery" // marks a torn line repaired on resume
 )
 
@@ -43,7 +44,8 @@ type Entry struct {
 	Message  *llm.Message `json:"message,omitempty"`
 	Usage    *llm.Usage   `json:"usage,omitempty"`
 	Summary  string       `json:"summary,omitempty"`
-	Model    string       `json:"model,omitempty"` // EntryUsage
+	Model    string       `json:"model,omitempty"`  // EntryUsage
+	Source   string       `json:"source,omitempty"` // "subagent" for delegated usage
 	Meta     *Meta        `json:"meta,omitempty"`
 }
 
@@ -124,12 +126,15 @@ func Create(dir string, meta Meta) (*Session, error) {
 
 // State is what a loaded session reconstructs.
 type State struct {
-	Meta     Meta
-	Messages []llm.Message // active context (after the latest compaction)
-	All      []llm.Message // full history for display
-	Usage    llm.Usage
-	Cost     float64
-	ByModel  map[string]llm.Usage // usage per model that served it
+	Meta           Meta
+	Messages       []llm.Message // active context (after the latest compaction)
+	All            []llm.Message // full history for display
+	Usage          llm.Usage
+	Cost           float64
+	ByModel        map[string]llm.Usage // usage per model that served it
+	Delegated      llm.Usage            // usage from subagents
+	DelegatedCost  float64
+	DelegatedTasks int
 }
 
 func (st *State) addUsage(model string, u llm.Usage) {
@@ -281,7 +286,13 @@ func (s *Session) read() (*State, error) {
 		case EntryUsage:
 			if e.Usage != nil {
 				st.addUsage(e.Model, *e.Usage)
+				if e.Source == "subagent" {
+					st.Delegated.Add(*e.Usage)
+					st.DelegatedCost += llm.Lookup(e.Model).Cost(*e.Usage)
+				}
 			}
+		case EntryTask:
+			st.DelegatedTasks++
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}
 		}
@@ -313,6 +324,14 @@ func (s *Session) AppendMessage(m llm.Message, usage *llm.Usage) error {
 func (s *Session) AppendUsage(model string, u llm.Usage) error {
 	return s.append(Entry{Type: EntryUsage, Model: model, Usage: &u})
 }
+
+// AppendSubagentUsage records spend made by a delegated child.
+func (s *Session) AppendSubagentUsage(model string, u llm.Usage) error {
+	return s.append(Entry{Type: EntryUsage, Model: model, Source: "subagent", Usage: &u})
+}
+
+// AppendTask records that a subagent task was started.
+func (s *Session) AppendTask() error { return s.append(Entry{Type: EntryTask}) }
 
 func (s *Session) AppendCompaction(summary string) error {
 	return s.append(Entry{Type: EntryCompaction, Summary: summary})

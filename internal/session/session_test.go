@@ -215,7 +215,8 @@ func TestUsageByModel(t *testing.T) {
 	}
 	s.AppendMessage(llm.Message{Role: llm.RoleAssistant, Model: "big", Blocks: []llm.Block{llm.TextBlock("a")}}, &llm.Usage{Input: 10})
 	s.AppendUsage("small", llm.Usage{Input: 5})
-	s.AppendUsage("small", llm.Usage{Output: 2})
+	s.AppendTask()
+	s.AppendSubagentUsage("small", llm.Usage{Output: 2})
 	s.Close()
 	st, err := Load(s.Path)
 	if err != nil {
@@ -223,6 +224,9 @@ func TestUsageByModel(t *testing.T) {
 	}
 	if st.ByModel["big"].Input != 10 || st.ByModel["small"].Input != 5 || st.ByModel["small"].Output != 2 || st.Usage.Input != 15 {
 		t.Errorf("by model = %+v, total %+v", st.ByModel, st.Usage)
+	}
+	if st.DelegatedTasks != 1 || st.Delegated.Output != 2 {
+		t.Errorf("delegated tasks=%d usage=%+v", st.DelegatedTasks, st.Delegated)
 	}
 }
 

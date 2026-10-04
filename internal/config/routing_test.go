@@ -12,7 +12,7 @@ func TestRoutingLoadsAndSaves(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg0 := &Config{ConfigDir: filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik")}
-	write(t, cfg0.UserConfigPath(), `{"theme":"dark","roles":{"worker":"groq/llama-4-scout","explore":"gemini/gemini-3.8-flash"},"fallbacks":{"worker":["ollama/qwen3-coder"]},"budget":{"session_usd":2,"warn_at":0.5}}`)
+	write(t, cfg0.UserConfigPath(), `{"theme":"dark","delegation":"balanced","roles":{"worker":"groq/llama-4-scout","explore":"gemini/gemini-3.8-flash"},"fallbacks":{"worker":["ollama/qwen3-coder"]},"budget":{"session_usd":2,"warn_at":0.5}}`)
 	write(t, LocalSettingsPath(cwd), `{"roles":{"explore":"ollama/qwen3:4b"}}`)
 
 	cfg, err := Load(cwd)
@@ -23,6 +23,9 @@ func TestRoutingLoadsAndSaves(t *testing.T) {
 	if r.Roles["worker"] != "groq/llama-4-scout" || r.Roles["explore"] != "ollama/qwen3:4b" || r.Fallbacks["worker"][0] != "ollama/qwen3-coder" {
 		t.Errorf("loaded routing = %+v", r)
 	}
+	if r.Delegation != DelegationBalanced {
+		t.Errorf("delegation = %q", r.Delegation)
+	}
 	if r.Budget.SessionUSD != 2 || r.Budget.WarnFraction() != 0.5 {
 		t.Errorf("budget = %+v", r.Budget)
 	}
@@ -31,11 +34,12 @@ func TestRoutingLoadsAndSaves(t *testing.T) {
 	// reload even though the user file still sets it.
 	r.Roles = map[string]string{"explore": "ollama/qwen3:4b", "smart": "anthropic/claude-opus-5"}
 	r.Fallbacks = nil
+	r.Delegation = DelegationAggressive
 	r.Budget = Budget{SessionUSD: 1.5}
 	if err := cfg.SaveRouting(LocalSettingsPath(cwd), r); err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Routing(); got.Roles["worker"] != "" || got.Roles["smart"] == "" || got.Budget.SessionUSD != 1.5 {
+	if got := cfg.Routing(); got.Roles["worker"] != "" || got.Roles["smart"] == "" || got.Delegation != DelegationAggressive || got.Budget.SessionUSD != 1.5 {
 		t.Errorf("after save = %+v", got)
 	}
 	var raw map[string]any
@@ -59,6 +63,36 @@ func TestRoutingLoadsAndSaves(t *testing.T) {
 	data, _ = os.ReadFile(cfg.UserConfigPath())
 	if !strings.Contains(string(data), `"theme": "dark"`) && !strings.Contains(string(data), `"theme":"dark"`) {
 		t.Errorf("user config lost other keys: %s", data)
+	}
+}
+
+func TestDelegationPolicyValidationAndSharedTightening(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	user := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik", "config.json")
+	write(t, user, `{"delegation":"aggressive"}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"delegation":"balanced"}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Routing().Delegation != DelegationBalanced {
+		t.Fatalf("shared config did not tighten delegation: %q", cfg.Routing().Delegation)
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"delegation":"aggressive"}`)
+	write(t, user, `{"delegation":"manual"}`)
+	cfg, err = Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Routing().Delegation != DelegationManual {
+		t.Fatalf("shared config widened delegation: %q", cfg.Routing().Delegation)
+	}
+
+	write(t, user, `{"delegation":"eager"}`)
+	if _, err := Load(cwd); err == nil || !strings.Contains(err.Error(), "delegation must be") {
+		t.Fatalf("invalid personal policy: %v", err)
 	}
 }
 

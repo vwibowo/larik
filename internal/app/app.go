@@ -163,6 +163,7 @@ func Setup(cwd, version string) (*App, error) {
 			return r.Provider, r.Model, err
 		},
 		Roles:        a.roles,
+		Policy:       func() string { return string(a.Cfg.Routing().Delegation) },
 		Repo:         gitRoot,
 		WorktreeRoot: filepath.Join(cfg.DataDir, "worktrees"),
 		// A finished subagent's browser tabs are closed.

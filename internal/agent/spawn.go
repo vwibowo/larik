@@ -123,6 +123,31 @@ func (a *Agent) AddUsage(model string, u llm.Usage) {
 	}
 }
 
+// RecordDelegation records that a subagent task was started.
+func (a *Agent) RecordDelegation() {
+	a.mu.Lock()
+	a.delegatedTasks++
+	a.mu.Unlock()
+	if a.opts.Session != nil {
+		a.saveFailed(a.opts.Session.AppendTask())
+	}
+}
+
+// AddSubagentUsage adds delegated child spend and preserves its attribution.
+func (a *Agent) AddSubagentUsage(model string, u llm.Usage) {
+	cost := llm.Lookup(model).Cost(u)
+	a.mu.Lock()
+	a.usage.Add(u)
+	a.cost += cost
+	a.delegated.Add(u)
+	a.delegatedCost += cost
+	a.addModelUsageLocked(model, u)
+	a.mu.Unlock()
+	if a.opts.Session != nil {
+		a.saveFailed(a.opts.Session.AppendSubagentUsage(model, u))
+	}
+}
+
 // ModelSpend is one model's share of the session's usage.
 type ModelSpend struct {
 	Model   string

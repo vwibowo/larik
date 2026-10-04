@@ -33,8 +33,11 @@ func TestRoutingWizardSavesPresetAndEdits(t *testing.T) {
 	hit(m, tea.KeyDown) // Cheapest
 	hit(m, tea.KeyEnter)
 	w := m.routing
-	if w.step != rtRoles || w.r.Roles["worker"] != "ollama/qwen3-coder" {
-		t.Fatalf("after preset: step %d roles %v", w.step, w.r.Roles)
+	if w.step != rtRoles || w.r.Roles["worker"] != "ollama/qwen3-coder" || w.r.Delegation != config.DelegationAggressive {
+		t.Fatalf("after preset: step %d roles %v policy %q", w.step, w.r.Roles, w.r.Delegation)
+	}
+	if view := plain(w.view(m.st, 100, 40)); !strings.Contains(view, "Delegation policy") || !strings.Contains(view, "aggressive") {
+		t.Fatalf("roles view lacks delegation policy:\n%s", view)
 	}
 
 	// smart is the first row: pick Opus for it by typing a filter.
@@ -95,11 +98,12 @@ func TestRoutingWizardSavesPresetAndEdits(t *testing.T) {
 		Fallbacks   map[string][]string          `json:"fallbacks"`
 		Budget      config.Budget                `json:"budget"`
 		RoleOptions map[string]config.RoleOption `json:"role_options"`
+		Delegation  config.DelegationPolicy      `json:"delegation"`
 	}
 	json.Unmarshal(data, &saved)
 	if saved.Roles["smart"] != "anthropic/claude-opus-5" || saved.Roles["worker"] != "ollama/qwen3-coder" ||
 		saved.Fallbacks["worker"][0] != "anthropic/claude-haiku-4-5" || saved.Budget.SessionUSD != 1.5 ||
-		saved.RoleOptions["worker"] != (config.RoleOption{Isolation: "worktree", MaxTurns: 30, Context: "minimal"}) {
+		saved.RoleOptions["worker"] != (config.RoleOption{Isolation: "worktree", MaxTurns: 30, Context: "minimal"}) || saved.Delegation != config.DelegationAggressive {
 		t.Errorf("saved %s", data)
 	}
 	if m.opts.Config.Routing().Roles["smart"] == "" {
@@ -133,9 +137,9 @@ func TestRoutingWizardRejectsBadBudget(t *testing.T) {
 
 func TestRoutingCommandKeyValue(t *testing.T) {
 	m := routingModel(t)
-	m.command("/routing worker=anthropic/claude-haiku-4-5 budget=$3")
+	m.command("/routing policy=balanced worker=anthropic/claude-haiku-4-5 budget=$3")
 	r := m.opts.Config.Routing()
-	if r.Roles["worker"] != "anthropic/claude-haiku-4-5" || r.Budget.SessionUSD != 3 {
+	if r.Roles["worker"] != "anthropic/claude-haiku-4-5" || r.Delegation != config.DelegationBalanced || r.Budget.SessionUSD != 3 {
 		t.Fatalf("routing = %+v", r)
 	}
 	if !strings.Contains(savedConfig(t, m), `"worker": "anthropic/claude-haiku-4-5"`) {
@@ -144,6 +148,10 @@ func TestRoutingCommandKeyValue(t *testing.T) {
 	m.command("/routing worker.isolation=worktree worker.max_turns=25")
 	if o := m.opts.Config.Routing().Options["worker"]; o.Isolation != "worktree" || o.MaxTurns != 25 {
 		t.Errorf("options = %+v", o)
+	}
+	m.command("/routing policy=eager")
+	if m.opts.Config.Routing().Delegation != config.DelegationBalanced {
+		t.Errorf("a bad delegation policy was saved")
 	}
 	m.command("/routing worker.isolation=docker")
 	if m.opts.Config.Routing().Options["worker"].Isolation != "worktree" {

@@ -162,6 +162,9 @@ func TestSuggestRouting(t *testing.T) {
 	bal := SuggestRouting(PresetBalanced, available, main)
 	// Local models cost nothing per call, so they rank first; the 4B one
 	// is fine for searching but too small for the worker.
+	if bal.Delegation != config.DelegationBalanced {
+		t.Errorf("balanced delegation = %q", bal.Delegation)
+	}
 	if bal.Roles["explore"] != "ollama/qwen3:4b" || bal.Roles["worker"] != "ollama/qwen3-coder" || bal.Roles["smart"] != main {
 		t.Errorf("balanced roles = %v", bal.Roles)
 	}
@@ -177,6 +180,9 @@ func TestSuggestRouting(t *testing.T) {
 
 	cloud := opts("anthropic/claude-opus-5", "anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5", "gemini/gemini-3.8-flash")
 	cheap := SuggestRouting(PresetCheapest, cloud, main)
+	if cheap.Delegation != config.DelegationAggressive {
+		t.Errorf("cheapest delegation = %q", cheap.Delegation)
+	}
 	if cheap.Roles["worker"] != "gemini/gemini-3.8-flash" || cheap.Roles["smart"] != "" {
 		t.Errorf("cheapest roles = %v", cheap.Roles)
 	}
@@ -188,7 +194,7 @@ func TestSuggestRouting(t *testing.T) {
 	if r := SuggestRouting(PresetBalanced, opts("ollama/qwen3-coder@30.5B"), "ollama/qwen3-coder"); len(r.Roles) != 0 {
 		t.Errorf("single local model: roles = %v, want none", r.Roles)
 	}
-	if r := SuggestRouting(PresetCustom, available, main); len(r.Roles)+len(r.Fallbacks) != 0 {
+	if r := SuggestRouting(PresetCustom, available, main); len(r.Roles)+len(r.Fallbacks) != 0 || r.Delegation != "" {
 		t.Errorf("custom should suggest nothing, got %+v", r)
 	}
 

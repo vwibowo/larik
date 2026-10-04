@@ -106,6 +106,13 @@ func (r *Registry) ForExecution(e Execution) *Registry {
 		return r.With(codeTool{specs: specs, listed: listed, hybrid: true})
 	}
 	modelTools := []Tool{codeTool{specs: specs, listed: specs}}
+	// Subagent management is conversation-level, so scripts cannot call it,
+	// but the main model still needs it directly for routed delegation.
+	for _, name := range []string{"task", "task_wait", "task_stop"} {
+		if tool, ok := r.Get(name); ok {
+			modelTools = append(modelTools, tool)
+		}
+	}
 	if plan, ok := r.Get("exit_plan_mode"); ok {
 		modelTools = append(modelTools, plan)
 	}

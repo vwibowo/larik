@@ -60,9 +60,9 @@ func newRoutingWizard(cfg *config.Config, main string, lists map[string]provider
 	w.r.Roles = maps.Clone(w.r.Roles)
 	w.r.Options = maps.Clone(w.r.Options)
 	w.presets.items = []pickItem{
-		{label: "Balanced", detail: "keep your main model for planning; cheaper models for subagents", value: presetChoice{providers.PresetBalanced}},
-		{label: "Cheapest", detail: "the lowest-priced capable models for every subagent", value: presetChoice{providers.PresetCheapest}},
-		{label: "Local and plan first", detail: "Ollama, LM Studio or your ChatGPT plan before paid APIs", value: presetChoice{providers.PresetLocal}},
+		{label: "Balanced", detail: "plan and review on the main model; delegate substantial routine work", value: presetChoice{providers.PresetBalanced}},
+		{label: "Cheapest", detail: "aggressively delegate routine work to the lowest-priced capable models", value: presetChoice{providers.PresetCheapest}},
+		{label: "Local and plan first", detail: "aggressively prefer Ollama, LM Studio or your ChatGPT plan", value: presetChoice{providers.PresetLocal}},
 		{label: "Edit current", detail: "start from your current routing and change it by hand", value: presetChoice{providers.PresetCustom}},
 	}
 	w.presets.home()
@@ -108,7 +108,7 @@ func (m *model) handleRouting(msg tea.KeyPressMsg) tea.Cmd {
 	case w.canceled:
 		return nil
 	}
-	return m.println(m.st.ok.Render("✓ Model routing saved") + m.st.dim.Render(" to "+tildePath(w.path)+" · applies to the next request\n"+routingSummary(w.cfg)))
+	return m.println(m.st.ok.Render("✓ Model routing saved") + m.st.dim.Render(" to "+tildePath(w.path)+" · role destinations apply to the next task; policy applies after /clear\n"+routingSummary(w.cfg)))
 }
 
 // setLists supplies the model lists once they load.
@@ -204,11 +204,15 @@ func (w *routingWizard) update(msg tea.KeyPressMsg) tea.Cmd {
 				if len(s.Roles) == 0 {
 					w.err = "found nothing cheaper than " + w.main + " to route to; connect another provider or pick models by hand"
 				}
-				w.r.Roles, w.r.Fallbacks, w.r.Options = s.Roles, s.Fallbacks, s.Options
+				w.r.Roles, w.r.Fallbacks, w.r.Options, w.r.Delegation = s.Roles, s.Fallbacks, s.Options, s.Delegation
 			}
 			w.step, w.row = rtRoles, 0
 		}
 	case rtRoles:
+		if msg.String() == "p" {
+			w.cycleDelegation()
+			return nil
+		}
 		if rows := w.roleRows(); w.row < len(rows) && w.optionKey(msg.String(), rows[w.row]) {
 			return nil
 		}
@@ -236,6 +240,17 @@ func (w *routingWizard) update(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (w *routingWizard) cycleDelegation() {
+	switch w.r.Delegation {
+	case config.DelegationBalanced:
+		w.r.Delegation = config.DelegationAggressive
+	case config.DelegationAggressive:
+		w.r.Delegation = config.DelegationManual
+	default:
+		w.r.Delegation = config.DelegationBalanced
+	}
 }
 
 // optionKey changes a role's limits on the roles step: w toggles the
@@ -515,6 +530,11 @@ func routingSummary(cfg *config.Config) string {
 	if len(lines) == 0 {
 		lines = append(lines, "  every role inherits the main model")
 	}
+	policy := r.Delegation
+	if policy == "" {
+		policy = config.DelegationManual
+	}
+	lines = append(lines, fmt.Sprintf("  policy   %s", policy))
 	if b := r.Budget; b.SessionUSD > 0 {
 		lines = append(lines, fmt.Sprintf("  budget   $%.2f per session, warn at %.0f%%", b.SessionUSD, b.WarnFraction()*100))
 	}
@@ -558,7 +578,13 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		}
 		hint = "↑/↓ move · enter choose · esc cancel"
 	case w.step == rtRoles:
-		body = append(body, st.dim.Render("A role without a model uses the main model."), "")
+		policy := w.r.Delegation
+		if policy == "" {
+			policy = config.DelegationManual
+		}
+		body = append(body, "Delegation policy  "+st.accent.Render(string(policy))+st.dim.Render("  (p to change)"),
+			st.dim.Render("manual waits for explicit delegation; balanced avoids trivial handoffs; aggressive delegates most separable routine work."), "",
+			st.dim.Render("A role without a model uses the main model."), "")
 		body = append(body, w.rowsView(st, w.roleRows(), func(role string) string {
 			spec := w.r.Roles[role]
 			v := spec
@@ -577,7 +603,7 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		}
 		body = append(body, "", st.dim.Render("worktree: the subagent edits its own git branch; the main agent reviews and merges it."),
 			st.dim.Render("minimal context: no global instructions or skills index, just this project — a smaller prompt a small model won't wander off from."))
-		hint = "↑/↓ move · enter change · d inherit · w worktree · c minimal context · +/- turns · n next · esc back"
+		hint = "↑/↓ move · enter change · p policy · d inherit · w worktree · c minimal context · +/- turns · n next · esc back"
 	case w.step == rtFallbacks:
 		body = append(body, st.dim.Render("When a model is rate-limited, out of quota or down, larik switches to the next one before any output."), "")
 		body = append(body, w.rowsView(st, w.fallbackRows(), func(role string) string {
@@ -605,7 +631,7 @@ func (w *routingWizard) view(st styles, width, height int) string {
 		hint = "tab next field · enter continue · esc back"
 	case w.step == rtSave:
 		preview := *w.cfg
-		preview.Roles, preview.Fallbacks, preview.RoleOptions, preview.Budget = w.r.Roles, w.r.Fallbacks, w.r.Options, w.r.Budget
+		preview.Roles, preview.Fallbacks, preview.RoleOptions, preview.Delegation, preview.Budget = w.r.Roles, w.r.Fallbacks, w.r.Options, w.r.Delegation, w.r.Budget
 		body = append(body, st.ok.Render("✓ Ready")+st.dim.Render(" · main model "+w.main), routingSummary(&preview), "", st.dim.Render("Save to"))
 		rows := []string{
 			radio(w.scope == 0) + " " + tildePath(w.cfg.UserConfigPath()) + st.dim.Render("  every project"),

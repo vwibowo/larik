@@ -11,7 +11,7 @@ import (
 func TestRoutingSavingsNote(t *testing.T) {
 	// Main model priced: shows what running everything on it would cost.
 	got := routingSavingsNote("anthropic/claude-opus-5", llm.Usage{Input: 1_000_000, Output: 1_000_000}, 1.00)
-	if !strings.Contains(got, "routing saved $29.0000 (97%)") || !strings.Contains(got, "$30.0000") {
+	if !strings.Contains(got, "estimated routing saving $29.0000 (97%)") || !strings.Contains(got, "$30.0000") || !strings.Contains(got, "token use may differ") {
 		t.Errorf("note = %q", got)
 	}
 
@@ -33,6 +33,16 @@ func TestRoutingSavingsNote(t *testing.T) {
 	}
 }
 
+func TestCostCommandShowsDelegationOnSameModel(t *testing.T) {
+	m := testModel(t)
+	m.agent.RecordDelegation()
+	m.agent.AddSubagentUsage("m", llm.Usage{Input: 100, Output: 10})
+	out := fmt.Sprintf("%v", m.command("/cost")())
+	if !strings.Contains(out, "delegated 1 task") || strings.Contains(out, "routing configured · 0") {
+		t.Fatalf("/cost lost same-model delegation: %s", out)
+	}
+}
+
 func TestCostCommandShowsSavings(t *testing.T) {
 	m := testModel(t) // main model "m", an unpriced test model
 	llm.Catalog["m"] = llm.ModelInfo{ID: "m", InputPrice: 5, OutputPrice: 25}
@@ -41,10 +51,11 @@ func TestCostCommandShowsSavings(t *testing.T) {
 	t.Cleanup(func() { delete(llm.Catalog, "cheap") })
 
 	m.agent.AddUsage("m", llm.Usage{Input: 1000, Output: 100})
-	m.agent.AddUsage("cheap", llm.Usage{Input: 9000, Output: 900})
+	m.agent.RecordDelegation()
+	m.agent.AddSubagentUsage("cheap", llm.Usage{Input: 9000, Output: 900})
 
 	out := fmt.Sprintf("%v", m.command("/cost")())
-	if !strings.Contains(out, "cheap") || !strings.Contains(out, "routing saved") {
+	if !strings.Contains(out, "cheap") || !strings.Contains(out, "delegated 1 task") || !strings.Contains(out, "estimated routing saving") {
 		t.Fatalf("/cost output missing the breakdown or savings note: %s", out)
 	}
 }

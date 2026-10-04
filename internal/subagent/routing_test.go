@@ -95,6 +95,9 @@ func TestTaskModelRoleRunsOnCheaperModel(t *testing.T) {
 	if !models["llama-4-scout"] || !models["m"] {
 		t.Errorf("spend by model = %+v", sp)
 	}
+	if st := a.Stats(); st.DelegatedTasks != 1 || st.Delegated.Input == 0 {
+		t.Errorf("delegated stats = %+v", st)
+	}
 }
 
 // Forwarded child events name the model the subagent ran on, so a front end
@@ -167,6 +170,31 @@ func TestTaskModelPrecedence(t *testing.T) {
 		if model != c.wantModel || !strings.Contains(notice, c.wantNotice) || (c.wantNotice == "" && notice != "") {
 			t.Errorf("def %q asked %q: model %q notice %q", c.defModel, c.asked, model, notice)
 		}
+	}
+}
+
+func TestTaskDescriptionUsesDelegationPolicy(t *testing.T) {
+	policy := "balanced"
+	tl := &Tool{
+		Set:    Discover(nil),
+		Roles:  func() []Role { return []Role{{Name: "worker", Spec: "cheap/model"}} },
+		Policy: func() string { return policy },
+	}
+	balanced := tl.Spec().Description
+	registry := tools.NewRegistry(tl)
+	if !strings.Contains(balanced, "Delegation policy: balanced") || !strings.Contains(balanced, "Delegate early") {
+		t.Fatalf("balanced description = %q", balanced)
+	}
+	policy = "aggressive"
+	if cached := registry.Specs()[0].Description; cached != balanced {
+		t.Fatalf("registry changed its cached policy description")
+	}
+	if aggressive := tl.Spec().Description; !strings.Contains(aggressive, "Delegation policy: aggressive") || !strings.Contains(aggressive, "Proactively delegate") {
+		t.Fatalf("aggressive description = %q", aggressive)
+	}
+	policy = "manual"
+	if manual := tl.Spec().Description; strings.Contains(manual, "Delegation policy:") {
+		t.Fatalf("manual policy should keep the base guidance: %q", manual)
 	}
 }
 

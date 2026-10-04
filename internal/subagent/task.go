@@ -51,10 +51,13 @@ type Role struct {
 type Tool struct {
 	Set     *Set
 	Resolve Resolver
-	// Roles lists the model roles, read for each request so a config
-	// change applies at once. Roles with a Spec are offered to the model
-	// as the task's model input; nil offers none.
+	// Roles lists the model roles. Specs are snapshotted when a fresh tool
+	// registry is built, while execution resolves the current role mapping.
+	// Roles with a Spec are offered to the model as the task's model input.
 	Roles func() []Role
+	// Policy is "manual", "balanced", or "aggressive". Like Roles, its
+	// model-facing instructions are snapshotted at a fresh context boundary.
+	Policy func() string
 	// Context is appended to every child system prompt (env block and
 	// project instructions, plus the skills index when available).
 	// ContextFunc, if set, is used instead and read for each child, so
@@ -100,7 +103,14 @@ func (t *Tool) Spec() llm.ToolSpec {
 	if len(offered) > 0 {
 		b.WriteString("\n\nSet model to run a subagent on another model, chosen by role. Spend the strong model on judgement and the cheap ones on volume: " +
 			"give well-specified, mechanical work (searches, routine edits, tests, boilerplate) to a cheap role with a precise prompt, " +
-			"and keep design decisions, ambiguous debugging and final review for yourself or the smart role. Without model, the agent's own default applies.\nModel roles:\n")
+			"and keep design decisions, ambiguous debugging and final review for yourself or the smart role. Without model, the agent's own default applies.")
+		switch t.policy() {
+		case "balanced":
+			b.WriteString("\n\nDelegation policy: balanced. Before doing broad repository exploration or well-specified multi-step mechanical work yourself, delegate it to the appropriate cheap role. Delegate early, before duplicating the investigation in your own context. Keep one-read/one-edit tasks local when subagent startup and review would cost more, and personally verify important results.")
+		case "aggressive":
+			b.WriteString("\n\nDelegation policy: aggressive. Proactively delegate separable searches, routine implementation, tests, and boilerplate to the appropriate cheap or local role, preferably in parallel. Keep architectural decisions, ambiguous debugging, integration, and final review yourself. Avoid delegation only for truly trivial one-step work or when the handoff would duplicate work already done.")
+		}
+		b.WriteString("\nModel roles:\n")
 		for _, r := range offered {
 			fmt.Fprintf(&b, "- %s: %s", r.Name, r.Spec)
 			if r.Price != "" {
@@ -203,7 +213,6 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if role.MaxTurns > 0 {
 		c.maxTurns = role.MaxTurns
 	}
-
 	if in.Background {
 		id, err := parent.StartBackground(label, func(bctx context.Context, bemit func(agent.Event)) (string, bool) {
 			res := t.runChild(bctx, parent, bemit, c)
@@ -212,9 +221,11 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 		if err != nil {
 			return tools.Result{Content: err.Error(), IsError: true}
 		}
+		parent.RecordDelegation()
 		return tools.Result{Content: fmt.Sprintf("Started background task %s (%s). Its result will be delivered to you automatically when it finishes. "+
 			"Keep working on other things meanwhile; call task_wait if you need the result before continuing, or task_stop to cancel it.", id, label)}
 	}
+	parent.RecordDelegation()
 	return t.runChild(ctx, parent, emit, c)
 }
 
@@ -320,7 +331,7 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 			if used == "" {
 				used = model
 			}
-			parent.AddUsage(used, e.Usage.Turn)
+			parent.AddSubagentUsage(used, e.Usage.Turn)
 			st := parent.Stats()
 			emit(agent.Event{Kind: agent.EvUsage, Usage: &st})
 		case agent.EvAssistant:
@@ -401,6 +412,13 @@ func (t *Tool) role(asked string, def Definition) (Role, bool) {
 		}
 	}
 	return Role{}, false
+}
+
+func (t *Tool) policy() string {
+	if t.Policy == nil {
+		return "manual"
+	}
+	return t.Policy()
 }
 
 func (t *Tool) roles() []Role {

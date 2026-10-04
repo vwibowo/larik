@@ -83,12 +83,15 @@ type PermissionReply struct {
 type UsageInfo struct {
 	// Model made the Turn's request; it can differ from the agent's model
 	// after a fallback or for compaction.
-	Model         string    `json:"model,omitempty"`
-	Turn          llm.Usage `json:"turn"`
-	Total         llm.Usage `json:"total"`
-	CostUSD       float64   `json:"cost_usd"`
-	ContextTokens int       `json:"context_tokens"`
-	ContextWindow int       `json:"context_window"`
-	RequestMS     int64     `json:"request_ms,omitempty"`
-	TTFTMS        int64     `json:"ttft_ms,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	Turn             llm.Usage `json:"turn"`
+	Total            llm.Usage `json:"total"`
+	CostUSD          float64   `json:"cost_usd"`
+	ContextTokens    int       `json:"context_tokens"`
+	ContextWindow    int       `json:"context_window"`
+	RequestMS        int64     `json:"request_ms,omitempty"`
+	TTFTMS           int64     `json:"ttft_ms,omitempty"`
+	Delegated        llm.Usage `json:"delegated,omitempty"`
+	DelegatedCostUSD float64   `json:"delegated_cost_usd,omitempty"`
+	DelegatedTasks   int       `json:"delegated_tasks,omitempty"`
 }

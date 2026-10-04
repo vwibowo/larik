@@ -180,6 +180,8 @@ Larik also reads the public [Catwalk catalog](https://catwalk.charm.land/v2/prov
 
 Config reads go through `Config.Routing()`, a snapshot taken under a lock, because `/routing` can save new roles while subagents resolve on other goroutines.
 
+Delegation and role resolution are separate decisions. The `delegation` policy (`manual`, `balanced`, or `aggressive`) is snapshotted into the `task` tool description at a fresh context boundary and guides whether the main model should hand work off. It does not intercept or classify individual tool calls in Go. Once the model calls `task`, the built-in agent definition or the task's explicit `model` chooses a role, and role resolution below chooses the provider/model. A shared project setting may lower the delegation policy but cannot raise it, because raising it widens provider use.
+
 After resolving, `withFallbacks` looks up `fallbacks[role]`, else `fallbacks[spec]`, and wraps the provider in `llm.WithFallback` ([fallback.go](../internal/llm/fallback.go)). Candidates that can't be built (no key, say) are skipped.
 
 The decorator follows the same rule as `WithRetry`: it only switches while nothing has been yielded.

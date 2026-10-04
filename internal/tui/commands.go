@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/config"
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/mcp"
@@ -75,7 +76,7 @@ func (m *model) command(line string) tea.Cmd {
 	// compaction.
 	if !m.idle() {
 		switch name {
-		case "/model", "/connect", "/providers", "/execution", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/execution", "/browser", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
 			what := "a turn is running"
 			switch {
 			case m.compactCancel != nil:
@@ -168,6 +169,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/execution":
 		return m.executionCommand(arg)
 
+	case "/browser":
+		return m.browserCommand(arg)
+
 	case "/reload":
 		if m.agent.RunningBackground() > 0 {
 			return fail("wait for background tasks before reloading")
@@ -254,6 +258,18 @@ func (m *model) command(line string) tea.Cmd {
 		if c := m.opts.Config; c != nil && c.Routing().Budget.SessionUSD > 0 {
 			b := c.Routing().Budget
 			out += fmt.Sprintf(" of $%.2f budget", b.SessionUSD)
+		}
+		if s.DelegatedTasks > 0 {
+			totalTokens := s.Total.Input + s.Total.Output
+			delegatedTokens := s.Delegated.Input + s.Delegated.Output
+			share := float64(0)
+			if totalTokens > 0 {
+				share = 100 * float64(delegatedTokens) / float64(totalTokens)
+			}
+			mainCost := max(s.CostUSD-s.DelegatedCostUSD, 0)
+			out += fmt.Sprintf("\n  delegated %s · subagents %.0f%% of input/output tokens · main $%.4f / subagents $%.4f", plural(s.DelegatedTasks, "task"), share, mainCost, s.DelegatedCostUSD)
+		} else if r := m.opts.Config.Routing(); r.Delegation != config.DelegationManual && r.Delegation != "" {
+			out += "\n  routing configured · 0 delegated tasks"
 		}
 		if spend := m.agent.SpendByModel(); len(spend) > 1 {
 			for _, sp := range spend {
@@ -559,7 +575,7 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 	for _, a := range args {
 		key, val, ok := strings.Cut(a, "=")
 		if !ok || key == "" {
-			return fail("usage: /routing [show | role=provider/model | role= | role.isolation=worktree | role.max_turns=<n> | budget=<usd>]")
+			return fail("usage: /routing [show | policy=manual|balanced|aggressive | role=provider/model | role= | role.isolation=worktree | role.max_turns=<n> | budget=<usd>]")
 		}
 		val = strings.TrimSpace(val)
 		if role, opt, ok := strings.Cut(key, "."); ok {
@@ -591,6 +607,12 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 			continue
 		}
 		switch key {
+		case "policy":
+			p := config.DelegationPolicy(val)
+			if p != config.DelegationManual && p != config.DelegationBalanced && p != config.DelegationAggressive {
+				return fail("policy is manual, balanced, or aggressive")
+			}
+			r.Delegation = p
 		case "budget":
 			b, err := parseBudget(val, "")
 			if err != nil {
@@ -619,7 +641,7 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 	if err := cfg.SaveRouting(cfg.UserConfigPath(), r); err != nil {
 		return fail(err.Error())
 	}
-	return info("✓ saved to " + tildePath(cfg.UserConfigPath()) + "\n" + routingSummary(cfg))
+	return info("✓ saved to " + tildePath(cfg.UserConfigPath()) + " · role destinations apply to the next task; policy applies after /clear\n" + routingSummary(cfg))
 }
 
 // routingSavingsNote compares what this session actually spent against
@@ -640,7 +662,7 @@ func routingSavingsNote(mainModel string, total llm.Usage, actualUSD float64) st
 	if saved <= 0 {
 		return fmt.Sprintf("  (on %s alone this would have cost $%.4f)", mainModel, counterfactual)
 	}
-	return fmt.Sprintf("  routing saved $%.4f (%.0f%%) versus running everything on %s ($%.4f)",
+	return fmt.Sprintf("  estimated routing saving $%.4f (%.0f%%) versus pricing the same tokens on %s ($%.4f); actual direct-run token use may differ",
 		saved, 100*saved/counterfactual, mainModel, counterfactual)
 }
 

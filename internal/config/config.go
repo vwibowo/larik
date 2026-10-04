@@ -124,6 +124,9 @@ type Config struct {
 	// RoleOptions limit subagents running on a role: a worktree to keep a
 	// cheap model's edits off your checkout, and a turn cap.
 	RoleOptions map[string]RoleOption `json:"role_options,omitempty"`
+	// Delegation controls how proactively the main model is encouraged to
+	// hand suitable work to routed subagents.
+	Delegation DelegationPolicy `json:"delegation,omitempty"`
 	// Budget caps a session's spend.
 	Budget Budget `json:"budget,omitempty"`
 
@@ -226,6 +229,38 @@ type RoleOption struct {
 	// Smaller and more focused for a small model; zero value ("") keeps
 	// the full context.
 	Context string `json:"context,omitempty"`
+}
+
+// DelegationPolicy controls how proactively the main model delegates work.
+type DelegationPolicy string
+
+const (
+	DelegationManual     DelegationPolicy = "manual"
+	DelegationBalanced   DelegationPolicy = "balanced"
+	DelegationAggressive DelegationPolicy = "aggressive"
+)
+
+func parseDelegationPolicy(p DelegationPolicy) (DelegationPolicy, error) {
+	if p == "" {
+		return DelegationManual, nil
+	}
+	switch p {
+	case DelegationManual, DelegationBalanced, DelegationAggressive:
+		return p, nil
+	default:
+		return "", fmt.Errorf("delegation must be manual, balanced, or aggressive")
+	}
+}
+
+func delegationRank(p DelegationPolicy) int {
+	switch p {
+	case DelegationAggressive:
+		return 2
+	case DelegationBalanced:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Budget caps what a session may spend, subagents included.
@@ -552,6 +587,18 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		c.Fallbacks[k] = v
 	}
+	if o.Delegation != "" {
+		p, err := parseDelegationPolicy(o.Delegation)
+		if err != nil {
+			if trusted {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+		} else if trusted || delegationRank(p) < delegationRank(c.Delegation) {
+			// Shared settings may only reduce provider use, never make
+			// delegation more aggressive.
+			c.Delegation = p
+		}
+	}
 	for k, v := range o.RoleOptions {
 		if !trusted {
 			continue
@@ -816,6 +863,19 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 	})
 }
 
+// SetBrowserEnabled updates only the personal browser switch, preserving
+// headless and chrome_path. Browser tools remain off by default.
+func (c *Config) SetBrowserEnabled(enabled bool) error {
+	return updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
+		b, _ := raw["browser"].(map[string]any)
+		if b == nil {
+			b = map[string]any{}
+		}
+		b["enabled"] = enabled
+		raw["browser"] = b
+	})
+}
+
 // SetAudioSetting updates one personal audio setting without replacing the
 // other endpoint settings.
 func (c *Config) SetAudioSetting(key string, value any) error {
@@ -961,16 +1021,22 @@ func (c *Config) SaveProvider(path, name string, pc ProviderConfig, model string
 
 // Routing is what the /routing wizard saves.
 type Routing struct {
-	Roles     map[string]string
-	Fallbacks map[string][]string
-	Options   map[string]RoleOption
-	Budget    Budget
+	Roles      map[string]string
+	Fallbacks  map[string][]string
+	Options    map[string]RoleOption
+	Delegation DelegationPolicy
+	Budget     Budget
 }
 
-// SaveRouting writes roles, fallbacks and budget to the settings file at
+// SaveRouting writes roles, fallbacks, delegation policy and budget to the settings file at
 // path, replacing those keys there (empty ones are removed), and applies
 // them to c.
 func (c *Config) SaveRouting(path string, r Routing) error {
+	policy, err := parseDelegationPolicy(r.Delegation)
+	if err != nil {
+		return err
+	}
+	r.Delegation = policy
 	roles := map[string]any{}
 	for k, v := range r.Roles {
 		if v = strings.TrimSpace(v); v != "" {
@@ -996,6 +1062,10 @@ func (c *Config) SaveRouting(path string, r Routing) error {
 			options[k] = v
 		}
 	}
+	delegation := r.Delegation
+	if delegation == DelegationManual {
+		delegation = ""
+	}
 	budget := map[string]any{}
 	if r.Budget.SessionUSD > 0 {
 		budget["session_usd"] = r.Budget.SessionUSD
@@ -1009,13 +1079,18 @@ func (c *Config) SaveRouting(path string, r Routing) error {
 	if path == LocalSettingsPath(c.Cwd) {
 		perm = 0o600
 	}
-	err := updateJSON(path, perm, func(raw map[string]any) {
+	err = updateJSON(path, perm, func(raw map[string]any) {
 		for key, v := range map[string]map[string]any{"roles": roles, "fallbacks": fallbacks, "role_options": options, "budget": budget} {
 			if len(v) == 0 {
 				delete(raw, key)
 			} else {
 				raw[key] = v
 			}
+		}
+		if delegation == "" {
+			delete(raw, "delegation")
+		} else {
+			raw["delegation"] = delegation
 		}
 	})
 	if err != nil {
@@ -1033,20 +1108,20 @@ func (c *Config) SaveRouting(path string, r Routing) error {
 	for k, v := range fallbacks {
 		newFallbacks[k] = slices.Clone(v.([]string))
 	}
-	c.Roles, c.Fallbacks, c.RoleOptions, c.Budget = newRoles, newFallbacks, newOptions, r.Budget
+	c.Roles, c.Fallbacks, c.RoleOptions, c.Delegation, c.Budget = newRoles, newFallbacks, newOptions, r.Delegation, r.Budget
 	return nil
 }
 
-// routingMu guards Roles, Fallbacks and Budget, which /routing changes
+// routingMu guards roles, fallbacks, delegation and budget, which /routing changes
 // while agents read them.
 var routingMu sync.RWMutex
 
-// Routing returns a copy of the roles, fallbacks and budget, safe to use
+// Routing returns a copy of the routing settings, safe to use
 // while another goroutine saves new ones.
 func (c *Config) Routing() Routing {
 	routingMu.RLock()
 	defer routingMu.RUnlock()
-	r := Routing{Roles: make(map[string]string, len(c.Roles)), Fallbacks: make(map[string][]string, len(c.Fallbacks)), Options: maps.Clone(c.RoleOptions), Budget: c.Budget}
+	r := Routing{Roles: make(map[string]string, len(c.Roles)), Fallbacks: make(map[string][]string, len(c.Fallbacks)), Options: maps.Clone(c.RoleOptions), Delegation: c.Delegation, Budget: c.Budget}
 	if r.Options == nil {
 		r.Options = map[string]RoleOption{}
 	}

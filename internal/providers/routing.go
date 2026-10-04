@@ -221,6 +221,13 @@ func SuggestRouting(p Preset, options []ModelOption, main string) config.Routing
 		r.Roles[RoleWorker] = worker.Spec()
 		r.Options[RoleWorker] = config.RoleOption{Isolation: "worktree", MaxTurns: DefaultWorkerTurns, Context: "minimal"}
 	}
+	if okE || okW {
+		if p == PresetBalanced {
+			r.Delegation = config.DelegationBalanced
+		} else {
+			r.Delegation = config.DelegationAggressive
+		}
+	}
 	// Keep the strong model reachable by name for hard subtasks, in case
 	// the main model is later switched to a cheaper one.
 	if p != PresetCheapest && main != "" && (okE || okW) {

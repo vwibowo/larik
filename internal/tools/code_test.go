@@ -104,6 +104,27 @@ func TestForExecution(t *testing.T) {
 	}
 }
 
+func TestCodeExecutionKeepsSubagentManagementDirect(t *testing.T) {
+	r := NewRegistry(
+		codeStub{"echo", `{"type":"object"}`},
+		codeStub{"task", `{"type":"object"}`},
+		codeStub{"task_wait", `{"type":"object"}`},
+		codeStub{"task_stop", `{"type":"object"}`},
+		codeStub{"todo_write", `{"type":"object"}`},
+	).ForExecution(ExecCode)
+	for _, name := range []string{CodeToolName, "task", "task_wait", "task_stop"} {
+		if _, ok := r.Get(name); !ok {
+			t.Errorf("code execution omitted %s", name)
+		}
+	}
+	if _, ok := r.Get("todo_write"); ok {
+		t.Error("code execution should still hide other conversation tools")
+	}
+	if desc := specOf(t, r, CodeToolName).Description; strings.Contains(desc, "task(") || strings.Contains(desc, "task_wait") {
+		t.Fatalf("run_code must not expose subagent tools to scripts:\n%s", desc)
+	}
+}
+
 func specOf(t *testing.T, r *Registry, name string) llm.ToolSpec {
 	t.Helper()
 	tool, ok := r.Get(name)

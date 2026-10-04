@@ -152,9 +152,12 @@ type Agent struct {
 	owner string
 	// autoAllowed remembers the calls auto mode approved (tool and input),
 	// kept on the root agent for its subagents too.
-	autoAllowed  map[string]bool
-	budgetWarned bool
-	byModel      map[string]llm.Usage // spend per model, subagents included
+	autoAllowed    map[string]bool
+	budgetWarned   bool
+	byModel        map[string]llm.Usage // spend per model, subagents included
+	delegated      llm.Usage
+	delegatedCost  float64
+	delegatedTasks int
 
 	// baseSystem is opts.System without the language line. In a nonempty
 	// context, a language change waits in nextLang for the next fresh context,
@@ -215,6 +218,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.usage = st.Usage
 	a.cost = st.Cost
 	a.byModel = maps.Clone(st.ByModel)
+	a.delegated, a.delegatedCost, a.delegatedTasks = st.Delegated, st.DelegatedCost, st.DelegatedTasks
 	a.startSource = "resume"
 }
 
@@ -328,7 +332,7 @@ func (a *Agent) Effort() llm.Effort {
 func (a *Agent) Stats() UsageInfo {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked()}
+	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks}
 }
 
 // Clear drops the conversation context (the session file keeps history)
@@ -948,7 +952,7 @@ func (a *Agent) recordUsageMeasured(model string, u llm.Usage, requestTime, ttft
 	a.cost += info.Cost(u)
 	a.addModelUsageLocked(model, u)
 	a.lastContext = u.ContextTokens() + u.Output
-	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), RequestMS: requestTime.Milliseconds(), TTFTMS: ttft.Milliseconds()}
+	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), RequestMS: requestTime.Milliseconds(), TTFTMS: ttft.Milliseconds(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks}
 	a.mu.Unlock()
 	emit(Event{Kind: EvUsage, Usage: &ui})
 }
