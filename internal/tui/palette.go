@@ -51,6 +51,7 @@ var commands = []command{
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
 	{"/config", "[key=value]", "settings: theme, appearance, tips, mouse, auto-compact, notifications, language, undo history, defaults", "other", ""},
+	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
 	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},
 	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},

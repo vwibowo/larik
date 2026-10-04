@@ -82,7 +82,8 @@ type App struct {
 	SearchNote  string
 	BrowserNote string
 
-	tools []tools.Tool
+	tools     []tools.Tool
+	closeOnce sync.Once
 }
 
 // Setup loads config for cwd and starts the shared services. Call Close
@@ -230,12 +231,17 @@ func (a *App) loadTools(ctx context.Context, notify func(string)) *tools.Registr
 	return reg
 }
 
-// Close shuts down the shared services.
+// Close shuts down the shared services. It is safe to call more than once.
 func (a *App) Close() {
-	a.MCP.Close()
-	a.LSP.Close()
-	a.Browser.Close()
-	a.Sandbox.Close()
+	if a == nil {
+		return
+	}
+	a.closeOnce.Do(func() {
+		a.MCP.Close()
+		a.LSP.Close()
+		a.Browser.Close()
+		a.Sandbox.Close()
+	})
 }
 
 // Options select the session and runtime settings for Open. Empty fields

@@ -156,9 +156,9 @@ type Agent struct {
 	budgetWarned bool
 	byModel      map[string]llm.Usage // spend per model, subagents included
 
-	// baseSystem is opts.System without the language line. A language
-	// change waits in nextLang for the next fresh context, so the prompt
-	// prefix, and provider caches, stay stable meanwhile.
+	// baseSystem is opts.System without the language line. In a nonempty
+	// context, a language change waits in nextLang for the next fresh context,
+	// so the prompt prefix and provider caches stay stable meanwhile.
 	baseSystem string
 	nextLang   *string
 	// nextExecution waits for a fresh context so the declared tool list
@@ -296,12 +296,26 @@ func (a *Agent) SetAutoCompact(on bool) {
 	a.mu.Unlock()
 }
 
-// SetLanguage sets the reply language from the next fresh context on
-// (after Clear, or in a new agent).
+// SetLanguage sets the reply language immediately when the context is empty.
+// Otherwise it takes effect after Clear so the prompt prefix stays stable.
 func (a *Agent) SetLanguage(lang string) {
 	a.mu.Lock()
-	a.nextLang = &lang
+	if len(a.messages) == 0 {
+		a.opts.Language = lang
+		a.nextLang = nil
+		a.opts.System = WithLanguage(a.baseSystem, lang)
+	} else {
+		a.nextLang = &lang
+	}
 	a.mu.Unlock()
+}
+
+// HasContext reports whether the agent has conversation messages that would
+// be discarded by Clear.
+func (a *Agent) HasContext() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.messages) > 0
 }
 
 func (a *Agent) Effort() llm.Effort {

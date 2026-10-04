@@ -445,11 +445,17 @@ func TestLanguageAppliesOnFreshContext(t *testing.T) {
 		t.Fatalf("language should be in the system prompt: %q", a.opts.System)
 	}
 	a.SetLanguage("")
-	if !strings.Contains(a.opts.System, "Indonesian") {
-		t.Fatal("the prompt should stay stable until the context is cleared")
+	if a.opts.System != "base" {
+		t.Fatalf("an empty context should apply the language immediately: %q", a.opts.System)
+	}
+
+	a.messages = []llm.Message{llm.UserText("hello")}
+	a.SetLanguage("French")
+	if a.opts.System != "base" {
+		t.Fatal("a nonempty context should stay stable until it is cleared")
 	}
 	a.Clear()
-	if a.opts.System != "base" {
+	if !strings.Contains(a.opts.System, "Respond in French") {
 		t.Fatalf("clearing should apply the new language: %q", a.opts.System)
 	}
 }

@@ -124,7 +124,7 @@ func TestConfigPanelToggleAndText(t *testing.T) {
 	if m.opts.Config.Language != "Indonesian" || m.settings.input != nil {
 		t.Fatalf("enter should save the language, got %q", m.opts.Config.Language)
 	}
-	if !strings.Contains(m.settings.status, "/clear") {
+	if !strings.Contains(m.settings.status, "fresh model context") {
 		t.Fatalf("the status should say when a language change applies: %q", m.settings.status)
 	}
 }
@@ -317,21 +317,20 @@ func TestExecutionPicker(t *testing.T) {
 	}
 }
 
-func TestExecutionWaitsForFreshContext(t *testing.T) {
+func TestExecutionConfirmsBeforeFreshContext(t *testing.T) {
 	m := testModel(t)
 	m.agent.Restore(&session.State{Messages: []llm.Message{llm.UserText("earlier prompt")}})
 	m.command("/execution hybrid")
-	if m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") != "hybrid" {
-		t.Fatalf("saved execution changed the current context: %q", m.agent.Execution())
+	if m.reload == nil || m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") == "hybrid" {
+		t.Fatal("execution should not save or clear before confirmation")
+	}
+	m.Update(press(tea.KeyEnter))
+	if m.reload != nil || m.agent.Execution() != "hybrid" || m.opts.Config.ExecutionFor("ollama", "m") != "hybrid" {
+		t.Fatalf("confirmed execution should be active in the fresh context: %q", m.agent.Execution())
 	}
 	m.command("/execution")
 	if it, _ := m.execPick.selected(); it.value != "hybrid" {
 		t.Fatalf("picker should show the saved choice: %+v", it)
-	}
-	m.execPick = nil
-	m.agent.Clear()
-	if m.agent.Execution() != "hybrid" {
-		t.Fatalf("fresh context execution = %q", m.agent.Execution())
 	}
 }
 

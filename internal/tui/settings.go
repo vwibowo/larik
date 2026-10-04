@@ -186,7 +186,7 @@ var settingSpecs = []settingSpec{
 			{value: "hybrid", label: "Hybrid", desc: "tools, plus scripts that call them when a task has many steps"},
 			{value: "code", label: "Code", desc: "ordinary tools via scripts; plan approval stays direct"},
 		},
-		later: "for models without their own setting (/execution sets one); existing contexts change after /clear",
+		later: "default for models without their own setting (/execution sets one)",
 		get: func(m *model) string {
 			e, _ := tools.ParseExecution(string(m.opts.Config.Execution))
 			return string(e)
@@ -220,7 +220,7 @@ var settingSpecs = []settingSpec{
 	{
 		key: "language", title: "Response language", section: "behavior", kind: kindText,
 		placeholder: "e.g. Indonesian; empty lets the model choose",
-		later:       "applies after /clear or in a new session",
+		later:       "active in the fresh model context",
 		get:         func(m *model) string { return m.opts.Config.Language },
 		store:       orEmpty(""),
 		set: func(m *model, v string) {
@@ -421,9 +421,10 @@ func (s settingSpec) check(v string) (string, error) {
 // saveSetting stores a setting in the user config and applies it to this
 // session, returning what to tell the user.
 func (m *model) saveSetting(key, raw string) (string, error) {
-	if key == "execution" && !m.idle() {
-		return "", fmt.Errorf("execution can't change while a turn or command is running")
+	if (key == "execution" || key == "language") && (!m.idle() || m.agent.RunningBackground() > 0) {
+		return "", fmt.Errorf("%s can't change while a turn or command is running", key)
 	}
+
 	spec, ok := settingByKey(key)
 	if !ok {
 		var keys []string
@@ -463,9 +464,31 @@ func (m *model) configCommand(arg string) tea.Cmd {
 	if !ok {
 		key, val, _ = strings.Cut(arg, " ")
 	}
-	msg, err := m.saveSetting(strings.TrimSpace(key), val)
+	key = strings.TrimSpace(key)
+	if (key == "language" || key == "execution") && (!m.idle() || m.agent.RunningBackground() > 0) {
+		return m.println(m.st.err.Render(key + " can't change while a turn or task is running"))
+	}
+	if spec, ok := settingByKey(key); ok {
+		if v, err := spec.check(val); err == nil && m.requiresFreshContext(spec, v) {
+			return m.askReload(spec.title+" needs a fresh context. Clear the current model context and apply it? (Transcript stays saved)", func() tea.Cmd { return m.configCommandApply(key, val) })
+		}
+	}
+	return m.configCommandApply(key, val)
+}
+
+func (m *model) configCommandApply(key, val string) tea.Cmd {
+	fresh := false
+	if spec, ok := settingByKey(key); ok {
+		if v, err := spec.check(val); err == nil {
+			fresh = m.requiresFreshContext(spec, v)
+		}
+	}
+	msg, err := m.saveSetting(key, val)
 	if err != nil {
 		return m.println(m.st.err.Render(err.Error()))
+	}
+	if fresh {
+		m.clearForSetting()
 	}
 	return m.println(m.st.dim.Render(msg))
 }
@@ -563,8 +586,7 @@ func (m *model) editSetting(key string) tea.Cmd {
 		if cur == "on" {
 			next = "off"
 		}
-		m.finishEdit(key, next)
-		return nil
+		return m.confirmSetting(key, next)
 	case kindText:
 		ti := textinput.New()
 		ti.Prompt = "› "
@@ -613,8 +635,7 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 			s.editing, s.input = "", nil
 			return nil
 		case "enter":
-			m.finishEdit(s.editing, s.input.Value())
-			return nil
+			return m.confirmSetting(s.editing, s.input.Value())
 		}
 		ti, cmd := s.input.Update(msg)
 		s.input = &ti
@@ -631,8 +652,7 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		if s.values.handleKey(msg) {
 			it, _ := s.values.selected()
-			m.finishEdit(s.editing, it.value.(string))
-			return nil
+			return m.confirmSetting(s.editing, it.value.(string))
 		}
 		if s.editing == "theme" { // show the highlighted theme as the cursor moves
 			if it, ok := s.values.selected(); ok {
@@ -742,10 +762,25 @@ func (m *model) executionCommand(arg string) tea.Cmd {
 			return m.println(m.st.err.Render(err.Error() + `, or "default"`))
 		}
 	}
+	if !m.idle() || m.agent.RunningBackground() > 0 {
+		return m.println(m.st.err.Render("execution can't change while a turn or task is running"))
+	}
+	_, source := cfg.ExecutionSource(provider, modelID)
+	changesContext := arg != "default" && e != m.agent.Execution() || arg == "default" && source == key
+	if changesContext && m.hasContext() && !m.reloadApproved {
+		return m.askReload("Execution needs a fresh context. Clear the current model context and apply it? (Transcript stays saved)", func() tea.Cmd {
+			m.reloadApproved = true
+			defer func() { m.reloadApproved = false }()
+			return m.executionCommand(arg)
+		})
+	}
 	if err := cfg.SetModelExecution(key, e); err != nil {
 		return m.println(m.st.err.Render("couldn't save execution: " + err.Error()))
 	}
 	m.agent.SetExecution(cfg.ExecutionFor(provider, modelID))
+	if m.reloadApproved {
+		m.clearForSetting()
+	}
 	when := "active now"
 	if m.agent.Execution() != cfg.ExecutionFor(provider, modelID) {
 		when = "applies after /clear or in a new session"

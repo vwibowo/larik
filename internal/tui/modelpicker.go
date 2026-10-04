@@ -373,6 +373,11 @@ func (m *model) handleWizard(msg tea.Msg) tea.Cmd {
 	if len(m.opts.Config.Routing().Roles) == 0 && connectedCount(m.opts.Config) > 1 {
 		note += "\n" + m.st.dim.Render("tip: /routing runs subagents on a cheaper model while this one plans")
 	}
+	if w.result.Path != "" && m.opts.App != nil && m.hasContext() {
+		return m.askReload("Provider settings were saved. Reload app services and start a fresh model context with "+w.result.Spec()+"? (Cancel keeps this session's current model)", func() tea.Cmd {
+			return tea.Sequence(m.reloadAppModel(w.result.Spec()), back)
+		})
+	}
 	return tea.Sequence(
 		m.println(m.st.ok.Render("✓ Connected "+w.result.Provider)+m.st.dim.Render(note)),
 		m.switchModel(w.result.Spec(), m.agent.Effort()),

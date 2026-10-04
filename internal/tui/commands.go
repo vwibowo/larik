@@ -75,7 +75,7 @@ func (m *model) command(line string) tea.Cmd {
 	// compaction.
 	if !m.idle() {
 		switch name {
-		case "/model", "/connect", "/providers", "/execution", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/execution", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
 			what := "a turn is running"
 			switch {
 			case m.compactCancel != nil:
@@ -167,6 +167,12 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/execution":
 		return m.executionCommand(arg)
+
+	case "/reload":
+		if m.agent.RunningBackground() > 0 {
+			return fail("wait for background tasks before reloading")
+		}
+		return m.askReload("Reload app services and start a fresh model context? (The session transcript stays saved)", m.reloadApp)
 
 	case "/undo":
 		paths, err := m.agent.Undo()

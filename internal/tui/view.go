@@ -153,6 +153,8 @@ func (m *model) View() tea.View {
 // position resets when a different one opens.
 func (m *model) panel() (kind, text string) {
 	switch {
+	case m.reload != nil:
+		return "reload", m.reloadView()
 	case m.perm != nil:
 		return "permission", m.permissionView()
 	case m.showKeys:
@@ -621,7 +623,7 @@ func panelRoom(room int) int {
 }
 
 func (m *model) hasPickerPanel() bool {
-	return m.provs != nil || m.settings != nil || m.wizard != nil || m.routing != nil ||
+	return m.reload != nil || m.provs != nil || m.settings != nil || m.wizard != nil || m.routing != nil ||
 		m.mpick != nil || m.modePick != nil || m.execPick != nil || m.sessionPick != nil || m.palette != nil ||
 		m.histPick != nil || m.mention != nil
 }

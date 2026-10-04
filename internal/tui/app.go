@@ -78,6 +78,9 @@ func Run(opts Options) error {
 	if m.sess != nil {
 		m.sess.Close("prompt_input_exit")
 	}
+	for _, a := range m.ownedApps {
+		a.Close()
+	}
 	// The alt screen takes the conversation with it; say how to get back.
 	if id := m.agent.SessionID(); id != "" && m.prompted {
 		fmt.Printf("session %s · resume with: larik --resume %s\n", id, id)
@@ -93,13 +96,14 @@ type toolRun struct {
 }
 
 type model struct {
-	opts   Options
-	agent  *agent.Agent
-	sess   *app.Session  // nil when the caller manages the session
-	bgStop chan struct{} // closed when switching away from agent
-	st     styles
-	md     *glamour.TermRenderer
-	isDark bool
+	opts      Options
+	agent     *agent.Agent
+	sess      *app.Session  // nil when the caller manages the session
+	bgStop    chan struct{} // closed when switching away from agent
+	ownedApps []*app.App    // apps created by in-TUI reload; initial app belongs to caller
+	st        styles
+	md        *glamour.TermRenderer
+	isDark    bool
 	// termDark is what the terminal reported; the theme setting may
 	// override it.
 	termDark bool
@@ -175,11 +179,13 @@ type model struct {
 	sessionPick *picker                   // the /sessions and /resume dropdown
 	provs       *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
-	wizardReturn bool
-	showKeys     bool            // the ? shortcuts overlay
-	showInfo     bool            // the F2 session information panel
-	usedSkills   map[string]bool // skills explicitly invoked in this TUI session
-	settings     *settingsPanel  // the /config screen, when open
+	wizardReturn   bool
+	showKeys       bool            // the ? shortcuts overlay
+	showInfo       bool            // the F2 session information panel
+	usedSkills     map[string]bool // skills explicitly invoked in this TUI session
+	settings       *settingsPanel  // the /config screen, when open
+	reload         *reloadPrompt   // confirmation before changing the active context
+	reloadApproved bool            // a confirmed execution change is being applied
 
 	// Settings from /config.
 	verbose      bool   // tool output in full
@@ -273,8 +279,18 @@ func newModel(opts Options) *model {
 		notify:   "off",
 		histIdx:  -1,
 	}
+	m.applyUIConfig()
+	m.todos, _ = tools.LatestTodos(opts.History)
+	m.lastReply = lastReply(opts.History)
+	m.loadHistory()
+	m.panelView.SoftWrap = false
+	m.applyTheme(m.wantDark())
+	return m
+}
+
+func (m *model) applyUIConfig() {
 	var bindings map[string]config.KeyList
-	if c := opts.Config; c != nil {
+	if c := m.opts.Config; c != nil {
 		m.appearance = c.Appearance
 		if m.appearance == "" {
 			if c.VerboseOn() {
@@ -289,6 +305,7 @@ func newModel(opts Options) *model {
 			m.notify = "off"
 		}
 		bindings = c.Keybindings
+		m.vim, m.status, m.sidebarStatus = nil, nil, nil
 		if c.EditorMode == "vim" {
 			m.vim = newVim()
 		}
@@ -302,12 +319,6 @@ func newModel(opts Options) *model {
 	m.keys, m.keyWarn = newKeymap(bindings)
 	m.input.KeyMap.InsertNewline = m.keys.binding(actNewline)
 	m.showThinking = m.verbose
-	m.todos, _ = tools.LatestTodos(opts.History)
-	m.lastReply = lastReply(opts.History)
-	m.loadHistory()
-	m.panelView.SoftWrap = false
-	m.applyTheme(m.wantDark())
-	return m
 }
 
 // theme is the theme setting: auto, dark or light.
@@ -628,6 +639,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
+		case m.reload != nil:
+			return m, m.handleReloadKey(msg)
 		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
 		case m.showKeys:
