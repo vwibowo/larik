@@ -26,6 +26,31 @@ func TestConversationWrapsOnceAndRewrapsOnResize(t *testing.T) {
 	}
 }
 
+func TestConversationIgnoresHorizontalMouseWheel(t *testing.T) {
+	m := testModel(t)
+	m.view.SetWidth(12)
+	m.view.SetHeight(2)
+	m.view.SetContentLines([]string{
+		strings.Repeat("a", 40), "second", "third", "fourth",
+	})
+	m.view.GotoTop()
+	for _, event := range []tea.MouseWheelMsg{
+		{Button: tea.MouseWheelRight},
+		{Button: tea.MouseWheelLeft},
+		{Button: tea.MouseWheelDown, Mod: tea.ModShift},
+		{Button: tea.MouseWheelUp, Mod: tea.ModShift},
+	} {
+		m.Update(event)
+		if x := m.view.XOffset(); x != 0 {
+			t.Fatalf("horizontal wheel %v shifted the conversation by %d", event, x)
+		}
+	}
+	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if m.view.AtTop() {
+		t.Fatal("normal wheel should still scroll the conversation vertically")
+	}
+}
+
 func TestSidebarStaysAnchoredWithShortConversation(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(120)

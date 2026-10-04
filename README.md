@@ -641,7 +641,7 @@ Personal settings, all editable from `/config` (which changes only the key you e
 - `debug` and `debug_retention_days` (not in `/config`): see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).
 - `keybindings` and `status_line` (not in `/config`): see [Rebinding keys](#rebinding-keys) and [Status line](#status-line).
-- `mouse`: wheel scrolling in the TUI (default on). Off leaves the mouse to the terminal, so text can be selected without a modifier.
+- `mouse`: vertical wheel scrolling in the TUI (default on); the conversation does not scroll horizontally. Off leaves the mouse to the terminal, so text can be selected without a modifier.
 - `auto_compact`: summarize the conversation when the context is 80% full. `/compact` works either way.
 - `token_saver`: opt-in command-output filtering (`/config token_saver=true`). Recognized Git, search/listing, Go, Cargo, Node package-manager, and pytest output is shortened before entering model context. Unrecognized output and failures pass through. A `bash` call can set `raw_output: true`; `raw_output` retrieves the exact captured stdout/stderr by tool-call ID without rerunning the command. Raw output stays in private session files. The displayed byte savings are estimates for command output; use `/cost` to inspect actual session token usage and cost.
 - `notifications`: `off`, `bell`, or `desktop` (OSC 9: iTerm2, Ghostty, kitty, WezTerm; other terminals get the bell). Sent only while the terminal is unfocused, when larik asks for permission or a turn of 10s or more ends. Notification hooks are separate.

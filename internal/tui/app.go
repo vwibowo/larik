@@ -465,7 +465,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		if m.hasPickerPanel() && msg.Y >= m.panelTop && msg.Y < m.panelTop+m.panelRows {
 			m.panelView, _ = m.panelView.Update(msg)
-		} else {
+		} else if msg.Button != tea.MouseWheelLeft && msg.Button != tea.MouseWheelRight && !msg.Mod.Contains(tea.ModShift) {
+			// Conversation output is already wrapped; horizontal wheel events
+			// should not shift the entire message list out of view.
 			m.view, _ = m.view.Update(msg)
 		}
 		return m, nil
