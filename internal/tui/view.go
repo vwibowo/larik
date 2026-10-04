@@ -259,7 +259,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		tokens := humanTokens(m.stats.Total.Input+m.stats.Total.CacheRead+m.stats.Total.CacheWrite) + " in / " + humanTokens(m.stats.Total.Output) + " out"
 		context := "ctx —"
 		if m.stats.ContextWindow > 0 {
-			context = fmt.Sprintf("ctx %d%%", m.stats.ContextTokens*100/m.stats.ContextWindow)
+			context = fmt.Sprintf("ctx %d%%", contextPercent(m.stats))
 		}
 		usageRows = append(usageRows, row("Tokens", tokens), row("Cost · "+context, m.costText()))
 	} else {
@@ -268,8 +268,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 			row("Session cost", m.costText()),
 		)
 		if m.stats.ContextWindow > 0 {
-			percent := m.stats.ContextTokens * 100 / m.stats.ContextWindow
-			usageRows = append(usageRows, row("Context", fmt.Sprintf("%s / %s · %d%%", humanTokens(m.stats.ContextTokens), humanTokens(m.stats.ContextWindow), percent)))
+			usageRows = append(usageRows, row("Context", fmt.Sprintf("%s / %s · %d%%", humanTokens(m.stats.ContextTokens), humanTokens(m.stats.ContextWindow), contextPercent(m.stats))))
 		}
 	}
 	sections = append(sections, usageRows)
@@ -1109,7 +1108,7 @@ func (m *model) statusLine() string {
 	ctxPct, ctxBar, ctxTokens := "", "", ""
 	if w := m.stats.ContextWindow; w > 0 {
 		used := max(m.stats.ContextTokens, 0)
-		pct := min(used*100/w, 100)
+		pct := contextPercent(m.stats)
 		style := m.st.accent
 		switch {
 		case pct >= 90:
@@ -1195,6 +1194,17 @@ func (m *model) statusLine() string {
 		return modeChip + "\n" + ansi.Truncate(customLines[0], max(m.width, 1), "…") + "\n" + model + provider
 	}
 	return modeChip + "\n" + model + provider
+}
+
+// contextPercent is the share of the context window in use, as every place
+// that shows it reports the same number. It is capped at 100: a window can be
+// smaller than the provider actually ran with, and "118%" reads as a bug.
+// Callers check ContextWindow > 0 before deciding to show anything at all.
+func contextPercent(stats agent.UsageInfo) int {
+	if stats.ContextWindow <= 0 {
+		return 0
+	}
+	return min(max(stats.ContextTokens, 0)*100/stats.ContextWindow, 100)
 }
 
 // costText is the session cost. With a session budget it shows the cap and

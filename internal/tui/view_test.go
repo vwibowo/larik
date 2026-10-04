@@ -180,6 +180,36 @@ func TestFooterShowsContextWindowBeforeAnyResponse(t *testing.T) {
 	}
 }
 
+// A window can turn out smaller than the provider ran with, so the share can
+// genuinely exceed the window. Every place that shows it caps it the same way:
+// one pane reading 118% while another reads 100% looks like a bug in larik.
+func TestContextPercentIsCappedEverywhere(t *testing.T) {
+	m := testModel(t)
+	m.width = 200
+	m.showInfo = true
+	m.stats = agent.UsageInfo{ContextWindow: 128_000, ContextTokens: 151_040, Total: llm.Usage{Input: 151_040, Output: 10}}
+	if got := contextPercent(m.stats); got != 100 {
+		t.Errorf("contextPercent = %d, want it capped at 100", got)
+	}
+	panes := map[string]string{"footer": plain(m.statusLine()), "status hook": m.statusPayload()}
+	for _, rows := range m.sessionSections(60, 0) {
+		panes["sidebar"] += plain(strings.Join(rows, "\n"))
+	}
+	for name, got := range panes {
+		if strings.Contains(got, "118") {
+			t.Errorf("%s reports an uncapped context share: %q", name, got)
+		}
+		if !strings.Contains(got, "100") {
+			t.Errorf("%s does not report the capped share: %q", name, got)
+		}
+	}
+	// Nothing to divide by: report nothing rather than a bogus share.
+	m.stats = agent.UsageInfo{ContextTokens: 500}
+	if got := contextPercent(m.stats); got != 0 {
+		t.Errorf("contextPercent without a window = %d", got)
+	}
+}
+
 // Your own messages carry a gutter on every line, wrapped ones included, so
 // they are told apart from the model's replies.
 func TestUserMessageGutterOnEveryLine(t *testing.T) {

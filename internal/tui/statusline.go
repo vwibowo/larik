@@ -106,9 +106,7 @@ func (m *model) statusPayload() string {
 	in.OutputStyle.Name = "default"
 	in.Cost.TotalCostUSD = m.stats.CostUSD
 	in.ContextWindow.Size, in.ContextWindow.UsedTokens = m.stats.ContextWindow, m.stats.ContextTokens
-	if m.stats.ContextWindow > 0 {
-		in.ContextWindow.UsedPercentage = min(m.stats.ContextTokens*100/m.stats.ContextWindow, 100)
-	}
+	in.ContextWindow.UsedPercentage = contextPercent(m.stats)
 	in.Larik.Provider = m.agent.ProviderName()
 	in.Larik.Effort = string(m.agent.Effort())
 	in.Larik.Mode = string(m.agent.Perms().Mode())
