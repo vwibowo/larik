@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.10.0
 
-Release candidate: v0.10.0 (not yet published).
+<p class="release-meta"><time datetime="2026-10-05">October 5, 2026</time></p>
 
 ### Added
 
