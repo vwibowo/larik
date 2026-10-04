@@ -196,6 +196,17 @@ func TestAppearanceCompactGroupsTools(t *testing.T) {
 	}
 }
 
+func TestCompactToolSummaryCountsOnce(t *testing.T) {
+	m := testModel(t)
+	for _, name := range []string{"read", "bash", "bash", "multi_edit", "edit"} {
+		m.compactTools = append(m.compactTools, agent.Event{ToolName: name})
+	}
+	want := "✓ Finished · 5 tools used: 1 read call, 2 bash calls, 2 edit calls"
+	if got := plain(m.compactToolSummary()); got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
 func TestVerboseShowsMoreToolOutput(t *testing.T) {
 	m := testModel(t)
 	out := strings.Repeat("line\n", 30)

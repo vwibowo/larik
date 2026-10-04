@@ -228,6 +228,10 @@ type model struct {
 	// context when it finishes, so nothing else may use the agent then.
 	compactCancel context.CancelFunc
 	recording     audio.Recording
+	voiceFrame    int
+	voiceReturn   int       // remaining frames before the composer reappears
+	voiceStarted  time.Time // elapsed recording time
+	voiceTickID   int       // invalidates ticks from an earlier recording
 }
 
 // Messages.
@@ -454,6 +458,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		if m.composerFocused() {
+			if m.voiceActive() {
+				return m, nil
+			}
 			if p, ok := m.pastedPath(msg.Content); ok {
 				m.pasteMention(p)
 				return m, m.syncComposer()
@@ -490,6 +497,20 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
 		m.setWidth(msg.Width)
+		return m, nil
+
+	case voiceTickMsg:
+		if msg.id != m.voiceTickID || m.recording == nil && m.voiceReturn == 0 {
+			return m, nil
+		}
+		if m.recording != nil {
+			m.voiceFrame++
+		} else {
+			m.voiceReturn--
+		}
+		if m.recording != nil || m.voiceReturn > 0 {
+			return m, m.voiceTick()
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -550,19 +571,31 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.println(m.st.err.Render("recording: " + msg.err.Error()))
 		}
+		if msg.recording == nil {
+			return m, m.println(m.st.err.Render("recording: microphone did not start"))
+		}
 		m.recording = msg.recording
-		return m, tea.Batch(m.println(m.st.dim.Render("🎙 Recording… press "+m.keyHint(actRecord, "again")+" to transcribe")), m.spin.Tick)
+		m.voiceStarted = time.Now()
+		m.voiceFrame = 0
+		m.voiceReturn = 0
+		m.voiceTickID++
+		return m, tea.Batch(m.voiceTick(), m.spin.Tick)
 
 	case transcriptionDoneMsg:
 		m.busyLabel = ""
-		if msg.err != nil {
-			return m, m.println(m.st.err.Render("transcription: " + msg.err.Error()))
-		}
-		if strings.TrimSpace(msg.text) != "" {
+		m.voiceReturn = 3
+		m.voiceTickID++
+		var cmd tea.Cmd
+		switch {
+		case msg.err != nil:
+			cmd = m.println(m.st.err.Render("transcription: " + msg.err.Error()))
+		case strings.TrimSpace(msg.text) != "":
 			m.input.SetValue(strings.TrimSpace(m.input.Value() + " " + strings.TrimSpace(msg.text)))
-			return m, m.syncComposer()
+			cmd = m.syncComposer()
+		default:
+			cmd = m.println(m.st.warn.Render("transcription returned no text"))
 		}
-		return m, m.println(m.st.warn.Render("transcription returned no text"))
+		return m, tea.Batch(cmd, m.voiceTick())
 
 	case speechDoneMsg:
 		m.busyLabel = ""
@@ -675,6 +708,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		if m.voiceActive() && m.composerFocused() && !m.keys.is(msg.String(), actRecord) {
+			return m, nil // no invisible edits or accidental submissions
+		}
 		switch m.keys.action[msg.String()] {
 		case actScrollUp:
 			m.view.PageUp()
@@ -711,6 +747,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.voiceActive() {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, tea.Batch(cmd, m.syncComposer()) // e.g. after a paste

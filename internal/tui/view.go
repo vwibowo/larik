@@ -79,7 +79,7 @@ func (m *model) View() tea.View {
 	// The live view sits below the conversation. When the sidebar is visible,
 	// both share its stable-height column layout.
 	var live []string
-	if m.running || m.recording != nil || m.busyLabel != "" || m.agent.RunningBackground() > 0 {
+	if m.running || m.busyLabel != "" && !m.voiceActive() || m.agent.RunningBackground() > 0 {
 		if s := m.liveView(conversationWidth); s != "" {
 			live = strings.Split(s, "\n")
 		}
@@ -592,10 +592,50 @@ func (m *model) floatTodos(conversation string, width int) string {
 
 func (m *model) composerView() string {
 	box := m.st.box
+	if m.voiceActive() {
+		box = box.BorderForeground(m.st.accent.GetForeground())
+		return box.Width(max(m.width, 7)).Render(m.voiceView())
+	}
 	if m.shellMode() {
 		box = box.BorderForeground(m.st.warn.GetForeground())
 	}
 	return box.Width(max(m.width, 7)).Render(m.input.View())
+}
+
+// voiceView replaces the textarea without changing its value. The waveform is
+// decorative: the recorder API does not expose microphone levels.
+func (m *model) voiceView() string {
+	var line string
+	switch {
+	case m.recording != nil:
+		bars := []rune("▁▂▃▅▆█")
+		count := min(11, 3+2*min(m.voiceFrame, 4))
+		if m.width < 38 {
+			count = 3
+		}
+		var wave strings.Builder
+		for i := range count {
+			wave.WriteRune(bars[(i*7+m.voiceFrame*3+i*m.voiceFrame/3)%len(bars)])
+		}
+		if m.width < 38 {
+			line = m.st.accent.Render(wave.String())
+			if key := m.keys.hint(actRecord); key != "" {
+				line += m.st.dim.Render(" " + key)
+			}
+		} else {
+			line = m.st.accent.Render(wave.String() + " Recording " + elapsed(time.Since(m.voiceStarted)))
+			if hint := m.keyHint(actRecord, "to transcribe"); hint != "" {
+				line += m.st.dim.Render(" · " + hint)
+			}
+		}
+	case m.busyLabel == "Starting recording…":
+		line = m.st.accent.Render("Starting microphone…")
+	case m.busyLabel == "Transcribing…":
+		line = m.st.accent.Render("✦ Transcribing…") + m.st.dim.Render(" · your draft is saved")
+	default:
+		line = m.st.accent.Render("✦ Ready "+strings.Repeat("▂", m.voiceReturn)) + m.st.dim.Render(" · returning to your draft…")
+	}
+	return ansi.Truncate(line, max(m.width-4, 1), "")
 }
 
 // availablePanelRows is the height a panel may use above the composer and
@@ -636,9 +676,6 @@ func (m *model) liveView(widths ...int) string {
 		width = widths[0]
 	}
 	var b []string
-	if m.recording != nil {
-		b = append(b, m.st.accent.Render(m.spin.View()+" 🎙 Recording…")+m.st.dim.Render(" · "+m.keyHint(actRecord, "to transcribe")))
-	}
 	thinkingNow := m.thinking.Len() > 0 && m.stream.Len() == 0 && m.calling == ""
 	if thinkingNow && m.showThinking {
 		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), width-4), 8)))
@@ -668,7 +705,7 @@ func (m *model) liveView(widths ...int) string {
 	case m.perm != nil:
 		label = "Waiting for your answer…"
 	case m.busyLabel == "Transcribing…":
-		label = "⏳ Transcribing…"
+		label = "Transcribing…"
 	case m.busyLabel != "":
 		label = m.busyLabel
 	case !m.running && len(tasks) > 0:
@@ -1324,7 +1361,7 @@ func (m *model) compactToolSummary() string {
 	}
 	parts := make([]string, 0, len(order))
 	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[name], plural(counts[name], name+" call")))
+		parts = append(parts, plural(counts[name], name+" call"))
 	}
 	return m.st.dim.Render("✓ Finished · " + plural(len(m.compactTools), "tool") + " used: " + strings.Join(parts, ", "))
 }

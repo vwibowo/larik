@@ -22,9 +22,23 @@ type transcriptionDoneMsg struct {
 }
 type speechDoneMsg struct{ err error }
 
+type voiceTickMsg struct{ id int }
+
+func (m *model) voiceActive() bool {
+	return m.recording != nil || m.busyLabel == "Starting recording…" || m.busyLabel == "Transcribing…" || m.voiceReturn > 0
+}
+
+func (m *model) voiceTick() tea.Cmd {
+	id := m.voiceTickID
+	return tea.Tick(110*time.Millisecond, func(time.Time) tea.Msg { return voiceTickMsg{id: id} })
+}
+
 func (m *model) startRecording() tea.Cmd {
 	if m.opts.Audio == nil {
 		return m.println(m.st.err.Render("audio is not enabled; configure audio in personal settings"))
+	}
+	if m.busyLabel == "Starting recording…" || m.busyLabel == "Transcribing…" || m.voiceReturn > 0 {
+		return nil
 	}
 	m.busyLabel = "Starting recording…"
 	svc := m.opts.Audio
@@ -38,6 +52,7 @@ func (m *model) stopRecording() tea.Cmd {
 	r := m.recording
 	m.recording = nil
 	m.busyLabel = "Transcribing…"
+	m.voiceTickID++ // stop the decorative recording animation
 	svc := m.opts.Audio
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
