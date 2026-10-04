@@ -169,6 +169,14 @@ type Agent struct {
 	windows map[string]int  // model -> context window actually in use
 	probed  map[string]bool // model -> tool support already checked
 	warned  map[string]bool // model -> truncation warning already shown
+	// resolved is the catalog window for the concrete model a whole-turn
+	// runtime reported for the selected name (an alias like "sonnet" is
+	// not a catalog key). Kept apart from windows, which holds what a
+	// provider measured, and dropped whenever the model changes.
+	resolved struct {
+		model  string
+		window int
+	}
 }
 
 func New(opts Options) *Agent {
@@ -251,6 +259,9 @@ func (a *Agent) TokenSaverOn() bool { return a.tokenSaver.Load() }
 func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRuntime) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.opts.Model != model {
+		a.resolved.model, a.resolved.window = "", 0
+	}
 	a.opts.Provider, a.opts.Model = p, model
 	if a.opts.ExecutionFor != nil && p != nil {
 		exec := a.opts.ExecutionFor(p.Name(), model)
@@ -755,6 +766,11 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 			}
 			if event.Tool != nil {
 				start(event.Tool)
+			}
+			// Before any usage, so the context share it reports is
+			// measured against the right window.
+			if event.ResolvedModel != "" {
+				a.noteResolvedModel(req.Model, event.ResolvedModel)
 			}
 			if event.Usage != nil {
 				a.recordUsage(req.Model, *event.Usage, emit)

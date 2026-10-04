@@ -81,3 +81,29 @@ func TestModelEffortAvailabilityAndSwitch(t *testing.T) {
 		t.Fatalf("unsupported effort carried to plain model: %q", m.agent.Effort())
 	}
 }
+
+// Claude Code reports effort support per model, so the picker offers exactly
+// the levels its CLI would accept rather than one list for the whole provider.
+func TestClaudeCLIEffortsFollowTheReportedModel(t *testing.T) {
+	m := testModel(t)
+	m.modelLists = map[string]providerModels{providers.ClaudeCLI: {models: []providers.Model{
+		{ID: "sonnet", CapsKnown: true, Efforts: []llm.Effort{llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax}},
+		{ID: "haiku", CapsKnown: true},
+	}}}
+	cases := []struct {
+		id   string
+		want []llm.Effort
+	}{
+		{"sonnet", []llm.Effort{"", "low", "medium", "high", "xhigh", "max"}},
+		// Reported as taking no levels: offering any would be a setting the
+		// CLI rejects.
+		{"haiku", []llm.Effort{""}},
+		// Typed in freehand, so nothing is known: keep the full range.
+		{"claude-opus-9", []llm.Effort{"", "low", "medium", "high", "max"}},
+	}
+	for _, tc := range cases {
+		if got := m.availableEfforts(pickModel{providers.ClaudeCLI, tc.id}); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}

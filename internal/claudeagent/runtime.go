@@ -40,8 +40,137 @@ const (
 
 // SuggestedModels are rolling aliases documented by Claude Code's --model
 // help. They follow the newest model in each family; the CLI remains the
-// authority for whether an alias is available to a given account.
+// authority for whether an alias is available to a given account. They are
+// only a fallback for a CLI that will not answer ListModels.
 var SuggestedModels = []string{"sonnet", "opus", "fable"}
+
+// Model is a model Claude Code offers to the signed-in account.
+type Model struct {
+	// ID is the value to pass to --model. It is often a rolling alias
+	// ("sonnet"), sometimes a concrete id.
+	ID      string
+	Display string
+	Desc    string
+	// Resolved is the concrete model the ID currently maps to, which is
+	// what carries catalog metadata such as the context window.
+	Resolved string
+	// Efforts are the effort levels this model accepts; empty means it
+	// takes none, which the CLI reports for its smallest models.
+	Efforts  []string
+	Thinking bool
+}
+
+// listModelsTimeout bounds the model query, which answers from local state
+// and so should be near-instant.
+const listModelsTimeout = 15 * time.Second
+
+const initializeRequest = `{"type":"control_request","request_id":"larik-initialize","request":{"subtype":"initialize"}}`
+
+// ListModels asks the CLI which models the signed-in account can use, through
+// the control protocol's initialize request. That answers from local state: it
+// starts no turn, sends no prompt, spends no tokens, and needs no network.
+// Pass the Status from Check, whose isolation flag and path it reuses.
+func (r *Runtime) ListModels(ctx context.Context, status Status) ([]Model, error) {
+	if !status.Ready() {
+		return nil, errors.New(status.Detail)
+	}
+	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
+	defer cancel()
+	// No tools, no settings files, no MCP servers and no slash commands:
+	// nothing of the user's own setup runs, and the reply stays small.
+	command := exec.CommandContext(ctx, status.Path,
+		"--print", status.Isolation, "--tools", "", "--strict-mcp-config",
+		"--input-format", "stream-json", "--output-format", "stream-json",
+		"--no-session-persistence", "--disable-slash-commands", "--no-chrome",
+		"--setting-sources", "", "--prompt-suggestions", "false", "--verbose",
+	)
+	prepareCommand(command)
+	environ := os.Environ()
+	if r.Environ != nil {
+		environ = r.Environ()
+	}
+	command.Env = sanitizedEnv(environ)
+	command.Stdin = strings.NewReader(initializeRequest + "\n")
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	models, parseErr := parseModels(stdout)
+	// Drain the rest so the child never blocks writing to a full pipe.
+	_, _ = io.Copy(io.Discard, stdout)
+	waitErr := command.Wait()
+	if parseErr != nil {
+		if waitErr != nil {
+			return nil, fmt.Errorf("%w (claude exited: %v)", parseErr, waitErr)
+		}
+		return nil, parseErr
+	}
+	return models, nil
+}
+
+// parseModels reads the model list out of the CLI's control response. Only
+// the models are decoded: the same reply describes the signed-in account,
+// including its email address, which Larik has no use for and never records.
+func parseModels(reader io.Reader) ([]Model, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64<<10), maxOutputLine)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var envelope struct {
+			Type     string `json:"type"`
+			Response struct {
+				Subtype string `json:"subtype"`
+				Error   string `json:"error"`
+				Payload struct {
+					Models []struct {
+						Value         string   `json:"value"`
+						ResolvedModel string   `json:"resolvedModel"`
+						DisplayName   string   `json:"displayName"`
+						Description   string   `json:"description"`
+						Efforts       []string `json:"supportedEffortLevels"`
+						Thinking      bool     `json:"supportsAdaptiveThinking"`
+					} `json:"models"`
+				} `json:"response"`
+			} `json:"response"`
+		}
+		if json.Unmarshal(line, &envelope) != nil || envelope.Type != "control_response" {
+			continue
+		}
+		if envelope.Response.Subtype != "success" {
+			detail := envelope.Response.Error
+			if detail == "" {
+				detail = envelope.Response.Subtype
+			}
+			return nil, fmt.Errorf("Claude CLI refused to list models: %s", detail)
+		}
+		out := make([]Model, 0, len(envelope.Response.Payload.Models))
+		for _, m := range envelope.Response.Payload.Models {
+			id := strings.TrimSpace(m.Value)
+			if id == "" {
+				continue
+			}
+			out = append(out, Model{
+				ID: id, Display: strings.TrimSpace(m.DisplayName),
+				Desc: strings.TrimSpace(m.Description), Resolved: strings.TrimSpace(m.ResolvedModel),
+				Efforts: m.Efforts, Thinking: m.Thinking,
+			})
+		}
+		if len(out) == 0 {
+			return nil, errors.New("Claude CLI listed no models")
+		}
+		return out, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read Claude model list: %w", err)
+	}
+	return nil, errors.New("Claude CLI did not answer the model-list request")
+}
 
 var requiredFlags = []string{
 	"--print", "--tools", "--allowedTools", "--strict-mcp-config",
@@ -386,9 +515,12 @@ type streamEnvelope struct {
 	Event   json.RawMessage `json:"event"`
 	Message json.RawMessage `json:"message"`
 	Usage   *usageJSON      `json:"usage"`
-	IsError bool            `json:"is_error"`
-	Result  string          `json:"result"`
-	Errors  []string        `json:"errors"`
+	// Model is the model the CLI reports on its init event, which is where
+	// a rolling alias such as "sonnet" becomes a concrete id.
+	Model   string   `json:"model"`
+	IsError bool     `json:"is_error"`
+	Result  string   `json:"result"`
+	Errors  []string `json:"errors"`
 }
 type usageJSON struct {
 	InputTokens              int64 `json:"input_tokens"`
@@ -401,6 +533,17 @@ func parseOutput(ctx context.Context, reader io.Reader, out chan<- llm.AgentRunt
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), maxOutputLine)
 	usageSent := false
+	modelSent := false
+	// reportModel passes on the concrete model the CLI resolved, once. It is
+	// used only to look up that model's limits; the turn keeps running under
+	// the name the user selected.
+	reportModel := func(model string) {
+		if modelSent || model == "" {
+			return
+		}
+		modelSent = true
+		send(ctx, out, llm.AgentRuntimeEvent{ResolvedModel: model})
+	}
 	turns := 0
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
@@ -412,6 +555,10 @@ func parseOutput(ctx context.Context, reader io.Reader, out chan<- llm.AgentRunt
 			return fmt.Errorf("malformed Claude stream JSON: %w", err)
 		}
 		switch envelope.Type {
+		case "system":
+			if envelope.Subtype == "init" {
+				reportModel(envelope.Model)
+			}
 		case "stream_event":
 			var event struct {
 				Type  string `json:"type"`
@@ -433,10 +580,13 @@ func parseOutput(ctx context.Context, reader io.Reader, out chan<- llm.AgentRunt
 			if maxTurns > 0 && turns > maxTurns {
 				return fmt.Errorf("Claude runtime exceeded the Larik limit of %d model iterations", maxTurns)
 			}
-			message, calls, err := decodeAssistant(envelope.Message)
+			message, calls, model, err := decodeAssistant(envelope.Message)
 			if err != nil {
 				return err
 			}
+			// Older CLIs may not send an init event; the answer itself
+			// still names the model that produced it.
+			reportModel(model)
 			for _, call := range calls {
 				matcher.add(call)
 			}
@@ -466,16 +616,20 @@ func parseOutput(ctx context.Context, reader io.Reader, out chan<- llm.AgentRunt
 	return nil
 }
 
-func decodeAssistant(raw json.RawMessage) (llm.Message, []llm.Block, error) {
+// decodeAssistant converts one assistant message. The returned model is the
+// concrete id the API answered with, reported as metadata; it is deliberately
+// not stamped on the message, which stays attributed to the requested model.
+func decodeAssistant(raw json.RawMessage) (llm.Message, []llm.Block, string, error) {
 	var wire struct {
 		Role    string `json:"role"`
+		Model   string `json:"model"`
 		Content []struct {
 			Type, Text, ID, Name string
 			Input                json.RawMessage `json:"input"`
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return llm.Message{}, nil, fmt.Errorf("malformed Claude assistant message: %w", err)
+		return llm.Message{}, nil, "", fmt.Errorf("malformed Claude assistant message: %w", err)
 	}
 	var text strings.Builder
 	var calls []llm.Block
@@ -494,7 +648,7 @@ func decodeAssistant(raw json.RawMessage) (llm.Message, []llm.Block, error) {
 		blocks = append(blocks, llm.TextBlock(text.String()))
 	}
 	blocks = append(blocks, calls...)
-	return llm.Message{Role: llm.RoleAssistant, Blocks: blocks}, calls, nil
+	return llm.Message{Role: llm.RoleAssistant, Blocks: blocks}, calls, wire.Model, nil
 }
 
 type callMatcher struct {

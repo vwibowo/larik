@@ -15,12 +15,36 @@ const truncationWarnAt = 0.9
 const reprobeAt = 0.5
 
 // windowLocked is the context window for the current model: the one the
-// provider reported, else the catalog's. Callers hold a.mu.
+// provider reported, else the catalog's for whichever model id we know is
+// running. Callers hold a.mu.
 func (a *Agent) windowLocked() int {
 	if w := a.windows[a.opts.Model]; w > 0 {
 		return w
 	}
+	if a.resolved.model == a.opts.Model && a.resolved.window > 0 {
+		return a.resolved.window
+	}
 	return llm.Lookup(a.opts.Model).ContextWindow
+}
+
+// noteResolvedModel records the catalog window of the concrete model a
+// whole-turn runtime resolved the selected name to. Claude Code takes rolling
+// aliases ("sonnet"), which no catalog lists, so without this the agent would
+// fall back to DefaultContextWindow and report a misleading context share.
+// Unknown ids change nothing: the metadata is a bonus, never a requirement.
+func (a *Agent) noteResolvedModel(selected, resolved string) {
+	if resolved == "" || resolved == selected {
+		return
+	}
+	info, ok := llm.Known(resolved)
+	if !ok || info.ContextWindow <= 0 {
+		return
+	}
+	a.mu.Lock()
+	if a.opts.Model == selected {
+		a.resolved.model, a.resolved.window = selected, info.ContextWindow
+	}
+	a.mu.Unlock()
 }
 
 // checkTools warns once per model when the provider knows the model can't

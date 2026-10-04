@@ -48,17 +48,49 @@ const DefaultContextWindow = 128_000
 
 // Lookup returns catalog info for a model, falling back to conservative defaults.
 func Lookup(model string) ModelInfo {
-	if m, ok := Catalog[model]; ok {
+	if m, ok := Known(model); ok {
 		return m
+	}
+	return ModelInfo{ID: model, ContextWindow: DefaultContextWindow, MaxOutput: 16_000}
+}
+
+// Known reports what the catalog says about a model, and whether it says
+// anything at all. Callers that must not guess (reporting a context window,
+// say) use this instead of Lookup's defaults.
+func Known(model string) (ModelInfo, bool) {
+	if m, ok := Catalog[model]; ok {
+		return m, true
 	}
 	// Tolerate provider-prefixed ids such as "anthropic/claude-sonnet-5" via OpenRouter.
 	if i := strings.LastIndex(model, "/"); i >= 0 {
 		if m, ok := Catalog[model[i+1:]]; ok {
 			m.ID = model
-			return m
+			return m, true
 		}
 	}
-	return ModelInfo{ID: model, ContextWindow: DefaultContextWindow, MaxOutput: 16_000}
+	// Tolerate a dated release of a catalogued model, e.g.
+	// "claude-sonnet-5-20260514": the limits and prices are the model's.
+	if base, ok := trimReleaseDate(model); ok {
+		if m, ok := Catalog[base]; ok {
+			m.ID = model
+			return m, true
+		}
+	}
+	return ModelInfo{}, false
+}
+
+// trimReleaseDate strips a trailing "-YYYYMMDD" version suffix.
+func trimReleaseDate(model string) (string, bool) {
+	const dateLen = len("-20060102")
+	if len(model) <= dateLen || model[len(model)-dateLen] != '-' {
+		return "", false
+	}
+	for _, r := range model[len(model)-dateLen+1:] {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return model[:len(model)-dateLen], true
 }
 
 // Cost returns the USD cost of a usage record, or 0 if the price is unknown.

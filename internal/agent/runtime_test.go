@@ -169,3 +169,62 @@ func TestRuntimeToolCallsRunInParallel(t *testing.T) {
 		t.Fatal("a writing call overlapped another call")
 	}
 }
+
+// answeringRuntime reports resolved as the concrete model for the turn, when
+// it is not empty, and always sends usage.
+type answeringRuntime struct{ resolved string }
+
+func (r answeringRuntime) Run(ctx context.Context, req llm.AgentRuntimeRequest) (<-chan llm.AgentRuntimeEvent, error) {
+	out := make(chan llm.AgentRuntimeEvent, 4)
+	go func() {
+		defer close(out)
+		if r.resolved != "" {
+			out <- llm.AgentRuntimeEvent{ResolvedModel: r.resolved}
+		}
+		answer := llm.Message{Role: llm.RoleAssistant, Model: req.Model, Blocks: []llm.Block{llm.TextBlock("done")}}
+		out <- llm.AgentRuntimeEvent{Assistant: &answer}
+		out <- llm.AgentRuntimeEvent{Usage: &llm.Usage{Input: 1000, Output: 10}}
+		out <- llm.AgentRuntimeEvent{Done: true}
+	}()
+	return out, nil
+}
+
+// A rolling alias such as "sonnet" is in no catalog, so without the model the
+// runtime resolved it to, the agent would measure context against the default
+// window and report a misleading share.
+func TestRuntimeResolvedModelSuppliesTheContextWindow(t *testing.T) {
+	run := func(resolved string) *Agent {
+		dir := t.TempDir()
+		a := New(Options{Provider: &fakeProvider{}, Runtime: answeringRuntime{resolved}, Model: "sonnet",
+			Cwd: dir, Tools: tools.NewRegistry(), Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir)})
+		drain(a.Run(context.Background(), "go"), PermissionReply{})
+		return a
+	}
+	want := llm.Catalog["claude-sonnet-5"].ContextWindow
+	for _, resolved := range []string{"claude-sonnet-5", "claude-sonnet-5-20260514"} {
+		if got := run(resolved).Stats().ContextWindow; got != want {
+			t.Errorf("window for resolved %q = %d, want %d", resolved, got, want)
+		}
+	}
+	// Nothing to learn from: the catalog default stands, as before.
+	if got := run("").Stats().ContextWindow; got != llm.DefaultContextWindow {
+		t.Errorf("window without a resolved model = %d, want the default %d", got, llm.DefaultContextWindow)
+	}
+	if got := run("sonnet-ultra-9").Stats().ContextWindow; got != llm.DefaultContextWindow {
+		t.Errorf("window for an unknown resolved model = %d, want the default %d", got, llm.DefaultContextWindow)
+	}
+	// The turn bills a Claude subscription, not tokens, so the alias stays
+	// the priced model and its unknown price keeps cost unreported.
+	a := run("claude-sonnet-5")
+	if st := a.Stats(); st.CostUSD != 0 {
+		t.Errorf("cost = %v, want 0: the resolved model must not price a subscription turn", st.CostUSD)
+	}
+	if a.messages[1].Model != "sonnet" {
+		t.Errorf("transcript model = %q, want the selected name", a.messages[1].Model)
+	}
+	// Switching model drops what was learned for the old one.
+	a.SetModel(&fakeProvider{}, "opus")
+	if got := a.Stats().ContextWindow; got != llm.DefaultContextWindow {
+		t.Errorf("window after switching model = %d, want the default %d", got, llm.DefaultContextWindow)
+	}
+}

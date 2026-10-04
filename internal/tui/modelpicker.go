@@ -33,6 +33,14 @@ func (m *model) availableEfforts(v pickModel) []llm.Effort {
 	}
 	switch {
 	case kind.Kind == providers.ClaudeCLI:
+		// Claude Code reports effort support per model, and its smallest
+		// models take none: a listed model that offered no levels above
+		// means exactly that, so don't offer any.
+		for _, candidate := range m.modelLists[v.provider].models {
+			if candidate.ID == v.model && candidate.CapsKnown {
+				return defaultOnly
+			}
+		}
 		return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortMax}
 	case kind.IsOllama():
 		for _, candidate := range m.modelLists[v.provider].models {

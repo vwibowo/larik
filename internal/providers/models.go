@@ -171,6 +171,7 @@ func EndpointOf(name string, pc config.ProviderConfig) Endpoint {
 // Model is one entry in a provider's model list.
 type Model struct {
 	ID       string
+	Desc     string // what the provider says the model is for, if anything
 	Size     int64  // bytes on disk, for local models
 	Params   string // e.g. "4.0B"
 	Context  int    // context window the model supports, if known
@@ -188,20 +189,7 @@ type Model struct {
 func (e Endpoint) ListModels(ctx context.Context) ([]Model, error) {
 	switch {
 	case e.Kind == ClaudeCLI:
-		status := claudeagent.New().Check(ctx)
-		if !status.Ready() {
-			return nil, errors.New(status.Detail)
-		}
-		// Claude Code has no supported non-interactive model-list command.
-		// Offer its rolling aliases as useful defaults; arbitrary full model
-		// IDs remain available through the picker's freeform entry.
-		out := make([]Model, 0, len(claudeagent.SuggestedModels))
-		for _, id := range claudeagent.SuggestedModels {
-			out = append(out, Model{ID: id, Chat: true, Tools: true, Thinking: true, Efforts: []llm.Effort{
-				llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax,
-			}})
-		}
-		return out, nil
+		return e.claudeCLIModels(ctx)
 	case e.Kind == Codex:
 		return e.codexModels(ctx)
 	case e.Kind == anthropic.Name:
@@ -217,6 +205,59 @@ func (e Endpoint) ListModels(ctx context.Context) ([]Model, error) {
 // IsOllama reports whether the endpoint is an Ollama server.
 func (e Endpoint) IsOllama() bool {
 	return e.Kind == "ollama" || strings.Contains(e.BaseURL, ":11434")
+}
+
+// claudeCLIModels asks Claude Code which models the signed-in account can
+// use. An older CLI that will not answer falls back to the rolling aliases;
+// either way, a full model ID stays available through freeform entry, and
+// the CLI validates the choice when a turn starts.
+func (e Endpoint) claudeCLIModels(ctx context.Context) ([]Model, error) {
+	runtime := claudeagent.New()
+	status := runtime.Check(ctx)
+	if !status.Ready() {
+		return nil, errors.New(status.Detail)
+	}
+	listed, err := runtime.ListModels(ctx, status)
+	if err != nil {
+		return suggestedClaudeModels(), nil
+	}
+	return claudeModels(listed), nil
+}
+
+// claudeModels converts what the CLI reported into picker entries.
+func claudeModels(listed []claudeagent.Model) []Model {
+	out := make([]Model, 0, len(listed))
+	for _, m := range listed {
+		// Every model Claude Code runs chats and calls tools; what differs
+		// between them is thinking and effort, which it reports per model.
+		model := Model{ID: m.ID, Desc: m.Desc, Chat: true, Tools: true, Thinking: m.Thinking, CapsKnown: true}
+		for _, level := range m.Efforts {
+			switch effort := llm.Effort(level); effort {
+			case llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax:
+				model.Efforts = append(model.Efforts, effort)
+			}
+		}
+		// The id is often a rolling alias, which no catalog lists; the
+		// model it resolves to is what knows the context window.
+		if info, known := llm.Known(m.Resolved); known {
+			model.Context = info.ContextWindow
+		}
+		out = append(out, model)
+	}
+	return out
+}
+
+// suggestedClaudeModels is the fallback for a CLI too old to list models.
+// Their capabilities are unknown rather than reported, so CapsKnown stays
+// false and the picker keeps offering the full range of effort levels.
+func suggestedClaudeModels() []Model {
+	out := make([]Model, 0, len(claudeagent.SuggestedModels))
+	for _, id := range claudeagent.SuggestedModels {
+		out = append(out, Model{ID: id, Chat: true, Tools: true, Thinking: true, Efforts: []llm.Effort{
+			llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax,
+		}})
+	}
+	return out
 }
 
 func (e Endpoint) ollamaModels(ctx context.Context) ([]Model, error) {

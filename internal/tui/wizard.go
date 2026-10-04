@@ -652,6 +652,9 @@ func modelItems(models []providers.Model, section, current string) []pickItem {
 
 func modelDetail(m providers.Model) string {
 	var parts []string
+	if m.Desc != "" {
+		parts = append(parts, m.Desc)
+	}
 	if m.Params != "" {
 		parts = append(parts, m.Params)
 	}

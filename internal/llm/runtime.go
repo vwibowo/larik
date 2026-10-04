@@ -31,6 +31,12 @@ type AgentRuntimeEvent struct {
 	Assistant      *Message
 	Tool           *AgentRuntimeToolRequest
 	Usage          *Usage
-	Done           bool
-	Err            error
+	// ResolvedModel is the concrete model id the runtime reports for this
+	// turn, when it resolves a rolling alias such as "sonnet" to one. It is
+	// metadata for looking up limits only: the request's model stays the
+	// name the user chose, so usage attribution and replayable-block
+	// matching are unaffected.
+	ResolvedModel string
+	Done          bool
+	Err           error
 }
