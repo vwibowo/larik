@@ -650,8 +650,26 @@ func modelItems(models []providers.Model, section, current string) []pickItem {
 	return items
 }
 
+// modelName is the provider's own name for a model, when neither the id nor
+// the description already conveys it. Claude Code's "default" and "sonnet"
+// describe the same model identically, and only its "Default (recommended)"
+// tells the two rows apart. The row's label stays the id, which is what gets
+// selected and sent.
+func modelName(m providers.Model) string {
+	if m.Display == "" || strings.EqualFold(m.Display, m.ID) {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(m.Desc), strings.ToLower(m.Display)) {
+		return "" // e.g. "Fable" before "Fable 5.1 · …"
+	}
+	return m.Display
+}
+
 func modelDetail(m providers.Model) string {
 	var parts []string
+	if name := modelName(m); name != "" {
+		parts = append(parts, name)
+	}
 	if m.Desc != "" {
 		parts = append(parts, m.Desc)
 	}

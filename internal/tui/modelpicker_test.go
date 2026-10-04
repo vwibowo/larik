@@ -107,3 +107,37 @@ func TestClaudeCLIEffortsFollowTheReportedModel(t *testing.T) {
 		}
 	}
 }
+
+// Two of Claude Code's models describe themselves identically, so the rows
+// tell them apart only by the provider's own name for each.
+func TestModelRowsCarryTheProvidersNameWhenItAddsSomething(t *testing.T) {
+	const sonnet5 = "Sonnet 5 · Efficient for routine tasks"
+	rows := modelItems([]providers.Model{
+		{ID: "default", Display: "Default (recommended)", Desc: sonnet5, Context: 1_000_000, Chat: true, Tools: true, CapsKnown: true},
+		{ID: "sonnet", Display: "Sonnet", Desc: sonnet5, Context: 1_000_000, Chat: true, Tools: true, CapsKnown: true},
+		{ID: "claude-fable-5-1[1m]", Display: "Fable", Desc: "Fable 5.1 · Most capable", Context: 1_000_000, Chat: true, Tools: true, CapsKnown: true},
+	}, "Claude Code CLI", "sonnet")
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	// The id is what gets selected and sent, so it stays the label.
+	for i, want := range []string{"default", "sonnet", "claude-fable-5-1[1m]"} {
+		if rows[i].label != want || rows[i].value != want {
+			t.Errorf("row %d label/value = %q/%v, want %q", i, rows[i].label, rows[i].value, want)
+		}
+	}
+	if rows[0].detail == rows[1].detail {
+		t.Errorf("default and sonnet are indistinguishable: both read %q", rows[0].detail)
+	}
+	if !strings.HasPrefix(rows[0].detail, "Default (recommended) · "+sonnet5) {
+		t.Errorf("default row = %q", rows[0].detail)
+	}
+	// "Sonnet" before "Sonnet 5 · …" and "Fable" before "Fable 5.1 · …" say
+	// nothing the row does not already say.
+	if !strings.HasPrefix(rows[1].detail, sonnet5) {
+		t.Errorf("sonnet row repeats its own name: %q", rows[1].detail)
+	}
+	if !strings.HasPrefix(rows[2].detail, "Fable 5.1 · ") {
+		t.Errorf("fable row repeats its own name: %q", rows[2].detail)
+	}
+}

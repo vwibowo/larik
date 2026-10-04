@@ -171,7 +171,7 @@ func TestListModelsReadsTheAccountsModelsOnly(t *testing.T) {
 		t.Fatalf("models = %+v", models)
 	}
 	sonnet, haiku := models[0], models[1]
-	if sonnet.ID != "sonnet" || sonnet.Resolved != "claude-sonnet-5" || !sonnet.Thinking ||
+	if sonnet.ID != "sonnet" || sonnet.Display != "Sonnet" || sonnet.Resolved != "claude-sonnet-5" || !sonnet.Thinking ||
 		strings.Join(sonnet.Efforts, ",") != "low,medium,high,xhigh,max" {
 		t.Errorf("sonnet = %+v", sonnet)
 	}

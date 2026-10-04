@@ -11,11 +11,11 @@ func TestClaudeModelsUseTheResolvedModelForMetadata(t *testing.T) {
 	got := claudeModels([]claudeagent.Model{
 		// A rolling alias: no catalog lists "sonnet", so only the model it
 		// resolves to can say how big its context window is.
-		{ID: "sonnet", Desc: "Sonnet 5 · Efficient for routine tasks", Resolved: "claude-sonnet-5",
+		{ID: "sonnet", Display: "Sonnet", Desc: "Sonnet 5 · Efficient for routine tasks", Resolved: "claude-sonnet-5",
 			Efforts: []string{"low", "medium", "high", "xhigh", "max"}, Thinking: true},
 		// A dated release of a catalogued model, which is how the CLI
 		// reports its smaller models.
-		{ID: "haiku", Desc: "Haiku 4.5 · Fastest for quick answers", Resolved: "claude-haiku-4-5-20251001"},
+		{ID: "haiku", Display: "Haiku", Desc: "Haiku 4.5 · Fastest for quick answers", Resolved: "claude-haiku-4-5-20251001"},
 		// Nothing known about it: better no window than a wrong one.
 		{ID: "claude-next-9[1m]", Resolved: "claude-next-9", Efforts: []string{"high", "nonsense"}},
 	})
@@ -25,6 +25,11 @@ func TestClaudeModelsUseTheResolvedModelForMetadata(t *testing.T) {
 	sonnet, haiku, unknown := got[0], got[1], got[2]
 	if sonnet.Context != llm.Catalog["claude-sonnet-5"].ContextWindow || !sonnet.Thinking || !sonnet.CapsKnown {
 		t.Errorf("sonnet = %+v", sonnet)
+	}
+	// The CLI's own name for a model reaches the picker, which needs it to
+	// tell rows apart that describe themselves identically.
+	if sonnet.Display != "Sonnet" || haiku.Display != "Haiku" {
+		t.Errorf("display names = %q, %q", sonnet.Display, haiku.Display)
 	}
 	if len(sonnet.Efforts) != 5 || sonnet.Efforts[4] != llm.EffortMax {
 		t.Errorf("sonnet efforts = %v", sonnet.Efforts)

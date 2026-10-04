@@ -170,7 +170,11 @@ func EndpointOf(name string, pc config.ProviderConfig) Endpoint {
 
 // Model is one entry in a provider's model list.
 type Model struct {
-	ID       string
+	ID string
+	// Display is the provider's own name for the model, when it keeps one
+	// apart from the id (Claude Code calls "default" "Default
+	// (recommended)"). The id stays what is selected and sent.
+	Display  string
 	Desc     string // what the provider says the model is for, if anything
 	Size     int64  // bytes on disk, for local models
 	Params   string // e.g. "4.0B"
@@ -230,7 +234,7 @@ func claudeModels(listed []claudeagent.Model) []Model {
 	for _, m := range listed {
 		// Every model Claude Code runs chats and calls tools; what differs
 		// between them is thinking and effort, which it reports per model.
-		model := Model{ID: m.ID, Desc: m.Desc, Chat: true, Tools: true, Thinking: m.Thinking, CapsKnown: true}
+		model := Model{ID: m.ID, Display: m.Display, Desc: m.Desc, Chat: true, Tools: true, Thinking: m.Thinking, CapsKnown: true}
 		for _, level := range m.Efforts {
 			switch effort := llm.Effort(level); effort {
 			case llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax:
