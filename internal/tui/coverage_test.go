@@ -30,8 +30,7 @@ var panelCoverage = map[string]string{
 // jsonOnly is the backlog of settings that have a discoverable guide but not a
 // native editor yet. A guide is deliberately not counted as TUI coverage.
 var jsonOnly = map[string]string{
-	"verbose":     "superseded by appearance; kept only so old configs keep working",
-	"mcp_servers": "needs transport-specific server forms and secret handling",
+	"verbose": "superseded by appearance; kept only so old configs keep working",
 }
 
 // configPaths lists the JSON path of every setting in t. It descends into a

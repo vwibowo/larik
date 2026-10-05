@@ -823,6 +823,10 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 		ti, cmd := m.settings.hooks.input.Update(msg)
 		m.settings.hooks.input = &ti
 		return cmd, true
+	case m.settings != nil && m.settings.mcp != nil && m.settings.mcp.input != nil:
+		ti, cmd := m.settings.mcp.input.Update(msg)
+		m.settings.mcp.input = &ti
+		return cmd, true
 	case m.settings != nil && m.settings.input != nil:
 		ti, cmd := m.settings.input.Update(msg)
 		m.settings.input = &ti

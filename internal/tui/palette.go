@@ -44,6 +44,7 @@ var commands = []command{
 	{"/new", "", "start a new session", "sessions", ""},
 	{"/fork", "", "branch the conversation into a new session and continue there", "sessions", ""},
 	{"/mcp", "[approve|login|logout <name>]", "MCP servers, their tools, prompts and resources; approve a project server, or sign in to one", "tools", ""},
+	{"/mcp-config", "", "edit named personal MCP servers", "tools", ""},
 	{"/hooks", "[approve]", "configured lifecycle hooks; approve the project's shared hooks", "tools", ""},
 	{"/hooks-config", "", "edit trusted personal lifecycle hooks (commands or prompts)", "tools", ""},
 	{"/skills", "", "list available skills", "tools", ""},

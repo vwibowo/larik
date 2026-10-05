@@ -119,6 +119,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/web-search-config":
 		return m.openWebSearchEditor()
 
+	case "/mcp-config":
+		return m.openMCPEditor()
+
 	case "/lsp-config":
 		return m.openLSPEditor()
 

@@ -322,6 +322,7 @@ fi
 | `/browser [on\|off]`                             | Show browser-tool status or enable/disable them in your personal config; reloads app services with a fresh model context (asks first when context exists)                                                                                                              |
 | `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
 | `/lsp-config`                                    | Edit personal language servers and built-in enable/disable switches; reload to apply |
+| `/mcp-config`                                    | Edit named personal MCP servers; reload to apply |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
 | `/web-search-config` / `/stt-config` / `/tts-config` | Edit personal search and speech endpoints (masked secrets; reload to apply) |
@@ -680,7 +681,8 @@ Larik connects to [Model Context Protocol](https://modelcontextprotocol.io) serv
 }
 ```
 
-- Server tools appear as `mcp__<server>__<tool>`. In rules, `mcp__github` covers every tool on that server.
+- `/mcp-config` (also **MCP servers** in `/config`) edits only named servers in `~/.config/larik/config.json`: add/delete, enable/disable, choose stdio, HTTP or SSE, enter a command or URL, comma-separated arguments and OAuth scopes, environment and header key/value pairs, and optional OAuth client ID, secret and callback port. Credential values are masked and never prefilled; entering a value replaces it, leaving the replacement empty clears it. Saving preserves unrelated fields, secures the personal config to mode 0600, and asks before reloading services with a fresh context (or says to use `/reload` when unavailable). Project servers and approvals are not edited here. `/mcp` remains the status, login and approval command.
+- Server tools appear as `mcp__<server>__<tool>`.  In rules, `mcp__github` covers every tool on that server.
 - `${VAR}` and `${VAR:-default}` are expanded in the command, args, env, URL, and headers.
 - **Trust:** servers from shared project files (`.mcp.json`, `.larik/settings.json`) don't start until you run `/mcp approve <name>`. The approval is stored in private project settings and pinned to a hash of the server's config, so editing the command or URL requires re-approval. Servers in personal settings start automatically.
 - **Permissions:** MCP tools ask before running. The exception is tools that declare both `readOnlyHint: true` and `openWorldHint: false`.
