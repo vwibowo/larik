@@ -125,6 +125,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/models-config":
 		return m.openModelsEditor()
 
+	case "/hooks-config":
+		return m.openHooksEditor()
+
 	case "/stt-config":
 		return m.openSTTEditor()
 

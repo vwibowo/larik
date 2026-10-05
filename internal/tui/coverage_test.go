@@ -32,7 +32,6 @@ var panelCoverage = map[string]string{
 var jsonOnly = map[string]string{
 	"verbose":     "superseded by appearance; kept only so old configs keep working",
 	"mcp_servers": "needs transport-specific server forms and secret handling",
-	"hooks":       "needs event, matcher, command, and prompt editors",
 }
 
 // configPaths lists the JSON path of every setting in t. It descends into a

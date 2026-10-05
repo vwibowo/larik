@@ -36,6 +36,7 @@ type settingsPanel struct {
 	endpoint    *endpointEditor    // personal web search or audio endpoint
 	lsp         *lspEditor         // personal language servers
 	models      *modelsEditor      // personal model catalog overrides
+	hooks       *hooksEditor       // trusted personal lifecycle hooks
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -532,7 +533,7 @@ var settingSpecs = []settingSpec{
 		covers: []string{"permissions"},
 	},
 	guideSetting("mcp_servers", "mcp_servers", "MCP server definitions", "tools", "Servers need transport-specific forms and safe handling for environment values and credentials.", `"mcp_servers": {"name": {"command": "server", "args": []}}`),
-	guideSetting("hooks", "hooks", "Lifecycle hooks", "tools", "Hooks need event, matcher, command, and prompt editors with an execution warning.", `"hooks": {"PostToolUse": [{"matcher": "edit", "hooks": [{"command": "gofmt -w $FILE"}]}]}`),
+	{key: "hooks", title: "Lifecycle hooks", section: "tools", kind: kindAction, cmd: "/hooks-config", open: (*model).openHooksEditor, get: func(m *model) string { return fmt.Sprintf("%d personal events", len(m.opts.Config.TrustedHooks)) }},
 	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
 	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return m.opts.Config.Audio.STT.Model }, cmd: "/stt-config", open: (*model).openSTTEditor},
 	{key: "audio_tts", title: "Text-to-speech endpoint", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return m.opts.Config.Audio.TTS.Model }, cmd: "/tts-config", open: (*model).openTTSEditor},
@@ -1080,6 +1081,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.models != nil {
 		return m.handleModelsKey(msg)
 	}
+	if s.hooks != nil {
+		return m.handleHooksKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1181,6 +1185,9 @@ func (m *model) settingsView() string {
 	}
 	if s.models != nil {
 		return m.modelsEditorView()
+	}
+	if s.hooks != nil {
+		return m.hooksEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()
