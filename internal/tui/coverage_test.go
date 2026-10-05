@@ -43,7 +43,6 @@ var jsonOnly = map[string]string{
 	"audio.stt.model":       "needs a speech endpoint form with secret handling",
 	"audio.stt.voice":       "needs a speech endpoint form with secret handling",
 	"audio.tts":             "needs a speech endpoint form with secret handling",
-	"sandbox":               "needs switches plus writable-path and domain list editors",
 	"lsp":                   "needs enable/disable and server command forms",
 }
 

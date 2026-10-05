@@ -480,6 +480,8 @@ On Windows, install Bash (for example, Git Bash) to use the `bash` tool. Larik h
 
 Larik checks at startup that the sandbox actually starts. If it can't, Larik runs without it, so commands ask for approval, and says why and how to fix it at startup and in `/sandbox`. This happens most often inside a Docker container: bubblewrap there needs `--security-opt seccomp=unconfined --security-opt systempaths=unconfined`. Alternatively, turn the sandbox off and let the container be the boundary. See [Running Larik in a container](docs/security.md#running-larik-in-a-container) for the trade-off.
 
+Use `/sandbox-config` or **Bash sandbox** in `/config` to manage the enabled/default state, full network access, extra writable paths, and allowed domains. Changes that widen access are highlighted; save them for all projects or only the current project's private settings. `/sandbox` continues to show the active sandbox status.
+
 **Inside the sandbox, a command:**
 
 - **Can** read everything.
@@ -633,7 +635,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 }
 ```
 
-`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—MCP servers, hooks, LSP servers, model metadata, sandbox lists, speech endpoints, and keybindings—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
+`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—MCP servers, hooks, LSP servers, model metadata, speech endpoints, and keybindings—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
 
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`. Both themes use a teal accent and leave the background transparent, so your terminal's own background shows through; only diff lines keep a faint green or red tint.
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.

@@ -315,6 +315,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/lsp":
 		return m.lspCommand(info)
 
+	case "/sandbox-config":
+		return m.openSandboxEditor()
+
 	case "/sandbox":
 		if m.opts.Sandbox == nil {
 			note := m.opts.SandboxNote

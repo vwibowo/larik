@@ -50,6 +50,7 @@ var commands = []command{
 	{"/lsp", "", "language servers and their status", "tools", ""},
 	{"/browser", "[on|off]", "show browser tools or switch them on/off (fresh context)", "tools", ""},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
+	{"/sandbox-config", "", "configure sandbox switches, writable paths and allowed domains", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
 	{"/config", "[key=value]", "search editable settings and open guides for file-only sections", "other", ""},

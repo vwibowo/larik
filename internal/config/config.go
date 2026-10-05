@@ -639,6 +639,24 @@ func (c *Config) merge(path string, trusted bool) error {
 	return nil
 }
 
+// SandboxAt reads only the sandbox section declared in one settings file.
+func SandboxAt(path string) (sandbox.Config, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return sandbox.Config{}, nil
+	}
+	if err != nil {
+		return sandbox.Config{}, err
+	}
+	var file struct {
+		Sandbox sandbox.Config `json:"sandbox"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return sandbox.Config{}, err
+	}
+	return file.Sandbox, nil
+}
+
 // StatusLineAt reads one command-backed display from one settings file. The
 // key is status_line or sidebar. It does not merge project layers.
 func StatusLineAt(path, key string) (*StatusLine, error) {

@@ -31,6 +31,7 @@ type settingsPanel struct {
 	guide   string             // key of a file-only setting whose instructions are open
 	rules   *permissionsEditor // native allow/deny rule editor
 	display *displayEditor     // status-line or sidebar command editor
+	sandbox *sandboxEditor     // native sandbox access editor
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -527,7 +528,17 @@ var settingSpecs = []settingSpec{
 	guideSetting("web_search", "web.search", "Web search backend", "tools", "Search providers need provider-specific endpoint and credential fields.", `"web": {"search": {"provider": "brave", "api_key_env": "BRAVE_API_KEY"}}`),
 	guideSetting("audio_stt", "audio.stt", "Speech-to-text endpoint", "audio", "Speech endpoints need URL, model, language, and masked credential fields.", `"audio": {"stt": {"base_url": "http://localhost:8000/v1", "model": "whisper-1"}}`),
 	guideSetting("audio_tts", "audio.tts", "Text-to-speech endpoint", "audio", "Speech endpoints need URL, model, voice, and masked credential fields.", `"audio": {"tts": {"base_url": "http://localhost:8000/v1", "model": "tts-1", "voice": "alloy"}}`),
-	guideSetting("sandbox", "sandbox", "Bash sandbox", "security", "Writable paths and allowed domains need list editors and clear warnings when access is widened.", `"sandbox": {"enabled": true, "network": false, "writable": [], "allowed_domains": []}`),
+	{
+		key: "sandbox", title: "Bash sandbox", section: "security", kind: kindAction,
+		get: func(m *model) string {
+			if m.opts.Sandbox == nil {
+				return "off or unavailable"
+			}
+			return m.opts.Sandbox.Summary()
+		},
+		cmd: "/sandbox-config", open: (*model).openSandboxEditor,
+		covers: []string{"sandbox"},
+	},
 	guideSetting("lsp", "lsp", "Language servers", "tools", "Servers need command, extension, root-marker, environment, and enable/disable editors.", `"lsp": {"name": {"command": ["server", "--stdio"], "extensions": [".ext"]}}`),
 	{
 		key: "debug", title: "Record this session", section: "advanced", kind: kindToggle,
@@ -1045,6 +1056,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.display != nil {
 		return m.handleDisplayKey(msg)
 	}
+	if s.sandbox != nil {
+		return m.handleSandboxEditorKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1131,6 +1145,9 @@ func (m *model) settingsView() string {
 	}
 	if s.display != nil {
 		return m.displayEditorView()
+	}
+	if s.sandbox != nil {
+		return m.sandboxEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()
