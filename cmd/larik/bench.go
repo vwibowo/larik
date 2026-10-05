@@ -23,7 +23,7 @@ import (
 func runBench(args []string) error {
 	fs := flag.NewFlagSet("bench", flag.ExitOnError)
 	var (
-		modelsFlag = fs.String("models", "", "comma-separated provider/model specs or config roles to compare (required), e.g. \"anthropic/claude-opus-5,worker,explore\"")
+		modelsFlag = fs.String("models", "", "comma-separated provider/model specs or config roles to compare (required); main means the configured primary model, e.g. \"main,worker,compact\"")
 		tasksFlag  = fs.String("tasks", "", "comma-separated task names to run (default: all)")
 		timeout    = fs.Duration("timeout", 3*time.Minute, "per task, per model")
 		execFlag   = fs.String("execution", "tools", "comma-separated execution settings to compare: tools, hybrid, code")
@@ -82,7 +82,7 @@ func runBench(args []string) error {
 
 	var all []bench.Result
 	for _, spec := range specs {
-		resolved, err := providers.Resolve(cfg, spec)
+		resolved, err := providers.Resolve(cfg, benchModelSpec(spec))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bench: %s: %v\n", spec, err)
 			continue
@@ -127,6 +127,15 @@ func runBench(args []string) error {
 		return fmt.Errorf("bench: no model ran any task")
 	}
 	return nil
+}
+
+// benchModelSpec gives the configured primary model a name alongside routing
+// roles such as worker and compact. An empty spec is Resolve's main-model form.
+func benchModelSpec(spec string) string {
+	if spec == "main" {
+		return ""
+	}
+	return spec
 }
 
 func selectTasks(namesFlag string) ([]bench.Task, error) {

@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestBenchModelSpec(t *testing.T) {
+	if got := benchModelSpec("main"); got != "" {
+		t.Errorf("main resolved as %q, want the empty primary-model spec", got)
+	}
+	if got := benchModelSpec("worker"); got != "worker" {
+		t.Errorf("worker resolved as %q", got)
+	}
+}
+
 func TestCompactionChange(t *testing.T) {
 	if got := compactionChange(16_000); got != "~16.0k context freed" {
 		t.Errorf("positive change = %q", got)

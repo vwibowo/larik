@@ -68,7 +68,7 @@ func compactionRetentionTask() Task {
 	c.messages = compactionConversation()
 	return Task{
 		Name:       "compaction-retention",
-		Prompt:     "Using only the compacted conversation, return one JSON object with exactly these keys and no Markdown: project, ticket, storage, ingest_port, file, function, max_batch, rejected_approach, remaining_todo, next_action. Preserve identifiers and wording exactly.",
+		Prompt:     "Using only the compacted conversation, return one JSON object with exactly these keys and no Markdown: project, ticket, storage, ingest_port, file, function, max_batch, rejected_approach, remaining_todo, next_action. Use concise values, preserve identifiers and numbers exactly, and do not add keys.",
 		Setup:      func(string) error { return nil },
 		Verify:     func(string) (bool, string) { return false, "compaction benchmark uses its recovery response" },
 		compaction: c,
@@ -138,10 +138,37 @@ func verifyRecovery(text string, want recoveryAnswer) (bool, string) {
 		}
 		return false, "recovery response has trailing content: " + err.Error()
 	}
-	if got != want {
-		gotJSON, _ := json.Marshal(got)
-		wantJSON, _ := json.Marshal(want)
-		return false, fmt.Sprintf("recovered facts differ:\ngot:  %s\nwant: %s", gotJSON, wantJSON)
+	// Recovery is about whether each fact remains usable, not whether the model
+	// copies one canonical sentence byte-for-byte. Natural expansions and
+	// capitalization such as "SQLite in WAL mode" or "Global mutex" still
+	// retain the fact. Unknown JSON keys were rejected above, and numeric
+	// corrections remain exact.
+	var missing []string
+	require := func(name, value string, fragments ...string) {
+		value = strings.ToLower(value)
+		for _, fragment := range fragments {
+			if !strings.Contains(value, strings.ToLower(fragment)) {
+				missing = append(missing, name)
+				return
+			}
+		}
+	}
+	require("project", got.Project, want.Project)
+	require("ticket", got.Ticket, want.Ticket)
+	require("storage", got.Storage, "SQLite", "WAL")
+	require("file", got.File, want.File)
+	require("function", got.Function, want.Function)
+	require("rejected_approach", got.RejectedApproach, "global mutex")
+	require("remaining_todo", got.RemainingTodo, "crash-recovery test")
+	require("next_action", got.NextAction, "FlushPending", "shutdown hook")
+	if got.IngestPort != want.IngestPort {
+		missing = append(missing, "ingest_port")
+	}
+	if got.MaxBatch != want.MaxBatch {
+		missing = append(missing, "max_batch")
+	}
+	if len(missing) > 0 {
+		return false, "recovery omitted or changed: " + strings.Join(missing, ", ")
 	}
 	return true, ""
 }

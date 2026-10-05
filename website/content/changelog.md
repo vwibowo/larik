@@ -25,6 +25,7 @@
 - **Compaction totals stay attributable.** `/cost` now includes estimated context freed by compaction. A subagent's compaction and failure messages are labelled in the conversation but do not inflate the main context's totals.
 - **Compaction on a tiny context window.** When the system prompt and tool definitions fill the window on their own, Larik no longer summarizes repeatedly to no effect.
 - **Malformed summaries.** An unclosed or repeated `<summary>` tag in the model's reply is handled deliberately instead of carrying the model's framing into the next context.
+- **Usable compaction benchmarks.** `larik bench` accepts `main` for the configured primary model, and recovery grading accepts natural wording when all required facts and corrected numbers are retained.
 - Chrome stays open after its initial browser startup check rather than closing when the probe context ends.
 - The compact tool summary no longer prints each tool count twice.
 - Server operation lifecycle, session usage reconstruction, and OpenAI-compatible provider error handling are more reliable.

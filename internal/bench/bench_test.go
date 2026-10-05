@@ -138,6 +138,17 @@ func TestCompactionRetentionScoring(t *testing.T) {
 	if pass, detail := verifyRecovery(string(answer), c.want); !pass {
 		t.Fatalf("exact recovery should pass: %s", detail)
 	}
+	natural := c.want
+	natural.Storage = "SQLite in WAL mode"
+	natural.File = "internal/relay/buffer.go (unverified prior assistant claim)"
+	natural.Function = "FlushPending (unverified prior assistant claim)"
+	natural.RejectedApproach = "Global mutex; it stalled readers. Sharded queue is accepted."
+	natural.RemainingTodo = "One item remains: add crash-recovery test."
+	natural.NextAction = "The immediate next action is to wire FlushPending into shutdown hook."
+	naturalJSON, _ := json.Marshal(natural)
+	if pass, detail := verifyRecovery(string(naturalJSON), c.want); !pass {
+		t.Fatalf("natural wording that retains every fact should pass: %s", detail)
+	}
 	withExtra := strings.TrimSuffix(string(answer), "}") + `,"invented":"detail"}`
 	if pass, _ := verifyRecovery(withExtra, c.want); pass {
 		t.Fatal("an invented recovery field should fail")
@@ -145,8 +156,8 @@ func TestCompactionRetentionScoring(t *testing.T) {
 	wrong := c.want
 	wrong.IngestPort = 4318
 	wrongJSON, _ := json.Marshal(wrong)
-	if pass, _ := verifyRecovery(string(wrongJSON), c.want); pass {
-		t.Fatal("a stale recovered value should fail")
+	if pass, detail := verifyRecovery(string(wrongJSON), c.want); pass || !strings.Contains(detail, "ingest_port") {
+		t.Fatalf("a stale recovered value should fail its field: pass=%v detail=%q", pass, detail)
 	}
 }
 
