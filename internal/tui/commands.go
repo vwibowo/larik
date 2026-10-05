@@ -113,6 +113,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/sidebar-config":
 		return m.openSidebarEditor()
 
+	case "/keybindings":
+		return m.openKeybindingsEditor()
+
 	case "/keys":
 		m.showKeys = true
 		return nil

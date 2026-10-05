@@ -639,6 +639,27 @@ func (c *Config) merge(path string, trusted bool) error {
 	return nil
 }
 
+// KeybindingsAt reads only personal keybinding overrides from one settings file.
+func KeybindingsAt(path string) (map[string]KeyList, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]KeyList{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		Keybindings map[string]KeyList `json:"keybindings"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+	if file.Keybindings == nil {
+		file.Keybindings = map[string]KeyList{}
+	}
+	return file.Keybindings, nil
+}
+
 // SandboxAt reads only the sandbox section declared in one settings file.
 func SandboxAt(path string) (sandbox.Config, error) {
 	data, err := os.ReadFile(path)

@@ -32,7 +32,6 @@ var panelCoverage = map[string]string{
 // native editor yet. A guide is deliberately not counted as TUI coverage.
 var jsonOnly = map[string]string{
 	"verbose":               "superseded by appearance; kept only so old configs keep working",
-	"keybindings":           "needs key capture, conflict handling, and unbinding",
 	"models":                "needs an add/edit/remove catalog wizard",
 	"mcp_servers":           "needs transport-specific server forms and secret handling",
 	"hooks":                 "needs event, matcher, command, and prompt editors",

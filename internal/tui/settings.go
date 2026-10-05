@@ -22,16 +22,17 @@ import (
 // config (~/.config/larik/config.json) and applied to this session right
 // away.
 type settingsPanel struct {
-	list    *picker
-	editing string           // key of the setting being changed
-	values  *picker          // its values, for a choice
-	input   *textinput.Model // its text, for a text setting
-	status  string           // result of the last change
-	failed  bool
-	guide   string             // key of a file-only setting whose instructions are open
-	rules   *permissionsEditor // native allow/deny rule editor
-	display *displayEditor     // status-line or sidebar command editor
-	sandbox *sandboxEditor     // native sandbox access editor
+	list        *picker
+	editing     string           // key of the setting being changed
+	values      *picker          // its values, for a choice
+	input       *textinput.Model // its text, for a text setting
+	status      string           // result of the last change
+	failed      bool
+	guide       string             // key of a file-only setting whose instructions are open
+	rules       *permissionsEditor // native allow/deny rule editor
+	display     *displayEditor     // status-line or sidebar command editor
+	sandbox     *sandboxEditor     // native sandbox access editor
+	keybindings *keybindingsEditor // native keybinding editor
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -515,7 +516,12 @@ var settingSpecs = []settingSpec{
 		},
 		cmd: "/sidebar-config", open: (*model).openSidebarEditor,
 	},
-	guideSetting("keybindings", "keybindings", "Keybindings", "interface", "Key capture, conflicts, alternate keys, and unbinding need a dedicated editor.", `"keybindings": {"external_editor": "ctrl+e", "paste_image": []}`),
+	{
+		key: "keybindings", title: "Keybindings", section: "interface", kind: kindAction,
+		get: func(m *model) string { return fmt.Sprintf("%d customized", len(m.opts.Config.Keybindings)) },
+		cmd: "/keybindings", open: (*model).openKeybindingsEditor,
+		covers: []string{"keybindings"},
+	},
 	guideSetting("models", "models", "Model catalog overrides", "models and providers", "Catalog entries have several typed limits and prices and need an add/edit/remove wizard.", `"models": {"model-id": {"provider": "openai", "context_window": 128000}}`),
 	{
 		key: "permissions", title: "Permission rules", section: "security", kind: kindAction,
@@ -1059,6 +1065,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.sandbox != nil {
 		return m.handleSandboxEditorKey(msg)
 	}
+	if s.keybindings != nil {
+		return m.handleKeybindingsEditorKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1148,6 +1157,9 @@ func (m *model) settingsView() string {
 	}
 	if s.sandbox != nil {
 		return m.sandboxEditorView()
+	}
+	if s.keybindings != nil {
+		return m.keybindingsEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()
