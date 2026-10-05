@@ -139,7 +139,7 @@ func (p *picker) handleKey(msg tea.KeyPressMsg) (chosen bool) {
 func (p *picker) view(st styles, width int) string {
 	vis := p.visible()
 	if len(vis) == 0 {
-		return st.dim.Render("  no matches")
+		return ansi.Truncate(st.dim.Render("  no matches"), max(width, 1), "…")
 	}
 	labelW, detailW, noteW := 0, 0, 0
 	for _, it := range vis {
@@ -147,10 +147,37 @@ func (p *picker) view(st styles, width int) string {
 		detailW = max(detailW, lipgloss.Width(it.detail))
 		noteW = max(noteW, lipgloss.Width(it.note))
 	}
-	labelW = min(labelW, max(width/2-4, 12))
-	// The note (status, "✓ current") matters more than the detail, so the
-	// detail gets what is left after it.
-	detailW = min(detailW, max(width-labelW-noteW-6, 0))
+	// Reserve the cursor first, then let labels use at most half the row. Notes
+	// (status, "✓ current", or a related command) matter more than details, so
+	// they get the remaining room first. Unlike a fixed minimum label width,
+	// this keeps every column inside very narrow terminals.
+	contentW := max(width-2, 1)
+	labelW = min(labelW, max(contentW/2, 1))
+	remaining := max(contentW-labelW, 0)
+	switch {
+	case noteW > 0 && detailW > 0 && remaining > 4:
+		columnsW := remaining - 4
+		if columnsW < 12 {
+			// At very narrow widths, keep the higher-priority note legible rather
+			// than showing two fragments that explain neither column.
+			noteW = min(noteW, remaining-2)
+			detailW = 0
+		} else {
+			// Reserve up to half for the detail/current value, then let a short
+			// note give its unused room back.
+			detailReserve := min(detailW, columnsW/2)
+			noteW = min(noteW, columnsW-detailReserve)
+			detailW = min(detailW, columnsW-noteW)
+		}
+	case noteW > 0 && remaining > 2:
+		noteW = min(noteW, remaining-2)
+		detailW = 0
+	case detailW > 0 && remaining > 2:
+		detailW = min(detailW, remaining-2)
+		noteW = 0
+	default:
+		detailW, noteW = 0, 0
+	}
 
 	var lines []string
 	cursorLine, section := 0, ""
@@ -163,7 +190,7 @@ func (p *picker) view(st styles, width int) string {
 		}
 		label := pad(ansi.Truncate(it.label, labelW, "…"), labelW)
 		detail := pad(ansi.Truncate(it.detail, detailW, "…"), detailW)
-		note := it.note
+		note := ansi.Truncate(it.note, noteW, "…")
 		switch {
 		case it.disabled:
 			label, detail = st.dim.Render(label), st.dim.Render(detail)
@@ -191,7 +218,14 @@ func (p *picker) view(st styles, width int) string {
 			cursor = st.accent.Render("› ")
 			cursorLine = len(lines)
 		}
-		lines = append(lines, ansi.Truncate(cursor+label+"  "+detail+"  "+note, width, "…"))
+		row := cursor + label
+		if detailW > 0 {
+			row += "  " + detail
+		}
+		if noteW > 0 {
+			row += "  " + note
+		}
+		lines = append(lines, ansi.Truncate(row, max(width, 1), "…"))
 	}
 
 	if p.height <= 0 || len(lines) <= p.height {

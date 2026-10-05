@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -92,12 +93,16 @@ func TestPaletteEnterRunsOrCompletes(t *testing.T) {
 	}
 }
 
-func TestConfigPaletteSuggestsSettingNames(t *testing.T) {
+func TestConfigPaletteSuggestsSettingNamesAndCurrentValues(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/config noti")
 	got := paletteLabels(m)
 	if len(got) != 1 || got[0] != "/config notifications=" {
 		t.Fatalf("editable config key suggestions = %v", got)
+	}
+	item := m.palette.visible()[0]
+	if !strings.Contains(item.detail, "current: Off") || item.note != "off|bell|desktop" {
+		t.Fatalf("suggestion should show its current value and accepted values: %+v", item)
 	}
 	m.Update(press(tea.KeyEnter))
 	if m.input.Value() != "/config notifications=" || m.palette != nil {
@@ -107,7 +112,12 @@ func TestConfigPaletteSuggestsSettingNames(t *testing.T) {
 
 func TestConfigPaletteOpensNativeWebEditor(t *testing.T) {
 	m := testModel(t)
-	m.command("/config web_search")
+	typeText(m, "/config web_search")
+	rows := m.palette.visible()
+	if len(rows) != 1 || rows[0].label != "/config web_search" || rows[0].note != "/web-search-config" {
+		t.Fatalf("native editor suggestion = %+v", rows)
+	}
+	m.Update(press(tea.KeyEnter))
 	if m.settings == nil || m.settings.endpoint == nil || m.settings.endpoint.kind != "web" {
 		t.Fatal("/config web_search should open the native editor")
 	}
@@ -117,12 +127,7 @@ func TestConfigPaletteContainsEveryEditableSetting(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/config ")
 	rows := m.palette.visible()
-	want := 0
-	for _, spec := range settingSpecs {
-		if spec.kind != kindAction {
-			want++
-		}
-	}
+	want := len(settingSpecs)
 	if len(rows) != want {
 		t.Fatalf("/config suggestions show %d settings, want %d", len(rows), want)
 	}

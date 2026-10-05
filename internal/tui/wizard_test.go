@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"larik/internal/chatgpt"
 	"larik/internal/config"
@@ -78,6 +79,30 @@ func TestPickerKeepsSelectionVisibleInOneOrTwoRows(t *testing.T) {
 		if view := plain(p.view(newStyles(true), 40)); !strings.Contains(view, "fourth") {
 			t.Errorf("height %d hid the selected row: %q", height, view)
 		}
+	}
+}
+
+func TestPickerFitsNarrowWidthsAndPrioritizesNotes(t *testing.T) {
+	p := picker{items: []pickItem{{
+		label:  "Configurable setting",
+		detail: "a long current value that may be omitted",
+		note:   "/config-command",
+		value:  "setting",
+	}}}
+	p.home()
+	for _, width := range []int{8, 12, 20} {
+		view := plain(p.view(newStyles(true), width))
+		for _, line := range strings.Split(view, "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("width %d rendered a %d-column row: %q", width, got, line)
+			}
+		}
+	}
+	if view := plain(p.view(newStyles(true), 20)); !strings.Contains(view, "/confi") {
+		t.Fatalf("narrow picker should retain the higher-priority note: %q", view)
+	}
+	if view := plain(p.view(newStyles(true), 60)); !strings.Contains(view, "a long") || !strings.Contains(view, "/config") {
+		t.Fatalf("a wider picker should retain both detail and note columns: %q", view)
 	}
 }
 

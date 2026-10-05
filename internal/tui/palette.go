@@ -60,7 +60,7 @@ var commands = []command{
 	{"/tts-config", "", "configure personal text-to-speech endpoint", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
-	{"/config", "[key=value]", "search editable settings and open guides for file-only sections", "other", ""},
+	{"/config", "[key=value]", "search every setting, see current values, or open its native editor", "other", ""},
 	{"/statusline", "", "configure and preview a personal command in the footer", "other", ""},
 	{"/sidebar-config", "", "configure and preview a personal command in the session sidebar", "other", ""},
 	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},
@@ -182,11 +182,23 @@ func (m *model) syncConfigPalette(query string) {
 	p := &picker{}
 	query = strings.ToLower(query)
 	for _, spec := range settingSpecs {
-		if spec.kind == kindAction {
-			continue // the action's own command is already suggested
-		}
-		haystack := strings.ToLower(spec.key + " " + spec.title + " " + spec.section)
+		haystack := strings.ToLower(spec.key + " " + spec.title + " " + spec.section + " " + spec.cmd)
 		if query != "" && !strings.Contains(haystack, query) {
+			continue
+		}
+		current := spec.label(spec.get(m))
+		if current == "" {
+			current = "not set"
+		}
+		if spec.kind == kindAction {
+			insert := "/config " + spec.key
+			p.items = append(p.items, pickItem{
+				section: spec.section,
+				label:   insert,
+				detail:  spec.title + " · current: " + current,
+				note:    spec.cmd,
+				value:   command{name: insert},
+			})
 			continue
 		}
 		usage := "value"
@@ -206,7 +218,8 @@ func (m *model) syncConfigPalette(query string) {
 		p.items = append(p.items, pickItem{
 			section: spec.section,
 			label:   insert,
-			detail:  spec.title + " · " + usage,
+			detail:  spec.title + " · current: " + current,
+			note:    usage,
 			value:   command{name: insert, args: "<value>"},
 		})
 	}
