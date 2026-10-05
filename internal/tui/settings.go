@@ -30,6 +30,7 @@ type settingsPanel struct {
 	failed  bool
 	guide   string             // key of a file-only setting whose instructions are open
 	rules   *permissionsEditor // native allow/deny rule editor
+	display *displayEditor     // status-line or sidebar command editor
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -493,8 +494,26 @@ var settingSpecs = []settingSpec{
 		},
 		set: func(m *model, v string) { m.opts.Config.Audio.MaxDurationSeconds, _ = strconv.Atoi(v) },
 	},
-	guideSetting("status_line", "status_line", "Custom status line", "interface", "A command, refresh interval, and preview need a dedicated wizard.", `"status_line": {"command": "~/.config/larik/status.sh", "refresh_interval_ms": 1000}`),
-	guideSetting("sidebar", "sidebar", "Custom sidebar", "interface", "A command, refresh interval, and preview need a dedicated wizard.", `"sidebar": {"command": "~/.config/larik/sidebar.sh", "refresh_interval_ms": 1000}`),
+	{
+		key: "status_line", title: "Custom status line", section: "interface", kind: kindAction,
+		get: func(m *model) string {
+			if m.opts.Config.StatusLine == nil {
+				return "not configured"
+			}
+			return m.opts.Config.StatusLine.Command
+		},
+		cmd: "/statusline", open: (*model).openStatusLineEditor,
+	},
+	{
+		key: "sidebar", title: "Custom sidebar", section: "interface", kind: kindAction,
+		get: func(m *model) string {
+			if m.opts.Config.Sidebar == nil {
+				return "not configured"
+			}
+			return m.opts.Config.Sidebar.Command
+		},
+		cmd: "/sidebar-config", open: (*model).openSidebarEditor,
+	},
 	guideSetting("keybindings", "keybindings", "Keybindings", "interface", "Key capture, conflicts, alternate keys, and unbinding need a dedicated editor.", `"keybindings": {"external_editor": "ctrl+e", "paste_image": []}`),
 	guideSetting("models", "models", "Model catalog overrides", "models and providers", "Catalog entries have several typed limits and prices and need an add/edit/remove wizard.", `"models": {"model-id": {"provider": "openai", "context_window": 128000}}`),
 	{
@@ -1023,6 +1042,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.rules != nil {
 		return m.handlePermissionsKey(msg)
 	}
+	if s.display != nil {
+		return m.handleDisplayKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1106,6 +1128,9 @@ func (m *model) settingsView() string {
 	s := m.settings
 	if s.rules != nil {
 		return m.permissionsView()
+	}
+	if s.display != nil {
+		return m.displayEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()

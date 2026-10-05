@@ -53,6 +53,8 @@ var commands = []command{
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
 	{"/config", "[key=value]", "search editable settings and open guides for file-only sections", "other", ""},
+	{"/statusline", "", "configure and preview a personal command in the footer", "other", ""},
+	{"/sidebar-config", "", "configure and preview a personal command in the session sidebar", "other", ""},
 	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
 	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},

@@ -408,6 +408,10 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusTickMsg:
 		return m, m.statusTick()
 
+	case displayPreviewMsg:
+		m.displayPreviewDone(msg)
+		return m, nil
+
 	case projectInfoMsg:
 		m.project, m.projectLoading = msg.info, false
 		return m, nil
@@ -790,6 +794,10 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 	case m.settings != nil && m.settings.rules != nil && m.settings.rules.input != nil:
 		ti, cmd := m.settings.rules.input.Update(msg)
 		m.settings.rules.input = &ti
+		return cmd, true
+	case m.settings != nil && m.settings.display != nil && m.settings.display.input != nil:
+		ti, cmd := m.settings.display.input.Update(msg)
+		m.settings.display.input = &ti
 		return cmd, true
 	case m.settings != nil && m.settings.input != nil:
 		ti, cmd := m.settings.input.Update(msg)

@@ -107,6 +107,12 @@ func (m *model) command(line string) tea.Cmd {
 	case "/permissions":
 		return m.openPermissions()
 
+	case "/statusline":
+		return m.openStatusLineEditor()
+
+	case "/sidebar-config":
+		return m.openSidebarEditor()
+
 	case "/keys":
 		m.showKeys = true
 		return nil

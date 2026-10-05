@@ -212,7 +212,7 @@ Teal is kept for Larik's own chrome: the model marker, the spinner, headings and
 
 ### Status line
 
-`status_line` adds a command's output to the left side of the footer while keeping Larik's model, context, cost and other safety information on the right. The permission mode stays at the start. Larik does not yet have a command-and-preview wizard; choose **Custom status line** in `/config` for the personal settings path and an example, then add the JSON there:
+`status_line` adds a command's output to the left side of the footer while keeping Larik's model, context, cost and other safety information on the right. The permission mode stays at the start. Use `/statusline` or **Custom status line** in `/config` to edit the command and refresh interval, test a preview with current session data, or disable it:
 
 ```json
 { "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
@@ -231,7 +231,7 @@ printf 'git: %.100s\nHEAD: %.100s\n' "$git_status" "$commit"
 
 ### Custom sidebar
 
-The right-hand `/info` sidebar can show your own live information below Larik's built-in sections. Choose **Custom sidebar** in `/config` for the personal settings path and an example, then configure the command there. It receives the same session JSON as `status_line`, including `larik.activity` (`idle`, `thinking`, `working` or `responding`), `larik.active_tool`, `larik.turn_running` and `larik.background_tasks`. Its output is shown as plain display content (up to 12 lines); it is refreshed while the sidebar is open, when session state changes, and at the poll interval. This is for information and visual status—not interactive tools. Use MCP or built-in tools to add actions.
+The right-hand `/info` sidebar can show your own live information below Larik's built-in sections. Use `/sidebar-config` or **Custom sidebar** in `/config` to edit, preview, or disable its personal command. It receives the same session JSON as `status_line`, including `larik.activity` (`idle`, `thinking`, `working` or `responding`), `larik.active_tool`, `larik.turn_running` and `larik.background_tasks`. Its output is shown as plain display content (up to 12 lines); it is refreshed while the sidebar is open, when session state changes, and at the poll interval. This is for information and visual status—not interactive tools. Use MCP or built-in tools to add actions.
 
 ```json
 {
@@ -633,14 +633,14 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 }
 ```
 
-`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—MCP servers, hooks, LSP servers, model metadata, sandbox lists, speech endpoints, keybindings, and custom status commands—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
+`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—MCP servers, hooks, LSP servers, model metadata, sandbox lists, speech endpoints, and keybindings—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
 
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`. Both themes use a teal accent and leave the background transparent, so your terminal's own background shows through; only diff lines keep a faint green or red tint.
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
 - `debug` and `debug_retention_days`: see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).
-- `keybindings`, `status_line`, and `sidebar`: file-only for now; their `/config` rows show configuration guides. See [Rebinding keys](#rebinding-keys), [Status line](#status-line), and [Custom sidebar](#custom-sidebar).
+- `status_line` and `sidebar`: native command-and-preview editors in `/config`; see [Status line](#status-line) and [Custom sidebar](#custom-sidebar). `keybindings` remains file-only for now and its `/config` row shows a guide; see [Rebinding keys](#rebinding-keys).
 - `mouse`: vertical wheel scrolling in the TUI (default on); the conversation does not scroll horizontally. Off leaves the mouse to the terminal, so text can be selected without a modifier.
 - `auto_compact`: summarize the conversation when the context is 80% full, measured from what the provider reported for the last request or, where that cannot know yet — a very large pasted prompt, a long tool result, a session you just resumed — from an estimate of what is about to be sent. `/compact` works either way. After compaction Larik reports the provider-measured summarizer input and billed output, for example `26k prompt → ~10k summary · ~16k saved`; the summary and saved counts are estimates of the rebuilt context because its stable system/tool prefix and wrapper are measured exactly only on the next regular request. Session and current-turn totals appear in the information sidebar, and `/cost` reports the session total. A subagent's compaction is labelled in the conversation but excluded from the main context's totals.
 - `token_saver`: opt-in command-output filtering (`/config token_saver=true`). Recognized Git, search/listing, Go, Cargo, Node package-manager, and pytest output is shortened before entering model context. Unrecognized output and failures pass through. A `bash` call can set `raw_output: true`; `raw_output` retrieves the exact captured stdout/stderr by tool-call ID without rerunning the command. Raw output stays in private session files. The displayed byte savings are estimates for command output; use `/cost` to inspect actual session token usage and cost.

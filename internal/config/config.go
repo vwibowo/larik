@@ -639,6 +639,33 @@ func (c *Config) merge(path string, trusted bool) error {
 	return nil
 }
 
+// StatusLineAt reads one command-backed display from one settings file. The
+// key is status_line or sidebar. It does not merge project layers.
+func StatusLineAt(path, key string) (*StatusLine, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		StatusLine *StatusLine `json:"status_line"`
+		Sidebar    *StatusLine `json:"sidebar"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+	switch key {
+	case "status_line":
+		return file.StatusLine, nil
+	case "sidebar":
+		return file.Sidebar, nil
+	default:
+		return nil, fmt.Errorf("unknown command display %q", key)
+	}
+}
+
 // PermissionRulesAt reads only the rules declared in one settings file. It
 // does not merge other layers, which lets the TUI edit a scope without copying
 // shared project rules into trusted personal configuration.

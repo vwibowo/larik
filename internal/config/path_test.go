@@ -197,6 +197,21 @@ func TestSetSettingPathRejectsABadPath(t *testing.T) {
 	}
 }
 
+func TestStatusLineAtReadsOnlyOneFile(t *testing.T) {
+	_, path := userConfig(t, `{"status_line":{"command":"status","refresh_interval_ms":500},"sidebar":{"command":"side"}}`)
+	status, err := StatusLineAt(path, "status_line")
+	if err != nil || status == nil || status.Command != "status" || status.RefreshIntervalMS != 500 {
+		t.Fatalf("status line = %+v, %v", status, err)
+	}
+	sidebar, err := StatusLineAt(path, "sidebar")
+	if err != nil || sidebar == nil || sidebar.Command != "side" {
+		t.Fatalf("sidebar = %+v, %v", sidebar, err)
+	}
+	if _, err := StatusLineAt(path, "other"); err == nil {
+		t.Fatal("unknown display key should fail")
+	}
+}
+
 func TestPermissionRulesAtAndEffectiveTrust(t *testing.T) {
 	cfg, user := userConfig(t, `{"permissions":{"allow":["bash(user*)"],"deny":["read(user)"]}}`)
 	if err := os.MkdirAll(filepath.Join(cfg.Cwd, ".larik"), 0o755); err != nil {
