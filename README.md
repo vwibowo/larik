@@ -321,6 +321,7 @@ fi
 | `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
+| `/web-search-config` / `/stt-config` / `/tts-config` | Edit personal search and speech endpoints (masked secrets; reload to apply) |
 | `/sandbox`                                       | Sandbox status                                                                                                                                                                                                                                                           |
 | `/<skill-name> [args]`                           | Run a skill                                                                                                                                                                                                                                                              |
 
@@ -419,6 +420,8 @@ Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execu
 | [Brave Search](https://brave.com/search/api/)                             | `BRAVE_API_KEY`  |
 | [Tavily](https://tavily.com)                                              | `TAVILY_API_KEY` |
 | [SearXNG](https://docs.searxng.org) (self-hosted; enable the JSON format) | `SEARXNG_URL`    |
+
+Use `/web-search-config` (or **Web search backend** in `/config`) to edit the personal search backend: toggle disabled, cycle the provider (auto/Brave/Tavily/SearXNG), set an optional URL or API-key environment variable, and replace or clear a masked API key. `/stt-config` and `/tts-config` (also in `/config`) edit personal speech endpoints: base URL, model, API-key environment variable, masked key (replace/clear), language, and voice. Saving preserves other web/audio settings and unknown fields, secures the personal config to owner-only permissions, and asks before rebuilding services and clearing a current model context; when reload is unavailable, run `/reload` later.
 
 You can also set it explicitly:
 

@@ -807,6 +807,10 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 		ti, cmd := m.settings.keybindings.input.Update(msg)
 		m.settings.keybindings.input = &ti
 		return cmd, true
+	case m.settings != nil && m.settings.endpoint != nil && m.settings.endpoint.input != nil:
+		ti, cmd := m.settings.endpoint.input.Update(msg)
+		m.settings.endpoint.input = &ti
+		return cmd, true
 	case m.settings != nil && m.settings.input != nil:
 		ti, cmd := m.settings.input.Update(msg)
 		m.settings.input = &ti

@@ -660,6 +660,53 @@ func KeybindingsAt(path string) (map[string]KeyList, error) {
 	return file.Keybindings, nil
 }
 
+// WebSearchAt reads only search settings from one personal settings file.
+func WebSearchAt(path string) (web.SearchConfig, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return web.SearchConfig{}, nil
+	}
+	if err != nil {
+		return web.SearchConfig{}, err
+	}
+	var file struct {
+		Web struct {
+			Search web.SearchConfig `json:"search"`
+		} `json:"web"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return web.SearchConfig{}, err
+	}
+	return file.Web.Search, nil
+}
+
+// AudioEndpointAt reads only one personal endpoint, without merging project settings.
+func AudioEndpointAt(path, kind string) (audio.EndpointConfig, error) {
+	if kind != "stt" && kind != "tts" {
+		return audio.EndpointConfig{}, fmt.Errorf("unknown audio endpoint %q", kind)
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return audio.EndpointConfig{}, nil
+	}
+	if err != nil {
+		return audio.EndpointConfig{}, err
+	}
+	var file struct {
+		Audio struct {
+			STT audio.EndpointConfig `json:"stt"`
+			TTS audio.EndpointConfig `json:"tts"`
+		} `json:"audio"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return audio.EndpointConfig{}, err
+	}
+	if kind == "stt" {
+		return file.Audio.STT, nil
+	}
+	return file.Audio.TTS, nil
+}
+
 // SandboxAt reads only the sandbox section declared in one settings file.
 func SandboxAt(path string) (sandbox.Config, error) {
 	data, err := os.ReadFile(path)
@@ -1021,6 +1068,29 @@ func SetSettingPath(file, path string, value any) error {
 	}
 	return updateJSON(file, settingPerm(path), func(raw map[string]any) {
 		setPath(raw, keys, value)
+	})
+}
+
+// SetUserSettingPaths atomically patches personal dotted paths, leaving all
+// other fields (including unknown fields in the same section) untouched.
+func (c *Config) SetUserSettingPaths(values map[string]any) error {
+	for path := range values {
+		for _, key := range strings.Split(path, ".") {
+			if key == "" {
+				return fmt.Errorf("bad setting path %q", path)
+			}
+		}
+	}
+	perm := os.FileMode(0o644)
+	for path := range values {
+		if settingPerm(path) == 0o600 {
+			perm = 0o600
+		}
+	}
+	return updateJSON(c.UserConfigPath(), perm, func(raw map[string]any) {
+		for path, value := range values {
+			setPath(raw, strings.Split(path, "."), value)
+		}
 	})
 }
 

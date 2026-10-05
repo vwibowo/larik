@@ -105,16 +105,11 @@ func TestConfigPaletteSuggestsSettingNames(t *testing.T) {
 	}
 }
 
-func TestConfigPaletteOpensFileOnlyGuide(t *testing.T) {
+func TestConfigPaletteOpensNativeWebEditor(t *testing.T) {
 	m := testModel(t)
-	typeText(m, "/config web_s")
-	got := paletteLabels(m)
-	if len(got) != 1 || got[0] != "/config web_search" {
-		t.Fatalf("guide suggestions = %v", got)
-	}
-	m.Update(press(tea.KeyEnter))
-	if m.settings == nil || m.settings.guide != "web_search" || m.input.Value() != "" {
-		t.Fatalf("enter should open the guide, got input %q", m.input.Value())
+	m.command("/config web_search")
+	if m.settings == nil || m.settings.endpoint == nil || m.settings.endpoint.kind != "web" {
+		t.Fatal("/config web_search should open the native editor")
 	}
 }
 

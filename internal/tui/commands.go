@@ -116,6 +116,15 @@ func (m *model) command(line string) tea.Cmd {
 	case "/keybindings":
 		return m.openKeybindingsEditor()
 
+	case "/web-search-config":
+		return m.openWebSearchEditor()
+
+	case "/stt-config":
+		return m.openSTTEditor()
+
+	case "/tts-config":
+		return m.openTTSEditor()
+
 	case "/keys":
 		m.showKeys = true
 		return nil

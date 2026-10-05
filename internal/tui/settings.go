@@ -33,6 +33,7 @@ type settingsPanel struct {
 	display     *displayEditor     // status-line or sidebar command editor
 	sandbox     *sandboxEditor     // native sandbox access editor
 	keybindings *keybindingsEditor // native keybinding editor
+	endpoint    *endpointEditor    // personal web search or audio endpoint
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -531,9 +532,9 @@ var settingSpecs = []settingSpec{
 	},
 	guideSetting("mcp_servers", "mcp_servers", "MCP server definitions", "tools", "Servers need transport-specific forms and safe handling for environment values and credentials.", `"mcp_servers": {"name": {"command": "server", "args": []}}`),
 	guideSetting("hooks", "hooks", "Lifecycle hooks", "tools", "Hooks need event, matcher, command, and prompt editors with an execution warning.", `"hooks": {"PostToolUse": [{"matcher": "edit", "hooks": [{"command": "gofmt -w $FILE"}]}]}`),
-	guideSetting("web_search", "web.search", "Web search backend", "tools", "Search providers need provider-specific endpoint and credential fields.", `"web": {"search": {"provider": "brave", "api_key_env": "BRAVE_API_KEY"}}`),
-	guideSetting("audio_stt", "audio.stt", "Speech-to-text endpoint", "audio", "Speech endpoints need URL, model, language, and masked credential fields.", `"audio": {"stt": {"base_url": "http://localhost:8000/v1", "model": "whisper-1"}}`),
-	guideSetting("audio_tts", "audio.tts", "Text-to-speech endpoint", "audio", "Speech endpoints need URL, model, voice, and masked credential fields.", `"audio": {"tts": {"base_url": "http://localhost:8000/v1", "model": "tts-1", "voice": "alloy"}}`),
+	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
+	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return m.opts.Config.Audio.STT.Model }, cmd: "/stt-config", open: (*model).openSTTEditor},
+	{key: "audio_tts", title: "Text-to-speech endpoint", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return m.opts.Config.Audio.TTS.Model }, cmd: "/tts-config", open: (*model).openTTSEditor},
 	{
 		key: "sandbox", title: "Bash sandbox", section: "security", kind: kindAction,
 		get: func(m *model) string {
@@ -1068,6 +1069,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.keybindings != nil {
 		return m.handleKeybindingsEditorKey(msg)
 	}
+	if s.endpoint != nil {
+		return m.handleEndpointKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1160,6 +1164,9 @@ func (m *model) settingsView() string {
 	}
 	if s.keybindings != nil {
 		return m.keybindingsEditorView()
+	}
+	if s.endpoint != nil {
+		return m.endpointEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()

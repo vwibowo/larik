@@ -25,24 +25,16 @@ var panelCoverage = map[string]string{
 	"approved_mcp_servers":   "/mcp approve",
 	"approved_project_hooks": "/hooks approve",
 	"browser.enabled":        "/browser on|off",
-	"audio.stt.language":     "/stt-language",
 }
 
 // jsonOnly is the backlog of settings that have a discoverable guide but not a
 // native editor yet. A guide is deliberately not counted as TUI coverage.
 var jsonOnly = map[string]string{
-	"verbose":               "superseded by appearance; kept only so old configs keep working",
-	"models":                "needs an add/edit/remove catalog wizard",
-	"mcp_servers":           "needs transport-specific server forms and secret handling",
-	"hooks":                 "needs event, matcher, command, and prompt editors",
-	"web.search":            "needs a provider-specific search wizard",
-	"audio.stt.base_url":    "needs a speech endpoint form with secret handling",
-	"audio.stt.api_key":     "needs a speech endpoint form with secret handling",
-	"audio.stt.api_key_env": "needs a speech endpoint form with secret handling",
-	"audio.stt.model":       "needs a speech endpoint form with secret handling",
-	"audio.stt.voice":       "needs a speech endpoint form with secret handling",
-	"audio.tts":             "needs a speech endpoint form with secret handling",
-	"lsp":                   "needs enable/disable and server command forms",
+	"verbose":     "superseded by appearance; kept only so old configs keep working",
+	"models":      "needs an add/edit/remove catalog wizard",
+	"mcp_servers": "needs transport-specific server forms and secret handling",
+	"hooks":       "needs event, matcher, command, and prompt editors",
+	"lsp":         "needs enable/disable and server command forms",
 }
 
 // configPaths lists the JSON path of every setting in t. It descends into a
