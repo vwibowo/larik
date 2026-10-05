@@ -201,15 +201,6 @@ func (m *model) syncConfigPalette(query string) {
 			usage = strings.Join(values, "|")
 		case kindNumber:
 			usage = "number|default"
-		case kindGuide:
-			insert := "/config " + spec.key
-			p.items = append(p.items, pickItem{
-				section: spec.section,
-				label:   insert,
-				detail:  spec.title + " · configuration guide",
-				value:   command{name: insert},
-			})
-			continue
 		}
 		insert := "/config " + spec.key + "="
 		p.items = append(p.items, pickItem{

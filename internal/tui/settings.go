@@ -28,7 +28,6 @@ type settingsPanel struct {
 	input       *textinput.Model // its text, for a text setting
 	status      string           // result of the last change
 	failed      bool
-	guide       string             // key of a file-only setting whose instructions are open
 	rules       *permissionsEditor // native allow/deny rule editor
 	display     *displayEditor     // status-line or sidebar command editor
 	sandbox     *sandboxEditor     // native sandbox access editor
@@ -49,7 +48,6 @@ const (
 	kindToggle
 	kindText
 	kindNumber // a whole number, within min and max
-	kindGuide  // explains a setting that still needs the settings file
 	kindAction // opens another screen
 )
 
@@ -93,8 +91,6 @@ type settingSpec struct {
 	// other, for a choice, accepts a typed value that isn't one of the
 	// choices (e.g. any number of days), returning it normalized.
 	other func(v string) (string, bool)
-	// guide explains why a setting is not editable here and shows its shape.
-	guide string
 	// For an action: the command that changes it, and how to open its screen.
 	cmd  string
 	open func(m *model) tea.Cmd
@@ -125,16 +121,6 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
-}
-
-// guideSetting keeps a file-only option discoverable without pretending that
-// typing its JSON representation is a native TUI editor.
-func guideSetting(key, path, title, section, why, example string) settingSpec {
-	return settingSpec{
-		key: key, path: path, title: title, section: section, kind: kindGuide,
-		guide: why, placeholder: example,
-		get: func(*model) string { return "settings file" },
-	}
 }
 
 // orEmpty stores v, or removes the key when v is the default.
@@ -782,8 +768,6 @@ func (s settingSpec) check(v string) (string, error) {
 			return "", fmt.Errorf("%s is between %d and %d %s", s.key, s.min, s.max, s.unit)
 		}
 		return strconv.Itoa(n), nil
-	case kindGuide:
-		return "", fmt.Errorf("%s is not editable in the TUI yet; open its /config guide", s.key)
 	case kindAction:
 		return "", fmt.Errorf("use %s to change the %s", s.cmd, s.key)
 	}
@@ -838,8 +822,6 @@ func (m *model) configCommand(arg string) tea.Cmd {
 	if !strings.ContainsAny(arg, "= ") {
 		if spec, ok := settingByKey(arg); ok {
 			switch spec.kind {
-			case kindGuide:
-				return m.openSettings(spec.key)
 			case kindAction:
 				return spec.open(m)
 			}
@@ -938,9 +920,6 @@ func (m *model) buildSettings() {
 			if v == "" {
 				it.detail = "not set"
 			}
-		case kindGuide:
-			it.detail = "not editable in the TUI yet"
-			it.note = "guide"
 		case kindAction:
 			it.detail = v
 			if v == "" {
@@ -1011,9 +990,6 @@ func (m *model) editSetting(key string) tea.Cmd {
 			next = "off"
 		}
 		return m.confirmSetting(key, next)
-	case kindGuide:
-		s.guide = key
-		return nil
 	case kindText, kindNumber:
 		ti := textinput.New()
 		ti.Prompt = "› "
@@ -1091,12 +1067,6 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	k := msg.String()
 	switch {
-	case s.guide != "":
-		if k == "esc" || k == "ctrl+c" || k == "enter" {
-			s.guide = ""
-		}
-		return nil
-
 	case s.input != nil:
 		switch k {
 		case "esc", "ctrl+c":
@@ -1201,13 +1171,6 @@ func (m *model) settingsView() string {
 	rows := m.availablePanelRows()
 	var head, body, hint string
 	switch {
-	case s.guide != "":
-		spec, _ := settingByKey(s.guide)
-		head = spread(m.st.accent.Render(spec.title), m.st.dim.Render("configuration guide"), w)
-		body = wrap("This setting is not editable in the TUI yet. "+spec.guide, w) + "\n\n" + m.st.dim.Render("Personal settings file") + "\n" +
-			shortHome(m.opts.Config.UserConfigPath()) + "\n\n" + m.st.dim.Render("Example (inside the top-level JSON object)") + "\n" +
-			wrap(spec.placeholder, w) + "\n\n" + m.st.dim.Render("Save the file, then run /reload. Project settings may have stricter trust rules.")
-		hint = "enter/esc back"
 	case s.input != nil:
 		spec, _ := settingByKey(s.editing)
 		head = spread(m.st.accent.Render(spec.title), m.st.dim.Render("saved for every project"), w)

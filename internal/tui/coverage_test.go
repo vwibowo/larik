@@ -27,8 +27,8 @@ var panelCoverage = map[string]string{
 	"browser.enabled":        "/browser on|off",
 }
 
-// jsonOnly is the backlog of settings that have a discoverable guide but not a
-// native editor yet. A guide is deliberately not counted as TUI coverage.
+// jsonOnly contains compatibility fields with no separate control. Every
+// active setting belongs in /config or a panel.
 var jsonOnly = map[string]string{
 	"verbose": "superseded by appearance; kept only so old configs keep working",
 }
@@ -71,9 +71,6 @@ func under(path, section string) bool {
 func uiCoverage() map[string]string {
 	covered := map[string]string{}
 	for _, s := range settingSpecs {
-		if s.kind == kindGuide {
-			continue
-		}
 		how := "/config " + s.key
 		if s.kind == kindAction {
 			how = s.cmd
@@ -167,8 +164,8 @@ func TestSettingRowsNameRealSettings(t *testing.T) {
 		}
 	}
 	for _, s := range settingSpecs {
-		if s.kind == kindAction || s.kind == kindGuide {
-			continue // actions and guides save nothing themselves
+		if s.kind == kindAction {
+			continue // actions save through their own panels
 		}
 		if !paths[s.configPath()] {
 			t.Errorf("/config %s writes %q, which is not a setting", s.key, s.configPath())

@@ -34,7 +34,7 @@ func TestModelsEditorCommandsAndSave(t *testing.T) {
 		t.Fatalf("save lost metadata: %s %v", b, err)
 	}
 	m.command("/config models")
-	if m.settings == nil || m.settings.models == nil || m.settings.guide != "" {
+	if m.settings == nil || m.settings.models == nil {
 		t.Fatal("config action did not open editor")
 	}
 	m.command("/model")
