@@ -1348,19 +1348,26 @@ func (m *model) costText() string {
 
 // renderUserMessage formats one of your prompts for the conversation. Every
 // line carries an accent gutter, soft-wrapped ones included, so your messages
-// are told apart from the model's replies at a glance. Wrapping happens here
-// because the gutter has to survive it; appendOutput leaves wrapped lines be.
+// are told apart from the model's replies at a glance. The gutter also runs
+// one empty line above and below the text, setting the prompt off as a block;
+// that room comes from gutter rows rather than bare newlines, which would
+// leave rows the gutter doesn't reach. Wrapping happens here because the
+// gutter has to survive it; appendOutput leaves wrapped lines be.
 func (m *model) renderUserMessage(text string) string {
 	width := m.convWidth
 	if width <= 0 {
 		width = m.width
 	}
-	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), max(width-2, 10)), "\n")
 	gutter := m.st.accent.Render("▌ ")
-	for i, l := range lines {
-		lines[i] = gutter + m.st.user.Render(l)
+	// The gutter takes two columns, so the text wraps two columns narrower
+	// and every rendered line still fits the conversation.
+	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), max(width-2, 10)), "\n")
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, gutter)
+	for _, l := range lines {
+		out = append(out, gutter+m.st.user.Render(l))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(append(out, gutter), "\n")
 }
 
 // renderAssistant formats a finished assistant message for scrollback.

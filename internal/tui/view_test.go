@@ -229,6 +229,46 @@ func TestUserMessageGutterOnEveryLine(t *testing.T) {
 			t.Errorf("line overflows the conversation: %q", l)
 		}
 	}
+	// The block is set off by empty gutter rows, not by bare newlines the
+	// gutter doesn't reach.
+	if strings.TrimSpace(lines[0]) != "▌" || strings.TrimSpace(lines[len(lines)-1]) != "▌" {
+		t.Errorf("a prompt should open and close on an empty gutter row: %q", got)
+	}
+	if strings.TrimSpace(lines[1]) == "▌" {
+		t.Errorf("only one empty gutter row belongs above the text: %q", got)
+	}
+}
+
+// Awkward prompts still render as one gutter block: a word longer than the
+// conversation is broken rather than left to overflow, and trailing blank
+// lines don't add gutter rows of their own.
+func TestUserMessageGutterHandlesLongWordsAndBlankEnds(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(40)
+	m.convWidth = 40
+	for name, text := range map[string]string{
+		"long word":      strings.Repeat("unbreakable", 12),
+		"trailing blank": "a short prompt\n\n\n",
+		"empty":          "",
+	} {
+		got := plain(m.renderUserMessage(text))
+		lines := strings.Split(got, "\n")
+		for _, l := range lines {
+			if !strings.HasPrefix(l, "▌ ") {
+				t.Errorf("%s: line without a gutter: %q in %q", name, l, got)
+			}
+			if lipgloss.Width(l) > 40 {
+				t.Errorf("%s: line overflows the conversation: %q", name, l)
+			}
+		}
+		n := len(lines)
+		if strings.TrimSpace(lines[0]) != "▌" || strings.TrimSpace(lines[n-1]) != "▌" {
+			t.Errorf("%s: a prompt should open and close on an empty gutter row: %q", name, got)
+		}
+		if text != "" && strings.TrimSpace(lines[n-2]) == "▌" {
+			t.Errorf("%s: a prompt should end on exactly one empty gutter row: %q", name, got)
+		}
+	}
 }
 
 func TestSidebarShowsProjectUsageAndTurnMetrics(t *testing.T) {
