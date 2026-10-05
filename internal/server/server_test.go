@@ -249,6 +249,28 @@ func TestJSONBodyRequiresExactlyOneValue(t *testing.T) {
 	}
 }
 
+func TestCompactReturnsAndPersistsMetrics(t *testing.T) {
+	h := newHarness(t)
+	st := h.create(map[string]any{})
+	h.do("POST", "/v1/sessions/"+st.ID+"/prompt", map[string]any{"text": "hello", "wait": true}, nil)
+	var res struct {
+		Summary    string
+		Compaction agent.CompactionInfo
+	}
+	if code := h.do("POST", "/v1/sessions/"+st.ID+"/compact", nil, &res); code != http.StatusOK {
+		t.Fatalf("compact: %d", code)
+	}
+	if res.Summary != "hi there" || res.Compaction.BeforeTokens != 10 || res.Compaction.AfterTokens != 5 || res.Compaction.SavedTokens != 5 || !res.Compaction.Available {
+		t.Fatalf("compact response: %+v", res)
+	}
+	if code := h.do("GET", "/v1/sessions/"+st.ID, nil, &st); code != http.StatusOK {
+		t.Fatalf("get session: %d", code)
+	}
+	if st.Usage.Compactions != 1 || st.Usage.CompactionMeasurements != 1 || st.Usage.CompactionSavedTokens != 5 {
+		t.Fatalf("session compaction stats: %+v", st.Usage)
+	}
+}
+
 func TestPromptWait(t *testing.T) {
 	h := newHarness(t)
 	st := h.create(map[string]any{})

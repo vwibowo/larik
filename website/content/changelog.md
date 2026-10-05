@@ -12,12 +12,19 @@
 
 ### Changed
 
+- **Compaction says what it saved.** A compaction now reports its size, for example `26k prompt → ~10k summary · ~16k saved`, in the TUI, in `-p` output and over the API. The information sidebar keeps a running count and total for the session and the current turn, and both survive resuming. The summary figure is an estimate — the exact size of the rebuilt context is known only once the next request is measured. The self-checking benchmark now includes `compaction-retention`, which measures whether ten important facts survive a forced compaction and remain usable.
+- **The context is sized before the request, not only after it.** Automatic compaction used to go by the provider's count for the *previous* request, so a very large pasted prompt, a long tool result or a freshly resumed session could overflow the window before anything noticed. Larik now also estimates what is about to be sent. Estimates decide only whether to compact; every token count shown still comes from the provider.
+- **A summary can no longer outgrow the context it frees.** Its length is capped by the writing model's own output limit and by a share of the window being freed, not just a fixed 32k.
 - **More useful recording feedback.** The composer gives way to an animated, decorative equalizer and stop-key hint while recording, then shows transcription progress before restoring the preserved draft. The bars are not a microphone-level meter.
 - **Smoother TUI navigation.** The conversation ignores horizontal wheel scrolling, the context-usage indicator stays within 100%, and configuration changes that rebuild the prompt or services ask before clearing the active model context.
 - **Less lookup overhead.** File search and session lookup avoid redundant work.
 
 ### Fixed
 
+- **A failed compaction no longer costs you the turn.** When summarizing failed partway through a long turn, the context-overflow recovery that should have caught the oversized request was skipped and the turn ended with a provider error. The two are now tracked apart: a failed threshold compaction is reported once and recovery stays armed.
+- **Compaction totals stay attributable.** `/cost` now includes estimated context freed by compaction. A subagent's compaction and failure messages are labelled in the conversation but do not inflate the main context's totals.
+- **Compaction on a tiny context window.** When the system prompt and tool definitions fill the window on their own, Larik no longer summarizes repeatedly to no effect.
+- **Malformed summaries.** An unclosed or repeated `<summary>` tag in the model's reply is handled deliberately instead of carrying the model's framing into the next context.
 - Chrome stays open after its initial browser startup check rather than closing when the probe context ends.
 - The compact tool summary no longer prints each tool count twice.
 - Server operation lifecycle, session usage reconstruction, and OpenAI-compatible provider error handling are more reliable.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -311,8 +312,15 @@ func TestCompaction(t *testing.T) {
 		assistant(llm.TextBlock("second answer")),
 	)
 	drain(a.Run(context.Background(), "hello"), PermissionReply{})
-	if _, err := a.Compact(context.Background(), nil); err != nil {
+	_, compaction, err := a.Compact(context.Background(), nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if compaction.Trigger != "manual" || compaction.BeforeTokens != 100 || compaction.AfterTokens != 10 || compaction.SavedTokens != 90 || !compaction.Estimated || !compaction.Available {
+		t.Fatalf("compaction metrics: %+v", compaction)
+	}
+	if stats := a.Stats(); stats.Compactions != 1 || stats.CompactionMeasurements != 1 || stats.CompactionSavedTokens != 90 || stats.ContextTokens != 0 {
+		t.Fatalf("stats after compaction: %+v", stats)
 	}
 	drain(a.Run(context.Background(), "next"), PermissionReply{})
 	msgs := fp.requests[2].Messages
@@ -323,6 +331,51 @@ func TestCompaction(t *testing.T) {
 	// The summary points at the transcript so details can be looked up.
 	if !strings.Contains(msgs[0].Blocks[0].Text, a.SessionPath()) {
 		t.Fatalf("summary should name the transcript %s: %q", a.SessionPath(), msgs[0].Blocks[0].Text)
+	}
+}
+
+type zeroUsageProvider struct{}
+
+func (zeroUsageProvider) Name() string { return "zero-usage" }
+func (zeroUsageProvider) Stream(context.Context, llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		yield(llm.StreamEvent{Type: llm.EventDone, Message: assistant(llm.TextBlock("<summary>short</summary>")), StopReason: llm.StopEnd}, nil)
+	}
+}
+
+func TestCompactionWithoutUsageDoesNotClaimSavings(t *testing.T) {
+	a := New(Options{Provider: zeroUsageProvider{}, Model: "m", Cwd: t.TempDir(), Tools: tools.Default(), Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, t.TempDir())})
+	a.messages = []llm.Message{llm.UserText("something to summarize")}
+	_, info, err := a.Compact(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Available || info.Estimated || info.SavedTokens != 0 {
+		t.Fatalf("missing usage reported as measured: %+v", info)
+	}
+	if stats := a.Stats(); stats.Compactions != 1 || stats.CompactionMeasurements != 0 || stats.CompactionSavedTokens != 0 {
+		t.Fatalf("stats without usage: %+v", stats)
+	}
+}
+
+func TestCompactionHonorsMainModelOutputLimit(t *testing.T) {
+	old, existed := llm.Catalog["m"]
+	llm.Catalog["m"] = llm.ModelInfo{ID: "m", ContextWindow: 100_000, MaxOutput: 7}
+	t.Cleanup(func() {
+		if existed {
+			llm.Catalog["m"] = old
+		} else {
+			delete(llm.Catalog, "m")
+		}
+	})
+
+	a, fp, _ := setup(t, permission.ModeYolo, assistant(llm.TextBlock("<summary>short</summary>")))
+	a.messages = []llm.Message{llm.UserText("something to summarize")}
+	if _, _, err := a.Compact(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := fp.requests[0].MaxTokens; got != 7 {
+		t.Fatalf("compaction MaxTokens = %d, want 7", got)
 	}
 }
 
@@ -556,7 +609,7 @@ func TestCompactionKeepsOpenTodos(t *testing.T) {
 		assistant(llm.TextBlock("<summary>fixing a bug</summary>")),
 	)
 	drain(a.Run(context.Background(), "fix it"), PermissionReply{})
-	summary, err := a.Compact(context.Background(), nil)
+	summary, _, err := a.Compact(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,13 +669,20 @@ func TestSecondOverflowInOneTurnCompactsAgain(t *testing.T) {
 	a := New(Options{Provider: op, Model: "m", Cwd: t.TempDir(), Tools: tools.Default(), MaxTurns: 10,
 		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, t.TempDir())})
 	var stop string
+	var triggers []string
 	for e := range a.Run(context.Background(), "go") {
 		if e.Kind == EvDone {
 			stop = e.StopReason
 		}
+		if e.Kind == EvCompacted && e.Compaction != nil {
+			triggers = append(triggers, e.Compaction.Trigger)
+		}
 	}
 	if stop != string(llm.StopEnd) {
 		t.Fatalf("stop = %q, want %q", stop, llm.StopEnd)
+	}
+	if !slices.Equal(triggers, []string{"overflow", "overflow"}) {
+		t.Fatalf("compaction triggers = %v", triggers)
 	}
 	if len(op.script) != 0 {
 		t.Fatalf("%d scripted replies unused", len(op.script))
@@ -650,7 +710,7 @@ func TestCompactionForgetsShownReads(t *testing.T) {
 	if got := result(fp.requests[2]); !strings.Contains(got, "unchanged") {
 		t.Fatalf("second read in one context should be short: %q", got)
 	}
-	if _, err := a.Compact(context.Background(), nil); err != nil {
+	if _, _, err := a.Compact(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	drain(a.Run(context.Background(), "again"), PermissionReply{})
@@ -669,7 +729,7 @@ func TestCacheKey(t *testing.T) {
 		assistant(llm.TextBlock("two")),
 	)
 	drain(a.Run(context.Background(), "hi"), PermissionReply{})
-	if _, err := a.Compact(context.Background(), nil); err != nil {
+	if _, _, err := a.Compact(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	drain(a.Run(context.Background(), "again"), PermissionReply{})

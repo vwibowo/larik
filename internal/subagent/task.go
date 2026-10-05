@@ -316,7 +316,10 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 	calls := 0
 	for e := range child.Run(ctx, c.prompt) {
 		switch e.Kind {
-		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvNotice:
+		// EvCompacted is forwarded for the same reason its failure notice
+		// already was: a child that filled its context is worth seeing.
+		// The label keeps it from reading as the parent's own compaction.
+		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvNotice, agent.EvCompacted:
 			if e.Kind == agent.EvToolEnd {
 				calls++
 			}

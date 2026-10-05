@@ -234,14 +234,14 @@ func TestUserMessageGutterOnEveryLine(t *testing.T) {
 func TestSidebarShowsProjectUsageAndTurnMetrics(t *testing.T) {
 	m := testModel(t)
 	m.project = projectInfo{name: "larik-hardness", branch: "main", files: 1, added: 4, available: true}
-	m.stats = agent.UsageInfo{Model: "claude-sonnet", Total: llm.Usage{Input: 1200, Output: 340}, CostUSD: 0.02, ContextTokens: 1500, ContextWindow: 10000}
-	m.turnStats = turnStats{ModelTime: 7 * time.Second, ToolTime: 3500 * time.Millisecond, TTFTTotal: 10 * time.Second, TTFTCount: 1, Steps: 2}
+	m.stats = agent.UsageInfo{Model: "claude-sonnet", Total: llm.Usage{Input: 1200, Output: 340}, CostUSD: 0.02, ContextTokens: 1500, ContextWindow: 10000, Compactions: 2, CompactionMeasurements: 2, CompactionSavedTokens: 25_000}
+	m.turnStats = turnStats{ModelTime: 7 * time.Second, ToolTime: 3500 * time.Millisecond, TTFTTotal: 10 * time.Second, TTFTCount: 1, Steps: 2, Compactions: 1, CompactionMeasurements: 1, CompactionSavedTokens: 16_000}
 	var rows []string
 	for _, sec := range m.sessionSections(40, 12) {
 		rows = append(rows, sec...)
 	}
 	got := plain(strings.Join(rows, "\n"))
-	for _, want := range []string{"Project", "larik-hardness", "main", "1 file · +4/−0", "Usage", "Input / output", "Session cost", "Turn stats", "Model time", "Tool time", "Avg TTFT", "Steps"} {
+	for _, want := range []string{"Project", "larik-hardness", "main", "1 file · +4/−0", "Usage", "Input / output", "Session cost", "Compactions", "2 · ~25k saved", "Turn stats", "Model time", "Tool time", "Avg TTFT", "Steps", "Compression", "1 · ~16k saved"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("sidebar missing %q:\n%s", want, got)
 		}

@@ -26,11 +26,14 @@ type projectInfo struct {
 type projectInfoMsg struct{ info projectInfo }
 
 type turnStats struct {
-	ModelTime time.Duration
-	ToolTime  time.Duration
-	TTFTTotal time.Duration
-	TTFTCount int
-	Steps     int
+	ModelTime              time.Duration
+	ToolTime               time.Duration
+	TTFTTotal              time.Duration
+	TTFTCount              int
+	Steps                  int
+	Compactions            int
+	CompactionMeasurements int
+	CompactionSavedTokens  int
 }
 
 func projectRootFor(cwd string) string {

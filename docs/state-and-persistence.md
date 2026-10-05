@@ -55,7 +55,7 @@ classDiagram
 |---|---|---|
 | `meta` | Session created (first line) | Cwd, provider/model, fork origin |
 | `message` | Every user or assistant message, with usage on assistant messages | Appended to both `Messages` (the context) and `All` (display history) |
-| `compaction` | After a successful compaction | `Messages` is reset to the single summary message, which names this file so the model can grep it; `All` keeps everything |
+| `compaction` | After a successful compaction | `Messages` is reset to the single summary message, which names this file so the model can grep it; `All` keeps everything; optional input/summary/saved-token metrics restore session compression totals |
 | `usage` | Spend made on this session's behalf outside its transcript (subagents) | Added to usage and cost |
 | `recovery` | Resuming after a torn final line | Marks the preceding incomplete line as recoverable; has no effect on messages |
 
@@ -65,7 +65,7 @@ Every entry has an `id` and the `parent_id` of the previous entry, so the file i
 
 ## Branches: fork and rewind
 
-A branch is a new file. `session.Fork(dir, src, keep)` copies the first `keep` messages (and any compaction entries among them) into a new session whose meta records `fork_of` and `fork_at`. The source is never touched.
+A branch is a new file. `session.Fork(dir, src, keep)` copies the first `keep` messages (and any compaction entries among them) into a new session whose meta records `fork_of` and `fork_at`. Compaction summaries are copied so the active context is identical, but their accounting fields are omitted just like prior usage, so the branch starts with fresh totals. The source is never touched.
 
 `keep` must fall on a **turn boundary**: the end of the transcript, or the index of a prompt (`IsPrompt`: a user message with text and no tool results). That guarantees a branch never ends with a `tool_use` missing its `tool_result`.
 

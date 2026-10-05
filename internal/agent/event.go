@@ -62,9 +62,10 @@ type Event struct {
 	AutoReason string                 `json:"auto_reason,omitempty"`
 	Reply      chan<- PermissionReply `json:"-"`
 
-	// EvUsage.
-	Usage   *UsageInfo `json:"usage,omitempty"`
-	Summary string     `json:"summary,omitempty"` // EvCompacted
+	// EvUsage and EvCompacted.
+	Usage      *UsageInfo      `json:"usage,omitempty"`
+	Summary    string          `json:"summary,omitempty"` // EvCompacted; retained for protocol compatibility
+	Compaction *CompactionInfo `json:"compaction,omitempty"`
 
 	// EvDone.
 	StopReason string `json:"stop_reason,omitempty"`
@@ -80,18 +81,37 @@ type PermissionReply struct {
 	Mode permission.Mode
 }
 
+// CompactionInfo reports the provider-grounded size reduction from one
+// compaction. BeforeTokens is the summarizer request's prompt size and
+// AfterTokens is its billed output size, which can include hidden reasoning.
+// The rebuilt context also contains the stable system/tool prefix and a small
+// summary wrapper, so SavedTokens is an estimate rather than an exact
+// next-request measurement. Available is false when the provider reports no
+// usage; in that case the numeric fields are zero and must not be displayed.
+type CompactionInfo struct {
+	Trigger      string `json:"trigger,omitempty"`
+	BeforeTokens int    `json:"before_tokens"`
+	AfterTokens  int    `json:"after_tokens"`
+	SavedTokens  int    `json:"saved_tokens"`
+	Estimated    bool   `json:"estimated"`
+	Available    bool   `json:"available"`
+}
+
 type UsageInfo struct {
 	// Model made the Turn's request; it can differ from the agent's model
 	// after a fallback or for compaction.
-	Model            string    `json:"model,omitempty"`
-	Turn             llm.Usage `json:"turn"`
-	Total            llm.Usage `json:"total"`
-	CostUSD          float64   `json:"cost_usd"`
-	ContextTokens    int       `json:"context_tokens"`
-	ContextWindow    int       `json:"context_window"`
-	RequestMS        int64     `json:"request_ms,omitempty"`
-	TTFTMS           int64     `json:"ttft_ms,omitempty"`
-	Delegated        llm.Usage `json:"delegated,omitempty"`
-	DelegatedCostUSD float64   `json:"delegated_cost_usd,omitempty"`
-	DelegatedTasks   int       `json:"delegated_tasks,omitempty"`
+	Model                  string    `json:"model,omitempty"`
+	Turn                   llm.Usage `json:"turn"`
+	Total                  llm.Usage `json:"total"`
+	CostUSD                float64   `json:"cost_usd"`
+	ContextTokens          int       `json:"context_tokens"`
+	ContextWindow          int       `json:"context_window"`
+	RequestMS              int64     `json:"request_ms,omitempty"`
+	TTFTMS                 int64     `json:"ttft_ms,omitempty"`
+	Delegated              llm.Usage `json:"delegated,omitempty"`
+	DelegatedCostUSD       float64   `json:"delegated_cost_usd,omitempty"`
+	DelegatedTasks         int       `json:"delegated_tasks,omitempty"`
+	Compactions            int       `json:"compactions,omitempty"`
+	CompactionMeasurements int       `json:"compaction_measurements,omitempty"`
+	CompactionSavedTokens  int       `json:"compaction_saved_tokens,omitempty"`
 }

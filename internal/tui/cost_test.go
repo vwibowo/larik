@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"larik/internal/agent"
 	"larik/internal/llm"
+	"larik/internal/session"
 )
 
 func TestRoutingSavingsNote(t *testing.T) {
@@ -40,6 +42,41 @@ func TestCostCommandShowsDelegationOnSameModel(t *testing.T) {
 	out := fmt.Sprintf("%v", m.command("/cost")())
 	if !strings.Contains(out, "delegated 1 task") || strings.Contains(out, "routing configured · 0") {
 		t.Fatalf("/cost lost same-model delegation: %s", out)
+	}
+}
+
+func TestCompactionCostLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    agent.UsageInfo
+		want string
+	}{
+		{"nothing to report", agent.UsageInfo{}, ""},
+		{"measured", agent.UsageInfo{Compactions: 1, CompactionMeasurements: 1, CompactionSavedTokens: 16_000},
+			"compacted 1 time · ~16000 tokens of context freed (estimated)"},
+		{"partly measured", agent.UsageInfo{Compactions: 3, CompactionMeasurements: 2, CompactionSavedTokens: 25_000},
+			"compacted 3 times · ~25000 tokens of context freed (estimated), 2 times measured"},
+		{"no usage reported", agent.UsageInfo{Compactions: 2},
+			"compacted 2 times · the provider reported no usage for them, so the reduction is unknown"},
+		{"the summary came out larger", agent.UsageInfo{Compactions: 1, CompactionMeasurements: 1, CompactionSavedTokens: -500},
+			"compacted 1 time · context grew by ~500 tokens"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := compactionCostLine(tc.s); got != tc.want {
+				t.Errorf("compactionCostLine =\n  %q\nwant\n  %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The README sends people to /cost for what the context actually cost, so
+// compaction has to show there and not only in the sidebar.
+func TestCostCommandReportsCompaction(t *testing.T) {
+	m := testModel(t)
+	m.agent.Restore(&session.State{Compactions: 2, CompactionMeasurements: 2, CompactionSavedTokens: 30_000})
+	out := plain(fmt.Sprintf("%v", m.command("/cost")()))
+	if !strings.Contains(out, "compacted 2 times") || !strings.Contains(out, "~30000 tokens of context freed") {
+		t.Fatalf("/cost does not report compaction: %s", out)
 	}
 }
 

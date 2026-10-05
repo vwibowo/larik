@@ -50,6 +50,9 @@ func TestTasksAreSelfChecking(t *testing.T) {
 	}
 
 	for _, task := range Tasks() {
+		if task.compaction != nil {
+			continue // scored from model output, not a fixture mutation
+		}
 		t.Run(task.Name, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := task.Setup(dir); err != nil {
@@ -95,11 +98,15 @@ func replaceN(dir, rel, old, new string, n int) error {
 
 // scriptedProvider replays fixed steps regardless of what it's asked,
 // standing in for a model that behaves exactly as expected.
-type scriptedProvider struct{ steps []llm.Message }
+type scriptedProvider struct {
+	steps    []llm.Message
+	requests []llm.Request
+}
 
 func (scriptedProvider) Name() string { return "fake" }
 
 func (p *scriptedProvider) Stream(_ context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	p.requests = append(p.requests, req)
 	return func(yield func(llm.StreamEvent, error) bool) {
 		msg := p.steps[0]
 		p.steps = p.steps[1:]
@@ -114,6 +121,83 @@ func (p *scriptedProvider) Stream(_ context.Context, req llm.Request) iter.Seq2[
 
 func toolUse(name, input string) llm.Block {
 	return llm.Block{Type: llm.BlockToolUse, ID: "x", Name: name, Input: json.RawMessage(input)}
+}
+
+func TestCompactionRetentionScoring(t *testing.T) {
+	task := compactionRetentionTask()
+	c := task.compaction
+	complete := "Northstar ACME-4821 SQLite WAL 4317 internal/relay/buffer.go FlushPending 64 global mutex add crash-recovery test shutdown hook"
+	if got, missing := scoreSummary(complete, c.summaryChecks); got != len(c.summaryChecks) || len(missing) != 0 {
+		t.Fatalf("complete summary scored %d/%d, missing %v", got, len(c.summaryChecks), missing)
+	}
+	if got, missing := scoreSummary(strings.Replace(complete, "ACME-4821", "", 1), c.summaryChecks); got != len(c.summaryChecks)-1 || !slices.Equal(missing, []string{"ticket"}) {
+		t.Fatalf("omitted ticket scored %d/%d, missing %v", got, len(c.summaryChecks), missing)
+	}
+
+	answer, _ := json.Marshal(c.want)
+	if pass, detail := verifyRecovery(string(answer), c.want); !pass {
+		t.Fatalf("exact recovery should pass: %s", detail)
+	}
+	withExtra := strings.TrimSuffix(string(answer), "}") + `,"invented":"detail"}`
+	if pass, _ := verifyRecovery(withExtra, c.want); pass {
+		t.Fatal("an invented recovery field should fail")
+	}
+	wrong := c.want
+	wrong.IngestPort = 4318
+	wrongJSON, _ := json.Marshal(wrong)
+	if pass, _ := verifyRecovery(string(wrongJSON), c.want); pass {
+		t.Fatal("a stale recovered value should fail")
+	}
+}
+
+func TestRunCompactionRetention(t *testing.T) {
+	task := compactionRetentionTask()
+	answer, _ := json.Marshal(task.compaction.want)
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{llm.TextBlock("<summary>Northstar ACME-4821 uses SQLite WAL on 4317. Work is in internal/relay/buffer.go at FlushPending with batch limit 64. The global mutex was rejected. Add crash-recovery test, then wire FlushPending into shutdown hook.</summary>")}},
+		{Blocks: []llm.Block{llm.TextBlock(string(answer))}},
+	}}
+
+	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second})
+	if !res.Pass {
+		t.Fatalf("expected retention run to pass: %+v", res)
+	}
+	if res.Retained != res.RetentionTotal || res.RetentionTotal != 10 {
+		t.Errorf("retention = %d/%d, want 10/10", res.Retained, res.RetentionTotal)
+	}
+	if res.Compactions != 1 || !res.CompactionMeasured || res.CompactionSavedTokens != 80 {
+		t.Errorf("compaction metrics = %+v", res)
+	}
+	if res.Requests != 2 {
+		t.Errorf("requests = %d, want compaction + recovery", res.Requests)
+	}
+	if len(p.requests) != 2 || len(p.requests[1].Tools) != 0 {
+		t.Fatalf("recovery request should have no tools: requests=%d tools=%d", len(p.requests), len(p.requests[1].Tools))
+	}
+	recoveryContext := p.requests[1].Messages
+	if len(recoveryContext) != 1 || strings.Contains(recoveryContext[0].Text(), "discovery shard=") || !strings.Contains(recoveryContext[0].Text(), "Northstar") || !strings.Contains(recoveryContext[0].Text(), task.Prompt) {
+		t.Fatalf("recovery should see only the summary and question, not the source transcript: messages=%d", len(recoveryContext))
+	}
+}
+
+func TestCompactionRetentionKeepFailedCannotReadItsTranscript(t *testing.T) {
+	task := compactionRetentionTask()
+	answer, _ := json.Marshal(task.compaction.want)
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{llm.TextBlock("<summary>intentionally omitted the facts</summary>")}},
+		{Blocks: []llm.Block{llm.TextBlock(string(answer))}},
+	}}
+	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	if res.Pass || res.Kept == "" {
+		t.Fatalf("an incomplete summary must fail and be kept: %+v", res)
+	}
+	t.Cleanup(func() { os.RemoveAll(res.Kept) })
+	if len(p.requests) != 2 || len(p.requests[1].Tools) != 0 {
+		t.Fatalf("--keep-failed exposed tools to recovery: requests=%d tools=%d", len(p.requests), len(p.requests[1].Tools))
+	}
+	if !strings.Contains(res.Detail, "summary omitted") {
+		t.Errorf("failure should list omitted facts: %q", res.Detail)
+	}
 }
 
 func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {

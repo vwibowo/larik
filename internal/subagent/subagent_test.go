@@ -93,7 +93,9 @@ func toolResults(req llm.Request) []llm.Block {
 
 func isChild(req llm.Request) bool { return strings.Contains(req.System, footer) }
 
-func newParent(t *testing.T, fp *funcProvider, mode permission.Mode) (*agent.Agent, string, *session.Session) {
+// newParent takes any llm.Provider, so a test that needs the provider to
+// fail a request can supply its own instead of funcProvider.
+func newParent(t *testing.T, fp llm.Provider, mode permission.Mode) (*agent.Agent, string, *session.Session) {
 	t.Helper()
 	dir := t.TempDir()
 	sess, err := session.Create(filepath.Join(dir, "sessions"), session.Meta{Cwd: dir, Model: "m"})

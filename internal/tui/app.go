@@ -244,8 +244,9 @@ type (
 	runEndedMsg  struct{}
 	outputMsg    string
 	compactedMsg struct {
-		summary string
-		err     error
+		summary    string
+		compaction agent.CompactionInfo
+		err        error
 	}
 )
 
@@ -617,7 +618,12 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil:
 			out = m.println(m.st.err.Render("compaction failed: " + msg.err.Error()))
 		default:
-			out = m.println(m.st.dim.Render("✓ Conversation compacted. Summary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
+			m.turnStats.Compactions++
+			if msg.compaction.Available {
+				m.turnStats.CompactionMeasurements++
+				m.turnStats.CompactionSavedTokens += msg.compaction.SavedTokens
+			}
+			out = m.println(m.st.dim.Render(compactionText(msg.compaction)+"\nSummary:\n") + m.st.dim.Render(truncateLines(msg.summary, 12)))
 		}
 		next := m.nextQueued()
 		if next == nil {
@@ -1104,7 +1110,27 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			m.turnStats.TTFTCount++
 		}
 	case agent.EvCompacted:
-		return m.println(m.st.dim.Render("✓ Context compacted to stay within the model's window."))
+		text := "✓ Context compacted to stay within the model's window."
+		if e.Compaction != nil {
+			text = compactionText(*e.Compaction)
+		}
+		if e.Agent != "" {
+			// A subagent summarized its own context, not this one. Its spend
+			// is already counted as delegated usage, and the turn and session
+			// compression figures describe the main context, so they stay out
+			// of it; it is shown because it says the child is doing enough
+			// work to have filled a context.
+			return m.println(m.agentLine(e, m.st.dim.Render(text)))
+		}
+		m.stats = m.agent.Stats()
+		if e.Compaction != nil {
+			m.turnStats.Compactions++
+			if e.Compaction.Available {
+				m.turnStats.CompactionMeasurements++
+				m.turnStats.CompactionSavedTokens += e.Compaction.SavedTokens
+			}
+		}
+		return m.println(m.st.dim.Render(text))
 	case agent.EvNotice:
 		if strings.HasPrefix(e.Text, "running /") && m.opts.Skills != nil {
 			name := strings.TrimPrefix(e.Text, "running /")
@@ -1116,9 +1142,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 				m.usedSkills[name] = true
 			}
 		}
-		return m.println(m.st.warn.Render("! " + e.Text))
+		return m.println(m.agentLine(e, m.st.warn.Render("! "+e.Text)))
 	case agent.EvError:
-		return m.println(m.st.err.Render("✗ " + e.Text))
+		return m.println(m.agentLine(e, m.st.err.Render("✗ "+e.Text)))
 	case agent.EvDone:
 		if e.StopReason != "interrupted" && m.appearance == "compact" && len(m.compactTools) > 0 {
 			return m.println(m.compactToolSummary())

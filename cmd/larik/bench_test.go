@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestCompactionChange(t *testing.T) {
+	if got := compactionChange(16_000); got != "~16.0k context freed" {
+		t.Errorf("positive change = %q", got)
+	}
+	if got := compactionChange(-500); got != "~500 context added" {
+		t.Errorf("negative change = %q", got)
+	}
+}
+
 func TestSpread(t *testing.T) {
 	n := func(v int) string { return fmt.Sprint(v) }
 	for _, c := range []struct {

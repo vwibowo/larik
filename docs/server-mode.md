@@ -84,7 +84,7 @@ sequenceDiagram
     L->>B: status{busy: false}
 ```
 
-With `{"wait": true}`, the handler subscribes before starting the run, reads events itself, and returns the final answer in the HTTP response.
+With `{"wait": true}`, the handler subscribes before starting the run, reads events itself, and returns the final answer in the HTTP response. If the turn compacted, the response also contains every compaction result for that turn. The compact endpoint returns both `summary` and `compaction`; the latter has `before_tokens`, estimated `after_tokens`, signed `saved_tokens`, `trigger`, `estimated`, and `available`. When a provider reports no usage, `available` is false and clients should not display the zero-valued metric fields. The same object is carried by `compacted` SSE/JSON events, while session status usage includes cumulative `compactions`, `compaction_measurements`, and `compaction_saved_tokens`.
 
 ## Design points
 

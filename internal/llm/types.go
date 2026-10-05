@@ -159,7 +159,11 @@ type Usage struct {
 	CacheWrite int `json:"cache_write"`
 }
 
-// ContextTokens is the prompt size the model saw on this call.
+// ContextTokens is the prompt size the model saw on this call. Adapters
+// report Input without the tokens counted under CacheRead and CacheWrite,
+// so the three add up to the whole prompt exactly once; an adapter that
+// reports an all-inclusive input count has to subtract the cached part
+// first (see the openai and gemini adapters).
 func (u Usage) ContextTokens() int { return u.Input + u.CacheRead + u.CacheWrite }
 
 func (u *Usage) Add(o Usage) {

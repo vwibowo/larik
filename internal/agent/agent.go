@@ -29,6 +29,17 @@ import (
 // automatic compaction before the next request.
 const compactThreshold = 0.8
 
+// Limits on how long a summary may be. 32k leaves room for a detailed
+// summary of a long conversation; the window share keeps a model with a
+// small context from being asked for a summary that wouldn't fit in the
+// context it is meant to free, and the floor keeps that share from
+// shrinking the allowance below any useful summary.
+const (
+	compactMaxOutput   = 32_000
+	compactWindowShare = 0.25
+	compactMinOutput   = 1_000
+)
+
 type Options struct {
 	Provider    llm.Provider
 	Runtime     llm.AgentRuntime
@@ -118,13 +129,16 @@ type Agent struct {
 	// caching by key (see llm.Request.CacheKey).
 	cacheKey string
 
-	mu          sync.Mutex
-	messages    []llm.Message
-	usage       llm.Usage
-	cost        float64
-	lastContext int
-	notes       []string // prepended to the next user message
-	planNoted   bool     // the model was last told plan mode is on
+	mu                     sync.Mutex
+	messages               []llm.Message
+	usage                  llm.Usage
+	cost                   float64
+	lastContext            int
+	compactions            int
+	compactionMeasurements int
+	compactionSavedTokens  int
+	notes                  []string // prepended to the next user message
+	planNoted              bool     // the model was last told plan mode is on
 	// saveErr is the first failure to write the session transcript, and
 	// saveReported whether the user has been told about it.
 	saveErr      error
@@ -137,6 +151,14 @@ type Agent struct {
 	activeFor struct {
 		base *tools.Registry
 		exec tools.Execution
+	}
+	// prefixEst is the estimated size of the part of a request that stays
+	// the same within a context (see estimate.go), kept with the inputs it
+	// was computed from so it is recomputed only when they change.
+	prefixEst    int
+	prefixEstFor struct {
+		system string
+		tools  *tools.Registry
 	}
 
 	sessionStarted bool
@@ -219,6 +241,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.cost = st.Cost
 	a.byModel = maps.Clone(st.ByModel)
 	a.delegated, a.delegatedCost, a.delegatedTasks = st.Delegated, st.DelegatedCost, st.DelegatedTasks
+	a.compactions, a.compactionMeasurements, a.compactionSavedTokens = st.Compactions, st.CompactionMeasurements, st.CompactionSavedTokens
 	a.startSource = "resume"
 }
 
@@ -332,7 +355,7 @@ func (a *Agent) Effort() llm.Effort {
 func (a *Agent) Stats() UsageInfo {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks}
+	return UsageInfo{Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks, Compactions: a.compactions, CompactionMeasurements: a.compactionMeasurements, CompactionSavedTokens: a.compactionSavedTokens}
 }
 
 // Clear drops the conversation context (the session file keeps history)
@@ -526,8 +549,18 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 	if a.opts.Checkpoints != nil && !sub { // subagent edits belong to the parent's turn
 		a.opts.Checkpoints.BeginTurn()
 	}
-	if a.needsCompaction() {
-		if err := a.compact(ctx, emit, false); err != nil {
+	// Size the request that is about to be sent, not only the transcript
+	// already retained from earlier turns. Compact the old conversation before
+	// appending this prompt so the prompt itself remains an explicit request.
+	upcoming := llm.UserText(prompt)
+	if !quiet {
+		a.mu.Lock()
+		upcoming.Blocks = append(upcoming.Blocks, a.pending...)
+		a.mu.Unlock()
+		upcoming.Blocks = append(upcoming.Blocks, attached...)
+	}
+	if a.needsCompaction(upcoming) {
+		if err := a.compact(ctx, emit, false, "auto"); err != nil {
 			emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
 		}
 	}
@@ -551,15 +584,24 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		return a.runRuntime(ctx, emit)
 	}
 
-	compactedThisTurn := false
+	// compactedThisTurn marks a compaction that succeeded and may not have
+	// freed enough; compactFailed one that errored. They are separate
+	// because a failed threshold compaction must not disarm the overflow
+	// recovery below, which is the last thing standing between an
+	// oversized request and a failed turn.
+	compactedThisTurn, compactFailed := false, false
 	stopContinuations := 0
 	var loops loopGuard
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
-		if turn > 0 && a.needsCompaction() && !compactedThisTurn {
-			if err := a.compact(ctx, emit, true); err != nil {
+		if turn > 0 && a.needsCompaction() && !compactedThisTurn && !compactFailed {
+			if err := a.compact(ctx, emit, true, "auto"); err != nil {
+				// Reporting this on every request of a long turn would be
+				// noise; it isn't attempted again until one succeeds.
 				emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
+				compactFailed = true
+			} else {
+				compactedThisTurn = true
 			}
-			compactedThisTurn = true
 		}
 
 		// Background results that finished mid-turn ride along with the
@@ -575,11 +617,13 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		msg, stop, err := a.stream(ctx, emit)
 		if errors.Is(err, llm.ErrContextOverflow) && !compactedThisTurn {
 			emit(Event{Kind: EvNotice, Text: "context window full; compacting"})
-			compactedThisTurn = true
-			if cerr := a.compact(ctx, emit, true); cerr != nil {
+			// There is no way to continue the turn without this one, so
+			// unlike the threshold compaction above its failure is fatal.
+			if cerr := a.compact(ctx, emit, true, "overflow"); cerr != nil {
 				emit(Event{Kind: EvError, Text: cerr.Error()})
 				return "error"
 			}
+			compactedThisTurn, compactFailed = true, false
 			msg, stop, err = a.stream(ctx, emit)
 		}
 		if err != nil {
@@ -951,8 +995,12 @@ func (a *Agent) recordUsageMeasured(model string, u llm.Usage, requestTime, ttft
 	a.usage.Add(u)
 	a.cost += info.Cost(u)
 	a.addModelUsageLocked(model, u)
+	// What the context holds now: the prompt this request was measured
+	// with, plus the reply that has just joined it. Every adapter reports
+	// Input without the cached part, so ContextTokens is the whole prompt
+	// and nothing is counted twice.
 	a.lastContext = u.ContextTokens() + u.Output
-	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), RequestMS: requestTime.Milliseconds(), TTFTMS: ttft.Milliseconds(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks}
+	ui := UsageInfo{Model: model, Turn: u, Total: a.usage, CostUSD: a.cost, ContextTokens: a.lastContext, ContextWindow: a.windowLocked(), RequestMS: requestTime.Milliseconds(), TTFTMS: ttft.Milliseconds(), Delegated: a.delegated, DelegatedCostUSD: a.delegatedCost, DelegatedTasks: a.delegatedTasks, Compactions: a.compactions, CompactionMeasurements: a.compactionMeasurements, CompactionSavedTokens: a.compactionSavedTokens}
 	a.mu.Unlock()
 	emit(Event{Kind: EvUsage, Usage: &ui})
 }
@@ -966,37 +1014,62 @@ func (a *Agent) appendMessage(m llm.Message, usage *llm.Usage) {
 	}
 }
 
-func (a *Agent) needsCompaction() bool {
+func (a *Agent) needsCompaction(upcoming ...llm.Message) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// With only a prompt and an answer there is nothing worth summarizing;
-	// compacting would just throw the conversation away (tiny local windows
-	// can be exceeded by the system prompt alone).
-	if len(a.messages) < 4 || a.opts.NoAutoCompact || a.opts.Runtime != nil {
+	// An upcoming prompt cannot be compacted before it is appended, so there
+	// must be some older context to summarize. Even one prior exchange can be
+	// worth compacting when a large prompt is about to overflow the window.
+	if len(a.messages) == 0 || a.opts.NoAutoCompact || a.opts.Runtime != nil {
 		return false
 	}
-	return a.lastContext > 0 && float64(a.lastContext) > compactThreshold*float64(a.windowLocked())
+	window := a.windowLocked()
+	if window <= 0 {
+		return false
+	}
+	limit := compactThreshold * float64(window)
+	// Compaction replaces the conversation but keeps the system prompt and
+	// tool definitions. When those fill the whole window on their own, as they
+	// can on a tiny local one, summarizing cannot make any request fit. A prefix
+	// above the 80% trigger but below the window can still benefit from freeing
+	// the old conversation, so it must not be rejected here.
+	prefix := a.prefixEstimateLocked()
+	if prefix >= window {
+		return false
+	}
+	// lastContext is what the provider measured for the previous request,
+	// so it knows nothing about what has been appended since — a large
+	// pasted prompt, a long tool result, a batch of background results, or
+	// a resumed transcript with no measurement at all. An estimate of what
+	// is about to be sent gets a vote too. It errs low (see estimate.go),
+	// so when it alone clears the threshold the real size has as well.
+	projected := max(a.lastContext, prefix+estimateMessages(a.messages)+estimateMessages(upcoming))
+	return projected > 0 && float64(projected) > limit
 }
 
 // Compact summarizes the conversation into a single message ("simple
 // compaction": nothing from the old transcript is replayed afterwards).
 // emit, if set, gets the events along the way (usage, notices, hook
-// output) except EvCompacted, whose summary is returned.
-func (a *Agent) Compact(ctx context.Context, emit func(Event)) (string, error) {
+// output) except EvCompacted, whose summary and metrics are returned.
+func (a *Agent) Compact(ctx context.Context, emit func(Event)) (string, CompactionInfo, error) {
 	var summary string
+	var info CompactionInfo
 	err := a.compactWith(ctx, func(e Event) {
 		switch {
 		case e.Kind == EvCompacted:
 			summary = e.Summary
+			if e.Compaction != nil {
+				info = *e.Compaction
+			}
 		case emit != nil:
 			emit(e)
 		}
 	}, false, "manual")
-	return summary, err
+	return summary, info, err
 }
 
-func (a *Agent) compact(ctx context.Context, emit func(Event), midTurn bool) error {
-	return a.compactWith(ctx, emit, midTurn, "auto")
+func (a *Agent) compact(ctx context.Context, emit func(Event), midTurn bool, trigger string) error {
+	return a.compactWith(ctx, emit, midTurn, trigger)
 }
 
 func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool, trigger string) error {
@@ -1006,17 +1079,22 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if wholeTurn {
 		return errors.New("compaction is managed by the Claude Code CLI runtime")
 	}
-	a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreCompact, Trigger: trigger}, trigger)
+	hookTrigger := trigger
+	if hookTrigger == "overflow" {
+		hookTrigger = "auto" // preserve the documented PreCompact matcher contract
+	}
+	a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreCompact, Trigger: hookTrigger}, hookTrigger)
 	a.mu.Lock()
 	msgs := append([]llm.Message(nil), a.messages...)
 	req := llm.Request{
 		Model:     a.opts.Model,
 		System:    a.opts.System,
 		Tools:     a.activeLocked().Specs(), // unchanged tools keep the cached prefix valid
-		MaxTokens: 32_000,
+		MaxTokens: compactMaxOutput,
 		Effort:    a.opts.Effort,
 		CacheKey:  a.cacheKey, // same prefix as the conversation's requests
 	}
+	window := a.windowLocked()
 	provider := a.opts.Provider
 	pick := a.opts.CompactWith
 	tr := a.opts.Trace
@@ -1027,8 +1105,15 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if pick != nil {
 		if p, m := pick(); p != nil && m != "" {
 			provider, req.Model = p, m
-			req.MaxTokens = min(req.MaxTokens, llm.Lookup(m).MaxOutput)
 		}
+	}
+	// The summary has to fit in whatever model writes it, and be a small
+	// enough share of the window it frees to be worth writing at all.
+	if maxOutput := llm.Lookup(req.Model).MaxOutput; maxOutput > 0 {
+		req.MaxTokens = min(req.MaxTokens, maxOutput)
+	}
+	if window > 0 {
+		req.MaxTokens = min(req.MaxTokens, max(int(compactWindowShare*float64(window)), compactMinOutput))
 	}
 	req.Messages = withUserText(msgs, compactionPrompt)
 
@@ -1036,6 +1121,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	ctx = tr.Wire(ctx, reqID)
 	start := time.Now()
 	var final llm.Message
+	var compactUsage llm.Usage
 	for ev, err := range provider.Stream(ctx, req) {
 		if err != nil {
 			tr.Response(reqID, trace.Response{Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds(), Error: err.Error()})
@@ -1047,6 +1133,7 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		case llm.EventDone:
 			final = ev.Message
 			usage := ev.Usage
+			compactUsage = usage
 			tr.Response(reqID, trace.Response{Message: &final, Usage: &usage, CostUSD: llm.Lookup(req.Model).Cost(usage),
 				StopReason: string(ev.StopReason), Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds()})
 			model := final.Model
@@ -1074,16 +1161,34 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		summary += "\n\nContinue the task from where it left off."
 	}
 
+	info := CompactionInfo{
+		Trigger:      trigger,
+		BeforeTokens: compactUsage.ContextTokens(),
+		AfterTokens:  compactUsage.Output,
+		Available:    compactUsage.ContextTokens() > 0 || compactUsage.Output > 0,
+	}
+	if info.Available {
+		info.Estimated = true
+		info.SavedTokens = info.BeforeTokens - info.AfterTokens
+	}
 	a.mu.Lock()
 	a.messages = []llm.Message{session.CompactionMessage(summary, a.SessionPath())}
 	a.env.ForgetShown()
-	a.lastContext = 0
+	a.lastContext = 0 // exact rebuilt size is known after the next regular request
+	a.compactions++
+	if info.Available {
+		a.compactionMeasurements++
+		a.compactionSavedTokens += info.SavedTokens
+	}
 	a.mu.Unlock()
 	if a.opts.Session != nil {
-		a.saveFailed(a.opts.Session.AppendCompaction(summary))
+		a.saveFailed(a.opts.Session.AppendCompaction(summary, session.CompactionStats{
+			Trigger: info.Trigger, BeforeTokens: info.BeforeTokens, AfterTokens: info.AfterTokens,
+			SavedTokens: info.SavedTokens, Estimated: info.Estimated, Available: info.Available,
+		}))
 	}
 	tr.Note(trace.KindCompaction, summary)
-	emit(Event{Kind: EvCompacted, Summary: summary})
+	emit(Event{Kind: EvCompacted, Summary: summary, Compaction: &info})
 	return nil
 }
 
@@ -1102,14 +1207,30 @@ func withUserText(msgs []llm.Message, text string) []llm.Message {
 	return llm.Append(msgs, llm.UserText(text))
 }
 
+// extractSummary pulls the summary out of the model's reply. The model is
+// asked for <summary>…</summary>, and the framing around it ("Here is the
+// summary:") must not become the next context.
+//
+// Malformed output is handled deliberately rather than losing a good
+// summary to a formatting slip: with no tags at all the whole reply is the
+// summary; an opening tag that is never closed takes everything after it;
+// and where several openings precede the first close, the last of them
+// wins, so a tag quoted in the framing doesn't drag the framing along. An
+// empty result is rejected by the caller.
 func extractSummary(s string) string {
-	if i := strings.Index(s, "<summary>"); i >= 0 {
-		s = s[i+len("<summary>"):]
-		if j := strings.Index(s, "</summary>"); j >= 0 {
-			s = s[:j]
-		}
+	const openTag, closeTag = "<summary>", "</summary>"
+	i := strings.Index(s, openTag)
+	if i < 0 {
+		return strings.TrimSpace(s)
 	}
-	return strings.TrimSpace(s)
+	body := s[i+len(openTag):]
+	if j := strings.Index(body, closeTag); j >= 0 {
+		body = body[:j]
+	}
+	if k := strings.LastIndex(body, openTag); k >= 0 {
+		body = body[k+len(openTag):]
+	}
+	return strings.TrimSpace(body)
 }
 
 func firstLine(s string) string {

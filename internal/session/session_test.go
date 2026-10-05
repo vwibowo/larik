@@ -105,6 +105,56 @@ func seed(t *testing.T, dir string) *Session {
 	return s
 }
 
+func TestCompactionStatsPersistButDoNotCarryIntoFork(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: "/w", Provider: "fake", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendMessage(text(llm.RoleUser, "prompt"), nil); err != nil {
+		t.Fatal(err)
+	}
+	stats := CompactionStats{Trigger: "manual", BeforeTokens: 26_000, AfterTokens: 10_000, SavedTokens: 16_000, Estimated: true, Available: true}
+	if err := s.AppendCompaction("summary", stats); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	st, err := Load(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Compactions != 1 || st.CompactionMeasurements != 1 || st.CompactionSavedTokens != 16_000 {
+		t.Fatalf("restored compaction stats: %+v", st)
+	}
+
+	branch, bst, err := Fork(dir, s.Path, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer branch.Close()
+	if bst.Compactions != 0 || bst.CompactionMeasurements != 0 || bst.CompactionSavedTokens != 0 {
+		t.Fatalf("fork inherited compaction accounting: %+v", bst)
+	}
+	if len(bst.Messages) != 1 || !strings.Contains(bst.Messages[0].Text(), "summary") {
+		t.Fatalf("fork lost compacted context: %+v", bst.Messages)
+	}
+
+	legacy, err := Create(t.TempDir(), Meta{Cwd: "/w", Provider: "fake", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.AppendCompaction("old summary")
+	legacy.Close()
+	legacyState, err := Load(legacy.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyState.Compactions != 1 || legacyState.CompactionMeasurements != 0 {
+		t.Fatalf("legacy compaction accounting: %+v", legacyState)
+	}
+}
+
 func TestPrompts(t *testing.T) {
 	s := seed(t, t.TempDir())
 	s.Close()

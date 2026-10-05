@@ -1,8 +1,6 @@
-// Package bench runs a handful of small, self-checking coding tasks
-// against a model so routing presets can be judged by outcome, not just
-// price. Each task sets up its own fixture directory, hands a prompt to
-// a fresh agent, and verifies the result by running `go test`, so
-// pass/fail is mechanical rather than judged by another model.
+// Package bench runs small, self-checking coding and context-retention tasks
+// against a model so routing presets can be judged by outcome, not just price.
+// Every pass/fail check is mechanical rather than judged by another model.
 package bench
 
 import (
@@ -23,11 +21,15 @@ type Task struct {
 	// Verify checks whether the task was completed, after the agent has
 	// finished. detail explains a failure, or is empty on success.
 	Verify func(dir string) (pass bool, detail string)
+
+	// compaction is set only for a context-retention benchmark. Its source
+	// conversation is compacted before Prompt asks the model to recover it.
+	compaction *compactionCase
 }
 
-// Tasks are the built-in benchmark cases, in a fixed, size-ordered list.
+// Tasks are the built-in benchmark cases, in a fixed list.
 func Tasks() []Task {
-	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask()}
+	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), compactionRetentionTask()}
 }
 
 // goTest runs `go test ./...` in dir and reports whether it passed.

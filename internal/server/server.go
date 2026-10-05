@@ -512,11 +512,12 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request, l *live) {
 	}
 
 	var res struct {
-		Session    string           `json:"session"`
-		Text       string           `json:"text"`
-		StopReason string           `json:"stop_reason"`
-		Error      string           `json:"error,omitempty"`
-		Usage      *agent.UsageInfo `json:"usage,omitempty"`
+		Session     string                 `json:"session"`
+		Text        string                 `json:"text"`
+		StopReason  string                 `json:"stop_reason"`
+		Error       string                 `json:"error,omitempty"`
+		Usage       *agent.UsageInfo       `json:"usage,omitempty"`
+		Compactions []agent.CompactionInfo `json:"compactions,omitempty"`
 	}
 	res.Session = l.id
 	for {
@@ -541,6 +542,10 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request, l *live) {
 				res.StopReason = e.StopReason
 			case agent.EvUsage:
 				res.Usage = e.Usage
+			case agent.EvCompacted:
+				if e.Compaction != nil {
+					res.Compactions = append(res.Compactions, *e.Compaction)
+				}
 			case EvStatus:
 				if !*e.Busy {
 					writeJSON(w, http.StatusOK, res)
@@ -610,17 +615,18 @@ func (s *Server) answerPerm(w http.ResponseWriter, r *http.Request, l *live) {
 
 func (s *Server) compact(w http.ResponseWriter, r *http.Request, l *live) {
 	var summary string
+	var compaction agent.CompactionInfo
 	err := l.idleDo(r.Context(), func(ctx context.Context) error {
 		var err error
-		summary, err = l.a.Compact(ctx, func(e agent.Event) { l.publish(e, false) })
+		summary, compaction, err = l.a.Compact(ctx, func(e agent.Event) { l.publish(e, false) })
 		return err
 	})
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error())
 		return
 	}
-	l.publish(agent.Event{Kind: agent.EvCompacted, Summary: summary}, false)
-	writeJSON(w, http.StatusOK, map[string]any{"summary": summary})
+	l.publish(agent.Event{Kind: agent.EvCompacted, Summary: summary, Compaction: &compaction}, false)
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "compaction": compaction})
 }
 
 func (s *Server) undo(w http.ResponseWriter, r *http.Request, l *live) {

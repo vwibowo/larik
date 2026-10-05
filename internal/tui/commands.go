@@ -191,11 +191,11 @@ func (m *model) command(line string) tea.Cmd {
 		m.busyLabel = "Compacting conversation…" + paren(m.keyHint(actInterrupt, "to cancel"))
 		a := m.agent
 		return tea.Batch(m.spin.Tick, func() tea.Msg {
-			summary, err := a.Compact(ctx, nil)
+			summary, compaction, err := a.Compact(ctx, nil)
 			if err != nil && ctx.Err() != nil {
 				err = context.Canceled // however the provider reported it
 			}
-			return compactedMsg{summary: summary, err: err}
+			return compactedMsg{summary: summary, compaction: compaction, err: err}
 		})
 
 	case "/clear":
@@ -270,6 +270,9 @@ func (m *model) command(line string) tea.Cmd {
 			out += fmt.Sprintf("\n  delegated %s · subagents %.0f%% of input/output tokens · main $%.4f / subagents $%.4f", plural(s.DelegatedTasks, "task"), share, mainCost, s.DelegatedCostUSD)
 		} else if r := m.opts.Config.Routing(); r.Delegation != config.DelegationManual && r.Delegation != "" {
 			out += "\n  routing configured · 0 delegated tasks"
+		}
+		if line := compactionCostLine(s); line != "" {
+			out += "\n  " + line
 		}
 		if spend := m.agent.SpendByModel(); len(spend) > 1 {
 			for _, sp := range spend {

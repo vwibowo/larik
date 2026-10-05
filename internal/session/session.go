@@ -37,16 +37,29 @@ const (
 )
 
 type Entry struct {
-	ID       string       `json:"id"`
-	ParentID string       `json:"parent_id,omitempty"`
-	Type     EntryType    `json:"type"`
-	Time     time.Time    `json:"ts"`
-	Message  *llm.Message `json:"message,omitempty"`
-	Usage    *llm.Usage   `json:"usage,omitempty"`
-	Summary  string       `json:"summary,omitempty"`
-	Model    string       `json:"model,omitempty"`  // EntryUsage
-	Source   string       `json:"source,omitempty"` // "subagent" for delegated usage
-	Meta     *Meta        `json:"meta,omitempty"`
+	ID         string           `json:"id"`
+	ParentID   string           `json:"parent_id,omitempty"`
+	Type       EntryType        `json:"type"`
+	Time       time.Time        `json:"ts"`
+	Message    *llm.Message     `json:"message,omitempty"`
+	Usage      *llm.Usage       `json:"usage,omitempty"`
+	Summary    string           `json:"summary,omitempty"`
+	Compaction *CompactionStats `json:"compaction,omitempty"`
+	Model      string           `json:"model,omitempty"`  // EntryUsage
+	Source     string           `json:"source,omitempty"` // "subagent" for delegated usage
+	Meta       *Meta            `json:"meta,omitempty"`
+}
+
+// CompactionStats records the provider-reported input/output and estimated
+// savings of one compaction. Older transcript entries omit it and remain valid.
+type CompactionStats struct {
+	Trigger      string `json:"trigger,omitempty"`
+	BeforeTokens int    `json:"before_tokens"`
+	AfterTokens  int    `json:"after_tokens"`
+	SavedTokens  int    `json:"saved_tokens"`
+	Estimated    bool   `json:"estimated"`
+	Available    bool   `json:"available"`
+	Inherited    bool   `json:"inherited,omitempty"` // copied only to preserve a fork's active context
 }
 
 type Meta struct {
@@ -126,15 +139,18 @@ func Create(dir string, meta Meta) (*Session, error) {
 
 // State is what a loaded session reconstructs.
 type State struct {
-	Meta           Meta
-	Messages       []llm.Message // active context (after the latest compaction)
-	All            []llm.Message // full history for display
-	Usage          llm.Usage
-	Cost           float64
-	ByModel        map[string]llm.Usage // usage per model that served it
-	Delegated      llm.Usage            // usage from subagents
-	DelegatedCost  float64
-	DelegatedTasks int
+	Meta                   Meta
+	Messages               []llm.Message // active context (after the latest compaction)
+	All                    []llm.Message // full history for display
+	Usage                  llm.Usage
+	Cost                   float64
+	ByModel                map[string]llm.Usage // usage per model that served it
+	Delegated              llm.Usage            // usage from subagents
+	DelegatedCost          float64
+	DelegatedTasks         int
+	Compactions            int
+	CompactionMeasurements int
+	CompactionSavedTokens  int
 }
 
 func (st *State) addUsage(model string, u llm.Usage) {
@@ -295,6 +311,13 @@ func (s *Session) read() (*State, error) {
 			st.DelegatedTasks++
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}
+			if e.Compaction == nil || !e.Compaction.Inherited {
+				st.Compactions++
+			}
+			if e.Compaction != nil && !e.Compaction.Inherited && e.Compaction.Available {
+				st.CompactionMeasurements++
+				st.CompactionSavedTokens += e.Compaction.SavedTokens
+			}
 		}
 	})
 	if err != nil {
@@ -333,8 +356,12 @@ func (s *Session) AppendSubagentUsage(model string, u llm.Usage) error {
 // AppendTask records that a subagent task was started.
 func (s *Session) AppendTask() error { return s.append(Entry{Type: EntryTask}) }
 
-func (s *Session) AppendCompaction(summary string) error {
-	return s.append(Entry{Type: EntryCompaction, Summary: summary})
+func (s *Session) AppendCompaction(summary string, stats ...CompactionStats) error {
+	e := Entry{Type: EntryCompaction, Summary: summary}
+	if len(stats) > 0 {
+		e.Compaction = &stats[0]
+	}
+	return s.append(e)
 }
 
 func (s *Session) append(e Entry) error {
@@ -553,7 +580,7 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 			n++
 			err = s.append(Entry{Type: EntryMessage, Message: e.Message})
 		} else {
-			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary})
+			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary, Compaction: &CompactionStats{Inherited: true}})
 		}
 		if err != nil {
 			s.Close()

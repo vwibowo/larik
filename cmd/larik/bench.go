@@ -17,9 +17,9 @@ import (
 	"larik/internal/tools"
 )
 
-// runBench implements `larik bench`: a handful of small, self-checking
-// coding tasks run against one or more models, so a routing choice (or a
-// preset) can be judged by pass rate, cost and time instead of guesswork.
+// runBench implements `larik bench`: small, self-checking coding and
+// context-retention tasks run against one or more models, so a routing choice
+// can be judged by pass rate, cost and time instead of guesswork.
 func runBench(args []string) error {
 	fs := flag.NewFlagSet("bench", flag.ExitOnError)
 	var (
@@ -34,7 +34,7 @@ func runBench(args []string) error {
 		fmt.Fprintf(os.Stderr, "Usage: larik bench --models spec1,spec2,... [flags]\n\n"+
 			"Runs each task in %s against every model in its own throwaway directory in yolo mode\n"+
 			"(the directory is discarded after unless --keep-failed keeps a failure; nothing you have\n"+
-			"is touched), then checks the result mechanically (`go test`, or an exact expected file).\n"+
+			"is touched), then checks the result mechanically (`go test`, exact output, or retained facts).\n"+
 			"Use it to compare a cheap model against your main one before trusting it with real work,\n"+
 			"to see what a routing preset actually buys you, or to compare execution settings.\n\n", taskNames())
 		fs.PrintDefaults()
@@ -163,8 +163,19 @@ func printResult(r bench.Result) {
 	if r.Pass {
 		status = "pass"
 	}
-	fmt.Printf("%-4s  %6.1fs  %-10s  %3d tools  %2d req  %s in  %s out  %s peak ctx\n", status, r.Duration.Seconds(), costLabel(r.CostUSD), r.ToolCalls, r.Requests,
+	fmt.Printf("%-4s  %6.1fs  %-10s  %3d tools  %2d req  %s in  %s out  %s peak ctx", status, r.Duration.Seconds(), costLabel(r.CostUSD), r.ToolCalls, r.Requests,
 		kilo(r.Usage.ContextTokens()), kilo(r.Usage.Output), kilo(r.PeakContext))
+	if r.RetentionTotal > 0 {
+		fmt.Printf("  ·  %d/%d facts retained", r.Retained, r.RetentionTotal)
+	}
+	if r.Compactions > 0 {
+		if r.CompactionMeasured {
+			fmt.Print("  ·  " + compactionChange(r.CompactionSavedTokens))
+		} else {
+			fmt.Print("  ·  compaction size unavailable")
+		}
+	}
+	fmt.Println()
 	if !r.Pass && r.Detail != "" {
 		fmt.Println(indent(truncate(r.Detail, 400)))
 	}
@@ -179,6 +190,13 @@ func kilo(n int) string {
 		return fmt.Sprint(n)
 	}
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+func compactionChange(saved int) string {
+	if saved < 0 {
+		return "~" + kilo(-saved) + " context added"
+	}
+	return "~" + kilo(saved) + " context freed"
 }
 
 func costLabel(usd float64) string {
@@ -221,7 +239,8 @@ func printSpread(results []bench.Result) {
 	for _, k := range order {
 		rs := groups[k]
 		pass := 0
-		var in, peak, req, ms []int
+		var in, peak, req, ms, retained []int
+		retentionTotal := 0
 		for _, r := range rs {
 			if r.Pass {
 				pass++
@@ -230,10 +249,18 @@ func printSpread(results []bench.Result) {
 			peak = append(peak, r.PeakContext)
 			req = append(req, r.Requests)
 			ms = append(ms, int(r.Duration.Milliseconds()))
+			if r.RetentionTotal > 0 {
+				retained = append(retained, r.Retained)
+				retentionTotal = r.RetentionTotal
+			}
 		}
 		seconds := func(n int) string { return fmt.Sprintf("%.1fs", float64(n)/1000) }
-		fmt.Printf("  %-40s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s\n", k.model, k.task, pass, len(rs),
+		fmt.Printf("  %-40s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s", k.model, k.task, pass, len(rs),
 			spread(in, kilo), spread(peak, kilo), spread(req, func(n int) string { return fmt.Sprint(n) }), spread(ms, seconds))
+		if len(retained) > 0 {
+			fmt.Printf("  ·  retained %s/%d", spread(retained, func(n int) string { return fmt.Sprint(n) }), retentionTotal)
+		}
+		fmt.Println()
 	}
 }
 
@@ -260,6 +287,11 @@ func printSummary(results []bench.Result) {
 		anyPriced bool
 		in, out   int
 		peak      int
+		retained  int
+		retention int
+		compacted int
+		saved     int
+		measured  bool
 	}
 	order := []string{}
 	byModel := map[string]*totals{}
@@ -280,6 +312,13 @@ func printSummary(results []bench.Result) {
 		t.in += r.Usage.ContextTokens()
 		t.out += r.Usage.Output
 		t.peak = max(t.peak, r.PeakContext)
+		t.retained += r.Retained
+		t.retention += r.RetentionTotal
+		t.compacted += r.Compactions
+		if r.CompactionMeasured {
+			t.saved += r.CompactionSavedTokens
+			t.measured = true
+		}
 	}
 	fmt.Println("Summary:")
 	for _, model := range order {
@@ -288,6 +327,13 @@ func printSummary(results []bench.Result) {
 		if t.anyPriced {
 			cost = fmt.Sprintf("$%.4f", t.cost)
 		}
-		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s\n", model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
+		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s", model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
+		if t.retention > 0 {
+			fmt.Printf("  ·  %d/%d facts retained", t.retained, t.retention)
+		}
+		if t.compacted > 0 && t.measured {
+			fmt.Print("  ·  " + compactionChange(t.saved))
+		}
+		fmt.Println()
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"larik/internal/agent"
@@ -32,6 +33,14 @@ type Result struct {
 	// prompt a single request sent.
 	Usage       llm.Usage
 	PeakContext int
+	// Compaction fields are populated by context-retention tasks. Retained
+	// is the number of important facts found in the summary itself; the task
+	// passes only when every fact is retained and the recovery answer is exact.
+	Compactions           int
+	CompactionSavedTokens int
+	CompactionMeasured    bool
+	Retained              int
+	RetentionTotal        int
 	// Kept is the directory a failed run was kept in (Options.KeepFailed):
 	// work/ is the fixture as the agent left it, transcript.md the
 	// conversation and calls.jsonl every tool call, scripts' included.
@@ -94,12 +103,19 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 			return res
 		}
 	}
+	registry := tools.Default()
+	if task.compaction != nil {
+		// The recovery answer must come from the summary alone. In particular,
+		// --keep-failed gives the compaction wrapper a transcript path for the
+		// saved artifact; no tools means the model cannot use it as a back door.
+		registry = tools.NewRegistry()
+	}
 	a := agent.New(agent.Options{
 		Provider:  provider,
 		Model:     model,
 		Cwd:       dir,
 		MaxTurns:  40,
-		Tools:     tools.Default(),
+		Tools:     registry,
 		Execution: exec,
 		Perms:     permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir),
 		Session:   sess,
@@ -109,8 +125,8 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 	defer cancel()
 
 	var calls []callRecord
-	start := time.Now()
-	for e := range a.Run(runCtx, task.Prompt) {
+	var finalText string
+	consume := func(e agent.Event) {
 		switch e.Kind {
 		case agent.EvToolEnd:
 			if e.ToolName != tools.CodeToolName {
@@ -126,16 +142,61 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 			}
 		case agent.EvPermission:
 			e.Reply <- agent.PermissionReply{Allow: true}
+		case agent.EvAssistant:
+			if e.Message != nil {
+				finalText = e.Message.Text()
+			}
+		}
+	}
+
+	start := time.Now()
+	if c := task.compaction; c != nil {
+		res.RetentionTotal = len(c.summaryChecks)
+		if sess != nil {
+			for _, m := range c.messages {
+				if err := sess.AppendMessage(m, nil); err != nil {
+					res.Detail = "seeding the transcript: " + err.Error()
+					break
+				}
+			}
+		}
+		if res.Detail == "" {
+			a.Restore(&session.State{Messages: c.messages})
+			summary, info, err := a.Compact(runCtx, consume)
+			res.CompactionMeasured = info.Available
+			res.CompactionSavedTokens = info.SavedTokens
+			if err != nil {
+				res.Detail = "compacting the synthetic conversation: " + err.Error()
+			} else {
+				res.Retained, _ = scoreSummary(summary, c.summaryChecks)
+				for e := range a.Run(runCtx, task.Prompt) {
+					consume(e)
+				}
+				if runCtx.Err() == nil {
+					res.Pass, res.Detail = verifyRecovery(finalText, c.want)
+					if res.Retained != res.RetentionTotal {
+						_, missing := scoreSummary(summary, c.summaryChecks)
+						res.Pass = false
+						res.Detail = strings.TrimSpace(res.Detail + "\nsummary omitted: " + strings.Join(missing, ", "))
+					}
+				}
+			}
+		}
+	} else {
+		for e := range a.Run(runCtx, task.Prompt) {
+			consume(e)
+		}
+		if runCtx.Err() == nil {
+			res.Pass, res.Detail = task.Verify(dir)
 		}
 	}
 	res.Duration = time.Since(start)
 	stats := a.Stats()
-	res.CostUSD, res.Usage = stats.CostUSD, stats.Total
+	res.CostUSD, res.Usage, res.Compactions = stats.CostUSD, stats.Total, stats.Compactions
 
 	if runCtx.Err() != nil {
+		res.Pass = false
 		res.Detail = fmt.Sprintf("timed out after %s", o.Timeout)
-	} else {
-		res.Pass, res.Detail = task.Verify(dir)
 	}
 	if sess != nil {
 		sess.Close()

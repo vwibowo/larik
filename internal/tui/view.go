@@ -264,6 +264,9 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 			context = fmt.Sprintf("ctx %d%%", contextPercent(m.stats))
 		}
 		usageRows = append(usageRows, row("Tokens", tokens), row("Cost · "+context, m.costText()))
+		if m.stats.Compactions > 0 {
+			usageRows = append(usageRows, row(fmt.Sprintf("Compacted ×%d", m.stats.Compactions), compressionTotal(m.stats.CompactionSavedTokens, m.stats.CompactionMeasurements, m.stats.Compactions)))
+		}
 	} else {
 		usageRows = append(usageRows,
 			row("Input / output", humanTokens(m.stats.Total.Input+m.stats.Total.CacheRead+m.stats.Total.CacheWrite)+" / "+humanTokens(m.stats.Total.Output)),
@@ -271,6 +274,9 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		)
 		if m.stats.ContextWindow > 0 {
 			usageRows = append(usageRows, row("Context", fmt.Sprintf("%s / %s · %d%%", humanTokens(m.stats.ContextTokens), humanTokens(m.stats.ContextWindow), contextPercent(m.stats))))
+		}
+		if m.stats.Compactions > 0 {
+			usageRows = append(usageRows, row("Compactions", fmt.Sprintf("%d · %s", m.stats.Compactions, compressionTotal(m.stats.CompactionSavedTokens, m.stats.CompactionMeasurements, m.stats.Compactions))))
 		}
 	}
 	sections = append(sections, usageRows)
@@ -297,6 +303,9 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 			row("Model "+metric(m.turnStats.ModelTime), "Tool "+metric(m.turnStats.ToolTime)),
 			row("TTFT "+ttft, "Steps "+strconv.Itoa(m.turnStats.Steps)),
 		)
+		if m.turnStats.Compactions > 0 {
+			turnRows = append(turnRows, row(fmt.Sprintf("Compacted ×%d", m.turnStats.Compactions), compressionTotal(m.turnStats.CompactionSavedTokens, m.turnStats.CompactionMeasurements, m.turnStats.Compactions)))
+		}
 	} else {
 		turnRows = append(turnRows,
 			row("Model time", metric(m.turnStats.ModelTime)),
@@ -304,6 +313,9 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 			row("Avg TTFT", ttft),
 			row("Steps", strconv.Itoa(m.turnStats.Steps)),
 		)
+		if m.turnStats.Compactions > 0 {
+			turnRows = append(turnRows, row("Compression", fmt.Sprintf("%d · %s", m.turnStats.Compactions, compressionTotal(m.turnStats.CompactionSavedTokens, m.turnStats.CompactionMeasurements, m.turnStats.Compactions))))
+		}
 	}
 	sections = append(sections, turnRows)
 
@@ -1233,6 +1245,71 @@ func (m *model) statusLine() string {
 		return modeChip + "\n" + ansi.Truncate(customLines[0], max(m.width, 1), "…") + "\n" + model + provider
 	}
 	return modeChip + "\n" + model + provider
+}
+
+// agentLine attributes a one-line message to the subagent it came from,
+// nested the way renderToolCard nests a subagent's tool calls. Without the
+// label, a child's notice ("auto-compaction failed") reads as if it came
+// from the main conversation.
+func (m *model) agentLine(e agent.Event, text string) string {
+	if e.Agent == "" {
+		return text
+	}
+	return "  ↳ " + text + m.st.dim.Render("  ("+e.Agent+")")
+}
+
+func compactionText(c agent.CompactionInfo) string {
+	if !c.Available {
+		return "✓ Context compacted to stay within the model's window."
+	}
+	text := fmt.Sprintf("✓ Context compacted: %s prompt → ~%s summary", humanTokens(c.BeforeTokens), humanTokens(c.AfterTokens))
+	switch {
+	case c.SavedTokens > 0:
+		text += " · ~" + humanTokens(c.SavedTokens) + " saved"
+	case c.SavedTokens < 0:
+		text += " · ~" + humanTokens(-c.SavedTokens) + " larger"
+	}
+	return text
+}
+
+// compactionCostLine reports compaction in /cost: how often the context was
+// summarized and how much of it that freed. The summary requests' own spend
+// is already part of the token totals /cost prints above this line; what is
+// reported here is context freed, which is an estimate (see
+// agent.CompactionInfo) and so is kept apart from the measured totals.
+func compactionCostLine(s agent.UsageInfo) string {
+	if s.Compactions == 0 {
+		return ""
+	}
+	line := "compacted " + plural(s.Compactions, "time")
+	switch {
+	case s.CompactionMeasurements == 0:
+		return line + " · the provider reported no usage for them, so the reduction is unknown"
+	case s.CompactionSavedTokens < 0:
+		line += fmt.Sprintf(" · context grew by ~%d tokens", -s.CompactionSavedTokens)
+	default:
+		line += fmt.Sprintf(" · ~%d tokens of context freed (estimated)", s.CompactionSavedTokens)
+	}
+	if s.CompactionMeasurements < s.Compactions {
+		line += fmt.Sprintf(", %s measured", plural(s.CompactionMeasurements, "time"))
+	}
+	return line
+}
+
+func compressionTotal(saved, measured, total int) string {
+	if measured == 0 {
+		return "metrics unavailable"
+	}
+	var text string
+	if saved < 0 {
+		text = "~" + humanTokens(-saved) + " larger"
+	} else {
+		text = "~" + humanTokens(saved) + " saved"
+	}
+	if measured < total {
+		text += fmt.Sprintf(" · %d/%d measured", measured, total)
+	}
+	return text
 }
 
 // contextPercent is the share of the context window in use, as every place

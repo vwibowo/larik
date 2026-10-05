@@ -128,7 +128,7 @@ func (p *printer) handle(e agent.Event) {
 	// Keep stderr lines from gluing onto a partial stdout line.
 	if e.Kind != agent.EvTextDelta && e.Kind != agent.EvAssistant && !p.atLineStart {
 		switch e.Kind {
-		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvTaskDone, agent.EvNotice, agent.EvError:
+		case agent.EvToolStart, agent.EvToolEnd, agent.EvPermission, agent.EvTaskDone, agent.EvCompacted, agent.EvNotice, agent.EvError:
 			fmt.Fprintln(p.stdout)
 			p.atLineStart = true
 		}
@@ -157,10 +157,35 @@ func (p *printer) handle(e agent.Event) {
 		fmt.Fprintf(p.stderr, "%s✗ %s needs approval (denied in non-interactive mode; add an allow rule or use --mode)\n", nest(e), e.ToolName)
 	case agent.EvTaskDone:
 		fmt.Fprintf(p.stderr, "◆ background %s (%s) %s\n", e.ToolID, e.Agent, e.StopReason)
+	case agent.EvCompacted:
+		if e.Compaction == nil || !e.Compaction.Available {
+			fmt.Fprintf(p.stderr, "%s✓ context compacted\n", nest(e))
+			break
+		}
+		c := e.Compaction
+		fmt.Fprintf(p.stderr, "%s✓ context compacted: %s prompt → ~%s summary", nest(e), tokenCount(c.BeforeTokens), tokenCount(c.AfterTokens))
+		switch {
+		case c.SavedTokens > 0:
+			fmt.Fprintf(p.stderr, " · ~%s saved", tokenCount(c.SavedTokens))
+		case c.SavedTokens < 0:
+			fmt.Fprintf(p.stderr, " · ~%s larger", tokenCount(-c.SavedTokens))
+		}
+		fmt.Fprintln(p.stderr)
 	case agent.EvNotice:
 		fmt.Fprintf(p.stderr, "%s! %s\n", nest(e), e.Text)
 	case agent.EvError:
 		fmt.Fprintf(p.stderr, "%serror: %s\n", nest(e), e.Text)
+	}
+}
+
+func tokenCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%gM", float64(n/100_000)/10)
+	case n >= 1000:
+		return fmt.Sprintf("%dk", n/1000)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }
 

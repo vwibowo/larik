@@ -134,7 +134,7 @@ Esc cancels the turn's context. If text was already streaming, `keepPartial` ([a
 
 - **Transient API errors** (408, 409, 429, 5xx) are retried below the loop. The Anthropic and OpenAI SDKs retry on their own; the Gemini and Ollama adapters are wrapped in `llm.WithRetry` (4 and 3 attempts, exponential backoff), which retries only if nothing has been shown yet: once a delta reached the screen, the error is surfaced ([retry.go](../internal/llm/retry.go)). A wait the server asks for (`Retry-After`, or Gemini's `RetryInfo`) is honored; past a minute the error is surfaced instead.
 - **A server that goes quiet.** Every provider is wrapped in `llm.WithStallTimeout` ([stall.go](../internal/llm/stall.go)). It puts a timer in the request's context, and the shared HTTP transport runs it while waiting for the response headers and during each read of the body; if no byte arrives for `stall_timeout` (5 minutes, 15 for local servers), the request is cancelled and fails with `*llm.StallError`. That error is a `net.Error` timeout, so a fallback chain switches models when nothing has been shown yet; otherwise the turn ends with the error. After a stall the transport refuses the SDK's own connection retries, which would each wait the timeout again.
-- **Context overflow** (`llm.ErrContextOverflow`, which adapters return when the prompt is too long) triggers a compaction and one retry. A long turn can compact again later, once the previous compaction brought the context back under the threshold; one that didn't isn't repeated.
+- **Context overflow** (`llm.ErrContextOverflow`, which adapters return when the prompt is too long) triggers a compaction and one retry. A long turn can compact again later, once the previous compaction brought the context back under the threshold; one that didn't isn't repeated. A *failed* compaction is tracked separately from a successful one: the threshold compaction isn't attempted again until one succeeds (it would fail on every request of a long turn), but overflow recovery stays armed, because it is the only thing left that can get an oversized request through. An overflow compaction that fails ends the turn, since there is no way to continue without it.
 - **Truncated tool input** (possible with Anthropic's eager input streaming) arrives with `Input == nil`; the tool result tells the model to retry with complete JSON rather than failing the turn.
 
 ## Compaction
@@ -143,7 +143,20 @@ Compaction ([agent.go:509](../internal/agent/agent.go:509)) asks the same model,
 
 Then the entire message list is replaced with one user message: "This session continues from an earlier conversation that was summarized…" plus the summary, plus the path of the session file with a hint to grep it for exact details (a command, an error, a path) the summary left out. Nothing from before is replayed, but it stays one `grep` away. A `compaction` entry is appended to the session file, so resuming reconstructs the same state. Mid-turn compaction adds "Continue the task from where it left off."
 
-Triggers: automatic at 80% (unless `auto_compact` is off), on context overflow, and `/compact`. `PreCompact` hooks fire first.
+Triggers: automatic above 80% (unless `auto_compact` is off), on context overflow, and `/compact`. `PreCompact` hooks fire first.
+
+### Deciding when the context is full
+
+`needsCompaction` ([agent.go](../internal/agent/agent.go)) compares two numbers against the same 80% threshold and takes the larger:
+
+- `lastContext`, what the provider reported for the previous request (`Input + CacheRead + CacheWrite + Output`: the prompt it measured, plus the reply that has since joined it). Accurate, but it knows nothing about anything appended since — a large pasted prompt, a long tool result, a batch of background results — and a resumed session has no measurement at all.
+- An estimate of what is about to be sent ([estimate.go](../internal/agent/estimate.go)): four characters per token over the system prompt, tool definitions and messages, with a flat cost per image so a screenshot's base64 isn't measured as text. It errs low, deliberately — an estimate that compacted a conversation that still fits would destroy work, while one that is too cautious only falls back on the provider's overflow error. Nothing estimated is ever displayed: every token count a user sees comes from a provider.
+
+One case is excluded. Compaction replaces the conversation and keeps the system prompt and tool definitions, so when those alone are already over the threshold — as they can be on a small local window — summarizing frees nothing and would run again on the very next turn. The estimated prefix is checked first and compaction is skipped.
+
+The summary's own length is capped at 32k tokens, the writing model's maximum output, and a quarter of the window being freed (never below 1k): a summary that fills the context it is meant to free is not a compaction.
+
+A successful compaction emits provider-grounded telemetry such as `26k prompt → ~10k summary · ~16k saved`. The first value is the summarizer request's reported input size; the second is its billed output, which can include hidden reasoning on providers that account for it separately. The summary and difference are marked as estimates because the rebuilt context also includes the stable system/tool prefix, the continuation wrapper, and any carried todo list. The next normal model request replaces the context display with its exact provider-reported size. Compaction count and cumulative measured savings are restored with the session; compactions from providers that report no usage are counted but do not contribute a zero-valued savings claim.
 
 ## Why the loop looks like this
 

@@ -44,6 +44,18 @@ func TestTodoListPrintsAsChecklist(t *testing.T) {
 	}
 }
 
+func TestCompactionPrintsSavings(t *testing.T) {
+	var out, errOut bytes.Buffer
+	p := &printer{format: FormatText, stdout: &out, stderr: &errOut, atLineStart: true}
+	info := agent.CompactionInfo{BeforeTokens: 26_000, AfterTokens: 10_000, SavedTokens: 16_000, Estimated: true, Available: true}
+	p.handle(agent.Event{Kind: agent.EvCompacted, Compaction: &info})
+	for _, want := range []string{"26k prompt", "~10k summary", "~16k saved"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Fatalf("stderr lacks %q: %q", want, errOut.String())
+		}
+	}
+}
+
 func TestHeadlessKeepsPlanMode(t *testing.T) {
 	r := deny(agent.Event{ToolName: permission.ExitPlanTool})
 	if r.Allow || !strings.Contains(r.Reason, "final answer") {
