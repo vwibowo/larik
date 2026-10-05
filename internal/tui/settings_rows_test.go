@@ -161,15 +161,15 @@ func settingValue(t *testing.T, m *model, key string) string {
 
 func TestFileOnlySettingOpensGuideInsteadOfJSONInput(t *testing.T) {
 	m := testModel(t)
-	m.command("/config permissions")
-	if m.settings == nil || m.settings.guide != "permissions" {
+	m.command("/config sandbox")
+	if m.settings == nil || m.settings.guide != "sandbox" {
 		t.Fatal("a file-only setting should open its configuration guide")
 	}
 	if m.settings.input != nil {
 		t.Fatal("a file-only setting must not open a raw JSON input")
 	}
 	view := plain(m.settingsView())
-	for _, want := range []string{"not editable", "config.json", `"permissions"`, "/reload"} {
+	for _, want := range []string{"not editable", "config.json", `"sandbox"`, "/reload"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("guide should contain %q:\n%s", want, view)
 		}
@@ -182,7 +182,7 @@ func TestFileOnlySettingOpensGuideInsteadOfJSONInput(t *testing.T) {
 
 func TestFileOnlySettingRejectsCommandAssignment(t *testing.T) {
 	m := testModel(t)
-	if _, _, err := m.saveSetting("permissions", `{"allow":["bash(*)"]}`); err == nil || !strings.Contains(err.Error(), "not editable in the TUI") {
+	if _, _, err := m.saveSetting("sandbox", `{"network":true}`); err == nil || !strings.Contains(err.Error(), "not editable in the TUI") {
 		t.Fatalf("raw JSON assignment should be rejected clearly, got %v", err)
 	}
 	if saved := savedConfig(t, m); saved != "" {

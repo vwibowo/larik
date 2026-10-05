@@ -104,6 +104,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/providers":
 		return m.openProviders()
 
+	case "/permissions":
+		return m.openPermissions()
+
 	case "/keys":
 		m.showKeys = true
 		return nil

@@ -365,7 +365,7 @@ The check is a model's judgment, not a guarantee. It reduces how often you're as
 
 **Leaving plan mode.** In plan mode the model is told it is planning. `bash` is blocked, even for apparently read-only commands (including graphify queries); calling it from `run_code` is blocked too. Use `read`, `grep`, and `glob` to explore instead. When the plan is ready it calls `exit_plan_mode`. Larik prints the plan in the conversation and asks: **Yes, and accept edits**, **Yes, but ask before each edit**, or **No, keep planning**, which lets you say what to change. Approving switches the mode for this session only; your saved default stays as it is. In `larik -p` plan mode can't end, so the model gives the plan as its answer.
 
-Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win.
+Rules are written as `tool` or `tool(pattern)`. Bash patterns match the command, with `*` as a wildcard. File-tool patterns are globs on the path. Deny rules always win. Use `/permissions` or **Permission rules** in `/config` to add, edit, and remove validated allow/deny rules for all projects or only this project; saved changes apply immediately.
 
 Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
 
@@ -633,7 +633,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 }
 ```
 
-`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—permission rules, MCP servers, hooks, LSP servers, model metadata, sandbox lists, speech endpoints, keybindings, and custom status commands—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
+`/config` is the discovery point for personal settings. Settings with a native control use switches, pickers, text fields, or an existing wizard and change only the key you edit. Deeply nested sections that do not yet have a safe native editor—MCP servers, hooks, LSP servers, model metadata, sandbox lists, speech endpoints, keybindings, and custom status commands—are clearly marked **not editable in the TUI yet**. Selecting one shows the exact personal settings path, a small example, and the `/reload` step. Larik deliberately does not present a one-line raw JSON field as a configuration UI. Typing `/config ` in the composer suggests both editable keys and these guide entries.
 
 - `theme`: `auto` (follow the terminal's background, the default), `dark` or `light`. Both themes use a teal accent and leave the background transparent, so your terminal's own background shows through; only diff lines keep a faint green or red tint.
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.

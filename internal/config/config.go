@@ -639,6 +639,53 @@ func (c *Config) merge(path string, trusted bool) error {
 	return nil
 }
 
+// PermissionRulesAt reads only the rules declared in one settings file. It
+// does not merge other layers, which lets the TUI edit a scope without copying
+// shared project rules into trusted personal configuration.
+func PermissionRulesAt(path string) (permission.Rules, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return permission.Rules{}, nil
+	}
+	if err != nil {
+		return permission.Rules{}, err
+	}
+	var file struct {
+		Permissions permission.Rules `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return permission.Rules{}, err
+	}
+	return file.Permissions, nil
+}
+
+// EffectivePermissionRules reloads permission rules from every layer using the
+// same trust policy as Load: only personal files may allow, while every layer
+// may deny.
+func (c *Config) EffectivePermissionRules() (permission.Rules, error) {
+	layers := []struct {
+		path    string
+		trusted bool
+	}{
+		{c.UserConfigPath(), true},
+		{filepath.Join(c.Cwd, ".mcp.json"), false},
+		{filepath.Join(c.Cwd, ".larik", "settings.json"), false},
+		{LocalSettingsPath(c.Cwd), true},
+	}
+	var merged permission.Rules
+	for _, layer := range layers {
+		rules, err := PermissionRulesAt(layer.path)
+		if err != nil {
+			return permission.Rules{}, fmt.Errorf("%s: %w", layer.path, err)
+		}
+		if layer.trusted {
+			merged.Allow = append(merged.Allow, rules.Allow...)
+		}
+		merged.Deny = append(merged.Deny, rules.Deny...)
+	}
+	return merged, nil
+}
+
 // PersistAllowRule appends an allow rule to the project's local settings.
 func PersistAllowRule(cwd, rule string) error {
 	return AddListItem(LocalSettingsPath(cwd), "permissions.allow", rule)

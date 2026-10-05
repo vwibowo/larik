@@ -125,6 +125,17 @@ func (c *Checker) AddAllow(rule string) {
 	c.mu.Unlock()
 }
 
+// SetRules replaces the active rules after configuration is edited. Checkers
+// derived with WithCwd share the same state and see the replacement at once.
+func (c *Checker) SetRules(rules Rules) {
+	c.mu.Lock()
+	c.rules = Rules{
+		Allow: append([]string(nil), rules.Allow...),
+		Deny:  append([]string(nil), rules.Deny...),
+	}
+	c.mu.Unlock()
+}
+
 // Call describes a tool invocation for permission purposes.
 type Call struct {
 	Tool     string
@@ -257,6 +268,38 @@ func SuggestRule(tool string, input json.RawMessage) string {
 var subcommandTools = map[string]bool{"git": true, "go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "docker": true, "kubectl": true, "make": true, "uv": true, "bun": true}
 
 var ruleRe = regexp.MustCompile(`^([\w-]+)(?:\((.*)\))?$`)
+var domainRuleRe = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)(?:\.(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?))*$`)
+
+// ValidateRule checks the rule grammar used by Checker before a TUI editor
+// persists it. It deliberately validates syntax, not whether a tool currently
+// exists: MCP and future tools may be configured before they are loaded.
+func ValidateRule(rule string) error {
+	rule = strings.TrimSpace(rule)
+	m := ruleRe.FindStringSubmatch(rule)
+	if m == nil {
+		return fmt.Errorf("rule must be tool or tool(pattern)")
+	}
+	pattern := m[2]
+	hasPattern := strings.Contains(rule, "(")
+	if hasPattern && pattern == "" {
+		return fmt.Errorf("rule pattern must not be empty; use %s without parentheses", m[1])
+	}
+	if !hasPattern || pattern == "*" || m[1] == "bash" {
+		return nil
+	}
+	if domainTools[m[1]] {
+		host, ok := strings.CutPrefix(strings.ToLower(pattern), "domain:")
+		host = strings.TrimPrefix(host, "*.")
+		if !ok || !domainRuleRe.MatchString(host) {
+			return fmt.Errorf("%s pattern must be domain:example.com", m[1])
+		}
+		return nil
+	}
+	if _, err := doublestar.Match(pattern, "."); err != nil {
+		return fmt.Errorf("invalid path glob: %w", err)
+	}
+	return nil
+}
 
 func (c *Checker) matches(rule, tool, subject string) bool {
 	m := ruleRe.FindStringSubmatch(strings.TrimSpace(rule))

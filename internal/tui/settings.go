@@ -28,7 +28,8 @@ type settingsPanel struct {
 	input   *textinput.Model // its text, for a text setting
 	status  string           // result of the last change
 	failed  bool
-	guide   string // key of a file-only setting whose instructions are open
+	guide   string             // key of a file-only setting whose instructions are open
+	rules   *permissionsEditor // native allow/deny rule editor
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -496,7 +497,12 @@ var settingSpecs = []settingSpec{
 	guideSetting("sidebar", "sidebar", "Custom sidebar", "interface", "A command, refresh interval, and preview need a dedicated wizard.", `"sidebar": {"command": "~/.config/larik/sidebar.sh", "refresh_interval_ms": 1000}`),
 	guideSetting("keybindings", "keybindings", "Keybindings", "interface", "Key capture, conflicts, alternate keys, and unbinding need a dedicated editor.", `"keybindings": {"external_editor": "ctrl+e", "paste_image": []}`),
 	guideSetting("models", "models", "Model catalog overrides", "models and providers", "Catalog entries have several typed limits and prices and need an add/edit/remove wizard.", `"models": {"model-id": {"provider": "openai", "context_window": 128000}}`),
-	guideSetting("permissions", "permissions", "Permission rules", "security", "Allow and deny rules need a list editor with rule validation.", `"permissions": {"allow": ["bash(go test*)"], "deny": ["read(.env)"]}`),
+	{
+		key: "permissions", title: "Permission rules", section: "security", kind: kindAction,
+		get: func(m *model) string { return permissionSummary(m.opts.Config.Permissions) },
+		cmd: "/permissions", open: (*model).openPermissions,
+		covers: []string{"permissions"},
+	},
 	guideSetting("mcp_servers", "mcp_servers", "MCP server definitions", "tools", "Servers need transport-specific forms and safe handling for environment values and credentials.", `"mcp_servers": {"name": {"command": "server", "args": []}}`),
 	guideSetting("hooks", "hooks", "Lifecycle hooks", "tools", "Hooks need event, matcher, command, and prompt editors with an execution warning.", `"hooks": {"PostToolUse": [{"matcher": "edit", "hooks": [{"command": "gofmt -w $FILE"}]}]}`),
 	guideSetting("web_search", "web.search", "Web search backend", "tools", "Search providers need provider-specific endpoint and credential fields.", `"web": {"search": {"provider": "brave", "api_key_env": "BRAVE_API_KEY"}}`),
@@ -788,8 +794,13 @@ func (m *model) saveSetting(key, raw string) (settingSpec, string, error) {
 func (m *model) configCommand(arg string) tea.Cmd {
 	arg = strings.TrimSpace(arg)
 	if !strings.ContainsAny(arg, "= ") {
-		if spec, ok := settingByKey(arg); ok && spec.kind == kindGuide {
-			return m.openSettings(spec.key)
+		if spec, ok := settingByKey(arg); ok {
+			switch spec.kind {
+			case kindGuide:
+				return m.openSettings(spec.key)
+			case kindAction:
+				return spec.open(m)
+			}
 		}
 	}
 	key, val, ok := strings.Cut(arg, "=")
@@ -1009,6 +1020,9 @@ func (m *model) finishEdit(key, value string) tea.Cmd {
 
 func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	s := m.settings
+	if s.rules != nil {
+		return m.handlePermissionsKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1090,6 +1104,9 @@ func (m *model) setTheme(name string) tea.Cmd {
 
 func (m *model) settingsView() string {
 	s := m.settings
+	if s.rules != nil {
+		return m.permissionsView()
+	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()
 	var head, body, hint string

@@ -11,6 +11,25 @@ func call(tool string, readOnly bool, input string) Call {
 	return Call{Tool: tool, ReadOnly: readOnly, Input: json.RawMessage(input)}
 }
 
+func TestValidateRule(t *testing.T) {
+	for _, rule := range []string{
+		"read", "bash(*)", "bash(go test*)", "edit(src/**)",
+		"web_fetch(domain:go.dev)", "browser_navigate(domain:*.example.com)", "mcp__github",
+	} {
+		if err := ValidateRule(rule); err != nil {
+			t.Errorf("ValidateRule(%q): %v", rule, err)
+		}
+	}
+	for _, rule := range []string{
+		"", "read(", "read)", "read()", "bad tool", "edit([)",
+		"web_fetch(go.dev)", "web_fetch(domain:https://go.dev)", "web_fetch(domain:-bad.example)",
+	} {
+		if err := ValidateRule(rule); err == nil {
+			t.Errorf("ValidateRule(%q) accepted an invalid rule", rule)
+		}
+	}
+}
+
 func TestDecide(t *testing.T) {
 	rules := Rules{
 		Allow: []string{"bash(go test*)", "edit(docs/**)"},

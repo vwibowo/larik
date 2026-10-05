@@ -787,6 +787,10 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 		filter(m.sessionPick)
 	case m.histPick != nil:
 		filter(m.histPick)
+	case m.settings != nil && m.settings.rules != nil && m.settings.rules.input != nil:
+		ti, cmd := m.settings.rules.input.Update(msg)
+		m.settings.rules.input = &ti
+		return cmd, true
 	case m.settings != nil && m.settings.input != nil:
 		ti, cmd := m.settings.input.Update(msg)
 		m.settings.input = &ti

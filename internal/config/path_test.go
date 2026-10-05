@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -193,5 +194,35 @@ func TestSetSettingPathRejectsABadPath(t *testing.T) {
 	cfg, _ := userConfig(t, "")
 	if err := cfg.SetUserSettingPath("audio..language", "id"); err == nil {
 		t.Fatal("an empty path segment should be refused")
+	}
+}
+
+func TestPermissionRulesAtAndEffectiveTrust(t *testing.T) {
+	cfg, user := userConfig(t, `{"permissions":{"allow":["bash(user*)"],"deny":["read(user)"]}}`)
+	if err := os.MkdirAll(filepath.Join(cfg.Cwd, ".larik"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.Cwd, ".larik", "settings.json"), []byte(`{"permissions":{"allow":["bash(shared*)"],"deny":["read(shared)"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetSettingPath(LocalSettingsPath(cfg.Cwd), "permissions", map[string]any{
+		"allow": []string{"bash(project*)"}, "deny": []string{"read(project)"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	personal, err := PermissionRulesAt(user)
+	if err != nil || len(personal.Allow) != 1 || personal.Allow[0] != "bash(user*)" {
+		t.Fatalf("personal rules = %+v, %v", personal, err)
+	}
+	effective, err := cfg.EffectivePermissionRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(effective.Allow, ","); got != "bash(user*),bash(project*)" {
+		t.Fatalf("effective allow = %q; shared allow must stay ignored", got)
+	}
+	if got := strings.Join(effective.Deny, ","); got != "read(user),read(shared),read(project)" {
+		t.Fatalf("effective deny = %q", got)
 	}
 }

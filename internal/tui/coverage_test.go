@@ -36,7 +36,6 @@ var jsonOnly = map[string]string{
 	"sidebar":               "needs the same command form as status_line",
 	"keybindings":           "needs key capture, conflict handling, and unbinding",
 	"models":                "needs an add/edit/remove catalog wizard",
-	"permissions":           "needs allow and deny rule list editors",
 	"mcp_servers":           "needs transport-specific server forms and secret handling",
 	"hooks":                 "needs event, matcher, command, and prompt editors",
 	"web.search":            "needs a provider-specific search wizard",

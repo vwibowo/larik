@@ -25,6 +25,7 @@ var commands = []command{
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},
 	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
+	{"/permissions", "", "edit personal allow and deny rules for all projects or this project", "model and mode", ""},
 	{"/routing", "[role=provider/model]", "delegate routine work: policy, cheaper models, fallbacks and a budget", "model and mode", ""},
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
 	{"/clear", "", "fresh context, clears the view (history stays in the session file)", "conversation", ""},
