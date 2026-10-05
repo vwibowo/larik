@@ -122,6 +122,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/lsp-config":
 		return m.openLSPEditor()
 
+	case "/models-config":
+		return m.openModelsEditor()
+
 	case "/stt-config":
 		return m.openSTTEditor()
 

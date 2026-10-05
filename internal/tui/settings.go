@@ -35,6 +35,7 @@ type settingsPanel struct {
 	keybindings *keybindingsEditor // native keybinding editor
 	endpoint    *endpointEditor    // personal web search or audio endpoint
 	lsp         *lspEditor         // personal language servers
+	models      *modelsEditor      // personal model catalog overrides
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -524,7 +525,6 @@ var settingSpecs = []settingSpec{
 		cmd: "/keybindings", open: (*model).openKeybindingsEditor,
 		covers: []string{"keybindings"},
 	},
-	guideSetting("models", "models", "Model catalog overrides", "models and providers", "Catalog entries have several typed limits and prices and need an add/edit/remove wizard.", `"models": {"model-id": {"provider": "openai", "context_window": 128000}}`),
 	{
 		key: "permissions", title: "Permission rules", section: "security", kind: kindAction,
 		get: func(m *model) string { return permissionSummary(m.opts.Config.Permissions) },
@@ -548,6 +548,7 @@ var settingSpecs = []settingSpec{
 		covers: []string{"sandbox"},
 	},
 	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/lsp-config", open: (*model).openLSPEditor, get: func(m *model) string { return fmt.Sprintf("%d personal overrides", len(m.opts.Config.LSP)) }},
+	{key: "models", title: "Model catalog overrides", section: "defaults", kind: kindAction, cmd: "/models-config", open: (*model).openModelsEditor, get: func(m *model) string { return fmt.Sprintf("%d configured", len(m.opts.Config.Models)) }},
 	{
 		key: "debug", title: "Record this session", section: "advanced", kind: kindToggle,
 		later: "traces hold your prompts and file contents; /trace reviews them",
@@ -1076,6 +1077,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.lsp != nil {
 		return m.handleLSPKey(msg)
 	}
+	if s.models != nil {
+		return m.handleModelsKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1174,6 +1178,9 @@ func (m *model) settingsView() string {
 	}
 	if s.lsp != nil {
 		return m.lspEditorView()
+	}
+	if s.models != nil {
+		return m.modelsEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()

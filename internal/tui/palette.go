@@ -21,6 +21,7 @@ type command struct {
 var commands = []command{
 	{"/model", "[provider/model]", "pick a model from a list, or switch directly (e.g. /model openai/gpt-5.5)", "model and mode", "alt+p"},
 	{"/mode", "[mode]", "pick the permission mode: default, accept-edits, plan, auto, yolo", "model and mode", "shift+tab"},
+	{"/models-config", "", "edit personal model catalog overrides, limits and prices", "model and mode", ""},
 	{"/execution", "[tools|hybrid|code|default]", "how larik acts with this model: direct tools, hybrid, or scripts for ordinary tools", "model and mode", ""},
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},

@@ -18,6 +18,18 @@ type ModelInfo struct {
 // Catalog holds known models. Users can add or override entries in config.
 var Catalog = map[string]ModelInfo{}
 
+var builtInCatalog = map[string]ModelInfo{}
+
+// RestoreCatalogEntry drops a runtime override, restoring built-in metadata if present.
+// The next setup may layer trusted config and Catwalk metadata over it again.
+func RestoreCatalogEntry(id string) {
+	if info, ok := builtInCatalog[id]; ok {
+		Catalog[id] = info
+	} else {
+		delete(Catalog, id)
+	}
+}
+
 func init() {
 	for _, m := range []ModelInfo{
 		// Anthropic (first-party list prices).
@@ -40,6 +52,7 @@ func init() {
 		{ID: "gpt-5.6-luna", ContextWindow: 272_000, MaxOutput: 128_000},
 	} {
 		Catalog[m.ID] = m
+		builtInCatalog[m.ID] = m
 	}
 }
 

@@ -55,7 +55,7 @@ func TestPaletteFiltersAndRanksExactFirst(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/mo")
 	// Prefix matches lead; /memory only contains "mo", so it follows them.
-	if got := paletteLabels(m); len(got) != 3 || got[0] != "/model" || got[1] != "/mode" || got[2] != "/memory" {
+	if got := paletteLabels(m); len(got) != 4 || got[0] != "/model" || got[1] != "/mode" || got[2] != "/models-config" || got[3] != "/memory" {
 		t.Fatalf("/mo: %v", got)
 	}
 	typeText(m, "de")
