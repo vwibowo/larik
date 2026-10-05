@@ -38,8 +38,51 @@ func (m *model) hasContext() bool {
 	return m.agent.HasContext()
 }
 
+// settingChanges reports whether saving value for spec would actually change
+// anything that needs applying. Saving the value a setting already has is not
+// a change, so it never costs you a conversation.
+func (m *model) settingChanges(spec settingSpec, value string) bool {
+	return spec.applies != applyNow && strings.TrimSpace(value) != spec.get(m)
+}
+
+// requiresFreshContext reports whether the change would discard a model
+// context, which is what you are asked about before it happens.
 func (m *model) requiresFreshContext(spec settingSpec, value string) bool {
-	return (spec.key == "language" || spec.key == "execution") && strings.TrimSpace(value) != spec.get(m) && m.hasContext()
+	return m.settingChanges(spec, value) && m.hasContext()
+}
+
+// canReloadApp reports whether app services can be rebuilt right now. They
+// cannot for a session someone else manages, or while work is in flight.
+func (m *model) canReloadApp() bool {
+	return m.opts.App != nil && m.sess != nil && m.idle() && m.agent.RunningBackground() == 0 && m.perm == nil
+}
+
+// applySetting puts a saved setting into force: clearing the model context,
+// and rebuilding services when they are built from it. It returns anything
+// still to run, and whether the setting is in force now.
+func (m *model) applySetting(spec settingSpec) (tea.Cmd, bool) {
+	switch spec.applies {
+	case applyReload:
+		if !m.canReloadApp() {
+			return nil, false
+		}
+		return m.reloadApp(), true
+	case applyFresh:
+		m.clearForSetting()
+	}
+	return nil, true
+}
+
+// settingNote says when a saved setting takes effect: its own note, or, for
+// one that could not be applied yet, what it is waiting for.
+func (m *model) settingNote(spec settingSpec, applied bool) string {
+	if applied {
+		return spec.later
+	}
+	if spec.applies == applyReload && !m.idle() {
+		return "active after the turn ends and you run /reload"
+	}
+	return "active after /reload or in a new session"
 }
 
 func (m *model) clearForSetting() {
@@ -59,18 +102,15 @@ func (m *model) confirmSetting(key, raw string) tea.Cmd {
 	}
 	v, err := spec.check(raw)
 	if err != nil {
-		m.finishEdit(key, raw)
+		return m.finishEdit(key, raw) // the panel reports why
+	}
+	if busy := m.busySetting(spec, v); busy != "" {
+		m.settings.status, m.settings.failed = busy, true
+		m.settings.editing, m.settings.values, m.settings.input = "", nil, nil
 		return nil
 	}
 	if m.requiresFreshContext(spec, v) {
-		return m.askReload(spec.title+" needs a fresh context. Clear the current model context and apply it? (Transcript stays saved)", func() tea.Cmd {
-			m.finishEdit(key, raw)
-			if !m.settings.failed {
-				m.clearForSetting()
-			}
-			return nil
-		})
+		return m.askReload(freshContextQuestion(spec), func() tea.Cmd { return m.finishEdit(key, raw) })
 	}
-	m.finishEdit(key, raw)
-	return nil
+	return m.finishEdit(key, raw)
 }

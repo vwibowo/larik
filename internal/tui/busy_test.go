@@ -183,7 +183,7 @@ func TestMouseSettingReleasesTheMouse(t *testing.T) {
 	if v := m.View(); v.MouseMode != tea.MouseModeCellMotion {
 		t.Fatalf("mouse scrolling should be on by default: %v", v.MouseMode)
 	}
-	if _, err := m.saveSetting("mouse", "off"); err != nil {
+	if _, _, err := m.saveSetting("mouse", "off"); err != nil {
 		t.Fatal(err)
 	}
 	if v := m.View(); v.MouseMode != tea.MouseModeNone {

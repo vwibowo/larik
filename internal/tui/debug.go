@@ -25,22 +25,33 @@ func (m *model) debugCommand(arg string) tea.Cmd {
 		}
 		return m.println(m.st.dim.Render("not recording · /debug on to start"))
 	case "on":
-		rec, err := m.sess.StartTrace()
+		rec, err := m.setRecording(true)
 		if err != nil {
 			return m.println(m.st.err.Render("debug: " + err.Error()))
 		}
-		if m.opts.App != nil {
-			m.opts.App.Debug = true
-		}
 		return m.println(m.st.dim.Render("recording requests, responses and tool calls to " + shortPath(rec.Dir()) + " · /trace to review"))
 	case "off":
-		m.sess.StopTrace()
-		if m.opts.App != nil {
-			m.opts.App.Debug = false
-		}
+		_, _ = m.setRecording(false)
 		return m.println(m.st.dim.Render("stopped recording; the trace is kept · /trace to review"))
 	}
 	return m.println(m.st.err.Render("usage: /debug [on|off]"))
+}
+
+// setRecording starts or stops tracing this session, and the sessions opened
+// after it in this window. A session Larik does not manage cannot be traced,
+// which is not an error: the setting still saves, for the next start.
+func (m *model) setRecording(on bool) (*trace.Recorder, error) {
+	if m.opts.App != nil {
+		m.opts.App.Debug = on
+	}
+	if m.sess == nil {
+		return nil, nil
+	}
+	if !on {
+		m.sess.StopTrace()
+		return nil, nil
+	}
+	return m.sess.StartTrace()
 }
 
 // openTrace is /trace: serve this session's trace and open it in the

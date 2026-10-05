@@ -276,7 +276,7 @@ func TestExecutionCommand(t *testing.T) {
 
 	// The default applies to models without their own setting, so it
 	// doesn't override this one.
-	if _, err := m.saveSetting("execution", "code"); err != nil {
+	if _, _, err := m.saveSetting("execution", "code"); err != nil {
 		t.Fatal(err)
 	}
 	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "code" {
@@ -286,7 +286,7 @@ func TestExecutionCommand(t *testing.T) {
 	if m.agent.Execution() != "code" || strings.Contains(savedConfig(t, m), "ollama/m") {
 		t.Fatalf("removing the model's setting should fall back to the default: %q %s", m.agent.Execution(), savedConfig(t, m))
 	}
-	if _, err := m.saveSetting("execution", "tools"); err != nil {
+	if _, _, err := m.saveSetting("execution", "tools"); err != nil {
 		t.Fatal(err)
 	}
 	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "execution") {

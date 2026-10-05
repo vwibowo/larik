@@ -38,6 +38,7 @@ const (
 	kindChoice settingKind = iota
 	kindToggle
 	kindText
+	kindNumber // a whole number, within min and max
 	kindAction // opens another screen
 )
 
@@ -46,13 +47,31 @@ type settingChoice struct {
 	warn               bool
 }
 
+// applyKind is what has to happen before a saved setting is actually in
+// force. Settings that shape the prompt or the tool list cannot be applied to
+// a conversation already under way: the prefix sent to the model has to stay
+// byte-identical within one context, so they wait for a fresh one.
+type applyKind int
+
+const (
+	applyNow    applyKind = iota // the running session picks it up
+	applyFresh                   // the prompt changes: clear the model context
+	applyReload                  // services are built from it: rebuild the app
+)
+
 // settingSpec describes one row of /config and how to change it.
 type settingSpec struct {
 	key, title, section string
-	kind                settingKind
-	choices             []settingChoice
-	placeholder         string // for text settings
-	later               string // said after saving when it doesn't apply at once
+	// path is where the setting is written in the settings file, dotted for
+	// one inside a section ("audio.auto_speak"). Empty means the key itself.
+	path        string
+	kind        settingKind
+	choices     []settingChoice
+	placeholder string // for text and number settings
+	unit        string // what a number counts, e.g. "turns"
+	min, max    int    // a number's bounds, both inclusive
+	applies     applyKind
+	later       string // said after saving when it doesn't apply at once
 	// get returns the current value: a choice value, "on"/"off", or text.
 	get func(m *model) string
 	// store turns a checked value into what the config file holds; nil
@@ -66,6 +85,17 @@ type settingSpec struct {
 	// For an action: the command that changes it, and how to open its screen.
 	cmd  string
 	open func(m *model) tea.Cmd
+	// covers names the settings an action row is responsible for, when they
+	// are not its key: /routing is one row over four of them.
+	covers []string
+}
+
+// configPath is the dotted path the setting is written at.
+func (s settingSpec) configPath() string {
+	if s.path != "" {
+		return s.path
+	}
+	return s.key
 }
 
 func toggle(key, title, section string, get func(c *config.Config) bool, set func(m *model, on bool)) settingSpec {
@@ -139,7 +169,7 @@ var settingSpecs = []settingSpec{
 			m.mouse = on
 		}),
 	{
-		key: "audio_auto_speak", title: "Speak replies", section: "audio", kind: kindToggle,
+		key: "audio_auto_speak", path: "audio.auto_speak", title: "Speak replies", section: "audio", kind: kindToggle,
 		get:   func(m *model) string { return onOff(m.opts.Config.Audio.AutoSpeak) },
 		store: func(v string) any { return v == "on" },
 		set:   func(m *model, v string) { on := v == "on"; m.opts.Config.Audio.AutoSpeak = on },
@@ -186,7 +216,8 @@ var settingSpecs = []settingSpec{
 			{value: "hybrid", label: "Hybrid", desc: "tools, plus scripts that call them when a task has many steps"},
 			{value: "code", label: "Code", desc: "ordinary tools via scripts; plan approval stays direct"},
 		},
-		later: "default for models without their own setting (/execution sets one)",
+		applies: applyFresh,
+		later:   "default for models without their own setting (/execution sets one)",
 		get: func(m *model) string {
 			e, _ := tools.ParseExecution(string(m.opts.Config.Execution))
 			return string(e)
@@ -220,6 +251,7 @@ var settingSpecs = []settingSpec{
 	{
 		key: "language", title: "Response language", section: "behavior", kind: kindText,
 		placeholder: "e.g. Indonesian; empty lets the model choose",
+		applies:     applyFresh,
 		later:       "active in the fresh model context",
 		get:         func(m *model) string { return m.opts.Config.Language },
 		store:       orEmpty(""),
@@ -229,7 +261,7 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
-		key: "checkpoint_retention_days", title: "Undo history", section: "behavior", kind: kindChoice,
+		key: "checkpoint_retention_days", title: "Undo history", section: "behavior", kind: kindChoice, unit: "days",
 		choices: []settingChoice{
 			{value: "1", label: "1 day"},
 			{value: "7", label: "7 days", desc: "the default"},
@@ -275,6 +307,248 @@ var settingSpecs = []settingSpec{
 			}
 			return strconv.Itoa(n), true
 		},
+	},
+	{
+		key: "max_turns", title: "Turn limit", section: "behavior", kind: kindNumber,
+		unit: "turns", min: 1, max: 10_000, applies: applyReload,
+		placeholder: "how many model requests one prompt may take; empty for 200",
+		get: func(m *model) string {
+			if n := m.opts.Config.MaxTurns; n > 0 {
+				return strconv.Itoa(n)
+			}
+			return "" // never set, so the built-in limit applies
+		},
+		store: func(v string) any {
+			if v == "" || v == "200" { // the built-in limit needs no setting
+				return nil
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		// Cleared leaves the field at zero, which is how an unset limit is
+		// written down; reloading reads the built-in 200 back in.
+		set: func(m *model, v string) { m.opts.Config.MaxTurns, _ = strconv.Atoi(v) },
+	},
+	{
+		key: "stall_timeout", title: "Stall timeout", section: "behavior", kind: kindChoice,
+		unit: "seconds", applies: applyReload,
+		choices: []settingChoice{
+			{value: "default", label: "Automatic", desc: "300s, or 900s for a local server still loading a model"},
+			{value: "60", label: "60 seconds"},
+			{value: "300", label: "5 minutes"},
+			{value: "900", label: "15 minutes"},
+			{value: "forever", label: "Wait forever", desc: "never give up on a silent server"},
+		},
+		get: func(m *model) string {
+			switch s := m.opts.Config.StallTimeout; {
+			case s < 0:
+				return "forever"
+			case s == 0:
+				return "default"
+			default:
+				return strconv.Itoa(s)
+			}
+		},
+		store: func(v string) any {
+			switch v {
+			case "default":
+				return nil
+			case "forever":
+				return -1
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		set: func(m *model, v string) {
+			switch v {
+			case "default":
+				m.opts.Config.StallTimeout = 0
+			case "forever":
+				m.opts.Config.StallTimeout = -1
+			default:
+				m.opts.Config.StallTimeout, _ = strconv.Atoi(v)
+			}
+		},
+		other: func(v string) (string, bool) {
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(v), "s"))
+			if err != nil || n < 1 {
+				return "", false
+			}
+			return strconv.Itoa(n), true
+		},
+	},
+	{
+		key: "tool_search", title: "Load MCP tools on demand", section: "tools", kind: kindChoice,
+		applies: applyReload,
+		choices: []settingChoice{
+			{value: "auto", label: "Automatic", desc: "on once there are many, so they stay out of every request"},
+			{value: "on", label: "Always", desc: "the model searches for a tool before using it"},
+			{value: "off", label: "Never", desc: "send every MCP tool with every request"},
+		},
+		get: func(m *model) string {
+			if s := m.opts.Config.ToolSearch; s != "" {
+				return s
+			}
+			return "auto"
+		},
+		store: orEmpty("auto"),
+		set:   func(m *model, v string) { m.opts.Config.ToolSearch = v },
+	},
+	{
+		key: "memory", path: "memory.enabled", title: "Memory", section: "tools", kind: kindToggle,
+		applies: applyReload,
+		get:     func(m *model) string { return onOff(m.opts.Config.MemoryOn()) },
+		store:   func(v string) any { return v == "on" },
+		set:     func(m *model, v string) { on := v == "on"; m.opts.Config.Memory.Enabled = &on },
+	},
+	{
+		key: "web_fetch", path: "web.fetch_disabled", title: "Web fetch", section: "tools", kind: kindToggle,
+		applies: applyReload,
+		get:     func(m *model) string { return onOff(!m.opts.Config.Web.FetchDisabled) },
+		// Stored the other way round: the setting names what is switched off,
+		// so that a file saying nothing leaves fetching on.
+		store: func(v string) any { return v == "off" },
+		set:   func(m *model, v string) { m.opts.Config.Web.FetchDisabled = v == "off" },
+	},
+	{
+		key: "browser", path: "browser.enabled", title: "Browser tools", section: "tools", kind: kindAction,
+		get: func(m *model) string { return onOff(m.opts.Config.Browser.Enabled) },
+		cmd: "/browser",
+		// Selecting the row switches them, through the command that knows how
+		// to rebuild the app and report what project settings allow.
+		open: func(m *model) tea.Cmd {
+			return m.browserCommand(onOff(!m.opts.Config.Browser.Enabled))
+		},
+	},
+	{
+		key: "browser_headless", path: "browser.headless", title: "Browser without a window", section: "tools", kind: kindToggle,
+		applies: applyReload,
+		get:     func(m *model) string { return onOff(m.opts.Config.Browser.Headless) },
+		store:   func(v string) any { return v == "on" },
+		set:     func(m *model, v string) { m.opts.Config.Browser.Headless = v == "on" },
+	},
+	{
+		key: "browser_chrome_path", path: "browser.chrome_path", title: "Chrome to launch", section: "tools", kind: kindText,
+		placeholder: "a path to Chrome or Chromium; empty finds it for you",
+		applies:     applyReload,
+		get:         func(m *model) string { return m.opts.Config.Browser.ChromePath },
+		store:       orEmpty(""),
+		set:         func(m *model, v string) { m.opts.Config.Browser.ChromePath = v },
+	},
+	{
+		key: "audio_enabled", path: "audio.enabled", title: "Audio", section: "audio", kind: kindToggle,
+		applies: applyReload,
+		later:   "recording and speech need stt and tts endpoints as well",
+		get:     func(m *model) string { return onOff(m.opts.Config.Audio.Enabled) },
+		store:   func(v string) any { return v == "on" },
+		set:     func(m *model, v string) { m.opts.Config.Audio.Enabled = v == "on" },
+	},
+	{
+		key: "audio_record_command", path: "audio.record_command", title: "Recording command", section: "audio", kind: kindText,
+		placeholder: "records to the file given as $1; empty uses the built-in recorder",
+		applies:     applyReload,
+		get:         func(m *model) string { return m.opts.Config.Audio.RecordCommand },
+		store:       orEmpty(""),
+		set:         func(m *model, v string) { m.opts.Config.Audio.RecordCommand = v },
+	},
+	{
+		key: "audio_play_command", path: "audio.play_command", title: "Playback command", section: "audio", kind: kindText,
+		placeholder: "plays the file given as $1; empty uses the built-in player",
+		applies:     applyReload,
+		get:         func(m *model) string { return m.opts.Config.Audio.PlayCommand },
+		store:       orEmpty(""),
+		set:         func(m *model, v string) { m.opts.Config.Audio.PlayCommand = v },
+	},
+	{
+		key: "audio_max_duration_seconds", path: "audio.max_duration_seconds", title: "Recording limit", section: "audio", kind: kindNumber,
+		unit: "seconds", min: 1, max: 3600, applies: applyReload,
+		placeholder: "how long one recording may run; empty for the default",
+		get: func(m *model) string {
+			if s := m.opts.Config.Audio.MaxDurationSeconds; s > 0 {
+				return strconv.Itoa(s)
+			}
+			return ""
+		},
+		store: func(v string) any {
+			if v == "" {
+				return nil
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		set: func(m *model, v string) { m.opts.Config.Audio.MaxDurationSeconds, _ = strconv.Atoi(v) },
+	},
+	{
+		key: "debug", title: "Record this session", section: "advanced", kind: kindToggle,
+		later: "traces hold your prompts and file contents; /trace reviews them",
+		get: func(m *model) string {
+			if m.sess != nil {
+				return onOff(m.sess.Trace() != nil)
+			}
+			return onOff(m.opts.Config.DebugOn())
+		},
+		store: func(v string) any { return v == "on" },
+		set: func(m *model, v string) {
+			on := v == "on"
+			m.opts.Config.Debug = &on
+			_, _ = m.setRecording(on)
+		},
+	},
+	{
+		key: "debug_retention_days", title: "Trace history", section: "advanced", kind: kindChoice,
+		unit:  "days",
+		later: "old traces are deleted when larik starts",
+		choices: []settingChoice{
+			{value: "1", label: "1 day"},
+			{value: "14", label: "14 days", desc: "the default"},
+			{value: "90", label: "90 days"},
+			{value: "forever", label: "Forever", desc: "never delete old traces"},
+		},
+		get: func(m *model) string {
+			switch d := m.opts.Config.DebugRetentionDays; {
+			case d < 0:
+				return "forever"
+			case d == 0:
+				return "14"
+			default:
+				return strconv.Itoa(d)
+			}
+		},
+		store: func(v string) any {
+			switch v {
+			case "14":
+				return nil
+			case "forever":
+				return -1
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		set: func(m *model, v string) {
+			switch v {
+			case "14":
+				m.opts.Config.DebugRetentionDays = 0
+			case "forever":
+				m.opts.Config.DebugRetentionDays = -1
+			default:
+				m.opts.Config.DebugRetentionDays, _ = strconv.Atoi(v)
+			}
+		},
+		other: func(v string) (string, bool) {
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(v, "days")), "d"))
+			if err != nil || n < 1 {
+				return "", false
+			}
+			return strconv.Itoa(n), true
+		},
+	},
+	{
+		key: "auto_mode_model", path: "auto_mode.model", title: "Auto-mode judge", section: "advanced", kind: kindText,
+		placeholder: "provider/model or a role; empty uses this session's model",
+		later:       "the model that approves safe actions in auto mode",
+		get:         func(m *model) string { return m.opts.Config.AutoMode.Model },
+		store:       orEmpty(""),
+		set:         func(m *model, v string) { m.opts.Config.AutoMode.Model = v },
 	},
 	{
 		key: "mode", title: "Permission mode", section: "defaults", kind: kindChoice,
@@ -345,8 +619,9 @@ var settingSpecs = []settingSpec{
 			}
 			return strings.Join(set, ", ")
 		},
-		cmd:  "/routing",
-		open: func(m *model) tea.Cmd { return m.openRouting(rtPreset) },
+		cmd:    "/routing",
+		open:   func(m *model) tea.Cmd { return m.openRouting(rtPreset) },
+		covers: []string{"roles", "fallbacks", "role_options", "delegation"},
 	},
 	{
 		key: "budget", title: "Session budget", section: "defaults", kind: kindAction,
@@ -356,8 +631,9 @@ var settingSpecs = []settingSpec{
 			}
 			return ""
 		},
-		cmd:  "/routing budget=",
-		open: func(m *model) tea.Cmd { return m.openRouting(rtBudget) },
+		cmd:    "/routing budget=",
+		open:   func(m *model) tea.Cmd { return m.openRouting(rtBudget) },
+		covers: []string{"budget"},
 	},
 }
 
@@ -379,8 +655,14 @@ func (s settingSpec) label(v string) string {
 	}
 	if s.other != nil {
 		if n, ok := s.other(v); ok {
-			return n + " days"
+			return strings.TrimSpace(n + " " + s.unit)
 		}
+	}
+	if s.kind == kindNumber {
+		if v == "" {
+			return "default"
+		}
+		return strings.TrimSpace(v + " " + s.unit)
 	}
 	return v
 }
@@ -409,53 +691,69 @@ func (s settingSpec) check(v string) (string, error) {
 			if n, ok := s.other(v); ok {
 				return n, nil
 			}
-			return "", fmt.Errorf("%s is a number of days, or forever", s.key)
+			return "", fmt.Errorf("%s is a number of %s, or forever", s.key, s.unit)
 		}
 		return "", fmt.Errorf("%s is one of %s", s.key, strings.Join(names, ", "))
+	case kindNumber:
+		// Empty leaves the setting out of the file, so Larik's own default
+		// applies; "default" is the same thing said out loud.
+		if v == "" || strings.EqualFold(v, "default") {
+			return "", nil
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(v, "+"))
+		if err != nil {
+			return "", fmt.Errorf("%s is a whole number of %s, or default", s.key, s.unit)
+		}
+		if n < s.min || n > s.max {
+			return "", fmt.Errorf("%s is between %d and %d %s", s.key, s.min, s.max, s.unit)
+		}
+		return strconv.Itoa(n), nil
 	case kindAction:
 		return "", fmt.Errorf("use %s to change the %s", s.cmd, s.key)
 	}
 	return v, nil
 }
 
-// saveSetting stores a setting in the user config and applies it to this
-// session, returning what to tell the user.
-func (m *model) saveSetting(key, raw string) (string, error) {
-	if (key == "execution" || key == "language") && (!m.idle() || m.agent.RunningBackground() > 0) {
-		return "", fmt.Errorf("%s can't change while a turn or command is running", key)
+// busySetting reports why a setting cannot change right now, or "". One that
+// rebuilds the prompt or the services has to wait for the work using them.
+func (m *model) busySetting(spec settingSpec, value string) string {
+	if spec.applies == applyNow || !m.settingChanges(spec, value) {
+		return ""
 	}
+	if !m.idle() || m.agent.RunningBackground() > 0 {
+		return spec.key + " can't change while a turn or task is running"
+	}
+	return ""
+}
 
+// saveSetting stores a setting in the user config and applies it to this
+// session, returning the setting and what to tell the user. Putting it in
+// force is the caller's: it may have to ask first.
+func (m *model) saveSetting(key, raw string) (settingSpec, string, error) {
 	spec, ok := settingByKey(key)
 	if !ok {
 		var keys []string
 		for _, s := range settingSpecs {
 			keys = append(keys, s.key)
 		}
-		return "", fmt.Errorf("unknown setting %q (settings: %s)", key, strings.Join(keys, ", "))
+		return spec, "", fmt.Errorf("unknown setting %q (settings: %s)", key, strings.Join(keys, ", "))
 	}
 	v, err := spec.check(raw)
 	if err != nil {
-		return "", err
+		return spec, "", err
 	}
-	var saveErr error
-	if spec.key == "audio_auto_speak" {
-		saveErr = m.opts.Config.SetAudioSetting("auto_speak", spec.store(v))
-	} else {
-		saveErr = m.opts.Config.SetUserSetting(spec.key, spec.store(v))
+	if busy := m.busySetting(spec, v); busy != "" {
+		return spec, "", fmt.Errorf("%s", busy)
 	}
-	if saveErr != nil {
-		return "", fmt.Errorf("couldn't save: %w", saveErr)
+	if err := m.opts.Config.SetUserSettingPath(spec.configPath(), spec.store(v)); err != nil {
+		return spec, "", fmt.Errorf("couldn't save: %w", err)
 	}
 	spec.set(m, v)
 	shown := spec.label(v)
 	if spec.kind == kindText && v == "" {
 		shown = "not set"
 	}
-	msg := spec.title + " set to " + shown + " · saved to " + shortHome(m.opts.Config.UserConfigPath())
-	if spec.later != "" {
-		msg += " · " + spec.later
-	}
-	return msg, nil
+	return spec, spec.title + " set to " + shown + " · saved to " + shortHome(m.opts.Config.UserConfigPath()), nil
 }
 
 // configCommand handles /config key=value (or "key value").
@@ -465,32 +763,63 @@ func (m *model) configCommand(arg string) tea.Cmd {
 		key, val, _ = strings.Cut(arg, " ")
 	}
 	key = strings.TrimSpace(key)
-	if (key == "language" || key == "execution") && (!m.idle() || m.agent.RunningBackground() > 0) {
-		return m.println(m.st.err.Render(key + " can't change while a turn or task is running"))
-	}
 	if spec, ok := settingByKey(key); ok {
-		if v, err := spec.check(val); err == nil && m.requiresFreshContext(spec, v) {
-			return m.askReload(spec.title+" needs a fresh context. Clear the current model context and apply it? (Transcript stays saved)", func() tea.Cmd { return m.configCommandApply(key, val) })
+		if v, err := spec.check(val); err == nil {
+			if busy := m.busySetting(spec, v); busy != "" {
+				return m.println(m.st.err.Render(busy))
+			}
+			if m.requiresFreshContext(spec, v) {
+				return m.askReload(freshContextQuestion(spec), func() tea.Cmd { return m.configCommandApply(key, val) })
+			}
 		}
 	}
 	return m.configCommandApply(key, val)
 }
 
-func (m *model) configCommandApply(key, val string) tea.Cmd {
-	fresh := false
+// freshContextQuestion asks before a setting discards the conversation the
+// model is holding, naming what it costs and what it does not.
+func freshContextQuestion(spec settingSpec) string {
+	what := "a fresh context"
+	if spec.applies == applyReload {
+		what = "a fresh context and rebuilt services"
+	}
+	return spec.title + " needs " + what + ". Clear the current model context and apply it? (Transcript stays saved)"
+}
+
+// applySaved saves a setting and puts it in force, returning what to tell
+// the user and anything still to run.
+func (m *model) applySaved(key, value string) (settingSpec, string, tea.Cmd, error) {
+	// Whether this is a change has to be read before saving, which is what
+	// makes the old value the new one.
+	changes := false
 	if spec, ok := settingByKey(key); ok {
-		if v, err := spec.check(val); err == nil {
-			fresh = m.requiresFreshContext(spec, v)
+		if v, err := spec.check(value); err == nil {
+			changes = m.settingChanges(spec, v)
 		}
 	}
-	msg, err := m.saveSetting(key, val)
+	spec, msg, err := m.saveSetting(key, value)
+	if err != nil {
+		return spec, "", nil, err
+	}
+	var cmd tea.Cmd
+	applied := true
+	if changes {
+		cmd, applied = m.applySetting(spec)
+	}
+	if note := m.settingNote(spec, applied); note != "" {
+		msg += " · " + note
+	}
+	return spec, msg, cmd, nil
+}
+
+func (m *model) configCommandApply(key, val string) tea.Cmd {
+	_, msg, cmd, err := m.applySaved(key, val)
 	if err != nil {
 		return m.println(m.st.err.Render(err.Error()))
 	}
-	if fresh {
-		m.clearForSetting()
-	}
-	return m.println(m.st.dim.Render(msg))
+	// The message goes out alongside a rebuild, never before it: rebuilding
+	// resets the conversation, which would take the message with it.
+	return tea.Batch(cmd, m.println(m.st.dim.Render(msg)))
 }
 
 // openSettings shows the /config screen, jumping straight to one
@@ -507,7 +836,10 @@ func (m *model) openSettings(key string) tea.Cmd {
 
 func (m *model) buildSettings() {
 	cfg := m.opts.Config
-	p := &picker{}
+	// There are more settings than fit on a screen, so the list is typed at
+	// rather than scrolled through. The filter reads the value as well as
+	// the name: typing "vim" finds the editor mode by what it is set to.
+	p := &picker{filterable: true, matchDetail: true}
 	for _, spec := range settingSpecs {
 		v := spec.get(m)
 		it := pickItem{section: spec.section, label: spec.title, value: spec.key}
@@ -552,6 +884,8 @@ func (m *model) buildSettings() {
 	}
 	p.home()
 	if old := m.settings.list; old != nil {
+		p.filter = old.filter
+		p.home()
 		if it, ok := old.selected(); ok {
 			p.selectWhere(func(n pickItem) bool { return n.value == it.value })
 		}
@@ -587,7 +921,7 @@ func (m *model) editSetting(key string) tea.Cmd {
 			next = "off"
 		}
 		return m.confirmSetting(key, next)
-	case kindText:
+	case kindText, kindNumber:
 		ti := textinput.New()
 		ti.Prompt = "› "
 		ti.Placeholder = spec.placeholder
@@ -610,19 +944,27 @@ func (m *model) editSetting(key string) tea.Cmd {
 }
 
 // finishEdit saves a value and goes back to the list.
-func (m *model) finishEdit(key, value string) {
+func (m *model) finishEdit(key, value string) tea.Cmd {
 	s := m.settings
 	if key == "theme" {
 		m.previewTheme(s.themeWas) // so a failed save leaves the old theme
 	}
-	msg, err := m.saveSetting(key, value)
+	spec, msg, cmd, err := m.applySaved(key, value)
+	s.editing, s.values, s.input = "", nil, nil
 	if err != nil {
 		s.status, s.failed = err.Error(), true
-	} else {
-		s.status, s.failed = msg, false
+		m.buildSettings()
+		return nil
 	}
-	s.editing, s.values, s.input = "", nil, nil
+	if cmd != nil && spec.applies == applyReload {
+		// Rebuilding replaces the settings this panel was drawn from, so it
+		// closes and the result is reported in the conversation instead.
+		m.settings = nil
+		return tea.Batch(cmd, m.println(m.st.dim.Render(msg)))
+	}
+	s.status, s.failed = msg, false
 	m.buildSettings()
+	return cmd
 }
 
 func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -663,13 +1005,18 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch k {
-	case "esc", "ctrl+c", "q":
+	case "ctrl+c":
 		m.settings = nil
 		return nil
-	case "space", " ":
-		if it, ok := s.list.selected(); ok {
-			return m.editSetting(it.value.(string))
+	case "esc":
+		// Esc backs out one step at a time: first whatever was typed to
+		// narrow the list, then the panel.
+		if s.list.filter != "" {
+			s.list.filter = ""
+			s.list.home()
+			return nil
 		}
+		m.settings = nil
 		return nil
 	}
 	if s.list.handleKey(msg) {
@@ -713,10 +1060,10 @@ func (m *model) settingsView() string {
 		body = s.values.view(m.st, w)
 		hint = "↑/↓ + enter choose · esc back"
 	default:
-		s.list.height = max(rows-4-boolRows(s.status != ""), 1)
+		s.list.height = max(rows-5-boolRows(s.status != ""), 1)
 		head = spread(m.st.accent.Render("Settings"), m.st.dim.Render("/config"), w)
-		body = s.list.view(m.st, w)
-		hint = "↑/↓ move · enter or space change · esc close"
+		body = s.list.filterLine(m.st, "type to find a setting…") + "\n" + s.list.view(m.st, w)
+		hint = "↑/↓ move · type to filter · enter change · esc close"
 	}
 	out := head + "\n" + body
 	if s.status != "" {

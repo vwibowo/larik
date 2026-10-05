@@ -641,20 +641,7 @@ func (c *Config) merge(path string, trusted bool) error {
 
 // PersistAllowRule appends an allow rule to the project's local settings.
 func PersistAllowRule(cwd, rule string) error {
-	return updateLocal(cwd, func(raw map[string]any) {
-		perms, _ := raw["permissions"].(map[string]any)
-		if perms == nil {
-			perms = map[string]any{}
-		}
-		allow, _ := perms["allow"].([]any)
-		for _, r := range allow {
-			if r == rule {
-				return
-			}
-		}
-		perms["allow"] = append(allow, rule)
-		raw["permissions"] = perms
-	})
+	return AddListItem(LocalSettingsPath(cwd), "permissions.allow", rule)
 }
 
 // updateLocal edits private project settings as generic JSON so unknown keys survive.
@@ -863,38 +850,143 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 	})
 }
 
+// secretSections may hold credentials — API keys, endpoint tokens, a server's
+// environment — so writing anywhere inside one also makes the file readable
+// only by its owner.
+var secretSections = map[string]bool{
+	"providers": true, "audio": true, "web": true, "mcp_servers": true, "browser": true, "permissions": true,
+}
+
+// settingPerm is the mode a settings file is written with when path changes:
+// private for anything that may carry a secret, otherwise the ordinary mode.
+// updateJSON only ever tightens an existing file, never loosens it.
+func settingPerm(path string) os.FileMode {
+	section, _, _ := strings.Cut(path, ".")
+	if secretSections[section] {
+		return 0o600
+	}
+	return 0o644
+}
+
+// setPath writes value at a dotted path inside raw, creating the objects on
+// the way down. A nil or empty value removes the key, and with it any object
+// left empty, so a removed setting leaves no trace of itself behind.
+func setPath(raw map[string]any, keys []string, value any) {
+	if len(keys) == 1 {
+		if value == nil || value == "" {
+			delete(raw, keys[0])
+		} else {
+			raw[keys[0]] = value
+		}
+		return
+	}
+	child, _ := raw[keys[0]].(map[string]any)
+	if child == nil {
+		if value == nil || value == "" {
+			return // nothing there to remove
+		}
+		child = map[string]any{}
+	}
+	setPath(child, keys[1:], value)
+	if len(child) == 0 {
+		delete(raw, keys[0])
+		return
+	}
+	raw[keys[0]] = child
+}
+
+// SetSettingPath writes one setting, named by its dotted JSON path
+// ("audio.stt.language"), to the settings file at file. Settings Larik does
+// not know about, and the rest of the section being written, are preserved.
+// It does not update c; callers set the field they changed.
+func SetSettingPath(file, path string, value any) error {
+	keys := strings.Split(path, ".")
+	for _, k := range keys {
+		if k == "" {
+			return fmt.Errorf("bad setting path %q", path)
+		}
+	}
+	return updateJSON(file, settingPerm(path), func(raw map[string]any) {
+		setPath(raw, keys, value)
+	})
+}
+
+// SetUserSettingPath writes a dotted-path setting to the personal config
+// shared by every project.
+func (c *Config) SetUserSettingPath(path string, value any) error {
+	return SetSettingPath(c.UserConfigPath(), path, value)
+}
+
+// SetProjectSettingPath writes a dotted-path setting to your private settings
+// for this project. They are kept outside the repository, so they stay
+// personal: a shared project file may never widen what Larik can do.
+func (c *Config) SetProjectSettingPath(path string, value any) error {
+	return SetSettingPath(LocalSettingsPath(c.Cwd), path, value)
+}
+
+// listAt reads the string list at a dotted path, ignoring entries that are
+// not strings so a hand-edited file cannot break the edit.
+func listAt(raw map[string]any, keys []string) []string {
+	var cur any = raw
+	for _, k := range keys {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[k]
+	}
+	items, _ := cur.([]any)
+	var out []string
+	for _, it := range items {
+		if s, ok := it.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// AddListItem appends item to the string list at a dotted path in the
+// settings file at file, leaving it alone if the item is already there.
+func AddListItem(file, path, item string) error {
+	keys := strings.Split(path, ".")
+	return updateJSON(file, settingPerm(path), func(raw map[string]any) {
+		list := listAt(raw, keys)
+		if slices.Contains(list, item) {
+			return
+		}
+		setPath(raw, keys, append(list, item))
+	})
+}
+
+// RemoveListItem drops every occurrence of item from the string list at a
+// dotted path. An emptied list, and any object it leaves empty, is removed.
+func RemoveListItem(file, path, item string) error {
+	keys := strings.Split(path, ".")
+	return updateJSON(file, settingPerm(path), func(raw map[string]any) {
+		var kept []string
+		for _, s := range listAt(raw, keys) {
+			if s != item {
+				kept = append(kept, s)
+			}
+		}
+		if len(kept) == 0 {
+			setPath(raw, keys, nil)
+			return
+		}
+		setPath(raw, keys, kept)
+	})
+}
+
 // SetBrowserEnabled updates only the personal browser switch, preserving
 // headless and chrome_path. Browser tools remain off by default.
 func (c *Config) SetBrowserEnabled(enabled bool) error {
-	return updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
-		b, _ := raw["browser"].(map[string]any)
-		if b == nil {
-			b = map[string]any{}
-		}
-		b["enabled"] = enabled
-		raw["browser"] = b
-	})
+	return c.SetUserSettingPath("browser.enabled", enabled)
 }
 
 // SetAudioSetting updates one personal audio setting without replacing the
 // other endpoint settings.
 func (c *Config) SetAudioSetting(key string, value any) error {
-	err := updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
-		a, _ := raw["audio"].(map[string]any)
-		if a == nil {
-			a = map[string]any{}
-		}
-		if value == nil || value == "" {
-			delete(a, key)
-		} else {
-			a[key] = value
-		}
-		if len(a) == 0 {
-			delete(raw, "audio")
-		} else {
-			raw["audio"] = a
-		}
-	})
+	err := c.SetUserSettingPath("audio."+key, value)
 	if err == nil && key == "auto_speak" {
 		if v, ok := value.(bool); ok {
 			c.Audio.AutoSpeak = v
@@ -906,23 +998,7 @@ func (c *Config) SetAudioSetting(key string, value any) error {
 // SetSTTLanguage updates the personal STT language without replacing the
 // other audio settings.
 func (c *Config) SetSTTLanguage(language string) error {
-	return updateJSON(c.UserConfigPath(), 0o600, func(raw map[string]any) {
-		a, _ := raw["audio"].(map[string]any)
-		if a == nil {
-			a = map[string]any{}
-		}
-		stt, _ := a["stt"].(map[string]any)
-		if stt == nil {
-			stt = map[string]any{}
-		}
-		if language == "" {
-			delete(stt, "language")
-		} else {
-			stt["language"] = language
-		}
-		a["stt"] = stt
-		raw["audio"] = a
-	})
+	return c.SetUserSettingPath("audio.stt.language", language)
 }
 
 // ExecutionFor is how a model carries out actions: its model_execution
