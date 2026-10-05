@@ -28,27 +28,26 @@ var panelCoverage = map[string]string{
 	"audio.stt.language":     "/stt-language",
 }
 
-// jsonOnly is the backlog: settings that still need a text editor. Each entry
-// says what would change that, so the list reads as work rather than as an
-// excuse. Shrinking it is the point; entries are removed as the panels land.
+// jsonOnly is the backlog of settings that have a discoverable guide but not a
+// native editor yet. A guide is deliberately not counted as TUI coverage.
 var jsonOnly = map[string]string{
 	"verbose":               "superseded by appearance; kept only so old configs keep working",
-	"status_line":           "a /statusline wizard, with a preview of the command's output",
-	"sidebar":               "the same wizard as status_line",
-	"keybindings":           "an editor built into the /keys overlay",
-	"models":                "catalog overrides; rare and deeply nested, so the settings-file editor row",
-	"permissions":           "a /permissions panel for allow and deny rules",
-	"mcp_servers":           "a /mcp panel that adds, edits and removes servers",
-	"hooks":                 "a /hooks panel that adds and edits them",
-	"web.search":            "a search-backend wizard",
-	"audio.stt.base_url":    "an endpoint wizard for speech",
-	"audio.stt.api_key":     "an endpoint wizard for speech",
-	"audio.stt.api_key_env": "an endpoint wizard for speech",
-	"audio.stt.model":       "an endpoint wizard for speech",
-	"audio.stt.voice":       "an endpoint wizard for speech",
-	"audio.tts":             "an endpoint wizard for speech",
-	"sandbox":               "a /sandbox panel: the switches, and the writable and domain lists",
-	"lsp":                   "an /lsp panel that enables, disables and edits servers",
+	"status_line":           "needs a command form and output preview",
+	"sidebar":               "needs the same command form as status_line",
+	"keybindings":           "needs key capture, conflict handling, and unbinding",
+	"models":                "needs an add/edit/remove catalog wizard",
+	"permissions":           "needs allow and deny rule list editors",
+	"mcp_servers":           "needs transport-specific server forms and secret handling",
+	"hooks":                 "needs event, matcher, command, and prompt editors",
+	"web.search":            "needs a provider-specific search wizard",
+	"audio.stt.base_url":    "needs a speech endpoint form with secret handling",
+	"audio.stt.api_key":     "needs a speech endpoint form with secret handling",
+	"audio.stt.api_key_env": "needs a speech endpoint form with secret handling",
+	"audio.stt.model":       "needs a speech endpoint form with secret handling",
+	"audio.stt.voice":       "needs a speech endpoint form with secret handling",
+	"audio.tts":             "needs a speech endpoint form with secret handling",
+	"sandbox":               "needs switches plus writable-path and domain list editors",
+	"lsp":                   "needs enable/disable and server command forms",
 }
 
 // configPaths lists the JSON path of every setting in t. It descends into a
@@ -89,6 +88,9 @@ func under(path, section string) bool {
 func uiCoverage() map[string]string {
 	covered := map[string]string{}
 	for _, s := range settingSpecs {
+		if s.kind == kindGuide {
+			continue
+		}
 		how := "/config " + s.key
 		if s.kind == kindAction {
 			how = s.cmd
@@ -182,8 +184,8 @@ func TestSettingRowsNameRealSettings(t *testing.T) {
 		}
 	}
 	for _, s := range settingSpecs {
-		if s.kind == kindAction {
-			continue // actions open another screen; they save nothing themselves
+		if s.kind == kindAction || s.kind == kindGuide {
+			continue // actions and guides save nothing themselves
 		}
 		if !paths[s.configPath()] {
 			t.Errorf("/config %s writes %q, which is not a setting", s.key, s.configPath())

@@ -51,7 +51,7 @@ var commands = []command{
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
-	{"/config", "[key=value]", "settings: theme, appearance, tips, mouse, auto-compact, notifications, language, undo history, defaults", "other", ""},
+	{"/config", "[key=value]", "search editable settings and open guides for file-only sections", "other", ""},
 	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
 	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},
@@ -83,7 +83,19 @@ Keys
 // "/name" being typed, which is when the palette shows.
 func (m *model) paletteQuery() (string, bool) {
 	v := m.input.Value()
-	if !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \n") || m.paletteHidden == v {
+	if m.paletteHidden == v {
+		return "", false
+	}
+	// After `/config ` the palette becomes setting-name completion. It hides
+	// once a value starts, leaving the composer free for the value.
+	if strings.HasPrefix(v, "/config ") {
+		rest := strings.TrimPrefix(v, "/config ")
+		if strings.ContainsAny(rest, " =\n\t") {
+			return "", false
+		}
+		return v, true
+	}
+	if !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \n") {
 		return "", false
 	}
 	return v, true
@@ -103,6 +115,10 @@ func (m *model) syncPalette() {
 		return
 	}
 	m.paletteQ = q
+	if strings.HasPrefix(q, "/config ") {
+		m.syncConfigPalette(strings.TrimPrefix(q, "/config "))
+		return
+	}
 	p := &picker{}
 	var exact, prefix, other []pickItem
 	add := func(name, args, desc, section, key string) {
@@ -149,6 +165,52 @@ func (m *model) syncPalette() {
 	p.home()
 }
 
+// syncConfigPalette suggests setting keys after the user types `/config `.
+func (m *model) syncConfigPalette(query string) {
+	p := &picker{}
+	query = strings.ToLower(query)
+	for _, spec := range settingSpecs {
+		if spec.kind == kindAction {
+			continue // the action's own command is already suggested
+		}
+		haystack := strings.ToLower(spec.key + " " + spec.title + " " + spec.section)
+		if query != "" && !strings.Contains(haystack, query) {
+			continue
+		}
+		usage := "value"
+		switch spec.kind {
+		case kindToggle:
+			usage = "on|off"
+		case kindChoice:
+			values := make([]string, 0, len(spec.choices))
+			for _, choice := range spec.choices {
+				values = append(values, choice.value)
+			}
+			usage = strings.Join(values, "|")
+		case kindNumber:
+			usage = "number|default"
+		case kindGuide:
+			insert := "/config " + spec.key
+			p.items = append(p.items, pickItem{
+				section: spec.section,
+				label:   insert,
+				detail:  spec.title + " · configuration guide",
+				value:   command{name: insert},
+			})
+			continue
+		}
+		insert := "/config " + spec.key + "="
+		p.items = append(p.items, pickItem{
+			section: spec.section,
+			label:   insert,
+			detail:  spec.title + " · " + usage,
+			value:   command{name: insert, args: "<value>"},
+		})
+	}
+	m.palette = p
+	p.home()
+}
+
 // handlePaletteKey handles keys while the palette shows; ok is false for
 // keys that belong to the input.
 func (m *model) handlePaletteKey(msg tea.KeyPressMsg) (cmd tea.Cmd, ok bool) {
@@ -185,7 +247,7 @@ func (m *model) handlePaletteKey(msg tea.KeyPressMsg) (cmd tea.Cmd, ok bool) {
 
 func (m *model) complete(c command) {
 	v := c.name
-	if c.args != "" {
+	if c.args != "" && !strings.HasSuffix(v, "=") {
 		v += " "
 	}
 	m.input.SetValue(v)

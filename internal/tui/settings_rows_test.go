@@ -15,8 +15,8 @@ import (
 // Saving the value a setting already has must leave it at that value.
 func TestEveryRowRoundTripsItsCurrentValue(t *testing.T) {
 	for _, spec := range settingSpecs {
-		if spec.kind == kindAction {
-			continue // actions open a screen; they store nothing themselves
+		if spec.kind == kindAction || spec.kind == kindGuide {
+			continue // actions and guides store nothing themselves
 		}
 		t.Run(spec.key, func(t *testing.T) {
 			m := testModel(t)
@@ -157,6 +157,37 @@ func settingValue(t *testing.T, m *model, key string) string {
 		t.Fatalf("no setting named %q", key)
 	}
 	return spec.get(m)
+}
+
+func TestFileOnlySettingOpensGuideInsteadOfJSONInput(t *testing.T) {
+	m := testModel(t)
+	m.command("/config permissions")
+	if m.settings == nil || m.settings.guide != "permissions" {
+		t.Fatal("a file-only setting should open its configuration guide")
+	}
+	if m.settings.input != nil {
+		t.Fatal("a file-only setting must not open a raw JSON input")
+	}
+	view := plain(m.settingsView())
+	for _, want := range []string{"not editable", "config.json", `"permissions"`, "/reload"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("guide should contain %q:\n%s", want, view)
+		}
+	}
+	m.Update(press(tea.KeyEnter))
+	if m.settings == nil || m.settings.guide != "" {
+		t.Fatal("enter should return from the guide to the settings list")
+	}
+}
+
+func TestFileOnlySettingRejectsCommandAssignment(t *testing.T) {
+	m := testModel(t)
+	if _, _, err := m.saveSetting("permissions", `{"allow":["bash(*)"]}`); err == nil || !strings.Contains(err.Error(), "not editable in the TUI") {
+		t.Fatalf("raw JSON assignment should be rejected clearly, got %v", err)
+	}
+	if saved := savedConfig(t, m); saved != "" {
+		t.Fatalf("rejected assignment wrote a settings file: %s", saved)
+	}
 }
 
 func TestNumberRowBounds(t *testing.T) {

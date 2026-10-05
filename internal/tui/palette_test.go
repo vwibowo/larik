@@ -92,6 +92,47 @@ func TestPaletteEnterRunsOrCompletes(t *testing.T) {
 	}
 }
 
+func TestConfigPaletteSuggestsSettingNames(t *testing.T) {
+	m := testModel(t)
+	typeText(m, "/config noti")
+	got := paletteLabels(m)
+	if len(got) != 1 || got[0] != "/config notifications=" {
+		t.Fatalf("editable config key suggestions = %v", got)
+	}
+	m.Update(press(tea.KeyEnter))
+	if m.input.Value() != "/config notifications=" || m.palette != nil {
+		t.Fatalf("enter should complete an editable setting for its value: %q", m.input.Value())
+	}
+}
+
+func TestConfigPaletteOpensFileOnlyGuide(t *testing.T) {
+	m := testModel(t)
+	typeText(m, "/config web_s")
+	got := paletteLabels(m)
+	if len(got) != 1 || got[0] != "/config web_search" {
+		t.Fatalf("guide suggestions = %v", got)
+	}
+	m.Update(press(tea.KeyEnter))
+	if m.settings == nil || m.settings.guide != "web_search" || m.input.Value() != "" {
+		t.Fatalf("enter should open the guide, got input %q", m.input.Value())
+	}
+}
+
+func TestConfigPaletteContainsEveryEditableSetting(t *testing.T) {
+	m := testModel(t)
+	typeText(m, "/config ")
+	rows := m.palette.visible()
+	want := 0
+	for _, spec := range settingSpecs {
+		if spec.kind != kindAction {
+			want++
+		}
+	}
+	if len(rows) != want {
+		t.Fatalf("/config suggestions show %d settings, want %d", len(rows), want)
+	}
+}
+
 func TestPaletteEscHidesUntilInputChanges(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/c")
