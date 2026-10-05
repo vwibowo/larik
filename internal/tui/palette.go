@@ -48,6 +48,7 @@ var commands = []command{
 	{"/memory", "[add <text> | show <name> | delete <name>]", "notes remembered across sessions: list, read, add or delete them", "tools", ""},
 	{"/agents", "", "list subagents the model can delegate to", "tools", ""},
 	{"/lsp", "", "language servers and their status", "tools", ""},
+	{"/lsp-config", "", "configure personal language servers and built-in switches", "tools", ""},
 	{"/browser", "[on|off]", "show browser tools or switch them on/off (fresh context)", "tools", ""},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/sandbox-config", "", "configure sandbox switches, writable paths and allowed domains", "tools", ""},

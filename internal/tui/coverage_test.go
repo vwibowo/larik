@@ -34,7 +34,6 @@ var jsonOnly = map[string]string{
 	"models":      "needs an add/edit/remove catalog wizard",
 	"mcp_servers": "needs transport-specific server forms and secret handling",
 	"hooks":       "needs event, matcher, command, and prompt editors",
-	"lsp":         "needs enable/disable and server command forms",
 }
 
 // configPaths lists the JSON path of every setting in t. It descends into a

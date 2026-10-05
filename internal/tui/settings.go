@@ -34,6 +34,7 @@ type settingsPanel struct {
 	sandbox     *sandboxEditor     // native sandbox access editor
 	keybindings *keybindingsEditor // native keybinding editor
 	endpoint    *endpointEditor    // personal web search or audio endpoint
+	lsp         *lspEditor         // personal language servers
 	// themeWas restores the theme when a previewed choice is abandoned.
 	themeWas string
 }
@@ -546,7 +547,7 @@ var settingSpecs = []settingSpec{
 		cmd: "/sandbox-config", open: (*model).openSandboxEditor,
 		covers: []string{"sandbox"},
 	},
-	guideSetting("lsp", "lsp", "Language servers", "tools", "Servers need command, extension, root-marker, environment, and enable/disable editors.", `"lsp": {"name": {"command": ["server", "--stdio"], "extensions": [".ext"]}}`),
+	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/lsp-config", open: (*model).openLSPEditor, get: func(m *model) string { return fmt.Sprintf("%d personal overrides", len(m.opts.Config.LSP)) }},
 	{
 		key: "debug", title: "Record this session", section: "advanced", kind: kindToggle,
 		later: "traces hold your prompts and file contents; /trace reviews them",
@@ -1072,6 +1073,9 @@ func (m *model) handleSettingsKey(msg tea.KeyPressMsg) tea.Cmd {
 	if s.endpoint != nil {
 		return m.handleEndpointKey(msg)
 	}
+	if s.lsp != nil {
+		return m.handleLSPKey(msg)
+	}
 	k := msg.String()
 	switch {
 	case s.guide != "":
@@ -1167,6 +1171,9 @@ func (m *model) settingsView() string {
 	}
 	if s.endpoint != nil {
 		return m.endpointEditorView()
+	}
+	if s.lsp != nil {
+		return m.lspEditorView()
 	}
 	w := max(m.width-6, 20)
 	rows := m.availablePanelRows()

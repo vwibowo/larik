@@ -319,6 +319,7 @@ fi
 | `/agents`                                        | List subagents                                                                                                                                                                                                                                                           |
 | `/browser [on\|off]`                             | Show browser-tool status or enable/disable them in your personal config; reloads app services with a fresh model context (asks first when context exists)                                                                                                              |
 | `/lsp`                                           | Language servers and status                                                                                                                                                                                                                                              |
+| `/lsp-config`                                    | Edit personal language servers and built-in enable/disable switches; reload to apply |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
 | `/web-search-config` / `/stt-config` / `/tts-config` | Edit personal search and speech endpoints (masked secrets; reload to apply) |
@@ -895,7 +896,7 @@ Larik runs language servers so the model gets compiler feedback on its own edits
   New server commands are honored only from personal files (`~/.config/larik/config.json`, private project settings). A shared `.larik/settings.json` can only disable servers.
 
 - **Timing:** edits wait for fresh diagnostics for up to 3s (15s while a server is still loading the project). Servers that stay silent on clean files get a shorter wait.
-- `/lsp` shows servers and their status.
+- `/lsp` shows servers and their status. `/lsp-config` (also **Language servers** in `/config`) lists built-ins and personal overrides. Toggle built-ins, or add/edit/delete personal custom servers with comma-separated command argv, extensions and root markers, a language ID, and environment key/value entries. Command arguments are passed directly, not through a shell. Save asks before rebuilding services and starting a fresh model context; if reload is unavailable, run `/reload` later. The editor reads personal settings only, never copying commands from shared project settings. `initialization_options` has no schema-independent native editor: edit it only in `~/.config/larik/config.json`; the panel preserves it and other unknown fields when saving.
 
 ## Hooks
 
