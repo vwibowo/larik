@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +13,9 @@ import (
 func TestModelsEditorCommandsAndSave(t *testing.T) {
 	m := testModel(t)
 	path := m.opts.Config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(`{"models":{"custom":{"id":"custom","future":{"keep":true}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
