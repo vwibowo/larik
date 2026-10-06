@@ -10,6 +10,45 @@ import (
 	"larik/internal/config"
 )
 
+// An environment or header credential goes with its key when cleared, and d
+// means nothing on a row that is not a credential, so it cannot wipe a field
+// you can see and would have edited with enter.
+func TestMCPEditorClearsCredentialsOnlyOnPurpose(t *testing.T) {
+	m := testModel(t)
+	path := m.opts.Config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"mcp_servers":{"mine":{"command":"srv","env":{"TOKEN":"env-secret"}}}}`
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.command("/mcp-config")
+	e := m.settings.mcp
+	e.name = "mine"
+	e.rebuild()
+
+	e.list.selectWhere(func(it pickItem) bool { return it.value == "command" })
+	m.Update(typedKey('d'))
+	if len(e.changes) != 0 {
+		t.Fatalf("d touched a field that is not a credential: %v", e.changes)
+	}
+
+	e.list.selectWhere(func(it pickItem) bool { return it.value == "env:TOKEN" })
+	m.Update(typedKey('d'))
+	if _, ok := e.servers["mine"].Env["TOKEN"]; ok {
+		t.Fatal("d should remove the environment entry with its key")
+	}
+	m.saveMCPEditor()
+	saved := savedConfig(t, m)
+	if strings.Contains(saved, "TOKEN") || strings.Contains(saved, "env-secret") {
+		t.Errorf("cleared credential survived: %s", saved)
+	}
+	if !strings.Contains(saved, `"command": "srv"`) {
+		t.Errorf("clearing a credential lost the rest of the server: %s", saved)
+	}
+}
+
 func TestMCPEditorPersonalOnlyMaskedPatch(t *testing.T) {
 	m := testModel(t)
 	path := m.opts.Config.UserConfigPath()
@@ -38,8 +77,15 @@ func TestMCPEditorPersonalOnlyMaskedPatch(t *testing.T) {
 	}
 	e.input.SetValue("new-secret")
 	e.finishInput()
+	// Leaving a masked field empty backs out of replacing it; clearing the
+	// secret is d, so an empty input can never erase one you cannot see.
 	e.startInput("oauth:client_secret", m.width)
-	e.finishInput() // explicit clear
+	e.finishInput()
+	if !strings.Contains(e.status, "d clears") {
+		t.Fatalf("an empty input should say how to clear instead: %q", e.status)
+	}
+	e.list.selectWhere(func(it pickItem) bool { return it.value == "oauth:client_secret" })
+	m.Update(typedKey('d'))
 	e.change("disabled", true)
 	m.saveMCPEditor()
 	saved := savedConfig(t, m)

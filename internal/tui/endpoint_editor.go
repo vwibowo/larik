@@ -87,9 +87,9 @@ func (e *endpointEditor) rebuild() {
 		detail := e.fields[field]
 		if field == "api_key" {
 			if detail != "" {
-				detail = "set · replace or clear"
+				detail = "•••• · enter replaces · d clears"
 			} else {
-				detail = "not set · enter to replace"
+				detail = "not set · enter to set"
 			}
 		} else if detail == "" {
 			detail = "not set"
@@ -143,6 +143,13 @@ func (e *endpointEditor) startInput(field string, width int) tea.Cmd {
 	return ti.Focus()
 }
 
+// clearKey erases the stored credential. Replacing one is enter and clearing
+// it is this, so an empty input can never erase a secret you cannot see.
+func (e *endpointEditor) clearKey() {
+	e.change("api_key", "")
+	e.status, e.failed = "Cleared · not saved yet", false
+}
+
 func (e *endpointEditor) finishInput() {
 	value := strings.TrimSpace(e.input.Value())
 	if e.editing == "url" || e.editing == "base_url" {
@@ -156,8 +163,13 @@ func (e *endpointEditor) finishInput() {
 	}
 	e.input = nil
 	if e.editing == "api_key" && value == "" {
+		// Leaving the field empty is how you back out of replacing the key, so
+		// it must not erase the one already there; d and the action row do that.
+		if e.fields["api_key"] != "" {
+			e.status, e.failed = "Unchanged · d clears the API key", false
+		}
 		return
-	} // empty never accidentally erases a secret
+	}
 	e.change(e.editing, value)
 }
 
@@ -224,6 +236,13 @@ func (m *model) handleEndpointKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "s", "ctrl+s":
 		return m.requestEndpointSave()
+	case "d", "delete":
+		// Clearing the key is also an action row, which is how you find it;
+		// this is the shortcut, and the same key the MCP editor uses.
+		if it, ok := e.list.selected(); ok && it.value == "api_key" && e.fields["api_key"] != "" {
+			e.clearKey()
+			return nil
+		}
 	}
 	if !e.list.handleKey(msg) {
 		return nil
@@ -232,7 +251,7 @@ func (m *model) handleEndpointKey(msg tea.KeyPressMsg) tea.Cmd {
 	field := it.value.(string)
 	switch field {
 	case "clear_key":
-		e.change("api_key", "")
+		e.clearKey()
 		return nil
 	case "disabled":
 		e.change("disabled", e.fields["disabled"] != "on")

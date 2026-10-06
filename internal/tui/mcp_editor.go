@@ -75,7 +75,7 @@ func (e *mcpEditor) rebuild() {
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				add(group.title, k, "•••• (enter to replace; empty to clear)", group.prefix+":"+k)
+				add(group.title, k, "•••• · enter replaces · d removes", group.prefix+":"+k)
 			}
 			add("actions", "Add "+group.title+" key", "", group.prefix+"+")
 		}
@@ -85,7 +85,7 @@ func (e *mcpEditor) rebuild() {
 				id = s.OAuth.ClientID
 				scopes = strings.Join(s.OAuth.Scopes, ", ")
 				if s.OAuth.ClientSecret != "" {
-					secret = "•••• (enter to replace; empty to clear)"
+					secret = "•••• · enter replaces · d clears"
 				}
 				if s.OAuth.CallbackPort != 0 {
 					port = strconv.Itoa(s.OAuth.CallbackPort)
@@ -168,6 +168,53 @@ func (m *model) openMCPEditor() tea.Cmd {
 	m.settings = &settingsPanel{mcp: newMCPEditor(m.opts.Config)}
 	return nil
 }
+
+// maskedField reports whether field holds a credential. Such a field is never
+// rendered or prefilled, which also means an empty input cannot be read as
+// "clear it": there is nothing on screen to say what you would be erasing.
+// Clearing one is a deliberate key of its own, so startInput and finishInput
+// have to agree on which fields those are.
+func maskedField(field string) bool {
+	return field == "oauth:client_secret" || strings.HasPrefix(field, "env:") || strings.HasPrefix(field, "headers:")
+}
+
+// hasCredential reports whether a masked field currently holds anything. A
+// key being added for the first time does not, so abandoning its value prompt
+// is not described as leaving a credential in place.
+func (e *mcpEditor) hasCredential(field string) bool {
+	s := e.servers[e.name]
+	if field == "oauth:client_secret" {
+		return s.OAuth != nil && s.OAuth.ClientSecret != ""
+	}
+	group, key, ok := strings.Cut(field, ":")
+	if !ok {
+		return false
+	}
+	values := s.Env
+	if group == "headers" {
+		values = s.Headers
+	}
+	_, ok = values[key]
+	return ok
+}
+
+// clearCredential removes the credential the cursor is on: an environment or
+// header entry goes with its key, an OAuth client secret is emptied. It
+// reports whether the cursor was on one at all.
+func (e *mcpEditor) clearCredential() bool {
+	item, ok := e.list.selected()
+	if !ok || e.name == "" {
+		return false
+	}
+	field, _ := item.value.(string)
+	if !maskedField(field) {
+		return false
+	}
+	e.change(field, nil)
+	e.status, e.failed = "Cleared · not saved yet", false
+	return true
+}
+
 func (e *mcpEditor) startInput(field string, width int) tea.Cmd {
 	ti := textinput.New()
 	ti.Prompt = "› "
@@ -200,8 +247,8 @@ func (e *mcpEditor) startInput(field string, width int) tea.Cmd {
 	if strings.HasSuffix(field, "+") {
 		ti.Placeholder = "key name"
 	}
-	if field == "oauth:client_secret" || strings.HasPrefix(field, "env:") || strings.HasPrefix(field, "headers:") {
-		ti.Placeholder = "replace value (empty clears)"
+	if maskedField(field) {
+		ti.Placeholder = "new value (the stored one is never shown)"
 		ti.EchoMode = textinput.EchoPassword
 	}
 	e.input = &ti
@@ -257,6 +304,15 @@ func (e *mcpEditor) finishInput() {
 			}
 		}
 	}
+	if v == "" && maskedField(field) {
+		// Leaving a masked field empty is how you back out of replacing a
+		// credential, so it must not erase the one already there; d does that.
+		e.input = nil
+		if e.hasCredential(field) {
+			e.status, e.failed = "Unchanged · d clears this credential", false
+		}
+		return
+	}
 	e.input = nil
 	switch field {
 	case "args":
@@ -275,8 +331,8 @@ func (e *mcpEditor) finishInput() {
 			e.change(field, n)
 		}
 	default:
-		if v == "" && (strings.HasPrefix(field, "env:") || strings.HasPrefix(field, "headers:") || field == "oauth:client_secret" || field == "oauth:client_id") {
-			e.change(field, nil)
+		if v == "" && field == "oauth:client_id" {
+			e.change(field, nil) // shown in full, so clearing it is unambiguous
 		} else {
 			e.change(field, v)
 		}
@@ -355,6 +411,10 @@ func (m *model) handleMCPKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "s", "ctrl+s":
 		return m.requestMCPSave()
+	case "d", "delete":
+		if e.clearCredential() {
+			return nil
+		} // otherwise the cursor is not on a credential: d means nothing here
 	}
 	if !e.list.handleKey(msg) {
 		return nil
@@ -401,7 +461,7 @@ func (m *model) mcpEditorView() string {
 		body = e.list.view(m.st, w)
 		hint = "↑/↓ move · enter select/change · s save · esc back/close"
 	}
-	out := head + "\n" + body + "\n" + m.st.dim.Render("Credentials are masked; enter a new value to replace, empty to clear")
+	out := head + "\n" + body + "\n" + m.st.dim.Render("Credentials are never shown · enter replaces one · d clears the selected one")
 	if e.status != "" {
 		style := m.st.ok
 		if e.failed {

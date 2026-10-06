@@ -75,10 +75,18 @@ func TestEndpointEditorsReplaceClearAndDoNotCopyMergedValues(t *testing.T) {
 	}
 	m.command("/web-search-config")
 	e = m.settings.endpoint
-	if !strings.Contains(m.endpointEditorView(), "set · replace or clear") {
+	if !strings.Contains(m.endpointEditorView(), "••••") {
 		t.Fatal("key not masked")
 	}
-	e.change("api_key", "")
+	// Opening the field and leaving it empty backs out of replacing the key;
+	// it must not erase a secret the editor never showed you.
+	e.startInput("api_key", m.width)
+	e.finishInput()
+	if len(e.changes) != 0 || !strings.Contains(e.status, "d clears") {
+		t.Fatalf("an empty input should change nothing and say how to clear: %q %v", e.status, e.changes)
+	}
+	e.list.selectWhere(func(it pickItem) bool { return it.value == "api_key" })
+	m.Update(typedKey('d'))
 	m.saveEndpointEditor()
 	if strings.Contains(savedConfig(t, m), "new-secret") {
 		t.Fatal("key not cleared")

@@ -12,18 +12,21 @@ import (
 	"larik/internal/lsp"
 )
 
-// Every native editor reports a save in the same words, so you never have to
-// work out from one editor's phrasing whether a setting is in force. There are
-// only two outcomes: the running session uses it, or /reload does — and
-// /reload costs the model's context, which the message says.
-func TestEditorsReportSavingInTheSameWords(t *testing.T) {
-	for _, tc := range []struct {
-		command string
-		// change makes the editor dirty the way its own tests do.
-		change func(m *model)
-		status func(m *model) string
-		state  savedState
-	}{
+// editorCase drives one native editor far enough to have an unsaved draft,
+// which is what the cross-editor contracts below are about: every editor has
+// to report saving and discarding in the same words, whatever it edits.
+type editorCase struct {
+	command string
+	// change makes the editor dirty the way its own tests do.
+	change func(m *model)
+	status func(m *model) string
+	state  savedState
+}
+
+// editorCases covers every editor /config can open. A new one belongs here, so
+// that it has to agree with the others before it ships.
+func editorCases() []editorCase {
+	return []editorCase{
 		{
 			command: "/keybindings",
 			change: func(m *model) {
@@ -145,7 +148,15 @@ func TestEditorsReportSavingInTheSameWords(t *testing.T) {
 			status: func(m *model) string { return m.settings.hooks.status },
 			state:  savedAfterReload,
 		},
-	} {
+	}
+}
+
+// Every native editor reports a save in the same words, so you never have to
+// work out from one editor's phrasing whether a setting is in force. There are
+// only two outcomes: the running session uses it, or /reload does — and
+// /reload costs the model's context, which the message says.
+func TestEditorsReportSavingInTheSameWords(t *testing.T) {
+	for _, tc := range editorCases() {
 		t.Run(tc.command, func(t *testing.T) {
 			m := testModel(t)
 			m.command(tc.command)
@@ -162,6 +173,44 @@ func TestEditorsReportSavingInTheSameWords(t *testing.T) {
 			want := savedStatus(m.opts.Config.UserConfigPath(), tc.state)
 			if got := tc.status(m); got != want {
 				t.Errorf("status = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// Esc never throws away work silently: an editor holding an unsaved draft says
+// so and waits for a second esc. Editors with sub-screens back out of those
+// first, so the warning can come a few keys in — but it has to come before the
+// editor closes, in every one of them.
+func TestEditorsWarnBeforeDiscardingADraft(t *testing.T) {
+	for _, tc := range editorCases() {
+		t.Run(tc.command, func(t *testing.T) {
+			m := testModel(t)
+			m.command(tc.command)
+			tc.change(m)
+			warned := false
+			for range 8 {
+				if m.settings == nil {
+					break
+				}
+				m.Update(press(tea.KeyEscape))
+				if m.settings != nil && strings.Contains(tc.status(m), "Unsaved changes") {
+					warned = true
+				}
+			}
+			if m.settings != nil {
+				t.Fatalf("esc did not close the editor")
+			}
+			if !warned {
+				t.Error("esc discarded an unsaved draft without warning first")
+			}
+
+			// Nothing to lose, nothing to ask about: esc closes at once.
+			clean := testModel(t)
+			clean.command(tc.command)
+			clean.Update(press(tea.KeyEscape))
+			if clean.settings != nil {
+				t.Error("esc should close an editor with no changes at once")
 			}
 		})
 	}
