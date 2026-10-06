@@ -95,13 +95,14 @@ type toolRun struct {
 }
 
 type model struct {
-	opts      Options
-	agent     *agent.Agent
-	sess      *app.Session  // nil when the caller manages the session
-	bgStop    chan struct{} // closed when switching away from agent
-	ownedApps []*app.App    // apps created by in-TUI reload; initial app belongs to caller
-	st        styles
-	isDark    bool
+	opts         Options
+	agent        *agent.Agent
+	sess         *app.Session  // nil when the caller manages the session
+	bgStop       chan struct{} // closed when switching away from agent
+	ownedApps    []*app.App    // apps created by in-TUI reload; initial app belongs to caller
+	st           styles
+	themePalette *config.ThemePalette
+	isDark       bool
 	// termDark is what the terminal reported; the theme setting may
 	// override it.
 	termDark bool
@@ -362,7 +363,13 @@ func (m *model) wantDark() bool {
 
 func (m *model) applyTheme(isDark bool) {
 	m.isDark = isDark
-	m.st = newStyles(isDark)
+	m.themePalette = nil
+	if name := m.theme(); name != "auto" && name != "dark" && name != "light" {
+		if p, err := config.LoadTheme(name); err == nil {
+			m.themePalette = &p
+		}
+	}
+	m.st = newStylesWithPalette(isDark, m.themePalette)
 	m.input.SetStyles(transparentInput(isDark))
 	if m.permFeedback != nil {
 		m.permFeedback.SetStyles(transparentInput(isDark))

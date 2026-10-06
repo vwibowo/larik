@@ -939,22 +939,6 @@ func updateJSONIf(path string, perm os.FileMode, create bool, edit func(raw map[
 	return true, nil
 }
 
-// Themes are the accepted values of the "theme" setting.
-var Themes = []string{"auto", "dark", "light"}
-
-// ParseTheme checks a theme name; "" means auto.
-func ParseTheme(s string) (string, error) {
-	if s == "" {
-		return "auto", nil
-	}
-	for _, t := range Themes {
-		if s == t {
-			return s, nil
-		}
-	}
-	return "", fmt.Errorf("unknown theme %q (want %s)", s, strings.Join(Themes, ", "))
-}
-
 // NotificationKinds are the accepted values of the "notifications" setting.
 var NotificationKinds = []string{"off", "bell", "desktop"}
 

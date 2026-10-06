@@ -1448,7 +1448,7 @@ func (m *model) renderMarkdown(s string) string {
 }
 
 func (m *model) renderMarkdownWidth(s string, width int) string {
-	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(width-6, 20)))
+	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyleWithPalette(m.isDark, m.themePalette)), glamour.WithWordWrap(max(width-6, 20)))
 	if err != nil {
 		return s
 	}

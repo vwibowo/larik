@@ -779,6 +779,12 @@ func (s settingSpec) check(v string) (string, error) {
 			}
 			return "", fmt.Errorf("%s is a number of %s, or forever", s.key, s.unit)
 		}
+		if s.key == "theme" {
+			if n, err := config.ParseTheme(v); err == nil {
+				return n, nil
+			}
+			return "", fmt.Errorf("theme is one of %s, or an installed .itermcolors theme", strings.Join(names, ", "))
+		}
 		return "", fmt.Errorf("%s is one of %s", s.key, strings.Join(names, ", "))
 	case kindNumber:
 		// Empty leaves the setting out of the file, so Larik's own default
@@ -1087,6 +1093,15 @@ func (m *model) editSetting(key string) tea.Cmd {
 		}
 		p.items = append(p.items, it)
 	}
+	if key == "theme" {
+		for _, name := range config.ThemeNames() {
+			it := pickItem{label: name, detail: "installed iTerm2 color scheme", value: name}
+			if name == cur {
+				it.note, it.noteOK = "✓ current", true
+			}
+			p.items = append(p.items, it)
+		}
+	}
 	p.selectWhere(func(it pickItem) bool { return it.value == cur })
 	s.editing, s.values, s.themeWas = key, p, m.opts.Config.Theme
 	return nil
@@ -1208,13 +1223,19 @@ func (m *model) previewTheme(theme string) {
 		theme = ""
 	}
 	m.opts.Config.Theme = theme
-	if d := m.wantDark(); d != m.isDark {
-		m.applyTheme(d)
-	}
+	// Custom schemes can change while the light/dark classification stays the
+	// same, so applying only on an isDark transition would leave their palette
+	// unused.
+	m.applyTheme(m.wantDark())
 }
 
 // setTheme handles /theme <name>.
 func (m *model) setTheme(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if _, err := config.ParseTheme(name); err != nil {
+		known := append([]string{"auto", "dark", "light"}, config.ThemeNames()...)
+		return m.println(m.st.err.Render(err.Error() + " (available: " + strings.Join(known, ", ") + ")"))
+	}
 	return m.configCommand("theme=" + name)
 }
 

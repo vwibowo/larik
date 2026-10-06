@@ -2,18 +2,33 @@ package tui
 
 import (
 	"charm.land/glamour/v2/ansi"
+
 	glamourstyles "charm.land/glamour/v2/styles"
+	"larik/internal/config"
 )
 
 // markdownStyle is glamour's dark or light style recolored to the TUI palette
 // with every background removed, so rendered Markdown sits on the terminal's
 // own background instead of glamour's heading and code-block fills.
-func markdownStyle(isDark bool) ansi.StyleConfig {
+func markdownStyle(isDark bool) ansi.StyleConfig { return markdownStyleWithPalette(isDark, nil) }
+
+func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleConfig {
 	cfg := glamourstyles.LightStyleConfig
 	text, dim, accent := "#1F1F24", "#6B6B76", "#0D9488"
 	if isDark {
 		cfg = glamourstyles.DarkStyleConfig
 		text, dim, accent = "#ECECF0", "#7D7E87", "#2DD4BF"
+	}
+	if p != nil {
+		if p.Foreground != "" {
+			text = p.Foreground
+		}
+		if p.ANSI[8] != "" {
+			dim = p.ANSI[8]
+		}
+		if p.ANSI[14] != "" {
+			accent = p.ANSI[14]
+		}
 	}
 	ptr := func(s string) *string { return &s }
 	flat := func(p ansi.StylePrimitive, color string) ansi.StylePrimitive {

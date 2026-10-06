@@ -42,8 +42,25 @@ func (m *model) colorLines(path, code string, base lipgloss.Style) ([]string, bo
 	for tok := it(); tok != chroma.EOF; tok = it() {
 		st := base
 		entry := style.Get(tok.Type)
-		if entry.Colour.IsSet() {
-			st = st.Foreground(lipgloss.Color(entry.Colour.String()))
+		colour := ""
+		if m.themePalette != nil {
+			colour = m.themePalette.ANSI[7]
+			kind := strings.ToLower(tok.Type.String())
+			switch {
+			case strings.Contains(kind, "comment"):
+				colour = m.themePalette.ANSI[8]
+			case strings.Contains(kind, "string"):
+				colour = m.themePalette.ANSI[2]
+			case strings.Contains(kind, "keyword") || strings.Contains(kind, "operator"):
+				colour = m.themePalette.ANSI[5]
+			case strings.Contains(kind, "number") || strings.Contains(kind, "literal"):
+				colour = m.themePalette.ANSI[3]
+			}
+		} else if entry.Colour.IsSet() {
+			colour = entry.Colour.String()
+		}
+		if colour != "" {
+			st = st.Foreground(lipgloss.Color(colour))
 		}
 		st = st.Bold(entry.Bold == chroma.Yes).Italic(entry.Italic == chroma.Yes)
 		for i, seg := range strings.Split(tok.Value, "\n") {

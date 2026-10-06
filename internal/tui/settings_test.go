@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +13,28 @@ import (
 	"larik/internal/permission"
 	"larik/internal/session"
 )
+
+func TestInstalledThemeSettingIsAccepted(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	themeDir := filepath.Join(root, "larik", "themes")
+	if err := os.MkdirAll(themeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const scheme = `<plist><dict><key>Foreground Color</key><dict><key>Red Component</key><real>1</real><key>Green Component</key><real>1</real><key>Blue Component</key><real>1</real></dict></dict></plist>`
+	if err := os.WriteFile(filepath.Join(themeDir, "Test Scheme.itermcolors"), []byte(scheme), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(t)
+	m.command("/config theme=Test Scheme")
+	if m.opts.Config.Theme != "Test Scheme" || m.themePalette == nil {
+		t.Fatalf("installed theme was not applied: theme=%q palette=%v", m.opts.Config.Theme, m.themePalette)
+	}
+	m.command("/config theme=Missing")
+	if m.opts.Config.Theme != "Test Scheme" {
+		t.Fatal("unknown theme should not replace the active theme")
+	}
+}
 
 func TestThemeSettingOverridesTerminal(t *testing.T) {
 	m := testModel(t)
