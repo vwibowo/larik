@@ -158,6 +158,7 @@ type State struct {
 	Meta                   Meta
 	Messages               []llm.Message // active context (after the latest compaction)
 	All                    []llm.Message // full history for display
+	AllTimes               []time.Time   // when each of All was written
 	Usage                  llm.Usage
 	Cost                   float64
 	ByModel                map[string]llm.Usage // usage per model that served it
@@ -312,6 +313,7 @@ func (s *Session) read() (*State, error) {
 			}
 			st.Messages = llm.Append(st.Messages, *e.Message)
 			st.All = append(st.All, *e.Message)
+			st.AllTimes = append(st.AllTimes, e.Time)
 			if e.Usage != nil {
 				st.addUsage(e.Message.Model, *e.Usage)
 			}

@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,5 +276,106 @@ func TestResumeUndoHelper(t *testing.T) {
 	store := New(os.Getenv("LARIK_RESUME_UNDO_CHECKPOINTS"), os.Getenv("LARIK_RESUME_UNDO_WORK"))
 	if _, err := store.Undo(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// turnAt changes path in a new turn that starts changing files at a known
+// time, standing in for a prompt sent then.
+func turnAt(t *testing.T, s *Store, path, content string) time.Time {
+	t.Helper()
+	time.Sleep(5 * time.Millisecond) // keep turns apart on coarse clocks
+	s.BeginTurn()
+	if err := s.Capture(path); err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, content)
+	return s.turns[len(s.turns)-1].Time
+}
+
+func TestUndoSinceRevertsEveryLaterTurn(t *testing.T) {
+	work, dir := t.TempDir(), filepath.Join(t.TempDir(), "sess")
+	a, b := filepath.Join(work, "a.txt"), filepath.Join(work, "b.txt")
+	write(t, a, "a0")
+	s := New(dir, work)
+
+	turnAt(t, s, a, "a1")       // prompt 1
+	t2 := turnAt(t, s, a, "a2") // prompt 2 edits a again...
+	s.Capture(b)                // ...and creates b
+	write(t, b, "b2")
+	turnAt(t, s, a, "a3") // prompt 3
+	s.BeginTurn()         // prompt 4 changes nothing
+
+	want := map[string]bool{a: true, b: true}
+	got := s.Since(t2)
+	if len(got) != 2 || !want[got[0]] || !want[got[1]] {
+		t.Fatalf("Since(prompt 2) = %v", got)
+	}
+	if read(t, a) != "a3" {
+		t.Fatal("Since must not change anything")
+	}
+
+	paths, err := s.UndoSince(t2)
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("UndoSince: %v %v", paths, err)
+	}
+	if read(t, a) != "a1" {
+		t.Errorf("a = %q, want its state before prompt 2 (a1)", read(t, a))
+	}
+	if _, err := os.Stat(b); !os.IsNotExist(err) {
+		t.Error("b was created after the cut and must be removed")
+	}
+	// Prompt 1's change survives and is still undoable on its own.
+	if paths, err := s.Undo(); err != nil || len(paths) != 1 || read(t, a) != "a0" {
+		t.Fatalf("turn 1 should remain: %v %v a=%q", paths, err, read(t, a))
+	}
+}
+
+func TestUndoSinceKeepsEarlierWorkAndSurvivesResume(t *testing.T) {
+	work, dir := t.TempDir(), filepath.Join(t.TempDir(), "sess")
+	a := filepath.Join(work, "a.txt")
+	write(t, a, "a0")
+	s := New(dir, work)
+	t1 := turnAt(t, s, a, "a1")
+	t2 := turnAt(t, s, a, "a2")
+
+	if got := s.Since(t2.Add(time.Millisecond)); len(got) != 0 {
+		t.Errorf("nothing changed after the last turn: %v", got)
+	}
+	// A later run of the session loads the same turns with their times.
+	s = New(dir, work)
+	if got := s.Since(t2); len(got) != 1 {
+		t.Fatalf("resumed Since = %v", got)
+	}
+	if _, err := s.UndoSince(t2); err != nil || read(t, a) != "a1" {
+		t.Fatalf("resumed UndoSince: %v a=%q", err, read(t, a))
+	}
+	if got := s.Since(t1); len(got) != 1 {
+		t.Errorf("turn 1 is still there: %v", got)
+	}
+}
+
+func TestOldManifestsWithoutTimesFallBackToTheirFileTime(t *testing.T) {
+	work, dir := t.TempDir(), filepath.Join(t.TempDir(), "sess")
+	a := filepath.Join(work, "a.txt")
+	write(t, a, "a0")
+	s := New(dir, work)
+	turnAt(t, s, a, "a1")
+	manifest := filepath.Join(dir, "1", "manifest.json")
+	data := read(t, manifest)
+	// Rewrite the manifest the way earlier releases saved it: no time.
+	var m map[string]any
+	if err := json.Unmarshal([]byte(data), &m); err != nil {
+		t.Fatal(err)
+	}
+	delete(m, "time")
+	b, _ := json.Marshal(m)
+	write(t, manifest, string(b))
+
+	s = New(dir, work)
+	if got := s.Since(time.Now().Add(-time.Minute)); len(got) != 1 {
+		t.Errorf("an untimed manifest should be dated by its file: %v", got)
+	}
+	if got := s.Since(time.Now().Add(time.Minute)); len(got) != 0 {
+		t.Errorf("and not later than that: %v", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -75,18 +76,107 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 				fmt.Fprintf(&b, "%3d  %s\n", i+1, oneLine(st.All[prompts[i]].Text(), 90))
 			}
 			b.WriteString("/rewind <n> branches off just before prompt n and puts it back in the input to edit.\n" +
-				"The current session stays as it is. Files are not changed; use /undo for that.")
+				"The current session stays as it is. If files changed since that prompt you are asked whether to restore them too;\n" +
+				"/rewind <n> files restores without asking, /rewind <n> keep leaves the files alone.")
 			return info(b.String())
 		}
 		n, err := strconv.Atoi(args[0])
 		if err != nil || n < 1 || n > len(prompts) {
 			return fail(fmt.Sprintf("pick a prompt number from 1 to %d (see /rewind)", len(prompts)))
 		}
-		keep := prompts[n-1]
-		o.Model, o.ResumeID, o.Fork, o.ForkAt = current, m.sess.ID, true, &keep
-		return m.open(o, fmt.Sprintf("rewound to before prompt %d of %s", n, m.sess.ID), st.All[keep].Text())
+		files := ""
+		if len(args) > 1 {
+			if files = args[1]; files != "files" && files != "keep" {
+				return fail("usage: /rewind <n> [files | keep]")
+			}
+		}
+		at := prompts[n-1]
+		o.Model, o.ResumeID, o.Fork, o.ForkAt = current, m.sess.ID, true, &at
+		label := fmt.Sprintf("rewound to before prompt %d of %s", n, m.sess.ID)
+		prefill := st.All[at].Text()
+
+		var changed []string
+		since := time.Time{}
+		if at < len(st.AllTimes) {
+			since = st.AllTimes[at]
+			changed = m.agent.FilesSince(since)
+		}
+		branch := func(restore bool) tea.Cmd {
+			if !restore {
+				return m.open(o, label, prefill)
+			}
+			// Files first: a branch whose files still hold later changes
+			// would disagree with the conversation it continues.
+			paths, err := m.agent.UndoSince(since)
+			if err != nil {
+				msg := "restoring files: " + err.Error()
+				if len(paths) > 0 {
+					msg += " (restored " + m.shortPaths(strings.Join(paths, ", ")) + " before stopping)"
+				}
+				return fail(msg + "; nothing was branched")
+			}
+			return tea.Sequence(m.open(o, label+" · files restored", prefill), info("↶ restored "+m.shortPaths(strings.Join(paths, ", "))))
+		}
+		switch {
+		case len(changed) == 0 || files == "keep":
+			return branch(false)
+		case files == "files":
+			return branch(true)
+		}
+		m.rewindOffer = &rewindOffer{files: changed, branch: branch, picker: rewindChoices()}
+		return nil
 	}
 	return nil
+}
+
+// rewindOffer is the question /rewind asks when files changed after the
+// prompt it is rewinding to.
+type rewindOffer struct {
+	files  []string
+	branch func(restore bool) tea.Cmd
+	picker *picker
+}
+
+func rewindChoices() *picker {
+	p := &picker{items: []pickItem{
+		{label: "1. Branch and restore files", detail: "put the files back as they were before this prompt", value: true},
+		{label: "2. Branch only", detail: "leave the files as they are now", value: false},
+	}}
+	p.home()
+	return p
+}
+
+func (m *model) handleRewindKey(msg tea.KeyPressMsg) tea.Cmd {
+	o := m.rewindOffer
+	k := msg.String()
+	switch {
+	case k == "esc" || k == "ctrl+c":
+		m.rewindOffer = nil
+		return m.println(m.st.dim.Render("rewind cancelled"))
+	case k == "1" || k == "2":
+		m.rewindOffer = nil
+		return o.branch(k == "1")
+	}
+	if o.picker.handleKey(msg) {
+		it, _ := o.picker.selected()
+		m.rewindOffer = nil
+		return o.branch(it.value.(bool))
+	}
+	return nil
+}
+
+func (m *model) rewindView() string {
+	o := m.rewindOffer
+	w := max(m.width-6, 20)
+	head := spread(m.st.accent.Render("Restore files too?"), m.st.dim.Render(fmt.Sprintf("%d changed since that prompt", len(o.files))), w)
+	list := o.files
+	if len(list) > 8 {
+		list = append(list[:8:8], fmt.Sprintf("… and %d more", len(o.files)-8))
+	}
+	files := m.st.dim.Render(m.shortPaths(strings.Join(list, "\n")))
+	o.picker.height = max(m.availablePanelRows()-len(list)-5, 1)
+	hint := "1–2 or ↑/↓ + enter choose · esc cancel · changes made outside Larik to these files are overwritten"
+	return m.st.modal.Width(max(m.width-2, 10)).Render(head + "\n" + files + "\n" + o.picker.view(m.st, w) + "\n" + m.st.dim.Render(hint))
 }
 
 // open starts or loads a session and switches the TUI to it. The old

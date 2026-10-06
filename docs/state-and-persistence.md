@@ -86,9 +86,9 @@ flowchart LR
 ```
 
 - `/fork` and `larik -c --fork`: branch at the end and continue there.
-- `/rewind n`: branch just before prompt `n` and put that prompt back in the input box to edit.
+- `/rewind n`: branch just before prompt `n` and put that prompt back in the input box to edit. When files changed since that prompt, it first asks whether to restore them (see [Checkpoints](#checkpoints-and-undo)); `/rewind n files` and `/rewind n keep` answer in advance.
 - Usage is not copied: each branch reports only its own spend.
-- Rewinding changes only the conversation. Files are reverted separately with `/undo`.
+- Rewinding changes the conversation, and optionally the files: `/undo` still reverts one turn at a time, while `/rewind` can revert every turn since a prompt in one step.
 
 ## Checkpoints and /undo
 
@@ -106,6 +106,8 @@ stateDiagram-v2
 ```
 
 `Undo` skips turns that changed no files, so it always reverts the most recent turn that did something. Restores are confined to the project root; symlink paths and protected project files are rejected. Each restored file replaces its directory entry rather than following a changed symlink, and restores its original permissions. Manifests are saved through a temporary file and atomic rename. Afterwards the agent queues a `<system-note>` for the next message telling the model which files were reverted, so it re-reads them instead of trusting stale content.
+
+**Rewinding files.** Each turn records when it first changed a file. `Store.Since(t)` lists the files changed at or after `t`, and `Store.UndoSince(t)` reverts every such turn newest first, so each file ends as it was before the earliest of them (a file the turns created is removed). `/rewind n` uses the time the prompt was written to the session file as `t`, and restores before branching: a branch whose files still held later changes would disagree with the conversation it continues, so no note is queued for the model. Turns saved before this timestamp existed are dated by their manifest's modification time. The checkpoints belong to the session being rewound, since a branch starts with none; the same limits as `/undo` apply (ignored files, MCP writes, changes made by moving `HEAD`), and edits you made yourself to those files after the agent's are overwritten.
 
 **Across runs.** Each turn's manifest and blobs are on disk under `checkpoints/<session-id>/<n>/`, so `checkpoint.New` reloads them when a session is resumed (`larik -c`, `--resume`, `/resume`), and `/undo` keeps working. New turns are numbered after the last saved one. A branch (`/fork`, `/rewind`) is a new session id, so it starts with no undo history.
 

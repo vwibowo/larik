@@ -31,7 +31,11 @@ type snapshot struct {
 }
 
 type turn struct {
-	N     int        `json:"n"`
+	N int `json:"n"`
+	// Time is when the turn first changed a file. Rewinding a conversation
+	// to an earlier prompt restores every turn that began changing files
+	// after that prompt was sent.
+	Time  time.Time  `json:"time,omitempty"`
 	Files []snapshot `json:"files"`
 }
 
@@ -55,13 +59,19 @@ func New(dir, projectRoot string) *Store {
 		if err != nil || !e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name(), "manifest.json"))
+		manifest := filepath.Join(dir, e.Name(), "manifest.json")
+		data, err := os.ReadFile(manifest)
 		if err != nil {
 			continue
 		}
 		var t turn
 		if json.Unmarshal(data, &t) != nil || t.N != n || len(t.Files) == 0 {
 			continue
+		}
+		if t.Time.IsZero() { // saved before turns were timed
+			if fi, err := os.Stat(manifest); err == nil {
+				t.Time = fi.ModTime()
+			}
 		}
 		s.turns = append(s.turns, &t)
 	}
@@ -163,9 +173,15 @@ func (s *Store) add(path string, existed bool, data []byte, mode os.FileMode) er
 			return err
 		}
 	}
+	if len(t.Files) == 0 {
+		t.Time = time.Now()
+	}
 	t.Files = append(t.Files, snap)
 	if err := s.saveManifest(t); err != nil {
 		t.Files = t.Files[:len(t.Files)-1]
+		if len(t.Files) == 0 {
+			t.Time = time.Time{}
+		}
 		return err
 	}
 	s.seen[path] = true
@@ -200,54 +216,113 @@ func (s *Store) saveManifest(t *turn) error {
 	return os.Rename(tmp.Name(), filepath.Join(tdir, "manifest.json"))
 }
 
+// dropEmpty discards trailing turns that changed no files. The caller
+// holds s.mu.
+func (s *Store) dropEmpty() {
+	for len(s.turns) > 0 && len(s.turns[len(s.turns)-1].Files) == 0 {
+		s.turns = s.turns[:len(s.turns)-1]
+	}
+}
+
 // Undo reverts the most recent turn that changed files and returns the
 // restored paths.
 func (s *Store) Undo() ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.turns) > 0 {
-		t := s.turns[len(s.turns)-1]
+	s.dropEmpty()
+	if len(s.turns) == 0 {
+		return nil, fmt.Errorf("nothing to undo")
+	}
+	return s.undoLast()
+}
+
+// Since lists the files UndoSince(since) would restore, newest change
+// first, without touching anything.
+func (s *Store) Since(since time.Time) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	seen := map[string]bool{}
+	for i := len(s.turns) - 1; i >= 0; i-- {
+		t := s.turns[i]
 		if len(t.Files) == 0 {
-			s.turns = s.turns[:len(s.turns)-1]
 			continue
 		}
-		var restored []string
-		root, err := os.OpenRoot(s.root)
-		if err != nil {
-			return nil, err
+		if t.Time.Before(since) {
+			break
 		}
-		for i := len(t.Files) - 1; i >= 0; i-- {
-			f := t.Files[i]
-			rel, err := pathpolicy.WritePath(s.root, f.Path)
-			if err != nil {
-				root.Close()
+		for j := len(t.Files) - 1; j >= 0; j-- {
+			if p := t.Files[j].Path; !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// UndoSince reverts every turn that first changed a file at or after
+// since, newest first, so each file ends as it was before the earliest of
+// them. It returns the restored paths. On an error the turns not yet
+// restored stay, so the call can be retried.
+func (s *Store) UndoSince(since time.Time) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	seen := map[string]bool{}
+	for {
+		s.dropEmpty()
+		if len(s.turns) == 0 || s.turns[len(s.turns)-1].Time.Before(since) {
+			return out, nil
+		}
+		paths, err := s.undoLast()
+		for _, p := range paths {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+		if err != nil {
+			return out, err
+		}
+	}
+}
+
+// undoLast restores the newest turn, which must have files, and drops its
+// snapshot. The caller holds s.mu.
+func (s *Store) undoLast() ([]string, error) {
+	t := s.turns[len(s.turns)-1]
+	var restored []string
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	for i := len(t.Files) - 1; i >= 0; i-- {
+		f := t.Files[i]
+		rel, err := pathpolicy.WritePath(s.root, f.Path)
+		if err != nil {
+			return restored, err
+		}
+		if !f.Existed {
+			if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 				return restored, err
 			}
-			if !f.Existed {
-				if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-					root.Close()
-					return restored, err
-				}
-			} else {
-				data, err := os.ReadFile(f.Blob)
-				if err != nil {
-					root.Close()
-					return restored, err
-				}
-				if err := restoreFile(root, rel, data, os.FileMode(f.Mode)); err != nil {
-					root.Close()
-					return restored, err
-				}
+		} else {
+			data, err := os.ReadFile(f.Blob)
+			if err != nil {
+				return restored, err
 			}
-			restored = append(restored, f.Path)
+			if err := restoreFile(root, rel, data, os.FileMode(f.Mode)); err != nil {
+				return restored, err
+			}
 		}
-		root.Close()
-		s.turns = s.turns[:len(s.turns)-1]
-		s.seen = map[string]bool{}
-		_ = os.RemoveAll(filepath.Join(s.dir, fmt.Sprint(t.N)))
-		return restored, nil
+		restored = append(restored, f.Path)
 	}
-	return nil, fmt.Errorf("nothing to undo")
+	s.turns = s.turns[:len(s.turns)-1]
+	s.seen = map[string]bool{}
+	_ = os.RemoveAll(filepath.Join(s.dir, fmt.Sprint(t.N)))
+	return restored, nil
 }
 
 // restoreFile replaces the directory entry atomically. A symlink installed at

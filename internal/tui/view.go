@@ -190,6 +190,8 @@ func (m *model) panel() (kind, text string) {
 		return "execution", m.execPickerView()
 	case m.sessionPick != nil:
 		return "sessions", m.sessionPickerView()
+	case m.rewindOffer != nil:
+		return "rewind", m.rewindView()
 	case m.histPick != nil:
 		return "history", m.historyPickerView()
 	case m.palette != nil:
@@ -685,7 +687,7 @@ func panelRoom(room int) int {
 
 func (m *model) hasPickerPanel() bool {
 	return m.reload != nil || m.provs != nil || m.settings != nil || m.wizard != nil || m.routing != nil ||
-		m.mpick != nil || m.modePick != nil || m.execPick != nil || m.sessionPick != nil || m.palette != nil ||
+		m.mpick != nil || m.modePick != nil || m.execPick != nil || m.sessionPick != nil || m.rewindOffer != nil || m.palette != nil ||
 		m.histPick != nil || m.mention != nil
 }
 

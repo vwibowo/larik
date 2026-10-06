@@ -475,6 +475,24 @@ func (a *Agent) Undo() ([]string, error) {
 	return paths, nil
 }
 
+// FilesSince lists the files whose changes UndoSince(since) would revert.
+func (a *Agent) FilesSince(since time.Time) []string {
+	if a.opts.Checkpoints == nil {
+		return nil
+	}
+	return a.opts.Checkpoints.Since(since)
+}
+
+// UndoSince reverts every file change made at or after since. It queues no
+// note: it is for rewinding, where the branch that follows starts from a
+// context that already predates those changes.
+func (a *Agent) UndoSince(since time.Time) ([]string, error) {
+	if a.opts.Checkpoints == nil {
+		return nil, errors.New("checkpoints are disabled")
+	}
+	return a.opts.Checkpoints.UndoSince(since)
+}
+
 // Run processes one user prompt. The returned channel is closed after EvDone.
 // Callers must drain it and answer every EvPermission.
 func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {

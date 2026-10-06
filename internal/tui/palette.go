@@ -31,7 +31,7 @@ var commands = []command{
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
 	{"/clear", "", "fresh context, clears the view (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
-	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it", "conversation", ""},
+	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it (offers to restore files)", "conversation", ""},
 	{"/todos", "", "the model's task list for this work", "conversation", ""},
 	{"/copy", "", "copy the last reply to the clipboard", "conversation", ""},
 	{"/speak", "[text]", "synthesize and play text with the local TTS service", "conversation", ""},
