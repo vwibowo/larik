@@ -1,18 +1,23 @@
-# Larik v0.11.0
+# Larik v0.12.0
+
+_October 6, 2026_
 
 ### Added
 
-- **Configure Larik without editing JSON.** `/config` now searches every setting and opens native editors for display commands, keybindings, permission rules, sandbox access, provider endpoints, model overrides, LSP servers, lifecycle hooks and MCP servers. Editors validate entries, distinguish personal from shared settings, preview or test integrations where appropriate, and apply the same safety rule as config loading: shared project files may tighten access but never widen it.
-- **Compaction telemetry and a retention benchmark.** Successful compactions report provider-grounded prompt size, estimated summary size and context saved in the TUI, headless output and server API. Session totals survive resume, and `larik bench --tasks compaction-retention` mechanically checks whether important facts remain usable after a forced compaction.
+- **iTerm2 color schemes as themes.** Install a downloaded `.itermcolors` scheme into `~/.config/larik/themes/` and choose it as a theme in `/config` or `/theme <name>`. Its palette recolors the text, accents, syntax highlighting and Markdown, while the background stays transparent so your terminal's own background shows through.
+- **A menu on every prompt.** Click a prompt to open a menu: **Copy** puts it on the clipboard, **Fork** branches into a new session that keeps the turn and its reply, and **Rewind** branches off just before it. `/prompt [n]` opens the same menu from the keyboard.
+- **OpenTelemetry export.** Send each session's traces to an OTLP/HTTP collector (Grafana, Jaeger, Honeycomb, …) from personal settings (`telemetry.otlp_endpoint`) or the `LARIK_OTLP_ENDPOINT` environment variable. Metadata only — prompts, replies, tool input, file contents and paths are never exported. Off until an endpoint is given; Larik writes OTLP/JSON itself with no SDK in the binary, and exporting is best-effort so it never slows the agent.
 
 ### Changed
 
-- **Conversation layout follows the space it actually has.** Finished Markdown is re-rendered when the information sidebar changes the conversation width, prompts keep a consistent gutter and spacing, and Markdown tables now wrap inside a complete border instead of leaving open vertical rails.
-- **Credential removal is deliberate.** Leaving a masked credential field empty preserves the existing secret; choosing the explicit clear action removes it, so editing another endpoint or MCP field cannot erase credentials accidentally.
-- **Compaction anticipates the next request.** Larik estimates an upcoming prompt or tool result before sending it, caps summaries to the context they are meant to free, and keeps displayed token counts grounded in provider usage.
+- **`/rewind` can restore files.** When files changed since the prompt you rewind to, it lists them and asks whether to put them back before branching; `files` restores without asking, `keep` leaves them untouched.
+- **Prompts stand out more.** Your own prompts now sit in a rounded frame, and system notes are hidden from the history view.
+- **MCP tools validate their input.** A tool call whose arguments don't match the server's schema is reported with a clear error instead of failing later.
 
-### Fixed
+### Hardened
 
-- **Malformed tool history no longer bricks a session.** Before any provider serializes history, Larik repairs a missing `tool_result` with an ordered synthetic error result. A rejected or interrupted call can therefore degrade visibly instead of causing every later request to fail with a structural 400.
-- **Compaction recovery remains armed after failure.** Failed threshold compaction, tiny context windows, malformed summary tags and subagent attribution are handled without losing the turn or inflating the parent session's totals.
-- **Configuration changes report and apply consistently.** Native editors use the same save/reload feedback, narrow terminals expose editor-backed settings through the command palette, and credential changes take effect without an unrelated model switch.
+- **More robust sessions and sandbox.** A loop guard and decision log catch repeated actions, provider secrets stay protected in the sandbox, and a per-turn token budget bounds a single request, so a wayward turn degrades visibly rather than stalling.
+
+### Documentation
+
+- **A "tests must pass" Stop hook.** A ready-to-use recipe ([docs/examples/require-tests.sh](https://github.com/vwibowo/larik/blob/main/docs/examples/require-tests.sh)) shows how to end a turn only when the test suite is green.
