@@ -1372,11 +1372,11 @@ func (m *model) renderUserMessageWidth(text string, width int) string {
 	// and every rendered line still fits the conversation.
 	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), max(width-2, 10)), "\n")
 	out := make([]string, 0, len(lines)+2)
-	out = append(out, gutter)
+	out = append(out, "")
 	for _, l := range lines {
 		out = append(out, gutter+m.st.user.Render(l))
 	}
-	return strings.Join(append(out, gutter), "\n")
+	return strings.Join(append(out, ""), "\n")
 }
 
 // renderAssistant formats a finished assistant message for scrollback.
