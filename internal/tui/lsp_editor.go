@@ -256,11 +256,12 @@ func (m *model) saveLSPEditor() tea.Cmd {
 		return nil
 	}
 	e.changes, e.failed, e.closing = map[string]map[string]any{}, false, false
+	path := m.opts.Config.UserConfigPath()
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Saved to "+shortHome(m.opts.Config.UserConfigPath()))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded("Language servers", path))))
 	}
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active after /reload"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 

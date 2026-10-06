@@ -120,7 +120,7 @@ func (m *model) saveKeybindings() tea.Cmd {
 	m.opts.Config.Keybindings = maps.Clone(e.bindings)
 	m.keys, m.keyWarn = newKeymap(e.bindings)
 	e.dirty, e.closing, e.failed = false, false, false
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active now"
+	e.status = savedStatus(m.opts.Config.UserConfigPath(), savedActive)
 	return nil
 }
 

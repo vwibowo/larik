@@ -180,7 +180,7 @@ func (m *model) savePermissions() tea.Cmd {
 	m.opts.Config.Permissions = effective
 	m.agent.Perms().SetRules(effective)
 	e.dirty[e.scope], e.closing = false, false
-	e.status, e.failed = "Saved to "+shortHome(path)+" · active now", false
+	e.status, e.failed = savedStatus(path, savedActive), false
 	return nil
 }
 

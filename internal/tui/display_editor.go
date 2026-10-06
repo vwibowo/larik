@@ -185,7 +185,7 @@ func (m *model) saveDisplay() tea.Cmd {
 		m.status = active
 	}
 	e.dirty, e.closing, e.failed = false, false, false
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active now"
+	e.status = savedStatus(m.opts.Config.UserConfigPath(), savedActive)
 	return m.statusTick()
 }
 

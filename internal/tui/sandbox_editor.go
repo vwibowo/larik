@@ -245,9 +245,9 @@ func (m *model) saveSandboxEditor() tea.Cmd {
 	e.dirty[e.scope], e.failed, e.closing = false, false, false
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Sandbox saved to "+shortHome(path))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded("Bash sandbox", path))))
 	}
-	e.status = "Saved to " + shortHome(path) + " · active after /reload"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 

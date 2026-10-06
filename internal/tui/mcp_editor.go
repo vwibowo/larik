@@ -307,11 +307,12 @@ func (m *model) saveMCPEditor() tea.Cmd {
 	}
 	e.changes = map[string]map[string]any{}
 	e.failed, e.closing = false, false
+	path := m.opts.Config.UserConfigPath()
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Saved to "+shortHome(m.opts.Config.UserConfigPath()))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded("MCP servers", path))))
 	}
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active after /reload"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 func (m *model) requestMCPSave() tea.Cmd {

@@ -49,6 +49,18 @@ func newEndpointEditor(cfg *config.Config, kind string) *endpointEditor {
 	return e
 }
 
+// title names the endpoint in the editor's own header and in what it reports
+// after saving, so both say the same thing.
+func (e *endpointEditor) title() string {
+	switch e.kind {
+	case "stt":
+		return "Speech-to-text endpoint"
+	case "tts":
+		return "Text-to-speech endpoint"
+	}
+	return "Web search"
+}
+
 func (e *endpointEditor) prefix() string {
 	if e.kind == "web" {
 		return "web.search."
@@ -164,11 +176,12 @@ func (m *model) saveEndpointEditor() tea.Cmd {
 		return nil
 	}
 	e.changes, e.closing, e.failed = map[string]any{}, false, false
+	path := m.opts.Config.UserConfigPath()
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Saved to "+shortHome(m.opts.Config.UserConfigPath()))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded(e.title(), path))))
 	}
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active after /reload"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 
@@ -242,13 +255,7 @@ func (m *model) handleEndpointKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *model) endpointEditorView() string {
 	e := m.settings.endpoint
 	w := max(m.width-6, 20)
-	title := "Web search"
-	if e.kind == "stt" {
-		title = "Speech-to-text endpoint"
-	} else if e.kind == "tts" {
-		title = "Text-to-speech endpoint"
-	}
-	head := spread(m.st.accent.Render(title), m.st.dim.Render("personal · all projects"), w)
+	head := spread(m.st.accent.Render(e.title()), m.st.dim.Render("personal · all projects"), w)
 	var body, hint string
 	if e.input != nil {
 		body = m.st.dim.Render(e.editing) + "\n" + e.input.View()

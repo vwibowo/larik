@@ -201,11 +201,12 @@ func (m *model) saveModelsEditor() tea.Cmd {
 	}
 	e.changes = map[string]*llm.ModelInfo{}
 	e.failed, e.closing = false, false
+	path := m.opts.Config.UserConfigPath()
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Saved to "+shortHome(m.opts.Config.UserConfigPath()))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded("Model catalog overrides", path))))
 	}
-	e.status = "Saved to " + shortHome(m.opts.Config.UserConfigPath()) + " · active after /reload"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 func (m *model) requestModelsSave() tea.Cmd {

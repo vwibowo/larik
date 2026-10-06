@@ -519,8 +519,12 @@ var settingSpecs = []settingSpec{
 		cmd: "/permissions", open: (*model).openPermissions,
 		covers: []string{"permissions"},
 	},
-	{key: "mcp_servers", title: "MCP servers", section: "tools", kind: kindAction, cmd: "/mcp-config", open: (*model).openMCPEditor, get: func(m *model) string { return fmt.Sprintf("%d configured", len(m.opts.Config.MCPServers)) }},
-	{key: "hooks", title: "Lifecycle hooks", section: "tools", kind: kindAction, cmd: "/hooks-config", open: (*model).openHooksEditor, get: func(m *model) string { return fmt.Sprintf("%d personal events", len(m.opts.Config.TrustedHooks)) }},
+	{key: "mcp_servers", title: "MCP servers", section: "tools", kind: kindAction, cmd: "/mcp-config", open: (*model).openMCPEditor, get: func(m *model) string {
+		return editableSummary(countAt(config.MCPAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.MCPServers), "servers")
+	}},
+	{key: "hooks", title: "Lifecycle hooks", section: "tools", kind: kindAction, cmd: "/hooks-config", open: (*model).openHooksEditor, get: func(m *model) string {
+		return editableSummary(countAt(config.PersonalHooksAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.TrustedHooks), "events")
+	}},
 
 	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
 	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return m.opts.Config.Audio.STT.Model }, cmd: "/stt-config", open: (*model).openSTTEditor},
@@ -536,8 +540,12 @@ var settingSpecs = []settingSpec{
 		cmd: "/sandbox-config", open: (*model).openSandboxEditor,
 		covers: []string{"sandbox"},
 	},
-	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/lsp-config", open: (*model).openLSPEditor, get: func(m *model) string { return fmt.Sprintf("%d personal overrides", len(m.opts.Config.LSP)) }},
-	{key: "models", title: "Model catalog overrides", section: "defaults", kind: kindAction, cmd: "/models-config", open: (*model).openModelsEditor, get: func(m *model) string { return fmt.Sprintf("%d configured", len(m.opts.Config.Models)) }},
+	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/lsp-config", open: (*model).openLSPEditor, get: func(m *model) string {
+		return editableSummary(countAt(config.LSPAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.LSP), "servers")
+	}},
+	{key: "models", title: "Model catalog overrides", section: "defaults", kind: kindAction, cmd: "/models-config", open: (*model).openModelsEditor, get: func(m *model) string {
+		return editableSummary(countAt(config.UserModelsAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.Models), "overrides")
+	}},
 	{
 		key: "debug", title: "Record this session", section: "advanced", kind: kindToggle,
 		later: "traces hold your prompts and file contents; /trace reviews them",
@@ -969,6 +977,55 @@ func shortHome(path string) string {
 		}
 	}
 	return path
+}
+
+// After a native editor saves, one of two things is true, and every editor
+// says it the same way: the running session already uses the settings, or
+// they wait for /reload. /reload rebuilds the services and starts a fresh
+// model context, so the second case says so — it costs the conversation the
+// model is holding, which is not for the reader to infer.
+type savedState int
+
+const (
+	savedActive      savedState = iota // the running session uses it already
+	savedAfterReload                   // services are built from it
+)
+
+// savedStatus is an editor's own status line after it saved successfully.
+func savedStatus(path string, state savedState) string {
+	msg := "Saved to " + shortHome(path)
+	if state == savedAfterReload {
+		return msg + " · active after /reload (fresh context)"
+	}
+	return msg + " · active now"
+}
+
+// savedAndReloaded is printed in the conversation when saving rebuilt the
+// services itself, which closes the editor. It names what was saved, because
+// the editor that would have said so is no longer on screen.
+func savedAndReloaded(what, path string) string {
+	return what + " saved to " + shortHome(path) + " · active now"
+}
+
+// editableSummary describes a /config row whose editor changes only your
+// personal file while the running session uses every settings file merged
+// together. A single count would match neither what the editor shows nor what
+// is in force, so both are named when they differ.
+func editableSummary(personal, effective int, noun string) string {
+	if personal < 0 || personal == effective {
+		return fmt.Sprintf("%d %s", effective, noun)
+	}
+	return fmt.Sprintf("%d personal · %d %s in use", personal, effective, noun)
+}
+
+// countAt counts what one of the personal-file readers found, or -1 when the
+// file could not be read. The row then names only what is in use; the editor
+// says what is wrong with the file when you open it.
+func countAt[T any](entries map[string]T, err error) int {
+	if err != nil {
+		return -1
+	}
+	return len(entries)
 }
 
 // editSetting starts changing a setting: a toggle flips at once, a

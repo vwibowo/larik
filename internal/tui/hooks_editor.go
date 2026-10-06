@@ -251,11 +251,12 @@ func (m *model) saveHooksEditor() tea.Cmd {
 	}
 	e.changed = map[string][]any{}
 	e.failed, e.closing = false, false
+	path := m.opts.Config.UserConfigPath()
 	if m.canReloadApp() {
 		m.settings = nil
-		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render("Saved personal hooks to "+shortHome(m.opts.Config.UserConfigPath()))))
+		return tea.Batch(m.reloadApp(), m.println(m.st.dim.Render(savedAndReloaded("Personal hooks", path))))
 	}
-	e.status = "Saved personal hooks · active after /reload (fresh context)"
+	e.status = savedStatus(path, savedAfterReload)
 	return nil
 }
 func (m *model) requestHooksSave() tea.Cmd {
