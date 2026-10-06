@@ -148,6 +148,7 @@ Each layer is marked **trusted** (personal: only you write it) or not (shared: a
 | LSP servers | may add commands | may only disable |
 | Web search backend | honored | ignored (it would receive every query); may only disable web tools |
 | Debug recording and trace retention | honored | ignored (traces hold prompts and file contents) |
+| OpenTelemetry export (`telemetry`) | honored | ignored (the collector would learn about every request) |
 | Status line and sidebar commands, key bindings and editor mode | honored | ignored (the TUI commands execute; the others are how you type) |
 | Approvals themselves | read from private project settings only | ignored |
 

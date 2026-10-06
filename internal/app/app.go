@@ -27,6 +27,7 @@ import (
 	"larik/internal/session"
 	"larik/internal/skills"
 	"larik/internal/subagent"
+	"larik/internal/telemetry"
 	"larik/internal/tools"
 	"larik/internal/trace"
 	"larik/internal/web"
@@ -81,6 +82,12 @@ type App struct {
 	SandboxNote string
 	SearchNote  string
 	BrowserNote string
+	// TelemetryNote says why trace export is off although it was asked for.
+	TelemetryNote string
+
+	// Telemetry exports traces to an OpenTelemetry collector; nil unless
+	// configured (see config.Telemetry).
+	Telemetry *telemetry.Exporter
 
 	tools     []tools.Tool
 	closeOnce sync.Once
@@ -110,6 +117,7 @@ func Setup(cwd, version string) (*App, error) {
 	if keep := cfg.DebugRetention(); keep > 0 {
 		_ = trace.Prune(filepath.Join(cfg.DataDir, "sessions"), keep)
 	}
+	a.Telemetry, a.TelemetryNote = startTelemetry(cfg, version)
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools := tools.Builtin()
 	sbCfg := cfg.Sandbox
@@ -244,6 +252,7 @@ func (a *App) Close() {
 		a.LSP.Close()
 		a.Browser.Close()
 		a.Sandbox.Close()
+		a.Telemetry.Close()
 	})
 }
 
@@ -410,6 +419,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Cwd:         cwd,
 		MaxTurns:    a.Cfg.MaxTurns,
 		Unattended:  o.Unattended,
+		Observer:    a.Telemetry.Observer(sess.ID),
 		Tools:       tools.NewRegistry(a.tools...),
 		Execution:   a.Cfg.ExecutionFor(resolved.Provider.Name(), resolved.Model),
 		Perms:       perms,
@@ -522,4 +532,27 @@ func secretPaths(cfg *config.Config) []string {
 		filepath.Join(cfg.ConfigDir, "chatgpt-auth.json"),
 		filepath.Join(cfg.ConfigDir, "mcp-auth"),
 	}
+}
+
+// startTelemetry starts the trace exporter when an endpoint is configured,
+// in a personal config file or in LARIK_OTLP_ENDPOINT. Credentials come
+// from LARIK_OTLP_HEADERS only, so they never sit in a settings file. It returns a note
+// instead of an error: a broken collector setting must not stop the agent.
+func startTelemetry(cfg *config.Config, version string) (*telemetry.Exporter, string) {
+	endpoint := cfg.Telemetry.OTLPEndpoint
+	if v := os.Getenv("LARIK_OTLP_ENDPOINT"); v != "" {
+		endpoint = v
+	}
+	if endpoint == "" {
+		return nil, ""
+	}
+	x, err := telemetry.New(telemetry.Config{
+		Endpoint: endpoint, Headers: telemetry.ParseHeaders(os.Getenv("LARIK_OTLP_HEADERS")), Version: version,
+		LogPath: filepath.Join(cfg.DataDir, "logs", "telemetry.log"),
+	})
+	if err != nil {
+		return nil, "trace export is off: " + err.Error()
+	}
+	_ = os.MkdirAll(filepath.Join(cfg.DataDir, "logs"), 0o700)
+	return x, ""
 }

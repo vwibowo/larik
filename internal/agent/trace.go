@@ -28,6 +28,9 @@ func (a *Agent) Trace() *trace.Tracer { return a.tracer() }
 // the subagent's tracer, so they are skipped here.
 func (a *Agent) traceEvents(emit func(Event)) func(Event) {
 	return func(e Event) {
+		if e.Agent == "" {
+			a.observe(e)
+		}
 		if t := a.tracer(); t != nil && e.Agent == "" {
 			switch e.Kind {
 			case EvToolStart:

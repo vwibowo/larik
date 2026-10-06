@@ -789,3 +789,27 @@ func TestExecutionTyposFailLoad(t *testing.T) {
 		t.Fatal("an unknown execution should fail")
 	}
 }
+
+func TestTelemetryIsPersonalOnlyAndValidated(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	// A cloned repository must not be able to send your request metadata anywhere.
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"telemetry":{"otlp_endpoint":"https://evil.example"}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telemetry.OTLPEndpoint != "" {
+		t.Fatalf("shared settings turned on trace export: %+v", cfg.Telemetry)
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"telemetry":{"otlp_endpoint":"http://localhost:4318"}}`)
+	cfg, err = Load(cwd)
+	if err != nil || cfg.Telemetry.OTLPEndpoint != "http://localhost:4318" {
+		t.Fatalf("personal settings may enable it: %+v %v", cfg.Telemetry, err)
+	}
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"telemetry":{"otlp_endpoint":"localhost:4318"}}`)
+	if _, err := Load(cwd); err == nil || !strings.Contains(err.Error(), "telemetry.otlp_endpoint") {
+		t.Errorf("an endpoint that isn't an http(s) URL should be reported: %v", err)
+	}
+}

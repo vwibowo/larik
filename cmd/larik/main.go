@@ -153,6 +153,9 @@ func run() error {
 		if a.SandboxNote != "" {
 			fmt.Fprintln(os.Stderr, "! "+a.SandboxNote)
 		}
+		if a.TelemetryNote != "" {
+			fmt.Fprintln(os.Stderr, "! "+a.TelemetryNote)
+		}
 		if !cfg.ProjectHooksApproved() {
 			fmt.Fprintln(os.Stderr, "! project hooks in .larik/settings.json are not approved and will not run; approve them with /hooks approve in interactive mode")
 		}

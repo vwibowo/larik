@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"larik/internal/llm"
@@ -145,5 +146,73 @@ func TestAuthorizationDecisionsAreLogged(t *testing.T) {
 	}
 	if got["w2"] != "deny (rule)" {
 		t.Errorf("rule-denied write: %q", got["w2"])
+	}
+}
+
+// recorder collects what an Observer is told.
+type recorder struct {
+	mu   sync.Mutex
+	seen []observed
+}
+
+type observed struct {
+	from Origin
+	e    Event
+}
+
+func (r *recorder) Observe(from Origin, e Event) {
+	r.mu.Lock()
+	r.seen = append(r.seen, observed{from, e})
+	r.mu.Unlock()
+}
+
+func TestObserverSeesEventsButNotDeltas(t *testing.T) {
+	a, _, _ := setup(t, permission.ModeDefault,
+		assistant(toolUse("t1", "glob", `{"pattern":"*.none"}`)), assistant(llm.TextBlock("done")))
+	r := &recorder{}
+	a.opts.Observer = r
+	drain(a.Run(context.Background(), "go"), PermissionReply{Allow: true})
+
+	var kinds []EventKind
+	for _, o := range r.seen {
+		if o.from != (Origin{}) {
+			t.Errorf("the main agent has no label: %+v", o.from)
+		}
+		kinds = append(kinds, o.e.Kind)
+	}
+	want := map[EventKind]bool{EvToolStart: false, EvToolEnd: false, EvUsage: false, EvDone: false}
+	for _, k := range kinds {
+		if k == EvTextDelta || k == EvThinkingDelta || k == EvToolCallDelta {
+			t.Errorf("deltas are display-only and must not reach observers: %v", kinds)
+		}
+		if _, ok := want[k]; ok {
+			want[k] = true
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("observer never saw %s: %v", k, kinds)
+		}
+	}
+	if last := r.seen[len(r.seen)-1]; last.e.Kind != EvDone || last.e.StopReason != string(llm.StopEnd) {
+		t.Errorf("the turn ends with done and its stop reason: %+v", last)
+	}
+}
+
+func TestSubagentEventsCarryTheirOrigin(t *testing.T) {
+	parent, _, _ := setup(t, permission.ModeDefault)
+	r := &recorder{}
+	parent.opts.Observer = r
+	child := parent.Spawn(SpawnOptions{Type: "worker", Label: "worker: x", TraceParent: "task-7",
+		Provider: &fakeProvider{script: []llm.Message{assistant(llm.TextBlock("hi"))}}, Model: "m", Tools: tools.NewRegistry()})
+	for range child.Run(context.Background(), "go") {
+	}
+	if len(r.seen) == 0 {
+		t.Fatal("a subagent inherits its parent's observer")
+	}
+	for _, o := range r.seen {
+		if o.from != (Origin{Agent: "worker: x", Parent: "task-7"}) {
+			t.Errorf("origin = %+v", o.from)
+		}
 	}
 }

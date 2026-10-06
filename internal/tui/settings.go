@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -80,7 +81,9 @@ type settingSpec struct {
 	unit        string // what a number counts, e.g. "turns"
 	min, max    int    // a number's bounds, both inclusive
 	applies     applyKind
-	later       string // said after saving when it doesn't apply at once
+	// valid, for a text setting, rejects a value before it is saved.
+	valid func(v string) error
+	later string // said after saving when it doesn't apply at once
 	// get returns the current value: a choice value, "on"/"off", or text.
 	get func(m *model) string
 	// store turns a checked value into what the config file holds; nil
@@ -445,6 +448,21 @@ var settingSpecs = []settingSpec{
 		set:         func(m *model, v string) { m.opts.Config.Browser.ChromePath = v },
 	},
 	{
+		key: "otlp_endpoint", path: "telemetry.otlp_endpoint", title: "OpenTelemetry endpoint", section: "tools", kind: kindText,
+		placeholder: "an OTLP/HTTP collector such as http://localhost:4318; empty turns export off",
+		applies:     applyReload,
+		later:       "only metadata is sent (model, tokens, cost, timings, tool names), never prompts or output; LARIK_OTLP_HEADERS adds request headers",
+		valid: func(v string) error {
+			if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("otlp_endpoint must be an http(s) URL, such as http://localhost:4318")
+			}
+			return nil
+		},
+		get:   func(m *model) string { return m.opts.Config.Telemetry.OTLPEndpoint },
+		store: orEmpty(""),
+		set:   func(m *model, v string) { m.opts.Config.Telemetry.OTLPEndpoint = v },
+	},
+	{
 		key: "audio_enabled", path: "audio.enabled", title: "Audio", section: "audio", kind: kindToggle,
 		applies: applyReload,
 		later:   "recording and speech need stt and tts endpoints as well",
@@ -778,6 +796,11 @@ func (s settingSpec) check(v string) (string, error) {
 		return strconv.Itoa(n), nil
 	case kindAction:
 		return "", fmt.Errorf("use %s to change the %s", s.cmd, s.key)
+	}
+	if s.valid != nil && v != "" {
+		if err := s.valid(v); err != nil {
+			return "", err
+		}
 	}
 	return v, nil
 }

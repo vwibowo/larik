@@ -91,6 +91,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		LSP:           a.opts.LSP,
 		Sandbox:       a.opts.Sandbox,
 		Subagent:      o.Type,
+		Observer:      a.opts.Observer,
 		Trace:         tr.Child(label, o.TraceParent),
 	}
 	if o.Cwd != "" && o.Cwd != a.opts.Cwd {
@@ -103,6 +104,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	}
 	child := New(opts)
 	child.parent = a
+	child.origin = Origin{Agent: label, Parent: o.TraceParent}
 	child.owner = llm.NewCallID(label + "-")
 	child.tokenSaver = a.tokenSaver
 	child.env.TokenSaver = a.tokenSaver

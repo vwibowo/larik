@@ -601,6 +601,20 @@ Review a trace with `/trace` in the TUI, or `larik trace` from a shell, which op
 
 Traces are stored next to the session, in `<session>.trace/` under the data directory (owner-only), and deleted after 14 days (`debug_retention_days`; negative keeps them). Only new messages are written with each request, so a trace grows with the conversation rather than with its square; the raw HTTP bodies, though, hold each full request. API keys and other credential headers are redacted; prompts, file contents and tool output are not, so treat a trace like the session itself.
 
+## OpenTelemetry export
+
+Larik can send each session's model requests, tool calls and subagents to an OpenTelemetry collector, so they show up beside the rest of your services in Grafana, Honeycomb, Jaeger or whatever you run. It is off until you give it an endpoint, in personal settings:
+
+```json
+{ "telemetry": { "otlp_endpoint": "http://localhost:4318" } }
+```
+
+(or **OpenTelemetry endpoint** in `/config`), or, handy in CI and for `larik -p`, in the environment: `LARIK_OTLP_ENDPOINT=http://localhost:4318`, which wins over the file. If the collector needs a token, put it in the environment too, `LARIK_OTLP_HEADERS="Authorization=Bearer …,k2=v2"`, so it never sits in a settings file, as with provider keys. Use an OTLP/HTTP endpoint: a base URL, or the full `/v1/traces` URL.
+
+**Metadata only.** Each prompt is one trace: a `larik.turn` span holding a `chat <model>` span per request (input, output and cache tokens, cost, time to first token, context size), an `execute_tool <name>` span per tool call, and a `larik.subagent` span, nested under its `task` call, for each subagent, with its own requests and tools. Spans carry `larik.session.id`, stop reasons and error flags, and follow the `gen_ai.*` naming where it exists. Prompts, replies, tool input and output, file contents, paths and error messages are never exported; that is what [debug traces](#debug-mode-and-traces) are for, and they stay on your disk. Only personal settings can turn this on, because the collector learns about every request.
+
+Exporting is best-effort and never slows or stops an agent: spans are batched in the background, a failed delivery is tried twice and then dropped, and the failures are logged to `~/.local/share/larik/logs/telemetry.log`. Larik sends what is queued when it exits. Change the endpoint, and start a new session, to apply it. There is no OpenTelemetry SDK in the binary; Larik writes OTLP/JSON itself.
+
 ## Configuration
 
 Settings are read in this order. Later **personal** files override model, provider, permission mode, and allow-rule settings; shared project files can only tighten security:
@@ -653,6 +667,7 @@ Every editor reports a save the same way, because there are only two outcomes: `
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
 - `debug` and `debug_retention_days`: see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
+- `telemetry`: see [OpenTelemetry export](#opentelemetry-export). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).
 - `status_line`, `sidebar`, and `keybindings`: native editors in `/config`; see [Status line](#status-line), [Custom sidebar](#custom-sidebar), and [Rebinding keys](#rebinding-keys).
 - `mouse`: vertical wheel scrolling in the TUI (default on); the conversation does not scroll horizontally. Off leaves the mouse to the terminal, so text can be selected without a modifier.

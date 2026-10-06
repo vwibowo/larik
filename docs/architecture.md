@@ -13,7 +13,8 @@ flowchart TD
     headless["headless"] --> agent
     audio["audio"] --> config-independent local HTTP + OS audio commands
     server["server"] --> app & agent
-    app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks & trace
+    app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks & trace & telemetry
+    telemetry["telemetry"] --> agent
     subagent["subagent"] --> agent & worktree
     agent["agent"] --> llm & tools & permission & hooks & session & checkpoint & skills & lsp & trace
     providers["providers"] --> anthropic & openai & gemini & ollama & openaicompat & chatgpt
@@ -71,7 +72,9 @@ output cap is reached without holding the whole path list. The TUI, headless,
 and server front ends retain their existing event, permission and cancellation
 contracts.
 
-Two leaf packages sit beside the loop rather than in it:
+Three packages sit beside the loop rather than in it:
+
+- `telemetry` turns the events an agent emits into OpenTelemetry spans and posts them to a collector as OTLP/JSON. The agent knows only the small `agent.Observer` interface (`Options.Observer`); `app` creates the exporter from personal config or `LARIK_OTLP_ENDPOINT` and hands each session's observer to its agents, subagents included, which tell it their `Origin` so it can nest their spans under the `task` call. It reads event metadata only (names, counts, timings, flags), never text or tool input and output, and drops spans rather than block an agent. See [OpenTelemetry export](../README.md#opentelemetry-export).
 
 - `trace` records debug-mode events (requests as sent, raw HTTP, responses, tool calls, permission answers, hooks) to `<session>.trace/events.jsonl`. The agent writes to it only when a tracer is set, and `trace/viewer` serves `larik trace`. See [debug mode](../README.md#debug-mode-and-traces).
 - `clipboard` reads images from and writes text to the system clipboard, for `ctrl+v` image paste and `/copy`. Only the TUI uses it.

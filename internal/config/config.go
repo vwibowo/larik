@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,6 +76,9 @@ type Config struct {
 	// for `larik trace`. Honored only from personal files: traces hold
 	// prompts and file contents.
 	Debug *bool `json:"debug,omitempty"`
+	// Telemetry exports traces to an OpenTelemetry collector. Honored only
+	// from personal files: the collector learns about every request.
+	Telemetry Telemetry `json:"telemetry,omitempty"`
 	// DebugRetentionDays is how long traces are kept: 0 means the
 	// default (14), a negative value keeps them forever.
 	DebugRetentionDays int `json:"debug_retention_days,omitempty"`
@@ -261,6 +265,19 @@ func delegationRank(p DelegationPolicy) int {
 	default:
 		return 0
 	}
+}
+
+// Telemetry is the opt-in OpenTelemetry export. Spans carry model names,
+// token counts, cost, timings and tool names, never prompts, tool input or
+// output, or file contents.
+type Telemetry struct {
+	// OTLPEndpoint is the collector's OTLP/HTTP address, such as
+	// http://localhost:4318. Empty means no export. LARIK_OTLP_ENDPOINT
+	// overrides it.
+	//
+	// Credentials for the collector are not stored here, like provider
+	// keys: LARIK_OTLP_HEADERS ("k=v,k2=v2") supplies request headers.
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`
 }
 
 // Budget caps what a session may spend, subagents included.
@@ -498,6 +515,12 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.Debug != nil {
 		c.Debug = o.Debug
+	}
+	if trusted && o.Telemetry.OTLPEndpoint != "" {
+		if u, err := url.Parse(strings.TrimSpace(o.Telemetry.OTLPEndpoint)); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%s: telemetry.otlp_endpoint must be an http(s) URL, such as http://localhost:4318", path)
+		}
+		c.Telemetry.OTLPEndpoint = o.Telemetry.OTLPEndpoint
 	}
 	if trusted && o.DebugRetentionDays != 0 {
 		c.DebugRetentionDays = o.DebugRetentionDays

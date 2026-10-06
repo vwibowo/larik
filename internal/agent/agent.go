@@ -89,6 +89,9 @@ type Options struct {
 	// switches off session-level hooks and uses SubagentStop.
 	Subagent string
 
+	// Observer, if set, is told every event this agent emits (see Observer).
+	Observer Observer
+
 	// Unattended marks a run nobody is watching (print mode, the server),
 	// where a root agent that repeats itself is stopped rather than left
 	// to run until MaxTurns or the budget ends it.
@@ -177,6 +180,7 @@ type Agent struct {
 	bg *background // lazily created; see background.go
 
 	parent *Agent // set for subagents; spend counts against its budget
+	origin Origin // what an Observer is told about this agent
 	// owner identifies a subagent to tools that keep per-agent state (the
 	// browser's tabs); "" for the main agent.
 	owner string
@@ -513,6 +517,7 @@ func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit fu
 	emit = a.traceEvents(a.reportingSaveErrors(emit))
 	stop := a.runTurn(ctx, prompt, system, emit)
 	a.tracer().TurnEnd(stop)
+	a.observe(Event{Kind: EvDone, StopReason: stop})
 	return stop
 }
 
