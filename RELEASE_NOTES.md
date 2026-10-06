@@ -1,19 +1,18 @@
-# Larik v0.10.0
+# Larik v0.11.0
 
 ### Added
 
-- **Flexible model routing.** Choose `manual`, `balanced`, or `aggressive` delegation; route routine subagent work to cheaper models, configure fallbacks and a session budget, and see delegated usage and estimated savings in `/cost`.
-- **Discover more models.** Catwalk catalog integration adds provider and model metadata to the connection flow; review an endpoint and supply credentials before connecting. Claude Code can list account-available models and supported effort levels when its CLI provides them.
-- **Control browser tools in the TUI.** `/browser on`, `/browser off`, and `/browser` show or change browser-tool availability. `/reload` rebuilds app services without discarding the saved transcript; tool-list changes start in a fresh model context.
+- **Configure Larik without editing JSON.** `/config` now searches every setting and opens native editors for display commands, keybindings, permission rules, sandbox access, provider endpoints, model overrides, LSP servers, lifecycle hooks and MCP servers. Editors validate entries, distinguish personal from shared settings, preview or test integrations where appropriate, and apply the same safety rule as config loading: shared project files may tighten access but never widen it.
+- **Compaction telemetry and a retention benchmark.** Successful compactions report provider-grounded prompt size, estimated summary size and context saved in the TUI, headless output and server API. Session totals survive resume, and `larik bench --tasks compaction-retention` mechanically checks whether important facts remain usable after a forced compaction.
 
 ### Changed
 
-- **More useful recording feedback.** The composer gives way to an animated, decorative equalizer and stop-key hint while recording, then shows transcription progress before restoring the preserved draft. The bars are not a microphone-level meter.
-- **Smoother TUI navigation.** The conversation ignores horizontal wheel scrolling, the context-usage indicator stays within 100%, and configuration changes that rebuild the prompt or services ask before clearing the active model context.
-- **Less lookup overhead.** File search and session lookup avoid redundant work.
+- **Conversation layout follows the space it actually has.** Finished Markdown is re-rendered when the information sidebar changes the conversation width, prompts keep a consistent gutter and spacing, and Markdown tables now wrap inside a complete border instead of leaving open vertical rails.
+- **Credential removal is deliberate.** Leaving a masked credential field empty preserves the existing secret; choosing the explicit clear action removes it, so editing another endpoint or MCP field cannot erase credentials accidentally.
+- **Compaction anticipates the next request.** Larik estimates an upcoming prompt or tool result before sending it, caps summaries to the context they are meant to free, and keeps displayed token counts grounded in provider usage.
 
 ### Fixed
 
-- Chrome stays open after its initial browser startup check rather than closing when the probe context ends.
-- The compact tool summary no longer prints each tool count twice.
-- Server operation lifecycle, session usage reconstruction, and OpenAI-compatible provider error handling are more reliable.
+- **Malformed tool history no longer bricks a session.** Before any provider serializes history, Larik repairs a missing `tool_result` with an ordered synthetic error result. A rejected or interrupted call can therefore degrade visibly instead of causing every later request to fail with a structural 400.
+- **Compaction recovery remains armed after failure.** Failed threshold compaction, tiny context windows, malformed summary tags and subagent attribution are handled without losing the turn or inflating the parent session's totals.
+- **Configuration changes report and apply consistently.** Native editors use the same save/reload feedback, narrow terminals expose editor-backed settings through the command palette, and credential changes take effect without an unrelated model switch.
