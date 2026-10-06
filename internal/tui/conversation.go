@@ -10,35 +10,86 @@ import (
 // the oldest output is dropped past it. The session file keeps everything.
 const maxConversationBytes = 2 << 20
 
-// appendOutput adds printed output to the conversation. Output is wrapped
-// once here, so rendering a frame only touches the visible lines.
+type conversationRenderer func(*model, int) string
+
+type conversationOutput struct {
+	text       string
+	sourceSize int
+	size       int
+	render     conversationRenderer
+}
+
+// appendOutput adds already-rendered output to the conversation. Output is
+// wrapped once here, so rendering a frame only touches the visible lines.
 func (m *model) appendOutput(s string) {
-	m.outputs = append(m.outputs, s)
-	m.outputBytes += len(s)
+	m.appendConversationOutput(conversationOutput{text: s, sourceSize: len(s), size: len(s)})
+}
+
+// appendRenderedOutput retains enough source to lay structured output such as
+// markdown out again when the conversation column changes width.
+func (m *model) appendRenderedOutput(text string, renderedWidth, size int, render conversationRenderer) {
+	if renderedWidth != m.currentConversationWidth() {
+		text = render(m, m.currentConversationWidth())
+	}
+	m.appendConversationOutput(conversationOutput{text: text, sourceSize: size, render: render})
+}
+
+func (m *model) appendConversationOutput(out conversationOutput) {
+	if width := m.currentConversationWidth(); m.convWidth != width {
+		m.rewrapConversationWidth(width)
+	}
+	out.measure()
+	m.outputs = append(m.outputs, out)
+	m.outputBytes += out.size
 	if m.outputBytes > maxConversationBytes {
 		drop := 0
 		for m.outputBytes > maxConversationBytes*3/4 && drop < len(m.outputs)-1 {
-			m.outputBytes -= len(m.outputs[drop])
+			m.outputBytes -= m.outputs[drop].size
 			drop++
 		}
-		m.outputs = append([]string(nil), m.outputs[drop:]...)
+		m.outputs = append([]conversationOutput(nil), m.outputs[drop:]...)
 		m.rewrapConversation()
 		return
 	}
-	m.convLines = append(m.convLines, wrapOutput(s, m.convWidth)...)
+	m.convLines = append(m.convLines, wrapOutput(out.text, m.convWidth)...)
 	m.setConversation()
 }
 
-// rewrapConversation re-wraps all output for the current width.
+func (o *conversationOutput) renderAt(m *model, width int) string {
+	if o.render != nil {
+		o.text = o.render(m, width)
+	}
+	o.measure()
+	return o.text
+}
+
+func (o *conversationOutput) measure() {
+	o.size = max(o.sourceSize, len(o.text))
+}
+
+// rewrapConversation re-wraps all output for the current layout.
 func (m *model) rewrapConversation() {
-	m.rewrapConversationWidth(m.width)
+	m.rewrapConversationWidth(m.currentConversationWidth())
 }
 
 func (m *model) rewrapConversationWidth(width int) {
 	m.convWidth = width
+	m.outputBytes = 0
+	for i := range m.outputs {
+		m.outputs[i].renderAt(m, width)
+		m.outputBytes += m.outputs[i].size
+	}
+	if m.outputBytes > maxConversationBytes {
+		drop := 0
+		for m.outputBytes > maxConversationBytes*3/4 && drop < len(m.outputs)-1 {
+			m.outputBytes -= m.outputs[drop].size
+			drop++
+		}
+		m.outputs = append([]conversationOutput(nil), m.outputs[drop:]...)
+	}
 	m.convLines = m.convLines[:0]
-	for _, s := range m.outputs {
-		m.convLines = append(m.convLines, wrapOutput(s, m.convWidth)...)
+	for i := range m.outputs {
+		m.convLines = append(m.convLines, wrapOutput(m.outputs[i].text, width)...)
 	}
 	m.setConversation()
 }

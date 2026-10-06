@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -24,6 +25,17 @@ import (
 	"larik/internal/subagent"
 	"larik/internal/tools"
 )
+
+func (m *model) sessionSidebarWidth() int {
+	if !m.showInfo || m.width < 100 || m.showKeys {
+		return 0
+	}
+	return min(max(m.width/3, 30), 44)
+}
+
+func (m *model) currentConversationWidth() int {
+	return max(m.width-m.sessionSidebarWidth(), 1)
+}
 
 func (m *model) View() tea.View {
 	height := m.height
@@ -39,12 +51,9 @@ func (m *model) View() tea.View {
 	defer func() { m.frameBottomRows = 0 }()
 	room := max(height-m.frameBottomRows, 0)
 
-	showSidebar := m.showInfo && m.width >= 100 && !m.showKeys
-	sidebarWidth := 0
-	if showSidebar {
-		sidebarWidth = min(max(m.width/3, 30), 44)
-	}
-	conversationWidth := max(m.width-sidebarWidth, 1)
+	sidebarWidth := m.sessionSidebarWidth()
+	showSidebar := sidebarWidth > 0
+	conversationWidth := m.currentConversationWidth()
 	if m.convWidth != conversationWidth {
 		m.rewrapConversationWidth(conversationWidth)
 	}
@@ -1354,10 +1363,10 @@ func (m *model) costText() string {
 // leave rows the gutter doesn't reach. Wrapping happens here because the
 // gutter has to survive it; appendOutput leaves wrapped lines be.
 func (m *model) renderUserMessage(text string) string {
-	width := m.convWidth
-	if width <= 0 {
-		width = m.width
-	}
+	return m.renderUserMessageWidth(text, m.currentConversationWidth())
+}
+
+func (m *model) renderUserMessageWidth(text string, width int) string {
 	gutter := m.st.accent.Render("▌ ")
 	// The gutter takes two columns, so the text wraps two columns narrower
 	// and every rendered line still fits the conversation.
@@ -1374,6 +1383,10 @@ func (m *model) renderUserMessage(text string) string {
 // thought is how long the model thought, if known. Thinking is collapsed
 // to one line unless ctrl+o turned it on.
 func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
+	return m.renderAssistantWidth(msg, thought, m.currentConversationWidth())
+}
+
+func (m *model) renderAssistantWidth(msg llm.Message, thought time.Duration, width int) string {
 	var out []string
 	for _, b := range msg.Blocks {
 		switch b.Type {
@@ -1385,7 +1398,7 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 			switch {
 			case t == "":
 			case m.showThinking:
-				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, m.width-4), 20)))
+				out = append(out, m.st.thinking.Render("✻ "+truncateLines(wrap(t, width-4), 20)))
 			case thought >= time.Second:
 				out = append(out, m.st.thinking.Render("✻ Thought for "+elapsed(thought))+m.thinkingHint())
 			default:
@@ -1393,7 +1406,7 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 			}
 		case llm.BlockText:
 			if t := strings.TrimSpace(b.Text); t != "" {
-				out = append(out, m.renderMarkdown(t))
+				out = append(out, m.renderMarkdownWidth(t, width))
 			}
 		}
 	}
@@ -1404,13 +1417,18 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 // prose compact while giving headings and code blocks a blank line of
 // breathing room between surrounding content.
 func (m *model) renderMarkdown(s string) string {
-	if m.md == nil {
+	return m.renderMarkdownWidth(s, m.currentConversationWidth())
+}
+
+func (m *model) renderMarkdownWidth(s string, width int) string {
+	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(width-4, 20)))
+	if err != nil {
 		return s
 	}
 	var b strings.Builder
 	var previous int
 	for i, seg := range splitMarkdown(s) {
-		r, err := m.md.Render(seg.text)
+		r, err := renderer.Render(seg.text)
 		if err != nil {
 			return s
 		}
@@ -1709,12 +1727,16 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 
 // renderPlan shows a plan put to the user for approval.
 func (m *model) renderPlan(input json.RawMessage) string {
+	return m.renderPlanWidth(input, m.currentConversationWidth())
+}
+
+func (m *model) renderPlanWidth(input json.RawMessage, width int) string {
 	plan := agent.PlanOf(input)
 	if plan == "" {
 		plan = "(no plan given)"
 	}
 	head := m.st.accent.Render("◆ Plan")
-	return "\n" + head + "\n" + m.renderMarkdown(plan)
+	return "\n" + head + "\n" + m.renderMarkdownWidth(plan, width)
 }
 
 func firstLine(s string) string {
@@ -1825,15 +1847,45 @@ func shortPath(p string) string {
 }
 
 func (m *model) printHistory(label string) tea.Cmd {
+	history := make([]llm.Message, 0, len(m.opts.History))
+	size := len(label)
+	for _, source := range m.opts.History {
+		msg := llm.Message{Role: source.Role}
+		switch source.Role {
+		case llm.RoleUser:
+			text := source.Text()
+			msg.Blocks = []llm.Block{llm.TextBlock(text)}
+			size += len(text)
+		case llm.RoleAssistant:
+			for _, block := range source.Blocks {
+				switch block.Type {
+				case llm.BlockText, llm.BlockThinking:
+					msg.Blocks = append(msg.Blocks, llm.Block{Type: block.Type, Text: block.Text, DurationMS: block.DurationMS})
+					size += len(block.Text)
+				case llm.BlockToolUse:
+					input := append(json.RawMessage(nil), block.Input...)
+					msg.Blocks = append(msg.Blocks, llm.Block{Type: block.Type, Name: block.Name, Input: input})
+					size += len(block.Name) + len(input)
+				}
+			}
+		}
+		history = append(history, msg)
+	}
+	return m.printlnRendered(size, func(m *model, width int) string {
+		return m.renderHistory(history, label, width)
+	})
+}
+
+func (m *model) renderHistory(history []llm.Message, label string, width int) string {
 	var b []string
-	for _, msg := range m.opts.History {
+	for _, msg := range history {
 		switch msg.Role {
 		case llm.RoleUser:
 			if t := strings.TrimSpace(msg.Text()); t != "" {
-				b = append(b, "\n"+m.renderUserMessage(t))
+				b = append(b, "\n"+m.renderUserMessageWidth(t, width))
 			}
 		case llm.RoleAssistant:
-			if out := m.renderAssistant(msg, 0); out != "" {
+			if out := m.renderAssistantWidth(msg, 0, width); out != "" {
 				b = append(b, out)
 			}
 			for _, u := range msg.ToolUses() {
@@ -1842,7 +1894,7 @@ func (m *model) printHistory(label string) tea.Cmd {
 		}
 	}
 	b = append(b, m.st.dim.Render("── "+label+" ──"))
-	return m.println(strings.Join(b, "\n"))
+	return strings.Join(b, "\n")
 }
 
 func str(v any) string {

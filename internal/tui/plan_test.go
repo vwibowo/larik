@@ -68,8 +68,11 @@ func runSequence(cmd tea.Cmd) string {
 		return ""
 	}
 	msg := cmd()
-	if s, ok := msg.(outputMsg); ok {
-		return string(s)
+	switch msg := msg.(type) {
+	case outputMsg:
+		return string(msg)
+	case renderedOutputMsg:
+		return msg.text
 	}
 	// tea.Batch and tea.Sequence messages are slices of commands (the
 	// latter of an unexported type).

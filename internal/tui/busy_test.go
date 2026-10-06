@@ -22,10 +22,14 @@ func printed(cmd tea.Cmd) string {
 	if cmd == nil {
 		return ""
 	}
-	if s, ok := cmd().(outputMsg); ok {
-		return string(s)
+	switch msg := cmd().(type) {
+	case outputMsg:
+		return string(msg)
+	case renderedOutputMsg:
+		return msg.text
+	default:
+		return ""
 	}
-	return ""
 }
 
 func TestPromptsWaitForCompaction(t *testing.T) {

@@ -15,7 +15,6 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 
 	"larik/internal/agent"
@@ -102,7 +101,6 @@ type model struct {
 	bgStop    chan struct{} // closed when switching away from agent
 	ownedApps []*app.App    // apps created by in-TUI reload; initial app belongs to caller
 	st        styles
-	md        *glamour.TermRenderer
 	isDark    bool
 	// termDark is what the terminal reported; the theme setting may
 	// override it.
@@ -125,7 +123,7 @@ type model struct {
 	panelKind string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
-	outputs     []string
+	outputs     []conversationOutput
 	outputBytes int
 	convLines   []string
 	convWidth   int
@@ -241,8 +239,14 @@ type (
 		agent.Event
 		from *agent.Agent
 	}
-	runEndedMsg  struct{}
-	outputMsg    string
+	runEndedMsg       struct{}
+	outputMsg         string
+	renderedOutputMsg struct {
+		text   string
+		width  int
+		size   int
+		render conversationRenderer
+	}
 	compactedMsg struct {
 		summary    string
 		compaction agent.CompactionInfo
@@ -366,16 +370,16 @@ func transparentInput(isDark bool) textarea.Styles {
 
 func (m *model) setWidth(w int) {
 	m.width = w
-	m.view.SetWidth(max(w, 1))
+	conversationWidth := m.currentConversationWidth()
+	m.view.SetWidth(conversationWidth)
 	m.panelView.SetWidth(max(w, 1))
-	if m.convWidth != w {
-		m.rewrapConversation()
+	if m.convWidth != conversationWidth {
+		m.rewrapConversationWidth(conversationWidth)
 	}
 	m.input.SetWidth(max(w-4, 4)) // the composer border and padding use four cells
 	if m.permFeedback != nil {
 		m.permFeedback.SetWidth(max(w-10, 10))
 	}
-	m.md, _ = glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(w-4, 20)))
 }
 
 func (m *model) Init() tea.Cmd {
@@ -424,6 +428,10 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case outputMsg:
 		m.appendOutput(string(msg))
+		return m, nil
+
+	case renderedOutputMsg:
+		m.appendRenderedOutput(msg.text, msg.width, msg.size, msg.render)
 		return m, nil
 
 	case mcpSignInURLMsg:
@@ -993,7 +1001,9 @@ func (m *model) submit(text string) tea.Cmd {
 	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
 	return tea.Sequence(
-		m.println("\n"+m.renderUserMessage(text)),
+		m.printlnRendered(len(text), func(m *model, width int) string {
+			return "\n" + m.renderUserMessageWidth(text, width)
+		}),
 		tea.Batch(m.waitEvent(), m.spin.Tick),
 	)
 }
@@ -1066,12 +1076,19 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		m.calling = e.ToolName
 	case agent.EvAssistant:
 		m.doneThinking()
-		out := m.renderAssistant(*e.Message, m.thinkDur)
+		msg := llm.Message{Role: e.Message.Role}
+		sourceSize := 0
 		for _, b := range e.Message.Blocks {
+			if b.Type == llm.BlockText || b.Type == llm.BlockThinking {
+				msg.Blocks = append(msg.Blocks, llm.Block{Type: b.Type, Text: b.Text, DurationMS: b.DurationMS})
+				sourceSize += len(b.Text)
+			}
 			if b.Type == llm.BlockThinking && strings.TrimSpace(b.Text) != "" {
 				m.lastThinking = strings.TrimSpace(b.Text)
 			}
 		}
+		thought := m.thinkDur
+		out := m.renderAssistantWidth(msg, thought, m.currentConversationWidth())
 		if e.Agent == "" {
 			if t := strings.TrimSpace(e.Message.Text()); t != "" {
 				m.lastReply = t
@@ -1084,7 +1101,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		if out == "" {
 			return nil
 		}
-		shown := m.println(out)
+		shown := m.printlnRendered(sourceSize, func(m *model, width int) string {
+			return m.renderAssistantWidth(msg, thought, width)
+		})
 		if e.Agent == "" && m.opts.Config != nil && m.opts.Config.Audio.AutoSpeak {
 			return tea.Batch(shown, m.speak(m.lastReply))
 		}
@@ -1128,7 +1147,10 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		// stays for reference; the prompt only asks about it.
 		var plan tea.Cmd
 		if e.ToolName == permission.ExitPlanTool {
-			plan = m.println(m.renderPlan(e.Input))
+			input := append([]byte(nil), e.Input...)
+			plan = m.printlnRendered(len(input), func(m *model, width int) string {
+				return m.renderPlanWidth(input, width)
+			})
 		}
 		if m.perm != nil {
 			m.permQueue = append(m.permQueue, e)
@@ -1192,7 +1214,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		if e.StopReason == "interrupted" {
 			var cmds []tea.Cmd
 			if partial := strings.TrimSpace(m.stream.String()); partial != "" {
-				cmds = append(cmds, m.println(m.renderMarkdown(partial)))
+				cmds = append(cmds, m.printlnRendered(len(partial), func(m *model, width int) string {
+					return m.renderMarkdownWidth(partial, width)
+				}))
 			}
 			cmds = append(cmds, m.println(m.st.warn.Render("⏹ Interrupted")))
 			m.stream.Reset()
@@ -1307,6 +1331,12 @@ func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 
 func (m *model) println(s string) tea.Cmd {
 	return func() tea.Msg { return outputMsg(s) }
+}
+
+func (m *model) printlnRendered(size int, render conversationRenderer) tea.Cmd {
+	width := m.currentConversationWidth()
+	text := render(m, width)
+	return func() tea.Msg { return renderedOutputMsg{text: text, width: width, size: size, render: render} }
 }
 
 // waitBackground reads the agent's background-task stream for its lifetime.

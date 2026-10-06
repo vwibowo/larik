@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"larik/internal/agent"
+	"larik/internal/llm"
 )
 
 func TestConversationWrapsOnceAndRewrapsOnResize(t *testing.T) {
@@ -48,6 +49,72 @@ func TestConversationIgnoresHorizontalMouseWheel(t *testing.T) {
 	m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if m.view.AtTop() {
 		t.Fatal("normal wheel should still scroll the conversation vertically")
+	}
+}
+
+func TestConversationWidthOnlyReservesVisibleSidebar(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.showInfo = true
+
+	if got, want := m.currentConversationWidth(), 80; got != want {
+		t.Fatalf("visible sidebar conversation width = %d, want %d", got, want)
+	}
+	m.showKeys = true
+	if got, want := m.currentConversationWidth(), 120; got != want {
+		t.Fatalf("sidebar hidden by shortcuts conversation width = %d, want %d", got, want)
+	}
+	m.showKeys = false
+	m.setWidth(99)
+	if got, want := m.currentConversationWidth(), 99; got != want {
+		t.Fatalf("narrow info panel conversation width = %d, want %d", got, want)
+	}
+	m.showInfo = false
+	m.setWidth(120)
+	if got, want := m.currentConversationWidth(), 120; got != want {
+		t.Fatalf("hidden sidebar conversation width = %d, want %d", got, want)
+	}
+}
+
+func TestMarkdownRerendersWhenSidebarChangesConversationWidth(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	m.height = 30
+	markdown := "| Component | Description |\n| --- | --- |\n| conversation | A deliberately long description that must be laid out for the available conversation column. |\n\n- A deliberately long list item that should retain markdown indentation when the sidebar opens."
+	msg := llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockText, Text: markdown}}}
+	cmd := m.handleEvent(agent.Event{Kind: agent.EvAssistant, Message: &msg})
+	m.Update(cmd())
+
+	wide := m.outputs[0].text
+	if want := m.renderAssistantWidth(msg, 0, 120); wide != want {
+		t.Fatal("assistant output was not rendered for the full conversation width")
+	}
+
+	m.showInfo = true
+	m.View()
+	if got, want := m.convWidth, 80; got != want {
+		t.Fatalf("conversation width with sidebar = %d, want %d", got, want)
+	}
+	narrow := m.outputs[0].text
+	if narrow == wide {
+		t.Fatal("markdown output was not rerendered when the sidebar opened")
+	}
+	if want := m.renderAssistantWidth(msg, 0, 80); narrow != want {
+		t.Fatal("sidebar output was wrapped after rendering instead of being rendered for its column")
+	}
+	for _, line := range m.convLines {
+		if got := lipgloss.Width(line); got > m.convWidth {
+			t.Fatalf("sidebar conversation line is %d columns, want at most %d: %q", got, m.convWidth, plain(line))
+		}
+	}
+
+	m.showInfo = false
+	m.View()
+	if got, want := m.convWidth, 120; got != want {
+		t.Fatalf("conversation width after hiding sidebar = %d, want %d", got, want)
+	}
+	if got := m.outputs[0].text; got != wide {
+		t.Fatal("hiding the sidebar did not restore full-width markdown layout")
 	}
 }
 
@@ -124,8 +191,35 @@ func TestConversationDropsOldestPastCap(t *testing.T) {
 	for range maxConversationBytes/len(chunk) + 1 {
 		m.Update(outputMsg(chunk))
 	}
-	if m.outputBytes > maxConversationBytes || m.outputs[0] == "oldest" {
+	if m.outputBytes > maxConversationBytes || m.outputs[0].text == "oldest" {
 		t.Fatalf("conversation should drop its oldest output past the cap: %d bytes", m.outputBytes)
+	}
+}
+
+func TestConversationCapAccountsForRerenderedOutput(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(120)
+	expanded := strings.Repeat("x", 1<<16)
+	render := func(_ *model, width int) string {
+		if width < 100 {
+			return expanded
+		}
+		return "short"
+	}
+	for range maxConversationBytes/len(expanded) + 2 {
+		m.appendRenderedOutput("short", 120, len("source"), render)
+	}
+	if m.outputBytes >= maxConversationBytes/8 {
+		t.Fatalf("wide rendered output unexpectedly large: %d bytes", m.outputBytes)
+	}
+
+	m.showInfo = true
+	m.View()
+	if m.outputBytes > maxConversationBytes {
+		t.Fatalf("rerendered output exceeded the conversation cap: %d bytes", m.outputBytes)
+	}
+	if len(m.outputs) >= maxConversationBytes/len(expanded)+2 {
+		t.Fatal("rerendering to a larger layout did not drop the oldest output")
 	}
 }
 
