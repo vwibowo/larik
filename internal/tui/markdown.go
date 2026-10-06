@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -86,4 +87,72 @@ func trimBlankLines(s string) string {
 		lines = lines[:len(lines)-1]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// frameMarkdownTables completes the open table drawn by glamour. Glamour keeps
+// only column separators and the header rule; adding the four outside edges
+// makes those separators read as one table instead of dangling vertical rails.
+func frameMarkdownTables(s string) string {
+	lines := strings.Split(s, "\n")
+	cursor := 0
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		indent, divider, ok := tableDivider(lines[i])
+		if !ok {
+			continue
+		}
+		width := lipgloss.Width(divider)
+		start := i
+		for start > cursor && tableContentLine(lines[start-1], indent) {
+			start--
+		}
+		end := i
+		for end+1 < len(lines) && tableContentLine(lines[end+1], indent) {
+			end++
+		}
+		if start == i || end == i { // not a complete rendered table
+			continue
+		}
+
+		out = append(out, lines[cursor:start]...)
+		pad := strings.Repeat(" ", indent)
+		out = append(out, pad+"┌"+strings.ReplaceAll(divider, "┼", "┬")+"┐")
+		for row := start; row <= end; row++ {
+			if row == i {
+				out = append(out, pad+"├"+divider+"┤")
+				continue
+			}
+			content := ansi.Cut(lines[row], indent, indent+width)
+			if n := width - lipgloss.Width(content); n > 0 {
+				content += strings.Repeat(" ", n)
+			}
+			out = append(out, pad+"│"+content+"│")
+		}
+		out = append(out, pad+"└"+strings.ReplaceAll(divider, "┼", "┴")+"┘")
+		cursor = end + 1
+		i = end
+	}
+	out = append(out, lines[cursor:]...)
+	return strings.Join(out, "\n")
+}
+
+// tableDivider recognizes glamour's header rule and returns its indentation and
+// visible rule. ANSI styling is ignored for detection.
+func tableDivider(line string) (int, string, bool) {
+	plain := strings.TrimRight(ansi.Strip(line), " ")
+	trimmed := strings.TrimLeft(plain, " ")
+	if !strings.Contains(trimmed, "┼") {
+		return 0, "", false
+	}
+	for _, r := range trimmed {
+		if r != '─' && r != '┼' {
+			return 0, "", false
+		}
+	}
+	return len(plain) - len(trimmed), trimmed, true
+}
+
+func tableContentLine(line string, indent int) bool {
+	plain := ansi.Strip(line)
+	return strings.Contains(plain, "│") && lipgloss.Width(plain) > indent
 }

@@ -1421,7 +1421,7 @@ func (m *model) renderMarkdown(s string) string {
 }
 
 func (m *model) renderMarkdownWidth(s string, width int) string {
-	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(width-4, 20)))
+	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(m.isDark)), glamour.WithWordWrap(max(width-6, 20)))
 	if err != nil {
 		return s
 	}
@@ -1439,7 +1439,7 @@ func (m *model) renderMarkdownWidth(s string, width int) string {
 				b.WriteString("\n")
 			}
 		}
-		b.WriteString(trimBlankLines(r))
+		b.WriteString(frameMarkdownTables(trimBlankLines(r)))
 		previous = seg.kind
 	}
 	return b.String()
