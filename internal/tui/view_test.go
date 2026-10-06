@@ -196,10 +196,14 @@ func TestContextPercentIsCappedEverywhere(t *testing.T) {
 		panes["sidebar"] += plain(strings.Join(rows, "\n"))
 	}
 	for name, got := range panes {
-		if strings.Contains(got, "118") {
+		bad, want := "118%", "100%"
+		if name == "status hook" {
+			bad, want = `"used_percentage":118`, `"used_percentage":100`
+		}
+		if strings.Contains(got, bad) {
 			t.Errorf("%s reports an uncapped context share: %q", name, got)
 		}
-		if !strings.Contains(got, "100") {
+		if !strings.Contains(got, want) {
 			t.Errorf("%s does not report the capped share: %q", name, got)
 		}
 	}
@@ -221,21 +225,21 @@ func TestUserMessageGutterOnEveryLine(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("expected a wrapped message, got %q", got)
 	}
-	for _, l := range lines {
-		if !strings.HasPrefix(l, "▌ ") {
-			t.Errorf("line without a gutter: %q in %q", l, got)
+	for i, l := range lines {
+		if i > 0 && i < len(lines)-1 && !strings.HasPrefix(l, "▌ ") {
+			t.Errorf("content line without a gutter: %q in %q", l, got)
 		}
 		if lipgloss.Width(l) > 40 {
 			t.Errorf("line overflows the conversation: %q", l)
 		}
 	}
-	// The block is set off by empty gutter rows, not by bare newlines the
-	// gutter doesn't reach.
-	if strings.TrimSpace(lines[0]) != "▌" || strings.TrimSpace(lines[len(lines)-1]) != "▌" {
-		t.Errorf("a prompt should open and close on an empty gutter row: %q", got)
+	// Bare blank rows separate the prompt from surrounding conversation
+	// without extending the accent gutter beyond the message itself.
+	if lines[0] != "" || lines[len(lines)-1] != "" {
+		t.Errorf("a prompt should open and close on a blank row: %q", got)
 	}
 	if strings.TrimSpace(lines[1]) == "▌" {
-		t.Errorf("only one empty gutter row belongs above the text: %q", got)
+		t.Errorf("only one blank row belongs above the text: %q", got)
 	}
 }
 
@@ -253,20 +257,20 @@ func TestUserMessageGutterHandlesLongWordsAndBlankEnds(t *testing.T) {
 	} {
 		got := plain(m.renderUserMessage(text))
 		lines := strings.Split(got, "\n")
-		for _, l := range lines {
-			if !strings.HasPrefix(l, "▌ ") {
-				t.Errorf("%s: line without a gutter: %q in %q", name, l, got)
+		for i, l := range lines {
+			if i > 0 && i < len(lines)-1 && !strings.HasPrefix(l, "▌ ") {
+				t.Errorf("%s: content line without a gutter: %q in %q", name, l, got)
 			}
 			if lipgloss.Width(l) > 40 {
 				t.Errorf("%s: line overflows the conversation: %q", name, l)
 			}
 		}
 		n := len(lines)
-		if strings.TrimSpace(lines[0]) != "▌" || strings.TrimSpace(lines[n-1]) != "▌" {
-			t.Errorf("%s: a prompt should open and close on an empty gutter row: %q", name, got)
+		if lines[0] != "" || lines[n-1] != "" {
+			t.Errorf("%s: a prompt should open and close on a blank row: %q", name, got)
 		}
-		if text != "" && strings.TrimSpace(lines[n-2]) == "▌" {
-			t.Errorf("%s: a prompt should end on exactly one empty gutter row: %q", name, got)
+		if text != "" && strings.TrimSpace(lines[n-2]) == "" {
+			t.Errorf("%s: a prompt should end on exactly one blank row: %q", name, got)
 		}
 	}
 }
