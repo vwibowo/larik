@@ -184,6 +184,8 @@ How a hook runs ([hooks.go:191](../internal/hooks/hooks.go:191)):
 
 **Prompt hooks** (`"type": "prompt"`, [prompt.go](../internal/hooks/prompt.go)) send the hook's `prompt`, with `$ARGUMENTS` replaced by the input JSON, to a model through the runner's `Evaluator`, which `app.hookEvaluator` supplies per session: the hook's `model`, else the `explore` role, else the session's model, with spend added to the agent's totals. The hooks package itself has no model code. The reply is parsed for `{"ok": …, "reason": …}` (prose or a code fence around it is tolerated, as is the older `decision: approve|block`), and `ok: false` becomes the same `Result` as exit code 2. Unreadable answers, timeouts (30 s default) and errors fail open with a message.
 
+A worked `Stop` hook, "run the tests before the turn may end", is in the README under [hooks](../README.md#hooks) with a script in [examples/require-tests.sh](examples/require-tests.sh); it relies on the exit-2 and five-continuation behavior above, and `internal/hooks/recipe_test.go` runs it against a scratch repository so the two don't drift apart.
+
 Inside the agent ([agent/hooks.go](../internal/agent/hooks.go)), hook output enters the conversation wrapped in `<hook-context source="…">` or `<hook-feedback source="…">` tags, so the model can tell it apart from the user.
 
 ## Language servers

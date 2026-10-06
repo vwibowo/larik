@@ -993,6 +993,22 @@ Hooks run at points in the agent lifecycle: shell commands, or prompts a model a
 - It runs on the hook's `model` (a provider/model or a routing role) if set, otherwise on your `explore` role, otherwise on the session's model. Its cost counts toward the session and its budget. The default timeout is 30s.
 - An answer that can't be read, a timeout or an error doesn't block; you see a message.
 
+**Recipe: don't stop until the tests pass.** A `Stop` hook is the way to make a turn end only on green tests. [docs/examples/require-tests.sh](docs/examples/require-tests.sh) is a ready one: copy it somewhere and point a hook at it, with a timeout long enough for your suite (the default is 60 seconds):
+
+```json
+{ "hooks": { "Stop": [ { "hooks": [
+  { "type": "command", "command": "~/bin/require-tests.sh", "timeout": 600 }
+] } ] } }
+```
+
+When the agent is about to finish, the script runs the project's tests, `go test ./...`, `npm test`, `cargo test` or `pytest -q` by whichever project file it finds (set `VERIFY_CMD` in the hook's command to use your own, e.g. `"command": "VERIFY_CMD='make check' ~/bin/require-tests.sh"`). If they fail it exits 2 with the last 40 lines of output, so the agent carries on with the failures in front of it; if they pass, the turn ends. It remembers a passing run for the exact state of the working tree (per session, in the temp directory), so a turn that changed nothing since the last green run, such as a question, doesn't pay for the suite again; outside a git repository it always runs. Things to know:
+
+- Larik lets a `Stop` hook send the agent back at most 5 times in a turn. If the tests still fail after that, the turn ends anyway with a notice, so watch for it in unattended runs (`larik -p`, `larik serve`). The exit status of `-p` does not reflect the tests.
+- `Stop` fires for the main agent only; `SubagentStop` is a separate event, so subagents are not held to it.
+- Like any hook it runs outside the sandbox, with your permissions, and costs wall-clock time on every turn that changed files. Keep to a fast subset of the tests if the full suite is slow.
+- A hook from the shared `.larik/settings.json` needs `/hooks approve`; put it in personal settings (or `/hooks-config`) to have it always on.
+- To have a model judge instead of a command, use a prompt hook (above). It can read the transcript, so it can tell whether tests ran at all, but it costs a request each time.
+
 **Trust:** hooks in the shared `.larik/settings.json` don't run until you run `/hooks approve`. The approval is pinned to the hook set's content. Hooks in personal settings always run. `/hooks` still shows status and approves shared project hooks; `/hooks-config` (also **Lifecycle hooks** in `/config`) edits only `~/.config/larik/config.json` personal hooks. Pick a supported event, add matchers (case-insensitive anchored regex; blank or `*` matches all), then add command or prompt hooks. Set the shell command or model prompt, optional prompt model (provider/model or routing role), and optional timeout in seconds (1–86400; blank uses the default). Use Enter to change a field, `s` to save, Esc to go back or discard. **Only add hooks you trust:** commands execute shell code and prompt hooks send hook input to a model. Saving asks before reloading services and starting a fresh model context when a context exists; if reload is unavailable, run `/reload` later. The editor never imports project hooks or changes their approval hash; unknown personal fields are preserved where possible.
 
 Instructions are loaded from these files:
