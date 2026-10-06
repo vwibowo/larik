@@ -445,6 +445,7 @@ func (w *routingWizard) budgetKey(msg tea.KeyPressMsg) tea.Cmd {
 			w.err = err.Error()
 			return nil
 		}
+		b.SessionTokens = w.r.Budget.SessionTokens // the wizard doesn't edit the token cap
 		w.r.Budget = b
 		w.fields[w.focus].Blur()
 		w.step = rtSave
@@ -537,6 +538,9 @@ func routingSummary(cfg *config.Config) string {
 	lines = append(lines, fmt.Sprintf("  policy   %s", policy))
 	if b := r.Budget; b.SessionUSD > 0 {
 		lines = append(lines, fmt.Sprintf("  budget   $%.2f per session, warn at %.0f%%", b.SessionUSD, b.WarnFraction()*100))
+	}
+	if b := r.Budget; b.SessionTokens > 0 {
+		lines = append(lines, fmt.Sprintf("  tokens   %d per session, warn at %.0f%%", b.SessionTokens, b.WarnFraction()*100))
 	}
 	return strings.Join(lines, "\n")
 }

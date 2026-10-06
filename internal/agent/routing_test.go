@@ -142,3 +142,52 @@ func TestCompactUsesCompactRole(t *testing.T) {
 		t.Errorf("compaction spend not recorded under its model: %+v", a.SpendByModel())
 	}
 }
+
+func TestTokenBudgetWarnsThenStopsIncludingSubagents(t *testing.T) {
+	script := []llm.Message{}
+	for range 10 {
+		script = append(script, assistant(toolUse("t", "glob", `{"pattern":"*"}`)))
+	}
+	a, _, _ := setup(t, permission.ModeDefault, script...) // each request is 110 tokens
+	a.opts.TokenBudget = func() (int64, float64) { return 250, 0.5 }
+
+	var notices, errs []string
+	var stop string
+	for _, e := range drain(a.Run(context.Background(), "loop"), PermissionReply{Allow: true}) {
+		switch e.Kind {
+		case EvNotice:
+			notices = append(notices, e.Text)
+		case EvError:
+			errs = append(errs, e.Text)
+		case EvDone:
+			stop = e.StopReason
+		}
+	}
+	if stop != "budget" || len(errs) != 1 || !strings.Contains(errs[0], "token budget of 250 reached (330 used)") {
+		t.Fatalf("stop %q, errors %q", stop, errs)
+	}
+	warned := 0
+	for _, n := range notices {
+		if strings.Contains(n, "of the 250 session token budget used") {
+			warned++
+		}
+	}
+	if warned != 1 {
+		t.Errorf("warnings = %d, want 1: %q", warned, notices)
+	}
+
+	// Tokens spent by other subagents count against the parent's cap.
+	parent, _, _ := setup(t, permission.ModeDefault)
+	parent.opts.TokenBudget = func() (int64, float64) { return 100, 0.8 }
+	parent.AddUsage("m", llm.Usage{Input: 150})
+	child := parent.Spawn(SpawnOptions{Type: "worker", Provider: &fakeProvider{script: []llm.Message{assistant(llm.TextBlock("hi"))}}, Model: "m", Tools: tools.NewRegistry()})
+	stop = ""
+	for e := range child.Run(context.Background(), "go") {
+		if e.Kind == EvDone {
+			stop = e.StopReason
+		}
+	}
+	if stop != "budget" {
+		t.Errorf("child stop = %q, want budget", stop)
+	}
+}

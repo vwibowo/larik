@@ -291,3 +291,46 @@ func TestSandboxedCommit(t *testing.T) {
 		t.Fatalf("commit inside the sandbox: %v %s", err, out)
 	}
 }
+
+func TestCredentialsAreHidden(t *testing.T) {
+	t.Setenv("LARIK_TEST_NAMED_SECRET", "named-secret-value")
+	t.Setenv("LARIK_TEST_UNKNOWN_API_KEY", "suffix-secret-value")
+	t.Setenv("LARIK_TEST_ALLOWED_API_KEY", "passthrough-value")
+	t.Setenv("LARIK_TEST_PLAIN", "plain-value")
+	secrets := t.TempDir()
+	authFile := filepath.Join(secrets, "chatgpt-auth.json")
+	authDir := filepath.Join(secrets, "mcp-auth")
+	os.MkdirAll(authDir, 0o755)
+	os.WriteFile(authFile, []byte("file-secret"), 0o600)
+	os.WriteFile(filepath.Join(authDir, "srv.json"), []byte("dir-secret"), 0o600)
+
+	sb, root, _ := newTest(t, Config{
+		SecretEnv:      []string{"LARIK_TEST_NAMED_SECRET"},
+		SecretPaths:    []string{authFile, authDir},
+		EnvPassthrough: []string{"LARIK_TEST_ALLOWED_API_KEY"},
+	})
+	out, err := run(t, sb, root, "env")
+	if err != nil {
+		t.Fatal(err, out)
+	}
+	for _, leaked := range []string{"named-secret-value", "suffix-secret-value"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("sandboxed env leaks %q", leaked)
+		}
+	}
+	for _, kept := range []string{"passthrough-value", "plain-value"} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("sandboxed env lost %q", kept)
+		}
+	}
+	for _, p := range []string{authFile, filepath.Join(authDir, "srv.json")} {
+		out, _ := run(t, sb, root, "cat "+p)
+		if strings.Contains(out, "-secret") {
+			t.Errorf("sandboxed command read %s: %q", p, out)
+		}
+	}
+	// Outside the sandbox the secrets are still there for Larik itself.
+	if b, _ := os.ReadFile(authFile); string(b) != "file-secret" {
+		t.Error("hiding the file must not change it")
+	}
+}

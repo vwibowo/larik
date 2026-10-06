@@ -130,6 +130,10 @@ Only the script's printed output and final value go back to the model, capped li
 
 The memory limit is why scripts run in their own process. goja can't bound its own memory, and it only checks for interrupts between instructions, so one built-in call (`Array(1e9).fill(0)`, `"x".repeat(1e10)`) can allocate gigabytes without returning to the script. In the child, `debug.SetMemoryLimit` makes the garbage collector keep garbage down, and a watchdog goroutine samples `/memory/classes/heap/objects:bytes` every 2 ms and exits with status 3 past the limit; a Go out-of-memory crash is reported the same way. Either way only the child dies, and output printed before then is kept. The watchdog also exits the child if its parent goes away or it is more than 5 seconds past its deadline, so no script is left running. Starting the child costs about 20 ms. Scripts can't call `run_code`, `tool_search`, `call_tool`, `todo_write`, `task*`, `exit_plan_mode`, `skill` or `memory`.
 
+## Argument validation
+
+A tool can implement `tools.InputValidator`. `prepare` calls it before `authorize`, so a malformed call comes back to the model as `INVALID_ARGUMENTS: …` without asking the user. MCP tools implement it by checking the arguments against the server's `inputSchema` (`github.com/google/jsonschema-go`, compiled once per tool). This matters most for deferred tools reached through `call_tool`, whose schema the API never enforces. A schema that can't be compiled (a remote `$ref`, an unreadable document) isn't enforced; the server stays the judge. Built-in tools check their own input in `Run`.
+
 ## Authorization
 
 `authorize` ([runtools.go:104](../internal/agent/runtools.go:104)) combines hooks, rules and the mode. The precedence is:
@@ -156,6 +160,8 @@ flowchart TD
     ask -->|"deny + feedback"| udeny(["deny: user feedback to model"])
     ask -->|"ctx cancelled"| intr(["interrupted"])
 ```
+
+Every outcome of `authorize` except a read-only call allowed by rules or mode is appended to the session file as a `decision` entry (tool call id, answer such as `allow (hook)`, `deny (rule)`, `allow (auto)` or `deny`, reason, the rule that would cover it, and the permission mode), so the transcript says who approved what without debug mode.
 
 ### permission.Decide
 

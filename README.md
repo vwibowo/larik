@@ -53,6 +53,7 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 ./larik --model openrouter/anthropic/claude-sonnet-5
 ./larik -p "summarize this repo"                  # headless, text output
 ./larik -p --output json --mode yolo "run tests"  # one JSON event per line
+./larik -p --timeout 10m "refactor the parser"    # stop an unattended run after 10 minutes
 ./larik -c                                        # continue the last session here
 ./larik --resume 20260926-2358                    # resume by id prefix
 ./larik -c --fork                                 # branch the last session instead of appending
@@ -151,11 +152,11 @@ Then you can adjust each role, add fallbacks and set a budget. The result is sav
   In the wizard, `w` toggles the worktree, `c` toggles a minimal prompt (below) and `+`/`-` change the turn cap. From the command line: `/routing worker.isolation=worktree worker.max_turns=30`.
 
 - **A smaller prompt for cheap models:** `role_options.<role>.context: "minimal"` drops your global instruction file (`~/.config/larik/AGENTS.md`) and the skills index from that role's subagents, keeping only this project's own `AGENTS.md`/`CLAUDE.md`. The presets set it for `worker` and `explore`: it's a smaller prompt with less to misread, and it stops a small model from loading a skill that has nothing to do with the task. From the command line: `/routing worker.context=minimal` (or `=` empty for the full prompt).
-- **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free.
+- **Budget:** Larik warns once at `warn_at` (default 80%) and stops before the next request once the session, subagents included, has spent `session_usd`. Raise it with `/routing budget=5`. Local and plan-included models count as free, so `session_tokens` (`/routing tokens=2000000`) caps them too: it counts every token the session and its subagents sent and received, cache reads included, warns at the same fraction and stops before the next request. A shared project file can lower either cap but never raise it.
 - **Comparing models before you trust one:** `larik bench --models worker,anthropic/claude-haiku-4-5,ollama/qwen3-coder` runs small, self-checking tasks against each model in its own throwaway directory, then reports pass/fail, cost, time, tokens and peak context — no separate judge model. Coding tasks use `go test` or an exact expected file. The `compaction-retention` task forces a fixed synthetic project conversation through compaction, mechanically checks ten decisions, identifiers, constraints and next steps in the summary, then requires an exact JSON recovery answer from the compacted context; its row also reports retained facts and estimated context freed. It deliberately sends the same input to every model, so it compares summary quality rather than behavior at each model's different context-window limit. Select it alone with `--tasks compaction-retention`; in `--models`, `main` means the configured primary model, alongside roles such as `compact` and `worker`. `--execution tools,hybrid,code` runs each setting side by side, `--runs 3` repeats each task and adds a table of medians and ranges, and `--keep-failed` keeps a failed run's directory with its transcript and every tool call (scripts' included) so you can see why. Use it to see whether a role you're about to add is actually good enough, not just cheap, and which [execution setting](#execution) suits it. See `larik bench -h`.
 - **Compaction:** the `compact` role is usually best left unset. With prompt caching, the main model re-reads the conversation at the cache price (for Opus, $0.50 per million tokens), which can cost less than a cheap model reading it all uncached.
 - **Measuring the result:** `/cost` reports delegated task count, the subagents' token and cost share, and—when prices are known—an estimated saving from pricing the same tokens on the main model. That estimate is directional: a direct run might use a different number of tokens because each subagent starts with a fresh context and the main model must review its result. Delegating one read or one tiny edit can cost more; broad searches and repetitive work are where routing usually pays off.
-- **Quick edits:** `/routing policy=aggressive`, `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap).
+- **Quick edits:** `/routing policy=aggressive`, `/routing worker=groq/llama-4-scout`, `/routing explore=` (back to the main model), `/routing budget=` (no cap), `/routing tokens=` (no token cap).
 
 ## Keys and commands
 
@@ -494,6 +495,7 @@ Use `/sandbox-config` or **Bash sandbox** in `/config` to manage the enabled/def
 - **Can** read everything.
 - **Can** write only to the project (the git root), its own private temp directory, and common build caches (Go, npm, Cargo, `~/.cache`, on macOS also `~/Library/Caches` and the per-user temp root). The literal `/tmp`, shared by every program on the machine, is never writable.
 - **Can't** write to `.git/hooks`, `.git/config`, the other git files that point git at a config or hooks elsewhere (`commondir`, `config.worktree`, `info/`, `modules/`, `worktrees/`), `.larik/`, `.claude/` or `.mcp.json`, even inside the project, and can't move or replace `.git` itself, because any of these would let a later command or hook escape the sandbox. Commits still work.
+- **Can't see credentials.** Provider keys in the environment (every built-in provider's key variable, each provider's `api_key_env`, and any variable ending in `_API_KEY`, `_AUTH_TOKEN` or `_ACCESS_TOKEN`) are removed from the command's environment, and Larik's own sign-in files (`chatgpt-auth.json`, `mcp-auth/`) are unreadable. A command that needs one can be run unsandboxed, which asks first, or the variable can be listed under `sandbox.env_passthrough` in a personal file.
 - **Has no network access** except localhost, so tests that start local servers still work, unless you allow some domains (below).
 - **Can't** reach other apps on macOS: LaunchServices and Apple Events are blocked, so `open` and `osascript` can't be used to escape.
 
@@ -507,6 +509,7 @@ Use `/sandbox-config` or **Bash sandbox** in `/config` to manage the enabled/def
 ```jsonc
 { "sandbox": { "network": true, "writable": ["~/datasets"] } }   // personal config only
 { "sandbox": { "enabled": false } }                               // turn it off
+{ "sandbox": { "env_passthrough": ["GITHUB_TOKEN"] } }            // let commands see this variable (personal config only)
 ```
 
 **Allowing only some domains.** Between no network and all of it, list the domains sandboxed commands may reach:

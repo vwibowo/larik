@@ -63,6 +63,7 @@ func run() error {
 		fork    = flag.Bool("fork", false, "with -c or --resume: branch into a new session, leaving the original untouched")
 		list    = flag.Bool("sessions", false, "list sessions for this directory and exit")
 		showVer = flag.Bool("version", false, "print version and exit")
+		timeout = flag.Duration("timeout", 0, "with -p: stop the run after this long, e.g. 10m (0 means no limit)")
 		debug   = flag.Bool("debug", false, "record this session's requests, responses and tool calls for `larik trace` (also $LARIK_DEBUG=1)")
 	)
 	flag.Usage = func() {
@@ -136,7 +137,7 @@ func run() error {
 	if *debug || envDebug() {
 		a.Debug = true
 	}
-	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont, Fork: *fork})
+	s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont, Fork: *fork, Unattended: *print})
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,15 @@ func run() error {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		if *timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, *timeout)
+			defer cancel()
+		}
 		err := headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
+		if *timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("stopped: --timeout %s reached", *timeout)
+		}
 		if rec := s.Trace(); rec != nil {
 			fmt.Fprintf(os.Stderr, "trace: %s (view with: larik trace %s)\n", rec.Dir(), s.ID)
 		}

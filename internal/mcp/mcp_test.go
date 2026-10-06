@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"larik/internal/config"
+	"larik/internal/llm"
+	"larik/internal/tools"
 )
 
 // buildServer compiles testdata/server once per test binary.
@@ -318,5 +320,47 @@ func TestResourcesAndPrompts(t *testing.T) {
 	}
 	if st := m.Statuses()[0]; !st.Resources || len(st.Prompts) != 1 {
 		t.Fatalf("status: %+v", st)
+	}
+}
+
+func TestToolValidatesArguments(t *testing.T) {
+	bin := buildServer(t)
+	cfg := newCfg(t, map[string]config.MCPServer{"local": {Command: bin, Trusted: true}})
+	m := NewManager(cfg, "test")
+	m.Start()
+	defer m.Close()
+	reg := m.Registry(context.Background(), func(string) {})
+	echo, ok := reg.Get("mcp__local__echo")
+	if !ok {
+		t.Fatal("echo tool missing")
+	}
+	v, ok := echo.(tools.InputValidator)
+	if !ok {
+		t.Fatal("MCP tools must validate their input")
+	}
+	if err := v.ValidateInput(json.RawMessage(`{"text":"hi"}`)); err != nil {
+		t.Errorf("valid input rejected: %v", err)
+	}
+	for name, in := range map[string]string{
+		"missing required": `{}`,
+		"wrong type":       `{"text":42}`,
+		"not an object":    `["x"]`,
+	} {
+		if err := v.ValidateInput(json.RawMessage(in)); err == nil {
+			t.Errorf("%s: %s was accepted", name, in)
+		}
+	}
+}
+
+func TestUncompilableSchemaIsNotEnforced(t *testing.T) {
+	for name, schema := range map[string]string{
+		"remote ref":      `{"type":"object","properties":{"a":{"$ref":"https://example.invalid/s.json"}}}`,
+		"not json":        `nope`,
+		"unknown dialect": `{"$schema":"https://example.invalid/custom","type":"object","required":["a"]}`,
+	} {
+		tl := &tool{spec: llm.ToolSpec{Schema: json.RawMessage(schema)}}
+		if err := tl.ValidateInput(json.RawMessage(`{"a":1}`)); err != nil {
+			t.Errorf("%s: a schema that can't be compiled must not reject input: %v", name, err)
+		}
 	}
 }

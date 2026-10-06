@@ -12,6 +12,7 @@ import (
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/session"
 	"larik/internal/tools"
 )
 
@@ -87,6 +88,10 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 			tool, use.Name, use.Input = inner, inner.Spec().Name, args
 		}
 	}
+	var inputErr error
+	if found && unwrapErr == nil && use.Input != nil {
+		inputErr = validateInput(tool, use.Input)
+	}
 	switch {
 	case ctx.Err() != nil:
 		res.Content, res.IsError = "interrupted by user", true
@@ -96,6 +101,8 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
 	case unwrapErr != nil:
 		res.Content, res.IsError = unwrapErr.Error(), true
+	case inputErr != nil:
+		res.Content, res.IsError = "INVALID_ARGUMENTS: "+inputErr.Error()+"; read the tool's schema (tool_search with select:"+use.Name+") and retry", true
 	case use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName:
 		// Wrappers delegate their actions through the same authorization
 		// path as direct tool calls (see toolCaller).
@@ -172,9 +179,11 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	pre := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreToolUse, ToolName: use.Name, ToolInput: input, ToolUseID: use.ID}, use.Name)
 	if pre.Halt {
 		a.requestHalt(pre.HaltReason)
+		a.logDecision(use, "halt (hook)", pre.HaltReason, "")
 		return false, "Stopped by a PreToolUse hook: " + pre.HaltReason, input
 	}
 	if pre.Block || pre.Permission == "deny" {
+		a.logDecision(use, "deny (hook)", pre.Reason, "")
 		return false, "Blocked by PreToolUse hook: " + pre.Reason, input
 	}
 	if pre.UpdatedInput != nil {
@@ -188,7 +197,14 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: tool.ReadOnly(), Input: input})
 	tr := a.tracer()
 	record := func(answer, why string, asked time.Time) {
-		tr.Permission(use.ID, use.Name, permission.SuggestRule(use.Name, input), answer, why, asked)
+		rule := permission.SuggestRule(use.Name, input)
+		tr.Permission(use.ID, use.Name, rule, answer, why, asked)
+		// Reads allowed by rules or mode are the bulk of a session and
+		// carry no decision worth auditing.
+		if tool.ReadOnly() && answer == "allow (rules or mode)" {
+			return
+		}
+		a.logDecision(use, answer, why, rule)
 	}
 	switch {
 	case decision == permission.Deny:
@@ -288,4 +304,24 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 		}
 		return true, "", input
 	}
+}
+
+// validateInput runs a tool's own argument check, when it has one.
+func validateInput(tool tools.Tool, input json.RawMessage) error {
+	if v, ok := tool.(tools.InputValidator); ok {
+		return v.ValidateInput(input)
+	}
+	return nil
+}
+
+// logDecision appends how a tool call was authorized to the session file.
+func (a *Agent) logDecision(use llm.Block, answer, why, rule string) {
+	if a.opts.Session == nil {
+		return
+	}
+	d := session.Decision{ToolID: use.ID, Tool: use.Name, Answer: answer, Reason: why, Rule: rule}
+	if a.opts.Perms != nil {
+		d.Mode = string(a.opts.Perms.Mode())
+	}
+	a.saveFailed(a.opts.Session.AppendDecision(d))
 }

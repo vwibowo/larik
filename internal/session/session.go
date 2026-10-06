@@ -34,6 +34,7 @@ const (
 	EntryUsage      EntryType = "usage"    // spend not tied to a message, e.g. subagents
 	EntryTask       EntryType = "task"     // a subagent task was started
 	EntryRecovery   EntryType = "recovery" // marks a torn line repaired on resume
+	EntryDecision   EntryType = "decision" // how a tool call was authorized, for audit
 )
 
 type Entry struct {
@@ -48,6 +49,21 @@ type Entry struct {
 	Model      string           `json:"model,omitempty"`  // EntryUsage
 	Source     string           `json:"source,omitempty"` // "subagent" for delegated usage
 	Meta       *Meta            `json:"meta,omitempty"`
+	Decision   *Decision        `json:"decision,omitempty"`
+}
+
+// Decision records how one tool call was authorized: by a rule, a hook,
+// the auto-mode check or the user. The call's input is in the assistant
+// message that ToolID names, so it isn't repeated here. Replay ignores
+// decisions; they exist so the transcript can answer who approved what
+// without debug mode.
+type Decision struct {
+	ToolID string `json:"tool_id"`
+	Tool   string `json:"tool"`
+	Answer string `json:"answer"`           // e.g. "allow (rules or mode)", "deny (rule)", "allow", "deny"
+	Reason string `json:"reason,omitempty"` // why, or the user's feedback
+	Rule   string `json:"rule,omitempty"`   // the rule that would cover the call
+	Mode   string `json:"mode,omitempty"`   // permission mode in force
 }
 
 // CompactionStats records the provider-reported input/output and estimated
@@ -351,6 +367,11 @@ func (s *Session) AppendUsage(model string, u llm.Usage) error {
 // AppendSubagentUsage records spend made by a delegated child.
 func (s *Session) AppendSubagentUsage(model string, u llm.Usage) error {
 	return s.append(Entry{Type: EntryUsage, Model: model, Source: "subagent", Usage: &u})
+}
+
+// AppendDecision records how a tool call was authorized.
+func (s *Session) AppendDecision(d Decision) error {
+	return s.append(Entry{Type: EntryDecision, Decision: &d})
 }
 
 // AppendTask records that a subagent task was started.

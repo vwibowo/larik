@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -126,5 +127,36 @@ func TestToolCallsCarryTheirAgent(t *testing.T) {
 	}
 	if seen[1] != a.Owner() || !strings.HasPrefix(seen[1], "worker-") || parent.Owner() != "" {
 		t.Errorf("owners: %q vs %q", seen, a.Owner())
+	}
+}
+
+// strictTool is a remote tool that checks its arguments against a schema.
+type strictTool struct{ remoteTool }
+
+func (strictTool) ValidateInput(input json.RawMessage) error {
+	var in struct{ Title string }
+	if err := json.Unmarshal(input, &in); err != nil || in.Title == "" {
+		return errors.New("missing required property title")
+	}
+	return nil
+}
+
+func TestCallToolRejectsMalformedArgumentsBeforeAsking(t *testing.T) {
+	var ran []string
+	call := `{"tool":"mcp__tracker__create_issue","arguments":{"name":"Bug"}}`
+	fp := &fakeProvider{script: []llm.Message{
+		assistant(toolUse("1", tools.CallToolName, call)), assistant(llm.TextBlock("ok"))}}
+	dir := t.TempDir()
+	a := New(Options{Provider: fp, Model: "m", Cwd: dir,
+		Tools: tools.NewRegistry().Defer(strictTool{remoteTool{&ran}}),
+		Perms: permission.NewChecker(permission.ModeDefault, permission.Rules{}, dir)})
+	evs := drain(a.Run(context.Background(), "file it"), PermissionReply{Allow: true})
+
+	if len(permissionEvents(evs)) != 0 {
+		t.Error("a malformed call must be rejected before the user is asked")
+	}
+	res := lastToolResult(t, a)
+	if len(ran) != 0 || !res.IsError || !strings.Contains(res.Content, "INVALID_ARGUMENTS") || !strings.Contains(res.Content, "title") || res.Name != tools.CallToolName {
+		t.Errorf("ran=%v result=%+v", ran, res)
 	}
 }

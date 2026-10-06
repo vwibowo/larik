@@ -31,6 +31,17 @@ type Config struct {
 	// AllowedDomains, with Network off, lets commands reach these domains
 	// (and their subdomains) through a proxy Larik runs; nothing else.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// EnvPassthrough names environment variables that commands may see even
+	// though they look like credentials (personal files only: it widens
+	// access).
+	EnvPassthrough []string `json:"env_passthrough,omitempty"`
+	// SecretEnv and SecretPaths are filled in by the app, not read from
+	// settings: the credential variables and files that sandboxed commands
+	// must not see. Any variable ending in _API_KEY, _AUTH_TOKEN or
+	// _ACCESS_TOKEN is hidden as well, so providers Larik doesn't know
+	// about are covered.
+	SecretEnv   []string `json:"-"`
+	SecretPaths []string `json:"-"`
 }
 
 type Sandbox struct {
@@ -65,6 +76,11 @@ type Sandbox struct {
 	// holders keeps missing protected paths from being created under
 	// bubblewrap (see holders.go); nil with Seatbelt, which denies by path.
 	holders *holders
+	// secretEnv, passthrough and secretPaths keep credentials out of
+	// sandboxed commands (see scrubEnv and the profile builders).
+	secretEnv   map[string]bool
+	passthrough map[string]bool
+	secretPaths []string
 }
 
 // protectedNames are project paths that must stay read-only even though
@@ -84,6 +100,12 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 		return nil, ""
 	}
 	s := &Sandbox{root: real(root), network: cfg.Network, home: real(home)}
+	s.secretEnv, s.passthrough = nameSet(cfg.SecretEnv), nameSet(cfg.EnvPassthrough)
+	for _, p := range cfg.SecretPaths {
+		if filepath.IsAbs(p) {
+			s.secretPaths = append(s.secretPaths, real(p))
+		}
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		if _, err := exec.LookPath("sandbox-exec"); err != nil {
@@ -337,7 +359,7 @@ func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 		}
 	}
 	cmd.Dir = dir
-	cmd.Env = tmpEnv(s.tmpDir)
+	cmd.Env = s.scrubEnv(tmpEnv(s.tmpDir))
 	if s.proxy != nil {
 		cmd.Env = proxyEnv(cmd.Env, s.proxy.URL())
 	}
@@ -390,6 +412,44 @@ func tmpEnv(dir string) []string {
 		out = append(out, kv)
 	}
 	return append(out, "TMPDIR="+dir, "TMP="+dir, "TEMP="+dir)
+}
+
+func nameSet(names []string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n != "" {
+			m[n] = true
+		}
+	}
+	return m
+}
+
+// credentialName reports whether an environment variable looks like it
+// holds a credential, whatever provider it belongs to.
+func credentialName(k string) bool {
+	k = strings.ToUpper(k)
+	for _, suffix := range []string{"_API_KEY", "_AUTH_TOKEN", "_ACCESS_TOKEN"} {
+		if strings.HasSuffix(k, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// scrubEnv removes credentials from env: sandboxed bash reads everything
+// and runs without asking, so a prompt-injected `env` would otherwise put
+// every provider key into the model's context. Variables the user listed
+// in env_passthrough stay.
+func (s *Sandbox) scrubEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !s.passthrough[k] && (s.secretEnv[k] || credentialName(k)) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // Summary describes the sandbox for the system prompt and UI.
@@ -455,6 +515,13 @@ func (s *Sandbox) seatbeltProfile() string {
 		b.WriteString("\n  (literal " + sbQuote(p) + ")")
 	}
 	b.WriteString(")\n")
+	if len(s.secretPaths) > 0 {
+		b.WriteString("(deny file-read*")
+		for _, p := range s.secretPaths {
+			b.WriteString("\n  (subpath " + sbQuote(p) + ")")
+		}
+		b.WriteString(")\n")
+	}
 	b.WriteString(`(allow network-bind network-inbound (local ip "localhost:*"))
 (allow network-outbound (remote ip "localhost:*"))
 `)
@@ -488,6 +555,17 @@ func (s *Sandbox) bwrapArgs(script, dir string, held ...string) []string {
 		if _, err := os.Stat(p); err == nil && !bound[p] {
 			bound[p] = true
 			args = append(args, "--ro-bind", p, p)
+		}
+	}
+	// Credentials stay unreadable: a file is replaced by an empty one, a
+	// directory by an empty tmpfs.
+	for _, p := range s.secretPaths {
+		if fi, err := os.Stat(p); err == nil {
+			if fi.IsDir() {
+				args = append(args, "--tmpfs", p)
+			} else {
+				args = append(args, "--ro-bind", "/dev/null", p)
+			}
 		}
 	}
 	if !s.network {

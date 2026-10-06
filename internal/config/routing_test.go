@@ -134,3 +134,34 @@ func TestRoleOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenBudgetPersistsAndSharedFilesCanOnlyLowerIt(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Routing()
+	r.Budget = Budget{SessionTokens: 500000}
+	if err := cfg.SaveRouting(cfg.UserConfigPath(), r); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = Load(cwd)
+	if got := cfg.Routing().Budget.SessionTokens; got != 500000 {
+		t.Fatalf("saved token budget = %d", got)
+	}
+
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"budget":{"session_tokens":900000}}`)
+	if cfg, _ = Load(cwd); cfg.Budget.SessionTokens != 500000 {
+		t.Errorf("a shared file raised the cap to %d", cfg.Budget.SessionTokens)
+	}
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"budget":{"session_tokens":100000}}`)
+	if cfg, _ = Load(cwd); cfg.Budget.SessionTokens != 100000 {
+		t.Errorf("a shared file may lower the cap, got %d", cfg.Budget.SessionTokens)
+	}
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"budget":{"session_tokens":-1}}`)
+	if _, err := Load(cwd); err == nil {
+		t.Error("a negative token budget should fail to load")
+	}
+}

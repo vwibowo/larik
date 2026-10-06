@@ -112,7 +112,9 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
 	baseTools := tools.Builtin()
-	a.Sandbox, a.SandboxNote = sandbox.New(cfg.Sandbox, projectRoot, home)
+	sbCfg := cfg.Sandbox
+	sbCfg.SecretEnv, sbCfg.SecretPaths = secretEnv(cfg), secretPaths(cfg)
+	a.Sandbox, a.SandboxNote = sandbox.New(sbCfg, projectRoot, home)
 	if !cfg.Web.FetchDisabled {
 		baseTools = append(baseTools, web.FetchTool{F: web.NewFetcher()})
 	}
@@ -257,6 +259,9 @@ type Options struct {
 	// appending to it, keeping the first *ForkAt messages (all if nil).
 	Fork   bool
 	ForkAt *int
+	// Unattended marks a session nobody watches (print mode, the server):
+	// the agent stops if it loops instead of waiting for someone to notice.
+	Unattended bool
 }
 
 // Session is an opened agent plus what it owns.
@@ -404,6 +409,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		BuildSystem: a.SystemPrompt,
 		Cwd:         cwd,
 		MaxTurns:    a.Cfg.MaxTurns,
+		Unattended:  o.Unattended,
 		Tools:       tools.NewRegistry(a.tools...),
 		Execution:   a.Cfg.ExecutionFor(resolved.Provider.Name(), resolved.Model),
 		Perms:       perms,
@@ -425,6 +431,10 @@ func (a *App) Open(o Options) (*Session, error) {
 		Budget: func() (float64, float64) {
 			b := a.Cfg.Routing().Budget
 			return b.SessionUSD, b.WarnFraction()
+		},
+		TokenBudget: func() (int64, float64) {
+			b := a.Cfg.Routing().Budget
+			return b.SessionTokens, b.WarnFraction()
 		},
 	})
 	hookRunner.SetEvaluator(a.hookEvaluator(ag))
@@ -486,4 +496,30 @@ func (a *App) compactModel() (llm.Provider, string) {
 		return nil, ""
 	}
 	return r.Provider, r.Model
+}
+
+// secretEnv lists the environment variables that hold provider credentials,
+// so sandboxed commands don't inherit them.
+func secretEnv(cfg *config.Config) []string {
+	names := []string{"ANTHROPIC_AUTH_TOKEN"}
+	for _, c := range providers.Choices() {
+		if c.KeyEnv != "" {
+			names = append(names, c.KeyEnv)
+		}
+	}
+	for _, pc := range cfg.Providers {
+		if pc.APIKeyEnv != "" {
+			names = append(names, pc.APIKeyEnv)
+		}
+	}
+	return names
+}
+
+// secretPaths lists Larik's own credential files, which sandboxed commands
+// could otherwise read.
+func secretPaths(cfg *config.Config) []string {
+	return []string{
+		filepath.Join(cfg.ConfigDir, "chatgpt-auth.json"),
+		filepath.Join(cfg.ConfigDir, "mcp-auth"),
+	}
 }

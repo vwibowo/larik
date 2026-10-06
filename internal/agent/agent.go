@@ -89,6 +89,11 @@ type Options struct {
 	// switches off session-level hooks and uses SubagentStop.
 	Subagent string
 
+	// Unattended marks a run nobody is watching (print mode, the server),
+	// where a root agent that repeats itself is stopped rather than left
+	// to run until MaxTurns or the budget ends it.
+	Unattended bool
+
 	// NoAutoCompact turns off summarizing the conversation when the
 	// context is nearly full; /compact still works.
 	NoAutoCompact bool
@@ -106,6 +111,9 @@ type Options struct {
 	// none) and the fraction of it at which to warn. Subagents are held
 	// to their parent's budget and total.
 	Budget func() (capUSD, warnAt float64)
+	// TokenBudget, if set, returns the session's cap on processed tokens
+	// (0 for none) and the fraction of it at which to warn.
+	TokenBudget func() (capTokens int64, warnAt float64)
 
 	// BuildSystem, if set, rebuilds System (without the language line) at
 	// each fresh context, so edits to instruction files and new skills
@@ -176,6 +184,7 @@ type Agent struct {
 	// kept on the root agent for its subagents too.
 	autoAllowed    map[string]bool
 	budgetWarned   bool
+	tokensWarned   bool
 	byModel        map[string]llm.Usage // spend per model, subagents included
 	delegated      llm.Usage
 	delegatedCost  float64
@@ -592,6 +601,7 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 	compactedThisTurn, compactFailed := false, false
 	stopContinuations := 0
 	var loops loopGuard
+	loopWarned := false
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
 		if turn > 0 && a.needsCompaction() && !compactedThisTurn && !compactFailed {
 			if err := a.compact(ctx, emit, true, "auto"); err != nil {
@@ -681,8 +691,7 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		if ctx.Err() != nil {
 			return "interrupted"
 		}
-		if sub && loops.see(uses, results) {
-			emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", uses[0].Name, loopRepeats)})
+		if loops.see(uses, results) && a.loopStop(uses[0].Name, &loopWarned, emit) {
 			return "loop"
 		}
 		if halted, reason := a.takeHalt(); halted {
@@ -728,6 +737,7 @@ func (a *Agent) runRuntime(ctx context.Context, emit func(Event)) string {
 
 func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 	var loops loopGuard
+	loopWarned := false
 	a.mu.Lock()
 	registry := a.activeLocked()
 	req := llm.AgentRuntimeRequest{Model: a.opts.Model, System: a.opts.System, Workspace: a.opts.Cwd,
@@ -796,8 +806,7 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 		select {
 		case f := <-done:
 			record(f)
-			if a.opts.Subagent != "" && loops.see([]llm.Block{f.tool.Call}, []llm.Block{f.res}) {
-				emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: the subagent repeated the same %s call with the same result %d times; it looks stuck", f.tool.Call.Name, loopRepeats)})
+			if loops.see([]llm.Block{f.tool.Call}, []llm.Block{f.res}) && a.loopStop(f.tool.Call.Name, &loopWarned, emit) {
 				return "loop"
 			}
 			if halted, reason := a.takeHalt(); halted {

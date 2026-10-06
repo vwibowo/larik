@@ -268,6 +268,11 @@ type Budget struct {
 	// SessionUSD stops the agent before a request once the session's
 	// cost reaches it. Zero means no cap.
 	SessionUSD float64 `json:"session_usd,omitempty"`
+	// SessionTokens stops the agent once the session has processed this
+	// many tokens (input, output and cache reads and writes, subagents
+	// included). Unlike SessionUSD it also caps models with no price:
+	// local servers and subscription plans. Zero means no cap.
+	SessionTokens int64 `json:"session_tokens,omitempty"`
 	// WarnAt is the fraction of SessionUSD at which to warn (default 0.8).
 	WarnAt float64 `json:"warn_at,omitempty"`
 }
@@ -432,6 +437,7 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		c.Sandbox.Writable = append(c.Sandbox.Writable, o.Sandbox.Writable...)
 		c.Sandbox.AllowedDomains = append(c.Sandbox.AllowedDomains, o.Sandbox.AllowedDomains...)
+		c.Sandbox.EnvPassthrough = append(c.Sandbox.EnvPassthrough, o.Sandbox.EnvPassthrough...)
 	} else if o.Sandbox.Enabled != nil && *o.Sandbox.Enabled {
 		c.Sandbox.Enabled = o.Sandbox.Enabled // a shared file may only switch it on
 	}
@@ -617,11 +623,14 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		c.RoleOptions[k] = v
 	}
-	if o.Budget.SessionUSD < 0 || o.Budget.WarnAt < 0 {
+	if o.Budget.SessionUSD < 0 || o.Budget.WarnAt < 0 || o.Budget.SessionTokens < 0 {
 		return fmt.Errorf("%s: budget values must not be negative", path)
 	}
 	if o.Budget.SessionUSD != 0 && (trusted || c.Budget.SessionUSD == 0 || o.Budget.SessionUSD < c.Budget.SessionUSD) {
 		c.Budget.SessionUSD = o.Budget.SessionUSD
+	}
+	if o.Budget.SessionTokens != 0 && (trusted || c.Budget.SessionTokens == 0 || o.Budget.SessionTokens < c.Budget.SessionTokens) {
+		c.Budget.SessionTokens = o.Budget.SessionTokens
 	}
 	if trusted && o.Budget.WarnAt != 0 {
 		c.Budget.WarnAt = o.Budget.WarnAt
@@ -1331,6 +1340,9 @@ func (c *Config) SaveRouting(path string, r Routing) error {
 	}
 	if r.Budget.WarnAt > 0 {
 		budget["warn_at"] = r.Budget.WarnAt
+	}
+	if r.Budget.SessionTokens > 0 {
+		budget["session_tokens"] = r.Budget.SessionTokens
 	}
 	routingMu.Lock()
 	defer routingMu.Unlock()

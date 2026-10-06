@@ -7,6 +7,7 @@ A coding agent runs commands chosen by a model that reads untrusted text (reposi
 | Threat | Main defence | Backup |
 |---|---|---|
 | Model runs a destructive or exfiltrating command | OS sandbox: writes confined, network off | Permission prompt for anything unsandboxed; deny rules |
+| Sandboxed command reads provider keys or Larik's sign-in files and prints them into the context | Credential variables stripped from the command's environment; sign-in files unreadable | `env_passthrough` is personal-only, so a repository can't re-expose them |
 | Prompt injection in files or web pages | System prompt marks tool output as data; web content marked untrusted | Every side effect still goes through permissions and the sandbox |
 | A cloned repo ships malicious config | Shared config can only tighten; hooks and MCP servers need approval pinned to a hash | Sandbox keeps `.larik/`, `.claude/`, `.mcp.json`, `.git/hooks`, `.git/config` (and `commondir`, `modules/`, `worktrees/`, …) read-only; `.git` can't be moved |
 | Sandboxed command plants code that runs later outside the sandbox | Protected paths inside the project stay read-only | — |
@@ -72,6 +73,13 @@ Instruction files, skills and agent definitions are treated as instructions, lik
 The protected paths matter because the project itself is writable. Without them, a sandboxed command could add a git hook, a hook in `.larik/settings.json`, or an MCP server in `.mcp.json`, and that code would later run **outside** the sandbox. In Seatbelt the deny rules are emitted after the allow rules, because later rules win.
 
 The git entries are there because git trusts its directory completely: `commondir`, a per-worktree `config.worktree`, or a `.git` file saying `gitdir: <elsewhere>` would each point git at a config or hooks the command wrote somewhere writable, and `core.fsmonitor` or `core.hooksPath` there runs on the next `git status` outside the sandbox. Objects, refs and the index stay writable, so sandboxed commits work. `.git` itself is pinned in place: Seatbelt denies writes to that exact path, and bubblewrap binds it onto itself, since a mount point can't be renamed or removed. On Linux, bubblewrap can only re-bind paths that exist, so a protected path that doesn't exist yet (for example `.git` in a project that isn't a repository) isn't enforced there.
+
+**Credentials stay out of sandboxed commands.** Sandboxed bash runs without asking and can read everything, so without this a prompt-injected `env` or `cat` would put every provider key into the model's context and the session file with no prompt. `Sandbox.scrubEnv` ([sandbox.go](../internal/sandbox/sandbox.go)) removes from each command's environment:
+
+- the key variable of every provider Larik knows (`providers.Choices`), each configured `api_key_env`, and `ANTHROPIC_AUTH_TOKEN`, which `app.Setup` passes in as `Config.SecretEnv`;
+- any variable ending in `_API_KEY`, `_AUTH_TOKEN` or `_ACCESS_TOKEN`, so providers Larik has never heard of are covered too.
+
+`Config.SecretPaths` (`chatgpt-auth.json` and `mcp-auth/` in the config directory) are denied for reading: Seatbelt gets a `deny file-read*` rule after the allows, and bubblewrap binds `/dev/null` over a file or an empty tmpfs over a directory. `sandbox.env_passthrough` names variables to keep; it is read from personal files only because it widens access. Unsandboxed commands are unchanged: they always ask, and the prompt shows the command. The `run_code` helper already starts with an empty environment. API keys that sit in files elsewhere in your home directory (`~/.aws/credentials`, `.env` files in the project) are still readable, as they are in any sandbox that lets commands read the project: keep secrets out of the project.
 
 **Known gap: build caches.** The writable build caches (`~/go/pkg/mod`, `GOCACHE`, `~/.cargo/registry`, `~/.npm`, `~/.cache`) are shared with builds you run outside the sandbox. A sandboxed command can change a cached dependency's source (a Cargo `build.rs`, a Go module) or a tool environment kept under `~/.cache` (such as pre-commit's), and that code runs the next time an unsandboxed build uses it. They are writable because builds inside the sandbox need them. After letting the agent work on code you don't trust, clear those caches before building outside the sandbox.
 

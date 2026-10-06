@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"larik/internal/llm"
@@ -28,6 +30,9 @@ type tool struct {
 	remote   string // tool name on the server
 	session  *sdk.ClientSession
 	readOnly bool
+
+	once     sync.Once
+	resolved *jsonschema.Resolved // nil when the schema can't be compiled
 }
 
 func newTool(server string, session *sdk.ClientSession, t *sdk.Tool, used map[string]bool) *tool {
@@ -56,6 +61,48 @@ func newTool(server string, session *sdk.ClientSession, t *sdk.Tool, used map[st
 		session:  session,
 		readOnly: ro,
 	}
+}
+
+// ValidateInput checks input against the tool's input schema. A schema
+// that can't be compiled (an unsupported dialect, a remote $ref) is not
+// enforced: the server stays the judge of what it accepts.
+func (t *tool) ValidateInput(input json.RawMessage) error {
+	t.once.Do(func() { t.resolved = compileSchema(t.spec.Schema) })
+	if t.resolved == nil {
+		return nil
+	}
+	var args any
+	if err := json.Unmarshal(input, &args); err != nil {
+		return fmt.Errorf("arguments are not valid JSON: %w", err)
+	}
+	if err := t.resolved.Validate(args); err != nil {
+		return fmt.Errorf("arguments do not match the tool's schema: %w", err)
+	}
+	return nil
+}
+
+// compileSchema returns nil when schema can't be used for validation.
+func compileSchema(schema json.RawMessage) *jsonschema.Resolved {
+	var m map[string]any
+	if json.Unmarshal(schema, &m) != nil {
+		return nil
+	}
+	// Servers declare many dialects; the validator knows draft-07 and
+	// 2020-12 and treats an unmarked schema as the latter.
+	delete(m, "$schema")
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	var s jsonschema.Schema
+	if json.Unmarshal(b, &s) != nil {
+		return nil
+	}
+	r, err := s.Resolve(nil)
+	if err != nil {
+		return nil
+	}
+	return r
 }
 
 func (t *tool) Spec() llm.ToolSpec { return t.spec }

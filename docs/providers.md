@@ -205,6 +205,10 @@ flowchart LR
     FB -- no --> P["plain adapter"]
 ```
 
+## Budgets
+
+`budget.session_usd` and `budget.session_tokens` ([budget.go](../internal/agent/budget.go)) are checked before every request, on the root agent, whose totals already include every subagent's usage. Each warns once at `warn_at` (default 80%) and then ends the turn with stop reason `budget`. The dollar cap can't see models with no price (local servers, plan-included models); the token cap counts input, output and cache reads and writes, so it bounds those too. Shared project files may lower either cap but never raise it.
+
 ## Benchmarking a routing choice
 
 [internal/bench](../internal/bench) and `larik bench` run a handful of small, self-checking tasks against one or more models, so a role's model can be judged by outcome instead of price and name alone. Coding tasks set up their own throwaway directories and check the result with `go test` or an exact expected file. The `compaction-retention` task forces a fixed synthetic project conversation through `Agent.Compact`, checks ten important facts in the resulting summary, and asks the model for an exact recovery answer from the compacted context. Every model receives the same input, so this compares summary quality rather than behavior at different context-window limits. In `--models`, use `main` for the configured primary model or name routing roles such as `compact` and `worker`. All grading is mechanical, with no LLM-as-judge. `bench.Run` builds a plain `Agent` in `permission.ModeYolo` (the directory is discarded afterwards, so there is nothing to protect) and reports pass/fail, cost, wall time, and—for the compaction case—retained facts and estimated context freed.

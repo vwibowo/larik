@@ -390,3 +390,60 @@ func TestEntriesAreGreppable(t *testing.T) {
 		t.Fatalf("transcript escapes the text: %s", data)
 	}
 }
+
+func decisionLines(t *testing.T, path string) []Decision {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Decision
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Type == EntryDecision {
+			out = append(out, *e.Decision)
+		}
+	}
+	return out
+}
+
+func TestDecisionsAreRecordedButNotReplayedOrForked(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AppendMessage(text(llm.RoleUser, "go"), nil)
+	if err := s.AppendDecision(Decision{ToolID: "t1", Tool: "bash", Answer: "deny", Reason: "no", Rule: "bash(rm*)", Mode: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	s.AppendMessage(text(llm.RoleAssistant, "ok"), nil)
+	path := s.Path
+	s.Close()
+
+	got := decisionLines(t, path)
+	if len(got) != 1 || got[0].ToolID != "t1" || got[0].Answer != "deny" || got[0].Mode != "default" {
+		t.Fatalf("decisions on disk: %+v", got)
+	}
+
+	o, st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.Close()
+	if len(st.Messages) != 2 || len(st.All) != 2 {
+		t.Errorf("a decision must not change the replayed messages: %d active, %d all", len(st.Messages), len(st.All))
+	}
+
+	b, _, err := Fork(dir, path, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	if n := len(decisionLines(t, b.Path)); n != 0 {
+		t.Errorf("a branch starts with a fresh audit trail, got %d decisions", n)
+	}
+}

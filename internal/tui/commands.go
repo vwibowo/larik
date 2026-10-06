@@ -603,7 +603,7 @@ func (m *model) tasksCommand(args []string, info, fail func(string) tea.Cmd) tea
 }
 
 // routingCommand handles "/routing role=provider/model …", "role=" to
-// make a role inherit again, "budget=2.50" and "show", saving to the user
+// make a role inherit again, "budget=2.50", "tokens=2000000" and "show", saving to the user
 // config.
 func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
 	cfg := m.opts.Config
@@ -614,7 +614,7 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 	for _, a := range args {
 		key, val, ok := strings.Cut(a, "=")
 		if !ok || key == "" {
-			return fail("usage: /routing [show | policy=manual|balanced|aggressive | role=provider/model | role= | role.isolation=worktree | role.max_turns=<n> | budget=<usd>]")
+			return fail("usage: /routing [show | policy=manual|balanced|aggressive | role=provider/model | role= | role.isolation=worktree | role.max_turns=<n> | budget=<usd> | tokens=<n>]")
 		}
 		val = strings.TrimSpace(val)
 		if role, opt, ok := strings.Cut(key, "."); ok {
@@ -658,6 +658,15 @@ func (m *model) routingCommand(args []string, info, fail func(string) tea.Cmd) t
 				return fail(err.Error())
 			}
 			r.Budget.SessionUSD = b.SessionUSD
+		case "tokens":
+			n := int64(0)
+			if val != "" {
+				var err error
+				if n, err = strconv.ParseInt(val, 10, 64); err != nil || n < 0 {
+					return fail("tokens is a whole number of tokens, like 2000000 (empty or 0 removes the cap)")
+				}
+			}
+			r.Budget.SessionTokens = n
 		case "fallbacks", "fallback":
 			return fail("set fallbacks with /routing (no arguments)")
 		default:

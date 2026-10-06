@@ -37,6 +37,14 @@ type Tool interface {
 	Run(ctx context.Context, env *Env, input json.RawMessage) Result
 }
 
+// InputValidator is implemented by tools whose arguments the model only
+// knows from a schema the API doesn't enforce (MCP tools, above all when
+// reached through call_tool). The agent checks the input before asking for
+// permission, so a malformed call is rejected without bothering the user.
+type InputValidator interface {
+	ValidateInput(input json.RawMessage) error
+}
+
 // Env is the shared state tools operate in.
 type Env struct {
 	Cwd string

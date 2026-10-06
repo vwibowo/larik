@@ -126,6 +126,15 @@ stateDiagram-v2
     max_turns --> [*]
 ```
 
+### Repeating itself
+
+`loopGuard` ([loop.go](../internal/agent/loop.go)) hashes each round of tool calls together with their results. The same round four times within the last eight means the agent is stuck, and `loopStop` decides what happens:
+
+- A **subagent**, an **unattended** run (`-p`, `larik serve`: `Options.Unattended`) and a session in **auto** or **yolo** mode have nobody to press Esc, so the turn ends with stop reason `loop`.
+- In an ordinary interactive session the user is watching: Larik shows one notice per turn and carries on.
+
+Matching the results keeps honest retries apart: rerunning tests after an edit gives different output.
+
 ### Interrupts
 
 Esc cancels the turn's context. If text was already streaming, `keepPartial` ([agent.go:454](../internal/agent/agent.go:454)) stores it with `[interrupted by user]` so the transcript matches what the user saw. Tool calls that hadn't started get `interrupted by user` results, so every `tool_use` still has a matching `tool_result`. `llm.Append` merges a following user prompt into the trailing user message so roles keep alternating.

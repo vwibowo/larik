@@ -28,7 +28,7 @@ classDiagram
     class Entry {
         ID string
         ParentID string
-        Type meta, message, compaction, usage, recovery
+        Type meta, message, compaction, usage, task, decision, recovery
         Time
         Message *llm.Message
         Usage *llm.Usage
@@ -57,6 +57,7 @@ classDiagram
 | `message` | Every user or assistant message, with usage on assistant messages | Appended to both `Messages` (the context) and `All` (display history) |
 | `compaction` | After a successful compaction | `Messages` is reset to the single summary message, which names this file so the model can grep it; `All` keeps everything; optional input/summary/saved-token metrics restore session compression totals |
 | `usage` | Spend made on this session's behalf outside its transcript (subagents) | Added to usage and cost |
+| `decision` | A tool call was authorized or refused (rule, hook, auto mode or user), except reads allowed by rules or mode | Ignored by replay, and not copied into a branch (a fork starts with a fresh audit trail) |
 | `recovery` | Resuming after a torn final line | Marks the preceding incomplete line as recoverable; has no effect on messages |
 
 Every entry has an `id` and the `parent_id` of the previous entry, so the file is also a linked list. `read` tolerates a torn last line after a crash. Opening it for appending adds a `recovery` entry after the incomplete line; other malformed lines cause loading and forking to fail rather than silently dropping history.

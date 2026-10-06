@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"fmt"
 	"hash/fnv"
 
 	"larik/internal/llm"
+	"larik/internal/permission"
 )
 
 // A subagent is stuck when the same tool calls with the same results
@@ -45,4 +47,35 @@ func (g *loopGuard) see(calls []llm.Block, results []llm.Block) bool {
 		}
 	}
 	return n >= loopRepeats
+}
+
+// loopStop is called when the guard trips on a call to tool name and
+// reports whether the turn should end. A subagent, an unattended run and
+// an auto or yolo session have nobody to press Esc, so they stop. In an
+// ordinary interactive session the user is watching: say so once per turn
+// and carry on.
+func (a *Agent) loopStop(name string, warned *bool, emit func(Event)) bool {
+	who := "the agent"
+	if a.opts.Subagent != "" {
+		who = "the subagent"
+	}
+	if a.opts.Subagent != "" || a.opts.Unattended || a.autonomous() {
+		emit(Event{Kind: EvError, Text: fmt.Sprintf("stopped: %s repeated the same %s call with the same result %d times; it looks stuck", who, name, loopRepeats)})
+		return true
+	}
+	if !*warned {
+		*warned = true
+		emit(Event{Kind: EvNotice, Text: fmt.Sprintf("%s repeated the same %s call with the same result %d times; press Esc if it is stuck", who, name, loopRepeats)})
+	}
+	return false
+}
+
+// autonomous reports a permission mode that runs tools without asking the
+// user each time.
+func (a *Agent) autonomous() bool {
+	if a.opts.Perms == nil {
+		return false
+	}
+	m := a.opts.Perms.Mode()
+	return m == permission.ModeAuto || m == permission.ModeYolo
 }

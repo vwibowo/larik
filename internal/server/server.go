@@ -206,7 +206,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	o := app.Options{Model: req.Model, Effort: req.Effort, Mode: req.Mode}
+	o := app.Options{Model: req.Model, Effort: req.Effort, Mode: req.Mode, Unattended: true}
 	var id string
 	if req.Resume != "" || req.Continue {
 		path, err := s.resolve(req.Resume, req.Continue)
@@ -293,7 +293,7 @@ func (s *Server) fork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-	o := app.Options{ResumeID: id, Fork: true, ForkAt: req.At, Model: req.Model, Effort: req.Effort, Mode: req.Mode}
+	o := app.Options{ResumeID: id, Fork: true, ForkAt: req.At, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Unattended: true}
 	src := s.lookup(id)
 	if src != nil {
 		eff := string(src.a.Effort())
