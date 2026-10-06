@@ -11,6 +11,19 @@ import (
 // exportResultLines caps each tool result in an export.
 const exportResultLines = 30
 
+// PromptText is a user message's text without the <system-note> block Larik
+// puts in front of a prompt (plan mode, changed files and the like): what
+// the user actually typed, for showing them their prompt again.
+func PromptText(m llm.Message) string {
+	text := strings.TrimSpace(m.Text())
+	if rest, ok := strings.CutPrefix(text, "<system-note>"); ok {
+		if _, after, ok := strings.Cut(rest, "</system-note>"); ok {
+			text = strings.TrimSpace(after)
+		}
+	}
+	return text
+}
+
 // Markdown renders a session's full history for reading: prompts, replies,
 // and each tool call with its result (capped). Thinking, attached file
 // contents and images are left out; attachments are named.
@@ -53,12 +66,7 @@ func Markdown(st *State, id string) string {
 			if text == "" && len(attached) == 0 {
 				continue // only tool results, shown with their calls
 			}
-			// Notes Larik adds to a prompt aren't what the user typed.
-			if rest, ok := strings.CutPrefix(text, "<system-note>"); ok {
-				if _, after, ok := strings.Cut(rest, "</system-note>"); ok {
-					text = strings.TrimSpace(after)
-				}
-			}
+			text = PromptText(m)
 			heading := "## User"
 			if m.Role == llm.RoleUser && !IsPrompt(m) && text != "" {
 				heading = "## Larik" // background results, hook feedback

@@ -211,13 +211,7 @@ func (a *Agent) firstPrompt() string {
 
 // userText is a prompt without the notes Larik puts in front of it.
 func userText(m llm.Message) string {
-	text := strings.TrimSpace(m.Text())
-	if rest, ok := strings.CutPrefix(text, "<system-note>"); ok {
-		if _, after, ok := strings.Cut(rest, "</system-note>"); ok {
-			text = strings.TrimSpace(after)
-		}
-	}
-	return text
+	return session.PromptText(m)
 }
 
 func clip(s string, n int) string {

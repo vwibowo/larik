@@ -22,6 +22,7 @@ import (
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
+	"larik/internal/session"
 	"larik/internal/subagent"
 	"larik/internal/tools"
 )
@@ -1359,25 +1360,32 @@ func (m *model) costText() string {
 
 // renderUserMessage formats one of your prompts for the conversation. Every
 // line carries an accent gutter, soft-wrapped ones included, so your messages
-// are told apart from the model's replies at a glance. The gutter also runs
-// one empty line above and below the text, setting the prompt off as a block;
-// that room comes from gutter rows rather than bare newlines, which would
-// leave rows the gutter doesn't reach. Wrapping happens here because the
-// gutter has to survive it; appendOutput leaves wrapped lines be.
+// are told apart from the model's replies at a glance. A dim rounded frame as
+// wide as the conversation closes the prompt in, marking where a new turn
+// starts, and a blank row sits on either side of it. Wrapping and padding
+// happen here because the gutter and the right edge have to survive them;
+// appendOutput leaves wrapped lines be. The frame stays aligned on resize
+// because printlnRendered keeps this renderer and calls it with the new width.
 func (m *model) renderUserMessage(text string) string {
 	return m.renderUserMessageWidth(text, m.currentConversationWidth())
 }
 
 func (m *model) renderUserMessageWidth(text string, width int) string {
+	w := max(width, 14)
 	gutter := m.st.accent.Render("▌ ")
-	// The gutter takes two columns, so the text wraps two columns narrower
-	// and every rendered line still fits the conversation.
-	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), max(width-2, 10)), "\n")
-	out := make([]string, 0, len(lines)+2)
-	out = append(out, "")
+	edge := m.st.dim.Render(" │")
+	// The gutter and the right edge take two columns each, so the text wraps
+	// four columns narrower and is padded out to that width, measured on the
+	// plain text so wide characters keep the right edge in line.
+	inner := w - 4
+	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), inner), "\n")
+	out := make([]string, 0, len(lines)+4)
+	out = append(out, "", m.st.dim.Render("╭"+strings.Repeat("─", w-2)+"╮"))
 	for _, l := range lines {
-		out = append(out, gutter+m.st.user.Render(l))
+		pad := strings.Repeat(" ", max(inner-lipgloss.Width(l), 0))
+		out = append(out, gutter+m.st.user.Render(l)+pad+edge)
 	}
+	out = append(out, m.st.dim.Render("╰"+strings.Repeat("─", w-2)+"╯"))
 	return strings.Join(append(out, ""), "\n")
 }
 
@@ -1883,7 +1891,8 @@ func (m *model) renderHistory(history []llm.Message, label string, width int) st
 	for _, msg := range history {
 		switch msg.Role {
 		case llm.RoleUser:
-			if t := strings.TrimSpace(msg.Text()); t != "" {
+			// Show what you typed, not the notes Larik put in front of it.
+			if t := session.PromptText(msg); t != "" {
 				b = append(b, "\n"+m.renderUserMessageWidth(t, width))
 			}
 		case llm.RoleAssistant:

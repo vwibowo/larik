@@ -214,33 +214,49 @@ func TestContextPercentIsCappedEverywhere(t *testing.T) {
 	}
 }
 
-// Your own messages carry a gutter on every line, wrapped ones included, so
-// they are told apart from the model's replies.
+// checkPromptBox checks the frame a prompt is drawn in: a blank row, a
+// rounded top border as wide as the conversation, the text with a gutter on
+// the left and a closed edge on the right of every line, a matching bottom
+// border and a closing blank row. Every framed row is exactly as wide as the
+// conversation, so the right edge lines up.
+func checkPromptBox(t *testing.T, name, got string, width int) {
+	t.Helper()
+	lines := strings.Split(got, "\n")
+	n := len(lines)
+	if n < 5 {
+		t.Fatalf("%s: too few rows for a framed prompt: %q", name, got)
+	}
+	if lines[0] != "" || lines[n-1] != "" {
+		t.Errorf("%s: a prompt should open and close on a blank row: %q", name, got)
+	}
+	if want := "╭" + strings.Repeat("─", width-2) + "╮"; lines[1] != want {
+		t.Errorf("%s: top border should span the conversation: %q", name, lines[1])
+	}
+	if want := "╰" + strings.Repeat("─", width-2) + "╯"; lines[n-2] != want {
+		t.Errorf("%s: bottom border should span the conversation: %q", name, lines[n-2])
+	}
+	for i := 1; i <= n-2; i++ {
+		l := lines[i]
+		if i > 1 && i < n-2 && (!strings.HasPrefix(l, "▌ ") || !strings.HasSuffix(l, " │")) {
+			t.Errorf("%s: content line without a gutter and a right edge: %q in %q", name, l, got)
+		}
+		if lipgloss.Width(l) != width {
+			t.Errorf("%s: framed row is %d columns, want %d: %q", name, lipgloss.Width(l), width, l)
+		}
+	}
+}
+
+// Your own messages sit in a frame with a gutter on every line, wrapped ones
+// included, so they are told apart from the model's replies.
 func TestUserMessageGutterOnEveryLine(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(40)
 	m.convWidth = 40
 	got := plain(m.renderUserMessage("this prompt is long enough that it has to wrap over several rows\nand it has a hard newline too"))
-	lines := strings.Split(got, "\n")
-	if len(lines) < 3 {
+	if n := len(strings.Split(got, "\n")); n < 7 {
 		t.Fatalf("expected a wrapped message, got %q", got)
 	}
-	for i, l := range lines {
-		if i > 0 && i < len(lines)-1 && !strings.HasPrefix(l, "▌ ") {
-			t.Errorf("content line without a gutter: %q in %q", l, got)
-		}
-		if lipgloss.Width(l) > 40 {
-			t.Errorf("line overflows the conversation: %q", l)
-		}
-	}
-	// Bare blank rows separate the prompt from surrounding conversation
-	// without extending the accent gutter beyond the message itself.
-	if lines[0] != "" || lines[len(lines)-1] != "" {
-		t.Errorf("a prompt should open and close on a blank row: %q", got)
-	}
-	if strings.TrimSpace(lines[1]) == "▌" {
-		t.Errorf("only one blank row belongs above the text: %q", got)
-	}
+	checkPromptBox(t, "wrapped", got, 40)
 }
 
 // Awkward prompts still render as one gutter block: a word longer than the
@@ -251,27 +267,37 @@ func TestUserMessageGutterHandlesLongWordsAndBlankEnds(t *testing.T) {
 	m.setWidth(40)
 	m.convWidth = 40
 	for name, text := range map[string]string{
-		"long word":      strings.Repeat("unbreakable", 12),
-		"trailing blank": "a short prompt\n\n\n",
-		"empty":          "",
+		"long word":       strings.Repeat("unbreakable", 12),
+		"trailing blank":  "a short prompt\n\n\n",
+		"empty":           "",
+		"wide characters": strings.Repeat("日本語のプロンプト ", 6),
 	} {
 		got := plain(m.renderUserMessage(text))
+		checkPromptBox(t, name, got, 40)
 		lines := strings.Split(got, "\n")
-		for i, l := range lines {
-			if i > 0 && i < len(lines)-1 && !strings.HasPrefix(l, "▌ ") {
-				t.Errorf("%s: content line without a gutter: %q in %q", name, l, got)
-			}
-			if lipgloss.Width(l) > 40 {
-				t.Errorf("%s: line overflows the conversation: %q", name, l)
-			}
+		last := strings.TrimSuffix(strings.TrimPrefix(lines[len(lines)-3], "▌ "), " │")
+		if text != "" && strings.TrimSpace(last) == "" {
+			t.Errorf("%s: trailing blank lines shouldn't add gutter rows: %q", name, got)
 		}
-		n := len(lines)
-		if lines[0] != "" || lines[n-1] != "" {
-			t.Errorf("%s: a prompt should open and close on a blank row: %q", name, got)
-		}
-		if text != "" && strings.TrimSpace(lines[n-2]) == "" {
-			t.Errorf("%s: a prompt should end on exactly one blank row: %q", name, got)
-		}
+	}
+}
+
+// Redrawn history (resume, branch, rewind) shows your prompts as you typed
+// them, without the <system-note> block Larik put in front of them.
+func TestHistoryHidesSystemNotes(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(60)
+	m.convWidth = 60
+	history := []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{llm.TextBlock("<system-note>\nPlan mode is on: explore and plan.\n</system-note>\n\nis it the browser tools?")}},
+		{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.TextBlock("No.")}},
+	}
+	got := plain(m.renderHistory(history, "resumed", 60))
+	if strings.Contains(got, "system-note") || strings.Contains(got, "Plan mode is on") {
+		t.Errorf("history should hide the note Larik added: %q", got)
+	}
+	if !strings.Contains(got, "▌ is it the browser tools?") {
+		t.Errorf("history should still show the prompt itself: %q", got)
 	}
 }
 
