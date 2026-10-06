@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bufio"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,6 +51,11 @@ func TestProxyAllows(t *testing.T) {
 func newProxy(t *testing.T, unixPath string, domains ...string) *proxy {
 	t.Helper()
 	p, err := startProxy(domains, unixPath)
+	if unixPath != "" && errors.Is(err, syscall.EPERM) {
+		// An enclosing sandbox (say, an agent running these tests) may
+		// forbid binding Unix sockets; that says nothing about the proxy.
+		t.Skipf("can't bind a Unix socket here, probably inside another sandbox: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

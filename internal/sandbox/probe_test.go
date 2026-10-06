@@ -68,6 +68,11 @@ func TestNewFallsBackWhenTheSandboxCantStart(t *testing.T) {
 	cmd := exec.Command("sandbox-exec", "-p", nestingProfile, os.Args[0], "-test.run", "^TestNewFallsBackWhenTheSandboxCantStart$", "-test.v")
 	cmd.Env = append(os.Environ(), brokenSandboxEnv+"=1")
 	out, err := cmd.CombinedOutput()
+	if err != nil && strings.Contains(string(out), "sandbox_apply: Operation not permitted") && !strings.Contains(string(out), "=== RUN") {
+		// The wrapping sandbox-exec itself couldn't start, so this test
+		// already runs inside a sandbox and can't build the one it needs.
+		t.Skipf("already inside a sandbox, can't set up the nested one: %s", out)
+	}
 	if err != nil || !strings.Contains(string(out), "--- PASS") {
 		t.Fatalf("under another sandbox: %v\n%s", err, out)
 	}
