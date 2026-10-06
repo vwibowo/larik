@@ -28,14 +28,7 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 	if m.opts.App == nil || m.sess == nil {
 		return fail(name + " is not available here")
 	}
-	// Carry the current effort and mode over; the model too, except when
-	// resuming a session, which picks up its own.
-	eff := string(m.agent.Effort())
-	if eff == "" {
-		eff = "default"
-	}
-	o := app.Options{Effort: eff, Mode: string(m.agent.Perms().Mode())}
-	current := m.agent.ProviderName() + "/" + m.agent.Model()
+	o, current := m.sessionOptions()
 
 	switch name {
 	case "/resume":
@@ -73,7 +66,7 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 			var b strings.Builder
 			first := max(0, len(prompts)-20)
 			for i := first; i < len(prompts); i++ {
-				fmt.Fprintf(&b, "%3d  %s\n", i+1, oneLine(st.All[prompts[i]].Text(), 90))
+				fmt.Fprintf(&b, "%3d  %s\n", i+1, oneLine(session.PromptText(st.All[prompts[i]]), 90))
 			}
 			b.WriteString("/rewind <n> branches off just before prompt n and puts it back in the input to edit.\n" +
 				"The current session stays as it is. If files changed since that prompt you are asked whether to restore them too;\n" +
@@ -90,42 +83,61 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 				return fail("usage: /rewind <n> [files | keep]")
 			}
 		}
-		at := prompts[n-1]
-		o.Model, o.ResumeID, o.Fork, o.ForkAt = current, m.sess.ID, true, &at
-		label := fmt.Sprintf("rewound to before prompt %d of %s", n, m.sess.ID)
-		prefill := st.All[at].Text()
-
-		var changed []string
-		since := time.Time{}
-		if at < len(st.AllTimes) {
-			since = st.AllTimes[at]
-			changed = m.agent.FilesSince(since)
-		}
-		branch := func(restore bool) tea.Cmd {
-			if !restore {
-				return m.open(o, label, prefill)
-			}
-			// Files first: a branch whose files still hold later changes
-			// would disagree with the conversation it continues.
-			paths, err := m.agent.UndoSince(since)
-			if err != nil {
-				msg := "restoring files: " + err.Error()
-				if len(paths) > 0 {
-					msg += " (restored " + m.shortPaths(strings.Join(paths, ", ")) + " before stopping)"
-				}
-				return fail(msg + "; nothing was branched")
-			}
-			return tea.Sequence(m.open(o, label+" · files restored", prefill), info("↶ restored "+m.shortPaths(strings.Join(paths, ", "))))
-		}
-		switch {
-		case len(changed) == 0 || files == "keep":
-			return branch(false)
-		case files == "files":
-			return branch(true)
-		}
-		m.rewindOffer = &rewindOffer{files: changed, branch: branch, picker: rewindChoices()}
-		return nil
+		return m.rewindTo(st, prompts, n, files, info, fail)
 	}
+	return nil
+}
+
+// sessionOptions carries the current effort and mode over to a session
+// being opened; current is the model, which a resumed session replaces
+// with its own.
+func (m *model) sessionOptions() (o app.Options, current string) {
+	eff := string(m.agent.Effort())
+	if eff == "" {
+		eff = "default"
+	}
+	return app.Options{Effort: eff, Mode: string(m.agent.Perms().Mode())}, m.agent.ProviderName() + "/" + m.agent.Model()
+}
+
+// rewindTo branches off just before prompt n (1-based, of prompts in st)
+// and puts it back in the input. files is "files" to restore changed files
+// without asking, "keep" to leave them, or "" to ask when any changed.
+func (m *model) rewindTo(st *session.State, prompts []int, n int, files string, info, fail func(string) tea.Cmd) tea.Cmd {
+	o, current := m.sessionOptions()
+	at := prompts[n-1]
+	o.Model, o.ResumeID, o.Fork, o.ForkAt = current, m.sess.ID, true, &at
+	label := fmt.Sprintf("rewound to before prompt %d of %s", n, m.sess.ID)
+	prefill := session.PromptText(st.All[at])
+
+	var changed []string
+	since := time.Time{}
+	if at < len(st.AllTimes) {
+		since = st.AllTimes[at]
+		changed = m.agent.FilesSince(since)
+	}
+	branch := func(restore bool) tea.Cmd {
+		if !restore {
+			return m.open(o, label, prefill)
+		}
+		// Files first: a branch whose files still hold later changes
+		// would disagree with the conversation it continues.
+		paths, err := m.agent.UndoSince(since)
+		if err != nil {
+			msg := "restoring files: " + err.Error()
+			if len(paths) > 0 {
+				msg += " (restored " + m.shortPaths(strings.Join(paths, ", ")) + " before stopping)"
+			}
+			return fail(msg + "; nothing was branched")
+		}
+		return tea.Sequence(m.open(o, label+" · files restored", prefill), info("↶ restored "+m.shortPaths(strings.Join(paths, ", "))))
+	}
+	switch {
+	case len(changed) == 0 || files == "keep":
+		return branch(false)
+	case files == "files":
+		return branch(true)
+	}
+	m.rewindOffer = &rewindOffer{files: changed, branch: branch, picker: rewindChoices()}
 	return nil
 }
 
@@ -195,6 +207,7 @@ func (m *model) open(o app.Options, label, prefill string) tea.Cmd {
 	m.sess.Close("other")
 
 	m.sess, m.agent = s, s.Agent
+	m.promptMenu, m.promptCount = nil, 0
 	m.resetConversation()
 	m.opts.Agent, m.opts.Hooks, m.opts.History = s.Agent, s.Hooks, s.History
 	m.perm, m.permQueue, m.bgReplies, m.queue = nil, nil, nil, nil

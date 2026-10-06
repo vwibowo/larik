@@ -17,6 +17,11 @@ type conversationOutput struct {
 	sourceSize int
 	size       int
 	render     conversationRenderer
+	// prompt is set when the output shows one of your prompts, so a click
+	// on it can open the prompt menu.
+	prompt *promptRef
+	// firstLine and lines place the output in convLines.
+	firstLine, lines int
 }
 
 // appendOutput adds already-rendered output to the conversation. Output is
@@ -27,11 +32,11 @@ func (m *model) appendOutput(s string) {
 
 // appendRenderedOutput retains enough source to lay structured output such as
 // markdown out again when the conversation column changes width.
-func (m *model) appendRenderedOutput(text string, renderedWidth, size int, render conversationRenderer) {
+func (m *model) appendRenderedOutput(text string, renderedWidth, size int, render conversationRenderer, prompt *promptRef) {
 	if renderedWidth != m.currentConversationWidth() {
 		text = render(m, m.currentConversationWidth())
 	}
-	m.appendConversationOutput(conversationOutput{text: text, sourceSize: size, render: render})
+	m.appendConversationOutput(conversationOutput{text: text, sourceSize: size, render: render, prompt: prompt})
 }
 
 func (m *model) appendConversationOutput(out conversationOutput) {
@@ -51,7 +56,47 @@ func (m *model) appendConversationOutput(out conversationOutput) {
 		m.rewrapConversation()
 		return
 	}
-	m.convLines = append(m.convLines, wrapOutput(out.text, m.convWidth)...)
+	m.outputs[len(m.outputs)-1].place(&m.convLines, m.convWidth)
+	m.setConversation()
+}
+
+// place wraps the output onto the end of lines and records where it sits.
+func (o *conversationOutput) place(lines *[]string, width int) {
+	wrapped := wrapOutput(o.text, width)
+	o.firstLine, o.lines = len(*lines), len(wrapped)
+	*lines = append(*lines, wrapped...)
+}
+
+// outputAt returns the output shown on conversation line n, or nil.
+func (m *model) outputAt(n int) *conversationOutput {
+	for i := len(m.outputs) - 1; i >= 0; i-- {
+		o := &m.outputs[i]
+		if n >= o.firstLine && n < o.firstLine+o.lines {
+			return o
+		}
+		if n >= o.firstLine+o.lines {
+			return nil
+		}
+	}
+	return nil
+}
+
+// restyleOutput renders one output again in place, for a change that
+// keeps its size, such as highlighting a prompt; anything else re-wraps
+// the whole conversation.
+func (m *model) restyleOutput(o *conversationOutput) {
+	if o == nil || o.render == nil {
+		return
+	}
+	m.outputBytes -= o.size
+	o.renderAt(m, m.convWidth)
+	m.outputBytes += o.size
+	wrapped := wrapOutput(o.text, m.convWidth)
+	if len(wrapped) != o.lines || o.firstLine+o.lines > len(m.convLines) {
+		m.rewrapConversation()
+		return
+	}
+	copy(m.convLines[o.firstLine:], wrapped)
 	m.setConversation()
 }
 
@@ -89,13 +134,14 @@ func (m *model) rewrapConversationWidth(width int) {
 	}
 	m.convLines = m.convLines[:0]
 	for i := range m.outputs {
-		m.convLines = append(m.convLines, wrapOutput(m.outputs[i].text, width)...)
+		m.outputs[i].place(&m.convLines, width)
 	}
 	m.setConversation()
 }
 
 func (m *model) resetConversation() {
 	m.outputs, m.outputBytes, m.convLines = nil, 0, nil
+	m.promptMenu = nil // its prompt is no longer on screen
 	m.setConversation()
 	m.view.GotoTop() // a scrolled-up viewport would sit past the empty content
 }

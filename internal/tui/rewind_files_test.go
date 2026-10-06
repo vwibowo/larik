@@ -70,7 +70,9 @@ func rewindFixture(t *testing.T) (*model, string) {
 	store.Capture(bFile)
 	os.WriteFile(bFile, []byte("b2"), 0o644)
 	reply()
-	prompt("three")
+	// Saved as the agent saves a prompt sent in plan mode, with a note
+	// in front that /rewind and the prompt menu must not show.
+	prompt("<system-note>\nPlan mode is on.\n</system-note>\n\nthree")
 	store.Capture(aFile)
 	os.WriteFile(aFile, []byte("a3"), 0o644)
 	reply()

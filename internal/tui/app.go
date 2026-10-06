@@ -127,8 +127,14 @@ type model struct {
 	outputBytes int
 	convLines   []string
 	convWidth   int
-	// Layout of the last frame, for routing mouse wheel events.
+	// Layout of the last frame, for routing mouse events: the panel's rows,
+	// and the conversation's visible rows and width.
 	panelTop, panelRows int
+	viewRows, viewWidth int
+	// promptCount numbers the prompts printed in this session, as /rewind
+	// counts them; promptMenu is the menu opened on one of them.
+	promptCount int
+	promptMenu  *promptMenu
 	// frameBottomRows caches the composer and status height while a
 	// frame renders; zero outside View.
 	frameBottomRows int
@@ -247,8 +253,12 @@ type (
 		width  int
 		size   int
 		render conversationRenderer
+		prompt *promptRef
 	}
-	compactedMsg struct {
+	// historyOutputMsg prints a resumed conversation, one output per
+	// prompt so each can be clicked.
+	historyOutputMsg []renderedOutputMsg
+	compactedMsg     struct {
 		summary    string
 		compaction agent.CompactionInfo
 		err        error
@@ -432,8 +442,17 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case renderedOutputMsg:
-		m.appendRenderedOutput(msg.text, msg.width, msg.size, msg.render)
+		m.appendRenderedOutput(msg.text, msg.width, msg.size, msg.render, msg.prompt)
 		return m, nil
+
+	case historyOutputMsg:
+		for _, o := range msg {
+			m.appendRenderedOutput(o.text, o.width, o.size, o.render, o.prompt)
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		return m, m.handleClick(msg)
 
 	case mcpSignInURLMsg:
 		return m, m.println(m.st.dim.Render("sign in to "+msg.server+" in your browser; if it didn't open, visit:\n  ") + msg.url)
@@ -714,6 +733,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleSessionPickerKey(msg)
 		case m.rewindOffer != nil:
 			return m, m.handleRewindKey(msg)
+		case m.promptMenu != nil:
+			return m, m.handlePromptMenuKey(msg)
 		case m.histPick != nil:
 			return m, m.handleHistoryPickKey(msg)
 		case m.settings != nil:
@@ -850,7 +871,7 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 func (m *model) composerFocused() bool {
 	return m.perm == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
 		m.settings == nil && m.provs == nil && m.mpick == nil && m.modePick == nil &&
-		m.execPick == nil && m.sessionPick == nil && m.rewindOffer == nil && m.histPick == nil && !m.showKeys
+		m.execPick == nil && m.sessionPick == nil && m.rewindOffer == nil && m.promptMenu == nil && m.histPick == nil && !m.showKeys
 }
 
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -1003,10 +1024,10 @@ func (m *model) submit(text string) tea.Cmd {
 	m.turnStats = turnStats{}
 	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
+	m.promptCount++
+	ref := &promptRef{n: m.promptCount, text: text}
 	return tea.Sequence(
-		m.printlnRendered(len(text), func(m *model, width int) string {
-			return "\n" + m.renderUserMessageWidth(text, width)
-		}),
+		m.printPrompt(ref),
 		tea.Batch(m.waitEvent(), m.spin.Tick),
 	)
 }
@@ -1337,9 +1358,23 @@ func (m *model) println(s string) tea.Cmd {
 }
 
 func (m *model) printlnRendered(size int, render conversationRenderer) tea.Cmd {
+	out := m.renderOutput(size, render, nil)
+	return func() tea.Msg { return out }
+}
+
+// renderOutput renders output now, at the current width, keeping render to
+// lay it out again later.
+func (m *model) renderOutput(size int, render conversationRenderer, prompt *promptRef) renderedOutputMsg {
 	width := m.currentConversationWidth()
-	text := render(m, width)
-	return func() tea.Msg { return renderedOutputMsg{text: text, width: width, size: size, render: render} }
+	return renderedOutputMsg{text: render(m, width), width: width, size: size, render: render, prompt: prompt}
+}
+
+// printPrompt echoes one of your prompts, clickable for the prompt menu.
+func (m *model) printPrompt(ref *promptRef) tea.Cmd {
+	out := m.renderOutput(len(ref.text), func(m *model, width int) string {
+		return "\n" + m.renderPromptWidth(ref, width)
+	}, ref)
+	return func() tea.Msg { return out }
 }
 
 // waitBackground reads the agent's background-task stream for its lifetime.

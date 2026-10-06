@@ -664,18 +664,23 @@ func lastReply(history []llm.Message) string {
 // platform's tool, and through the terminal (OSC 52), which also reaches
 // a local clipboard over SSH.
 func (m *model) copyReply() tea.Cmd {
-	text := m.lastReply
-	if text == "" {
+	if m.lastReply == "" {
 		return m.println(m.st.dim.Render("no reply to copy yet"))
 	}
-	what := plural(strings.Count(text, "\n")+1, "line")
+	return m.copyText(m.lastReply, "the last reply")
+}
+
+// copyText puts text on the clipboard the way copyReply does; what names
+// it in the confirmation, e.g. "the last reply".
+func (m *model) copyText(text, what string) tea.Cmd {
+	what += " (" + plural(strings.Count(text, "\n")+1, "line") + ")"
 	native := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := clipboard.WriteText(ctx, text); err != nil {
-			return outputMsg(m.st.dim.Render("sent the last reply (" + what + ") to the terminal's clipboard; if nothing was copied, the terminal doesn't allow it (OSC 52)"))
+			return outputMsg(m.st.dim.Render("sent " + what + " to the terminal's clipboard; if nothing was copied, the terminal doesn't allow it (OSC 52)"))
 		}
-		return outputMsg(m.st.dim.Render("✓ copied the last reply (" + what + ")"))
+		return outputMsg(m.st.dim.Render("✓ copied " + what))
 	}
 	return tea.Batch(tea.SetClipboard(text), native)
 }

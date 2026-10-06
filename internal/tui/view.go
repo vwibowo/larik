@@ -144,6 +144,7 @@ func (m *model) View() tea.View {
 		rows = append(rows, live...)
 	}
 	m.panelTop, m.panelRows = viewRows+liveRows, panelRows
+	m.viewRows, m.viewWidth = viewRows, conversationWidth
 	if panelRows > 0 {
 		rows = append(rows, panelText)
 	}
@@ -193,6 +194,8 @@ func (m *model) panel() (kind, text string) {
 		return "sessions", m.sessionPickerView()
 	case m.rewindOffer != nil:
 		return "rewind", m.rewindView()
+	case m.promptMenu != nil:
+		return "prompt-menu", m.promptMenuView()
 	case m.histPick != nil:
 		return "history", m.historyPickerView()
 	case m.palette != nil:
@@ -688,7 +691,7 @@ func panelRoom(room int) int {
 
 func (m *model) hasPickerPanel() bool {
 	return m.reload != nil || m.provs != nil || m.settings != nil || m.wizard != nil || m.routing != nil ||
-		m.mpick != nil || m.modePick != nil || m.execPick != nil || m.sessionPick != nil || m.rewindOffer != nil || m.palette != nil ||
+		m.mpick != nil || m.modePick != nil || m.execPick != nil || m.sessionPick != nil || m.rewindOffer != nil || m.promptMenu != nil || m.palette != nil ||
 		m.histPick != nil || m.mention != nil
 }
 
@@ -1371,21 +1374,35 @@ func (m *model) renderUserMessage(text string) string {
 }
 
 func (m *model) renderUserMessageWidth(text string, width int) string {
+	return m.renderPromptFrame(text, width, m.st.dim)
+}
+
+// renderPromptWidth renders a clickable prompt; its frame takes the accent
+// color while the prompt menu is open on it.
+func (m *model) renderPromptWidth(ref *promptRef, width int) string {
+	border := m.st.dim
+	if m.promptMenu != nil && m.promptMenu.ref == ref {
+		border = m.st.accent
+	}
+	return m.renderPromptFrame(ref.text, width, border)
+}
+
+func (m *model) renderPromptFrame(text string, width int, border lipgloss.Style) string {
 	w := max(width, 14)
 	gutter := m.st.accent.Render("▌ ")
-	edge := m.st.dim.Render(" │")
+	edge := border.Render(" │")
 	// The gutter and the right edge take two columns each, so the text wraps
 	// four columns narrower and is padded out to that width, measured on the
 	// plain text so wide characters keep the right edge in line.
 	inner := w - 4
 	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), inner), "\n")
 	out := make([]string, 0, len(lines)+4)
-	out = append(out, "", m.st.dim.Render("╭"+strings.Repeat("─", w-2)+"╮"))
+	out = append(out, "", border.Render("╭"+strings.Repeat("─", w-2)+"╮"))
 	for _, l := range lines {
 		pad := strings.Repeat(" ", max(inner-lipgloss.Width(l), 0))
 		out = append(out, gutter+m.st.user.Render(l)+pad+edge)
 	}
-	out = append(out, m.st.dim.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+	out = append(out, border.Render("╰"+strings.Repeat("─", w-2)+"╯"))
 	return strings.Join(append(out, ""), "\n")
 }
 
@@ -1856,18 +1873,56 @@ func shortPath(p string) string {
 	return "…/" + strings.Join(parts[len(parts)-2:], "/")
 }
 
+// printHistory prints the session's earlier messages, one output per
+// prompt so each prompt can be clicked for the prompt menu.
 func (m *model) printHistory(label string) tea.Cmd {
-	history := make([]llm.Message, 0, len(m.opts.History))
-	size := len(label)
-	for _, source := range m.opts.History {
-		msg := llm.Message{Role: source.Role}
-		switch source.Role {
+	chunks, count := historyChunks(m.opts.History, 0)
+	m.promptCount = count
+	var out historyOutputMsg
+	for _, c := range chunks {
+		o := m.renderOutput(c.size, func(m *model, width int) string {
+			return m.renderHistoryChunk(c, width)
+		}, c.prompt)
+		if o.text != "" {
+			out = append(out, o)
+		}
+	}
+	out = append(out, m.renderOutput(len(label), func(m *model, _ int) string {
+		return m.st.dim.Render("── " + label + " ──")
+	}, nil))
+	return func() tea.Msg { return out }
+}
+
+// historyChunk is part of an earlier conversation printed as one output:
+// a single prompt, or the messages between two prompts.
+type historyChunk struct {
+	msgs   []llm.Message // copies holding only what is shown
+	prompt *promptRef
+	size   int
+}
+
+// historyChunks splits saved messages for display, numbering prompts
+// after first as session.Prompts would. count is the last number used.
+func historyChunks(source []llm.Message, first int) (chunks []historyChunk, count int) {
+	count = first
+	var cur historyChunk
+	flush := func() {
+		if len(cur.msgs) > 0 {
+			chunks = append(chunks, cur)
+		}
+		cur = historyChunk{}
+	}
+	for _, src := range source {
+		msg := llm.Message{Role: src.Role}
+		size := 0
+		switch src.Role {
 		case llm.RoleUser:
-			text := source.Text()
+			// Show what you typed, not the notes Larik put in front of it.
+			text := session.PromptText(src)
 			msg.Blocks = []llm.Block{llm.TextBlock(text)}
-			size += len(text)
+			size = len(text)
 		case llm.RoleAssistant:
-			for _, block := range source.Blocks {
+			for _, block := range src.Blocks {
 				switch block.Type {
 				case llm.BlockText, llm.BlockThinking:
 					msg.Blocks = append(msg.Blocks, llm.Block{Type: block.Type, Text: block.Text, DurationMS: block.DurationMS})
@@ -1879,20 +1934,31 @@ func (m *model) printHistory(label string) tea.Cmd {
 				}
 			}
 		}
-		history = append(history, msg)
+		if session.IsPrompt(src) {
+			flush()
+			count++
+			chunks = append(chunks, historyChunk{msgs: []llm.Message{msg}, prompt: &promptRef{n: count, text: msg.Text()}, size: size})
+			continue
+		}
+		cur.msgs = append(cur.msgs, msg)
+		cur.size += size
 	}
-	return m.printlnRendered(size, func(m *model, width int) string {
-		return m.renderHistory(history, label, width)
-	})
+	flush()
+	return chunks, count
 }
 
-func (m *model) renderHistory(history []llm.Message, label string, width int) string {
+func (m *model) renderHistoryChunk(c historyChunk, width int) string {
+	if c.prompt != nil {
+		if c.prompt.text == "" {
+			return ""
+		}
+		return "\n" + m.renderPromptWidth(c.prompt, width)
+	}
 	var b []string
-	for _, msg := range history {
+	for _, msg := range c.msgs {
 		switch msg.Role {
 		case llm.RoleUser:
-			// Show what you typed, not the notes Larik put in front of it.
-			if t := session.PromptText(msg); t != "" {
+			if t := msg.Text(); t != "" {
 				b = append(b, "\n"+m.renderUserMessageWidth(t, width))
 			}
 		case llm.RoleAssistant:
@@ -1902,6 +1968,19 @@ func (m *model) renderHistory(history []llm.Message, label string, width int) st
 			for _, u := range msg.ToolUses() {
 				b = append(b, m.st.dim.Render("● "+toolTitle(u.Name, u.Input, m.shortPaths)))
 			}
+		}
+	}
+	return strings.Join(b, "\n")
+}
+
+// renderHistory renders saved messages and a closing label as one string,
+// as printHistory lays them out.
+func (m *model) renderHistory(history []llm.Message, label string, width int) string {
+	chunks, _ := historyChunks(history, 0)
+	var b []string
+	for _, c := range chunks {
+		if out := m.renderHistoryChunk(c, width); out != "" {
+			b = append(b, out)
 		}
 	}
 	b = append(b, m.st.dim.Render("── "+label+" ──"))

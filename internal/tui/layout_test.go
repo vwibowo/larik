@@ -207,7 +207,7 @@ func TestConversationCapAccountsForRerenderedOutput(t *testing.T) {
 		return "short"
 	}
 	for range maxConversationBytes/len(expanded) + 2 {
-		m.appendRenderedOutput("short", 120, len("source"), render)
+		m.appendRenderedOutput("short", 120, len("source"), render, nil)
 	}
 	if m.outputBytes >= maxConversationBytes/8 {
 		t.Fatalf("wide rendered output unexpectedly large: %d bytes", m.outputBytes)

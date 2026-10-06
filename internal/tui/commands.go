@@ -65,6 +65,17 @@ func (m *model) cycleMode() tea.Cmd {
 	return nil
 }
 
+// busyWhat says what keeps the agent busy, for commands that must wait.
+func (m *model) busyWhat() string {
+	switch {
+	case m.compactCancel != nil:
+		return "the conversation is being compacted"
+	case m.shellCancel != nil:
+		return "a ! command is running"
+	}
+	return "a turn is running"
+}
+
 func (m *model) command(line string) tea.Cmd {
 	fields := strings.Fields(line)
 	name, args := fields[0], fields[1:]
@@ -77,14 +88,7 @@ func (m *model) command(line string) tea.Cmd {
 	if !m.idle() {
 		switch name {
 		case "/model", "/connect", "/providers", "/execution", "/browser", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
-			what := "a turn is running"
-			switch {
-			case m.compactCancel != nil:
-				what = "the conversation is being compacted"
-			case m.shellCancel != nil:
-				what = "a ! command is running"
-			}
-			return fail(name + " is unavailable while " + what + m.interruptHint())
+			return fail(name + " is unavailable while " + m.busyWhat() + m.interruptHint())
 		}
 	}
 
@@ -365,6 +369,9 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/sessions", "/resume", "/new", "/fork", "/rewind":
 		return m.sessionCommand(name, args, info, fail)
+
+	case "/prompt":
+		return m.promptCommand(args, info, fail)
 	}
 	if sk, ok := m.opts.Skills.Get(strings.TrimPrefix(name, "/")); ok && sk.UserInvocable {
 		if !m.idle() {
