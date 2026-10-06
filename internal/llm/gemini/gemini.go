@@ -181,7 +181,7 @@ func config(req llm.Request) *genai.GenerateContentConfig {
 
 func contents(req llm.Request) []*genai.Content {
 	var out []*genai.Content
-	for _, m := range req.Messages {
+	for _, m := range llm.RepairToolHistory(req.Messages) {
 		sameProducer := m.Model == req.Model
 		c := &genai.Content{Role: genai.RoleUser}
 		if m.Role == llm.RoleAssistant {

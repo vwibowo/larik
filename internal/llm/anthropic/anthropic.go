@@ -210,7 +210,7 @@ func buildParams(req llm.Request, name string, stripThinking bool) (sdk.MessageN
 		}})
 	}
 
-	for _, m := range req.Messages {
+	for _, m := range llm.RepairToolHistory(req.Messages) {
 		var blocks []sdk.ContentBlockParamUnion
 		for _, b := range llm.ReplayableBlocks(m, name, req.Model) {
 			if stripThinking && b.Type == llm.BlockThinking {

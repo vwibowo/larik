@@ -277,7 +277,7 @@ func (p *Provider) messages(req llm.Request) []map[string]any {
 	if req.System != "" {
 		out = append(out, map[string]any{"role": "system", "content": req.System})
 	}
-	for _, m := range req.Messages {
+	for _, m := range llm.RepairToolHistory(req.Messages) {
 		blocks := llm.ReplayableBlocks(m, p.name, req.Model)
 		if m.Role == llm.RoleUser {
 			var parts []map[string]any

@@ -76,6 +76,25 @@ func TestResponsesStream(t *testing.T) {
 	}
 }
 
+func TestOrphanedToolCallGetsSyntheticOutput(t *testing.T) {
+	req := llm.Request{Model: "gpt-5.5", Messages: []llm.Message{
+		llm.UserText("start"),
+		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "toolu_orphan", Name: "bash", Input: json.RawMessage(`{"command":"pwd"}`)}}},
+		llm.UserText("continue"),
+	}}
+	got, err := json.Marshal(inputItems(req, "codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	call := strings.Index(body, `"type":"function_call"`)
+	result := strings.Index(body, `"type":"function_call_output"`)
+	prompt := strings.LastIndex(body, `"text":"continue"`)
+	if call < 0 || result < call || prompt < result || !strings.Contains(body, `"call_id":"toolu_orphan"`) || !strings.Contains(body, "tool call did not produce a result") {
+		t.Fatalf("orphan was not repaired in order: %s", body)
+	}
+}
+
 func TestReasoningModel(t *testing.T) {
 	for m, want := range map[string]bool{"gpt-5.5": true, "gpt-6-sol": true, "o3": true, "gpt-4.1": false, "gpt-5.1-chat-latest": false} {
 		if got := reasoningModel(m); got != want {

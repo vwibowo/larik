@@ -148,6 +148,28 @@ func TestThinkingMismatchRetry(t *testing.T) {
 	}
 }
 
+func TestOrphanedToolCallGetsSyntheticResult(t *testing.T) {
+	params, err := buildParams(llm.Request{Model: "claude-opus-5", Messages: []llm.Message{
+		llm.UserText("start"),
+		{Role: llm.RoleAssistant, Model: "claude-opus-5", Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "toolu_orphan", Name: "bash", Input: json.RawMessage(`{"command":"pwd"}`)}}},
+		llm.UserText("continue"),
+	}}, Name, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	use := strings.Index(body, `"type":"tool_use"`)
+	result := strings.Index(body, `"type":"tool_result"`)
+	prompt := strings.LastIndex(body, `"text":"continue"`)
+	if use < 0 || result < use || prompt < result || !strings.Contains(body, `"tool_use_id":"toolu_orphan"`) || !strings.Contains(body, `"is_error":true`) {
+		t.Fatalf("orphan was not repaired in order: %s", body)
+	}
+}
+
 // TestCutOffToolCallIsInvalid: a tool call whose block never ended (the
 // output limit hit mid-call) must not run with whatever input arrived.
 func TestCutOffToolCallIsInvalid(t *testing.T) {

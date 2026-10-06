@@ -223,7 +223,7 @@ func (p *Provider) buildParams(req llm.Request) (responses.ResponseNewParams, []
 
 func inputItems(req llm.Request, name string) []any {
 	items := []any{}
-	for _, m := range req.Messages {
+	for _, m := range llm.RepairToolHistory(req.Messages) {
 		blocks := llm.ReplayableBlocks(m, name, req.Model)
 		if m.Role == llm.RoleUser {
 			var content []map[string]any
