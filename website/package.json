@@ -1,0 +1,14 @@
+{
+  "name": "larik-website",
+  "private": true,
+  "scripts": {
+    "build": "go run .",
+    "pages:list": "wrangler pages project list",
+    "pages-preview": "wrangler pages preview dist",
+    "deploy": "go run . && wrangler pages deploy dist --project-name larik",
+    "wrangler": "wrangler"
+  },
+  "devDependencies": {
+    "wrangler": "^4.146.0"
+  }
+}

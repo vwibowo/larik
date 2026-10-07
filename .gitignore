@@ -6,7 +6,6 @@
 AGENTS.md
 .DS_Store
 website/node_modules
-website/package.json
 website/package_lock.json
 benchmarks
 
