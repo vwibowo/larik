@@ -199,6 +199,8 @@ func TestSearcherSelection(t *testing.T) {
 	t.Setenv("BRAVE_API_KEY", "")
 	t.Setenv("TAVILY_API_KEY", "")
 	t.Setenv("SEARXNG_URL", "")
+	// The keyless backend is not auto-selected: it answers too few real
+	// queries to offer web_search on its own.
 	if s, err := NewSearcher(SearchConfig{}); s != nil || err != nil {
 		t.Error("no backend configured: no search tool")
 	}
@@ -211,6 +213,90 @@ func TestSearcherSelection(t *testing.T) {
 	}
 	if _, err := NewSearcher(SearchConfig{Provider: "brave"}); err == nil {
 		t.Error("brave without key should error")
+	}
+	t.Setenv("TAVILY_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "k")
+	if s, _ := NewSearcher(SearchConfig{}); s == nil || s.Name() != "brave" {
+		t.Error("BRAVE_API_KEY should select brave")
+	}
+	// ddg is reachable only by asking for it.
+	if s, _ := NewSearcher(SearchConfig{Provider: "ddg"}); s == nil || s.Name() != "ddg" {
+		t.Error("ddg should be selectable by name")
+	}
+	if _, err := NewSearcher(SearchConfig{Provider: "nope"}); err == nil {
+		t.Error("an unknown provider should error")
+	}
+}
+
+func TestDDGReadsAbstractResultsAndNestedTopics(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		io.WriteString(w, `{
+			"Heading": "Go",
+			"AbstractText": "A language.",
+			"AbstractURL": "https://duckduckgo.com/Go",
+			"Results": [{"FirstURL":"https://go.dev","Text":"Go - the language"}],
+			"RelatedTopics": [
+				{"Name":"Languages","Topics":[{"FirstURL":"https://go.dev/doc","Text":"Docs — how to"}]},
+				{"FirstURL":"https://go.dev","Text":"a duplicate, dropped"}
+			]
+		}`)
+	}))
+	defer srv.Close()
+
+	d, err := NewSearcher(SearchConfig{Provider: "ddg", URL: srv.URL + "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := d.Search(context.Background(), "go language", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Abstract first, then direct results, then nested topics; the repeated
+	// URL appears once.
+	want := []string{"https://duckduckgo.com/Go", "https://go.dev", "https://go.dev/doc"}
+	if len(rs) != len(want) {
+		t.Fatalf("got %d results: %+v", len(rs), rs)
+	}
+	for i, u := range want {
+		if rs[i].URL != u {
+			t.Errorf("result %d url = %s, want %s", i, rs[i].URL, u)
+		}
+	}
+	if rs[0].Title != "Go" || rs[1].Title != "Go" || rs[2].Title != "Docs" {
+		t.Errorf("titles = %q, %q, %q", rs[0].Title, rs[1].Title, rs[2].Title)
+	}
+	if gotQuery.Get("format") != "json" || gotQuery.Get("q") != "go language" {
+		t.Errorf("query = %v", gotQuery)
+	}
+}
+
+func TestDDGHonorsTheResultLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"Results":[
+			{"FirstURL":"https://a","Text":"A"},
+			{"FirstURL":"https://b","Text":"B"},
+			{"FirstURL":"https://c","Text":"C"}]}`)
+	}))
+	defer srv.Close()
+	d, _ := NewSearcher(SearchConfig{Provider: "ddg", URL: srv.URL + "/"})
+	rs, err := d.Search(context.Background(), "q", 2)
+	if err != nil || len(rs) != 2 {
+		t.Errorf("got %d results (%v), want 2", len(rs), err)
+	}
+}
+
+// This API reports a block or rate limit as an empty 200, which must not
+// read to the model as "nothing found".
+func TestDDGEmptyAnswerIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"RelatedTopics":[]}`)
+	}))
+	defer srv.Close()
+	d, _ := NewSearcher(SearchConfig{Provider: "ddg", URL: srv.URL + "/"})
+	if _, err := d.Search(context.Background(), "q", 5); err == nil {
+		t.Error("an empty answer should be an error, not zero results")
 	}
 }
 

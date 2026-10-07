@@ -257,7 +257,7 @@ func (m *model) handleEndpointKey(msg tea.KeyPressMsg) tea.Cmd {
 		e.change("disabled", e.fields["disabled"] != "on")
 		return nil
 	case "provider":
-		choices := []string{"", "brave", "tavily", "searxng"}
+		choices := []string{"", "brave", "tavily", "searxng", "ddg"}
 		for i, v := range choices {
 			if v == e.fields["provider"] {
 				e.change("provider", choices[(i+1)%len(choices)])

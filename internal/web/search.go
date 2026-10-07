@@ -15,7 +15,7 @@ import (
 
 // SearchConfig selects the search backend ("web.search" in settings).
 type SearchConfig struct {
-	Provider  string `json:"provider,omitempty"` // brave, tavily, searxng
+	Provider  string `json:"provider,omitempty"` // brave, tavily, searxng, ddg
 	APIKey    string `json:"api_key,omitempty"`
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 	URL       string `json:"url,omitempty"` // SearXNG instance or API base override
@@ -35,8 +35,13 @@ type Searcher interface {
 }
 
 // NewSearcher picks a backend from config or, failing that, from the
-// environment (BRAVE_API_KEY, TAVILY_API_KEY, SEARXNG_URL). It returns
-// nil when none is available.
+// environment (BRAVE_API_KEY, TAVILY_API_KEY, SEARXNG_URL). It returns nil
+// when none is available.
+//
+// "ddg" needs no key but is not auto-selected: DuckDuckGo's keyless API
+// answers only entity-style queries, so offering web_search by default
+// would give the model a tool that fails on most real questions. It has to
+// be asked for by name.
 func NewSearcher(cfg SearchConfig) (Searcher, error) {
 	if cfg.Disabled {
 		return nil, nil
@@ -93,8 +98,119 @@ func NewSearcher(cfg SearchConfig) (Searcher, error) {
 			return nil, fmt.Errorf("searxng search needs a url (or SEARXNG_URL)")
 		}
 		return &searxng{url: strings.TrimRight(base, "/"), client: client}, nil
+	case "ddg":
+		base := cfg.URL
+		if base == "" {
+			base = "https://api.duckduckgo.com/"
+		}
+		return &ddg{url: base, client: client}, nil
 	}
-	return nil, fmt.Errorf("unknown search provider %q (brave, tavily, searxng)", provider)
+	return nil, fmt.Errorf("unknown search provider %q (brave, tavily, searxng, ddg)", provider)
+}
+
+// ddg searches DuckDuckGo's Instant Answer API, which needs no key. It
+// answers with an abstract and related topics, not a ranked web index: an
+// entity query ("go programming language") returns Wikipedia and related
+// subjects, while a specific one ("go 1.27 release notes") returns nothing
+// at all. That is why it is opt-in rather than the default — see
+// NewSearcher — and why its empty answer is an error naming the backends
+// that do index the web.
+type ddg struct {
+	url    string
+	client *http.Client
+}
+
+func (d *ddg) Name() string { return "ddg" }
+
+// ddgTopic is one related topic. A topic either is a result (FirstURL) or
+// groups further ones (Topics), which is why the type recurses.
+type ddgTopic struct {
+	FirstURL string     `json:"FirstURL"`
+	Text     string     `json:"Text"`
+	Topics   []ddgTopic `json:"Topics"`
+}
+
+func (d *ddg) Search(ctx context.Context, query string, n int) ([]Result, error) {
+	u := d.url + "?" + url.Values{
+		"q":             {query},
+		"format":        {"json"},
+		"no_html":       {"1"},
+		"no_redirect":   {"1"},
+		"skip_disambig": {"1"},
+		"t":             {"larik"},
+	}.Encode()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("Accept", "application/json")
+	var out struct {
+		Heading       string     `json:"Heading"`
+		AbstractText  string     `json:"AbstractText"`
+		AbstractURL   string     `json:"AbstractURL"`
+		Results       []ddgTopic `json:"Results"`
+		RelatedTopics []ddgTopic `json:"RelatedTopics"`
+	}
+	if err := doJSON(d.client, req, &out); err != nil {
+		return nil, err
+	}
+
+	var rs []Result
+	seen := map[string]bool{}
+	add := func(title, link, snippet string) {
+		if link == "" || seen[link] || len(rs) >= n {
+			return
+		}
+		seen[link] = true
+		if title == "" {
+			title = link
+		}
+		rs = append(rs, Result{Title: title, URL: link, Snippet: stripTags(snippet)})
+	}
+	if out.AbstractURL != "" {
+		title := out.Heading
+		if title == "" {
+			title = query
+		}
+		add(title, out.AbstractURL, out.AbstractText)
+	}
+	// Results are direct hits; RelatedTopics are broader and may nest one
+	// level of groups.
+	var walk func(topics []ddgTopic)
+	walk = func(topics []ddgTopic) {
+		for _, t := range topics {
+			if len(t.Topics) > 0 {
+				walk(t.Topics)
+				continue
+			}
+			add(ddgTitle(t.Text), t.FirstURL, t.Text)
+		}
+	}
+	walk(out.Results)
+	walk(out.RelatedTopics)
+
+	if len(rs) == 0 {
+		// Distinguish "nothing matched" from a block or rate limit, which
+		// this API reports as an empty 200 rather than an error status.
+		return nil, fmt.Errorf("duckduckgo returned no results for %q; it answers with instant answers rather than a full web index, so a narrower query or a configured backend (BRAVE_API_KEY, TAVILY_API_KEY, SEARXNG_URL) may be needed", query)
+	}
+	return rs, nil
+}
+
+// ddgTitle is the leading sentence of a topic's text, which reads as a title;
+// the whole text stays as the snippet.
+func ddgTitle(text string) string {
+	// The API separates a topic's name from its description with an em
+	// dash, older entries with a hyphen.
+	for _, sep := range []string{" — ", " - "} {
+		if i := strings.Index(text, sep); i > 0 {
+			return text[:i]
+		}
+	}
+	if len(text) > 80 {
+		if i := strings.LastIndex(text[:80], " "); i > 0 {
+			return text[:i]
+		}
+		return text[:80]
+	}
+	return text
 }
 
 type brave struct {
