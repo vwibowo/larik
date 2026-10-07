@@ -164,7 +164,10 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		defer stream.Close()
 
 		var (
-			text, reasoning strings.Builder
+			reasoning strings.Builder
+			// text withholds anything that may be a tool call the server
+			// failed to convert, so leaked markup is never displayed.
+			text llm.SalvageGate
 			// calls in the order they started; byIndex is the one each
 			// stream index currently feeds.
 			calls   []*pendingCall
@@ -190,9 +193,10 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 					}
 				}
 				if d.Content != "" {
-					text.WriteString(d.Content)
-					if !yield(llm.StreamEvent{Type: llm.EventTextDelta, Text: d.Content}, nil) {
-						return
+					if shown := text.Write(d.Content); shown != "" {
+						if !yield(llm.StreamEvent{Type: llm.EventTextDelta, Text: shown}, nil) {
+							return
+						}
 					}
 				}
 				for _, tc := range d.ToolCalls {
@@ -226,9 +230,34 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if reasoning.Len() > 0 {
 			msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockThinking, Text: reasoning.String(), Provider: p.name})
 		}
-		if text.Len() > 0 {
-			msg.Blocks = append(msg.Blocks, llm.TextBlock(text.String()))
+		// A server that does not apply the model's tool template leaves the
+		// call in the text. Recover it rather than ending the turn on
+		// markup, and say so: the real fix is the server's configuration.
+		prose := text.Text()
+		var salvage []llm.Block
+		if len(calls) == 0 {
+			var found bool
+			if salvage, prose, found = llm.SalvageToolCalls(prose, req.Tools); found {
+				if !yield(llm.StreamEvent{Type: llm.EventNotice, Text: llm.SalvageNotice(len(salvage))}, nil) {
+					return
+				}
+				for _, c := range salvage {
+					if !yield(llm.StreamEvent{Type: llm.EventToolUseStart, Text: c.Name}, nil) {
+						return
+					}
+				}
+			}
 		}
+		// A fragment the gate held back that never became markup.
+		if rest := text.Flush(); rest != "" && len(salvage) == 0 {
+			if !yield(llm.StreamEvent{Type: llm.EventTextDelta, Text: rest}, nil) {
+				return
+			}
+		}
+		if prose != "" {
+			msg.Blocks = append(msg.Blocks, llm.TextBlock(prose))
+		}
+		msg.Blocks = append(msg.Blocks, salvage...)
 		for _, c := range calls {
 			if c.id == "" {
 				c.id = llm.NewCallID("call_")
@@ -244,7 +273,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 
 		stop := llm.StopEnd
 		switch {
-		case len(calls) > 0:
+		case len(calls) > 0 || len(salvage) > 0:
 			stop = llm.StopToolUse
 		case finish == "length":
 			stop = llm.StopMaxTokens

@@ -219,3 +219,120 @@ func TestDocumentBlocksAreDroppedNotSent(t *testing.T) {
 		t.Error("this API has no document block")
 	}
 }
+
+// collectAll runs a request and returns every event, so a test can assert
+// on the notice as well as the message.
+func collectAll(t *testing.T, p *Provider, req llm.Request) []llm.StreamEvent {
+	t.Helper()
+	var evs []llm.StreamEvent
+	for ev, err := range p.Stream(context.Background(), req) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		evs = append(evs, ev)
+	}
+	return evs
+}
+
+func salvageReq() llm.Request {
+	return llm.Request{
+		Model:    "m",
+		Messages: []llm.Message{llm.UserText("read a.go")},
+		Tools:    []llm.ToolSpec{{Name: "read", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}
+}
+
+// A server that leaves the tool call in the text must not end the turn on
+// markup: the call is recovered and the turn continues.
+func TestToolCallWrittenAsTextIsRecovered(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, llmtest.SSE(
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"I'll read it.\n<tool_call>{\"name\": \"read\", \"arguments\": {\"path\": \"a.go\"}}</tool_call>"},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	))
+	p := New("lmstudio", "", srv.URL)
+	evs := collectAll(t, p, salvageReq())
+
+	var done llm.StreamEvent
+	var notice, started string
+	for _, ev := range evs {
+		switch ev.Type {
+		case llm.EventDone:
+			done = ev
+		case llm.EventNotice:
+			notice = ev.Text
+		case llm.EventToolUseStart:
+			started = ev.Text
+		}
+	}
+	uses := done.Message.ToolUses()
+	if len(uses) != 1 || uses[0].Name != "read" || string(uses[0].Input) != `{"path": "a.go"}` {
+		t.Fatalf("tool uses = %+v", uses)
+	}
+	// The turn has to report tool use, or the agent loop would stop here.
+	if done.StopReason != llm.StopToolUse {
+		t.Errorf("stop reason = %q, want tool_use", done.StopReason)
+	}
+	// The markup is gone from what the user and transcript see; the prose
+	// the model actually wrote stays.
+	if got := done.Message.Text(); got != "I'll read it." {
+		t.Errorf("text = %q", got)
+	}
+	// A salvage is never silent, and the tool shows as starting.
+	if !strings.Contains(notice, "recovered a tool call") {
+		t.Errorf("notice = %q", notice)
+	}
+	if started != "read" {
+		t.Errorf("tool-use-start = %q", started)
+	}
+}
+
+// A structured call is authoritative: text that merely looks like a call
+// must not be salvaged on top of it, which would double-run the tool.
+func TestAStructuredCallSuppressesSalvage(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, llmtest.SSE(
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"example: <tool_call>{\"name\":\"read\",\"arguments\":{\"path\":\"wrong.go\"}}</tool_call>","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":"{\"path\":\"right.go\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	))
+	p := New("lmstudio", "", srv.URL)
+	evs := collectAll(t, p, salvageReq())
+
+	var done llm.StreamEvent
+	for _, ev := range evs {
+		if ev.Type == llm.EventDone {
+			done = ev
+		}
+		if ev.Type == llm.EventNotice {
+			t.Errorf("no salvage notice expected, got %q", ev.Text)
+		}
+	}
+	uses := done.Message.ToolUses()
+	if len(uses) != 1 || string(uses[0].Input) != `{"path":"right.go"}` {
+		t.Fatalf("the structured call must win: %+v", uses)
+	}
+	// The text, markup and all, is left exactly as the model wrote it.
+	if !strings.Contains(done.Message.Text(), "wrong.go") {
+		t.Errorf("text should be untouched, got %q", done.Message.Text())
+	}
+}
+
+// Prose that names no offered tool is left alone and still ends the turn.
+func TestProseThatIsNotACallEndsTheTurnNormally(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, llmtest.SSE(
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"The file looks fine to me."},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	))
+	p := New("lmstudio", "", srv.URL)
+	for _, ev := range collectAll(t, p, salvageReq()) {
+		if ev.Type == llm.EventNotice {
+			t.Errorf("unexpected notice %q", ev.Text)
+		}
+		if ev.Type == llm.EventDone {
+			if ev.StopReason != llm.StopEnd {
+				t.Errorf("stop reason = %q, want end_turn", ev.StopReason)
+			}
+			if ev.Message.Text() != "The file looks fine to me." {
+				t.Errorf("text = %q", ev.Message.Text())
+			}
+		}
+	}
+}

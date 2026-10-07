@@ -263,3 +263,61 @@ func TestPartialSamplingSendsOnlyWhatIsSet(t *testing.T) {
 		t.Error("temperature should be absent")
 	}
 }
+
+// Ollama normally converts tool calls itself, but a model whose template is
+// not applied leaves them in the text. Recover them there too.
+func TestToolCallWrittenAsTextIsRecovered(t *testing.T) {
+	f := newFake(t, `{"message":{"role":"assistant","content":"Reading it.\n<tool_call>{\"name\":\"read\",\"arguments\":{\"path\":\"a.go\"}}</tool_call>"},"done":true,"done_reason":"stop"}`)
+	p := New("ollama", f.URL+"/v1", 0)
+	evs, err := collect(t, p.Stream(context.Background(), llm.Request{
+		Model:    "qwen3:4b",
+		Messages: []llm.Message{llm.UserText("read a.go")},
+		Tools:    []llm.ToolSpec{{Name: "read", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := evs[len(evs)-1]
+	uses := done.Message.ToolUses()
+	if len(uses) != 1 || uses[0].Name != "read" || string(uses[0].Input) != `{"path":"a.go"}` {
+		t.Fatalf("tool uses = %+v", uses)
+	}
+	if done.StopReason != llm.StopToolUse {
+		t.Errorf("stop reason = %q, want tool_use", done.StopReason)
+	}
+	if got := done.Message.Text(); got != "Reading it." {
+		t.Errorf("text = %q, markup should be stripped", got)
+	}
+	var sawNotice bool
+	for _, e := range evs {
+		if e.Type == llm.EventNotice && strings.Contains(e.Text, "recovered a tool call") {
+			sawNotice = true
+		}
+	}
+	if !sawNotice {
+		t.Error("the user should be told a call was recovered")
+	}
+}
+
+// Nothing to salvage when the server did its job.
+func TestStructuredToolCallsAreNotResalvaged(t *testing.T) {
+	f := newFake(t, `{"message":{"role":"assistant","content":"like <tool_call>{\"name\":\"read\",\"arguments\":{\"path\":\"wrong\"}}</tool_call>","tool_calls":[{"function":{"name":"read","arguments":{"path":"right"}}}]},"done":true,"done_reason":"stop"}`)
+	p := New("ollama", f.URL+"/v1", 0)
+	evs, err := collect(t, p.Stream(context.Background(), llm.Request{
+		Model:    "qwen3:4b",
+		Messages: []llm.Message{llm.UserText("read")},
+		Tools:    []llm.ToolSpec{{Name: "read", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := evs[len(evs)-1]
+	if uses := done.Message.ToolUses(); len(uses) != 1 || string(uses[0].Input) != `{"path":"right"}` {
+		t.Fatalf("the structured call must win: %+v", uses)
+	}
+	for _, e := range evs {
+		if e.Type == llm.EventNotice {
+			t.Errorf("unexpected notice %q", e.Text)
+		}
+	}
+}
