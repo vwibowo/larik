@@ -315,11 +315,14 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 }
 
 // validateInput runs a tool's own argument check, when it has one.
+// validateInput checks a call's arguments before the tool runs. A tool that
+// validates for itself is trusted to; every other tool is held to the schema
+// it declares, which is the same contract the model was given.
 func validateInput(tool tools.Tool, input json.RawMessage) error {
 	if v, ok := tool.(tools.InputValidator); ok {
 		return v.ValidateInput(input)
 	}
-	return nil
+	return tools.ValidateAgainstSchema(tool.Spec(), input)
 }
 
 // logDecision appends how a tool call was authorized to the session file.

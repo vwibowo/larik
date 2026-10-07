@@ -132,7 +132,9 @@ The memory limit is why scripts run in their own process. goja can't bound its o
 
 ## Argument validation
 
-A tool can implement `tools.InputValidator`. `prepare` calls it before `authorize`, so a malformed call comes back to the model as `INVALID_ARGUMENTS: …` without asking the user. MCP tools implement it by checking the arguments against the server's `inputSchema` (`github.com/google/jsonschema-go`, compiled once per tool). This matters most for deferred tools reached through `call_tool`, whose schema the API never enforces. A schema that can't be compiled (a remote `$ref`, an unreadable document) isn't enforced; the server stays the judge. Built-in tools check their own input in `Run`.
+Every call's arguments are checked before the tool runs. `prepare` calls `validateInput` before `authorize`, so a malformed call comes back to the model as `INVALID_ARGUMENTS: …` naming what was wrong, without asking the user and without the tool running — and it is recorded as a `FaultInvalidArguments`, which `larik bench` counts. A tool that implements `tools.InputValidator` judges its own arguments: MCP tools do, checking them against the server's `inputSchema`, which matters most for deferred tools reached through `call_tool`, whose schema the API never enforces. Every other tool, built-ins included, is held to the schema in its own `Spec` by `tools.ValidateAgainstSchema` (`github.com/google/jsonschema-go`, compiled once per distinct schema and cached). Built-in tools also still check what their schemas cannot express in `Run`.
+
+Two things are deliberately not enforced. A schema that can't be compiled (a remote `$ref`, an unreadable document, anything that isn't an object) isn't applied at all, so the tool or the server stays the judge rather than every call being refused. And a property whose value is `null` is dropped before validating, because that is what unmarshalling into a tool's own struct does with it: models routinely send `null` for an argument they are not using, and a typed schema would otherwise refuse a call the tool would have handled. A `null` where the schema requires a value still fails, as a missing one.
 
 ## Authorization
 

@@ -8,17 +8,18 @@ import (
 	"larik/internal/permission"
 )
 
-// A subagent is stuck when the same tool calls with the same results
-// recur this often within the last loopWindow turns. Matching results too
-// keeps honest retries apart: rerunning tests after an edit gives
-// different output.
+// An agent is stuck when the same tool calls with the same results recur
+// this often within the last loopWindow turns. Matching results too keeps
+// honest retries apart: rerunning tests after an edit gives different
+// output.
 const (
 	loopWindow  = 8
 	loopRepeats = 4
 )
 
-// loopGuard notices a subagent repeating itself, which small models do
-// when they lose track of the task, and which nobody is watching.
+// loopGuard notices an agent repeating itself, which small models do when
+// they lose track of the task. It guards the root agent as well as
+// subagents; what differs is the response, which loopStop decides.
 type loopGuard struct{ recent []uint64 }
 
 // see records one turn's tool calls and results and reports whether that

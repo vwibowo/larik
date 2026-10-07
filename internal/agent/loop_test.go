@@ -53,7 +53,10 @@ func TestLoopGuard(t *testing.T) {
 	}
 }
 
-func TestMainAgentIsNotLoopGuarded(t *testing.T) {
+// The guard runs for the main agent too, but an interactive session is
+// watched, so a repeat is reported and the turn carries on rather than
+// being cut short. TestRootAgentLoopGuard covers where it does stop.
+func TestMainAgentIsWarnedNotStopped(t *testing.T) {
 	var script []llm.Message
 	for range 6 {
 		script = append(script, assistant(toolUse("t", "glob", `{"pattern":"*.none"}`)))
