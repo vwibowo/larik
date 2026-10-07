@@ -24,6 +24,7 @@ var commands = []command{
 	{"/models-config", "", "edit personal model catalog overrides, limits and prices", "model and mode", ""},
 	{"/execution", "[tools|hybrid|code|default]", "how larik acts with this model: direct tools, hybrid, or scripts for ordinary tools", "model and mode", ""},
 	{"/effort", "[level]", "show or set reasoning effort: low medium high xhigh max default", "model and mode", ""},
+	{"/sampling", "[temp=.. top_p=.. top_k=..|default|none]", "show or set this model's decoding parameters", "model and mode", ""},
 	{"/connect", "[provider]", "set up a provider: pick it, connect, choose a model, save", "model and mode", ""},
 	{"/providers", "", "see every provider's status; edit, test, remove or add one", "model and mode", ""},
 	{"/permissions", "", "edit personal allow and deny rules for all projects or this project", "model and mode", ""},

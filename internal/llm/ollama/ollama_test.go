@@ -197,3 +197,69 @@ func TestToolResultImagesFollowAsUserMessage(t *testing.T) {
 		t.Errorf("images: %v", msgs[1])
 	}
 }
+
+// Sampling is an override: a request that configures none must look exactly
+// as it did before sampling existed, so no existing setup changes behavior.
+func TestNoSamplingSendsNoDecodingOptions(t *testing.T) {
+	f := newFake(t, `{"message":{"role":"assistant","content":"hi"},"done":true,"done_reason":"stop"}`)
+	p := New("ollama", f.URL+"/v1", 0)
+	if _, err := collect(t, p.Stream(context.Background(), llm.Request{
+		Model: "qwen3:4b", Messages: []llm.Message{llm.UserText("hello")},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	options, _ := f.body["options"].(map[string]any)
+	f.mu.Unlock()
+	for _, k := range []string{"temperature", "top_p", "top_k"} {
+		if v, ok := options[k]; ok {
+			t.Errorf("unconfigured request sent %s=%v", k, v)
+		}
+	}
+	if _, ok := options["num_ctx"]; !ok {
+		t.Error("num_ctx should still be sent")
+	}
+}
+
+func TestSamplingReachesOllamaOptions(t *testing.T) {
+	f := newFake(t, `{"message":{"role":"assistant","content":"hi"},"done":true,"done_reason":"stop"}`)
+	p := New("ollama", f.URL+"/v1", 0)
+	temp, topP, topK := 0.7, 0.8, 20
+	if _, err := collect(t, p.Stream(context.Background(), llm.Request{
+		Model: "qwen3:4b", Messages: []llm.Message{llm.UserText("hello")},
+		Sampling: &llm.Sampling{Temperature: &temp, TopP: &topP, TopK: &topK},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	options, _ := f.body["options"].(map[string]any)
+	f.mu.Unlock()
+	// JSON numbers decode as float64, top_k included.
+	for k, want := range map[string]float64{"temperature": 0.7, "top_p": 0.8, "top_k": 20} {
+		if got, ok := options[k]; !ok || got != want {
+			t.Errorf("options[%q] = %v (present %v), want %v", k, got, ok, want)
+		}
+	}
+}
+
+// A partial override sets only what it names and leaves the rest to Ollama.
+func TestPartialSamplingSendsOnlyWhatIsSet(t *testing.T) {
+	f := newFake(t, `{"message":{"role":"assistant","content":"hi"},"done":true,"done_reason":"stop"}`)
+	p := New("ollama", f.URL+"/v1", 0)
+	topK := 20
+	if _, err := collect(t, p.Stream(context.Background(), llm.Request{
+		Model: "qwen3:4b", Messages: []llm.Message{llm.UserText("hello")},
+		Sampling: &llm.Sampling{TopK: &topK},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	options, _ := f.body["options"].(map[string]any)
+	f.mu.Unlock()
+	if options["top_k"] != float64(20) {
+		t.Errorf("top_k = %v", options["top_k"])
+	}
+	if _, ok := options["temperature"]; ok {
+		t.Error("temperature should be absent")
+	}
+}

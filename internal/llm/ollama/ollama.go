@@ -153,6 +153,17 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if req.MaxTokens > 0 {
 			options["num_predict"] = req.MaxTokens
 		}
+		if s := req.Sampling; !s.Empty() {
+			if s.Temperature != nil {
+				options["temperature"] = *s.Temperature
+			}
+			if s.TopP != nil {
+				options["top_p"] = *s.TopP
+			}
+			if s.TopK != nil {
+				options["top_k"] = *s.TopK
+			}
+		}
 		body := map[string]any{
 			"model":    req.Model,
 			"messages": p.messages(req),

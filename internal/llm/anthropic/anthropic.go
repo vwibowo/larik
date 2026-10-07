@@ -178,6 +178,7 @@ func buildParams(req llm.Request, name string, stripThinking bool) (sdk.MessageN
 		params.System = []sdk.TextBlockParam{{Text: req.System, CacheControl: sdk.NewCacheControlEphemeralParam()}}
 	}
 
+	thinking := false
 	if legacyThinking(req.Model) {
 		// Haiku 4.5 and older take a fixed budget and reject effort.
 		if req.Effort != llm.EffortDefault {
@@ -187,13 +188,29 @@ func buildParams(req llm.Request, name string, stripThinking bool) (sdk.MessageN
 			}
 			if budget < int64(maxTokens) {
 				params.Thinking = sdk.ThinkingConfigParamOfEnabled(budget)
+				thinking = true
 			}
 		}
 	} else {
 		adaptive := sdk.ThinkingConfigAdaptiveParam{Display: sdk.ThinkingConfigAdaptiveDisplaySummarized}
 		params.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &adaptive}
+		thinking = true
 		if req.Effort != llm.EffortDefault {
 			params.OutputConfig = sdk.OutputConfigParam{Effort: sdk.OutputConfigEffort(req.Effort)}
+		}
+	}
+
+	// Extended thinking fixes temperature and rejects top_p and top_k, so
+	// sampling overrides apply only when it is off.
+	if s := req.Sampling; !thinking && !s.Empty() {
+		if s.Temperature != nil {
+			params.Temperature = sdk.Float(*s.Temperature)
+		}
+		if s.TopP != nil {
+			params.TopP = sdk.Float(*s.TopP)
+		}
+		if s.TopK != nil {
+			params.TopK = sdk.Int(int64(*s.TopK))
 		}
 	}
 

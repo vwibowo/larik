@@ -261,6 +261,34 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
+		key: "sampling", title: "Sampling", section: "behavior", kind: kindText,
+		placeholder: "e.g. temp=0.7 top_p=0.8 top_k=20; empty uses each model's own",
+		applies:     applyNow,
+		later:       "default for models without a published or saved setting (/sampling sets one)",
+		valid: func(v string) error {
+			_, err := llm.ParseSampling(v)
+			return err
+		},
+		get: func(m *model) string { return m.opts.Config.Sampling.String() },
+		store: func(v string) any {
+			sm, err := llm.ParseSampling(v)
+			if err != nil || sm.Empty() {
+				return nil
+			}
+			return sm.JSON()
+		},
+		set: func(m *model, v string) {
+			sm, err := llm.ParseSampling(v)
+			if err != nil {
+				return
+			}
+			if sm.Empty() {
+				sm = nil
+			}
+			m.opts.Config.Sampling = sm
+		},
+	},
+	{
 		key: "language", title: "Response language", section: "behavior", kind: kindText,
 		placeholder: "e.g. Indonesian; empty lets the model choose",
 		applies:     applyFresh,
@@ -1305,6 +1333,47 @@ func boolRows(on bool) int {
 		return 1
 	}
 	return 0
+}
+
+// samplingCommand handles /sampling: with no argument it reports the decoding
+// parameters in force for the current model and where they came from. A spec
+// ("temp=0.7 top_p=0.8") saves them for that model, "default" drops the
+// model's own entry, and "none" saves an empty entry so nothing is sent even
+// when the model has a published default. Sampling is a per-request
+// parameter, so a change applies to the next turn without a fresh context.
+func (m *model) samplingCommand(arg string) tea.Cmd {
+	cfg := m.opts.Config
+	provider, modelID := m.agent.ProviderName(), m.agent.Model()
+	key := provider + "/" + modelID
+	describe := func() string {
+		sm, src := cfg.SamplingSource(provider, modelID)
+		if sm.Empty() {
+			return fmt.Sprintf("sampling for %s: none (the server's own defaults)", key)
+		}
+		return fmt.Sprintf("sampling for %s: %s (from %s)", key, sm, src)
+	}
+	arg = strings.TrimSpace(arg)
+	switch arg {
+	case "":
+		return m.println(m.st.dim.Render(describe() + ` · set with /sampling temp=0.7 top_p=0.8 top_k=20, or "default" / "none"`))
+	case "default":
+		if err := cfg.SetModelSampling(key, nil, true); err != nil {
+			return m.println(m.st.err.Render("couldn't save sampling: " + err.Error()))
+		}
+	case "none":
+		if err := cfg.SetModelSampling(key, &llm.Sampling{}, false); err != nil {
+			return m.println(m.st.err.Render("couldn't save sampling: " + err.Error()))
+		}
+	default:
+		sm, err := llm.ParseSampling(arg)
+		if err != nil {
+			return m.println(m.st.err.Render(err.Error() + `, or "default" / "none"`))
+		}
+		if err := cfg.SetModelSampling(key, sm, false); err != nil {
+			return m.println(m.st.err.Render("couldn't save sampling: " + err.Error()))
+		}
+	}
+	return m.println(m.st.dim.Render(describe() + " · saved to " + shortHome(cfg.UserConfigPath()) + " · active on the next turn"))
 }
 
 // executionCommand handles /execution: with no argument it shows the

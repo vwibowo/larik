@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"larik/internal/llm"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -811,5 +812,71 @@ func TestTelemetryIsPersonalOnlyAndValidated(t *testing.T) {
 	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"telemetry":{"otlp_endpoint":"localhost:4318"}}`)
 	if _, err := Load(cwd); err == nil || !strings.Contains(err.Error(), "telemetry.otlp_endpoint") {
 		t.Errorf("an endpoint that isn't an http(s) URL should be reported: %v", err)
+	}
+}
+
+func TestSamplingLoadsResolvesAndSaves(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik", "config.json")
+	write(t, path, `{"sampling":{"temperature":0.1},
+		"model_sampling":{"ollama/qwen3:4b":{"temperature":0.2,"top_k":20},"qwen3:14b":{}}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The per-model entry wins, and its source is reported.
+	sm, src := cfg.SamplingSource("ollama", "qwen3:4b")
+	if sm == nil || *sm.Temperature != 0.2 || *sm.TopK != 20 {
+		t.Fatalf("qwen3:4b sampling = %v", sm)
+	}
+	if src != "model_sampling[ollama/qwen3:4b]" {
+		t.Errorf("source = %q", src)
+	}
+	// An empty entry suppresses the published default rather than falling
+	// through to it.
+	if sm := cfg.SamplingFor("ollama", "qwen3:14b"); sm != nil {
+		t.Errorf("empty entry should send nothing, got %v", sm)
+	}
+	// A model with no entry and no published default uses the default.
+	if sm := cfg.SamplingFor("anthropic", "claude-opus-5"); sm == nil || *sm.Temperature != 0.1 {
+		t.Errorf("default sampling = %v", sm)
+	}
+
+	// Saving round-trips through the file and into the loaded config.
+	topP := 0.95
+	if err := cfg.SetModelSampling("ollama/qwen3:4b", &llm.Sampling{TopP: &topP}, false); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm = again.SamplingFor("ollama", "qwen3:4b")
+	if sm == nil || sm.Temperature != nil || *sm.TopP != 0.95 {
+		t.Errorf("after save, sampling = %v (entries replace, not merge)", sm)
+	}
+	// Removing the entry brings the published default back.
+	if err := again.SetModelSampling("ollama/qwen3:4b", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if sm := again.SamplingFor("ollama", "qwen3:4b"); sm == nil || *sm.Temperature != 0.7 {
+		t.Errorf("expected Qwen's published values back, got %v", sm)
+	}
+}
+
+func TestSamplingOutOfRangeIsRejectedAtStartup(t *testing.T) {
+	for _, bad := range []string{
+		`{"sampling":{"temperature":9}}`,
+		`{"sampling":{"top_p":0}}`,
+		`{"model_sampling":{"m":{"top_k":0}}}`,
+	} {
+		cwd := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		write(t, filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "larik", "config.json"), bad)
+		if _, err := Load(cwd); err == nil {
+			t.Errorf("%s should be rejected", bad)
+		}
 	}
 }

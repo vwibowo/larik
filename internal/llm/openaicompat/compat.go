@@ -146,6 +146,20 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if tools := toolsJSON(req.Tools); len(tools) > 0 {
 			opts = append(opts, option.WithJSONSet("tools", tools))
 		}
+		if s := req.Sampling; !s.Empty() {
+			if s.Temperature != nil {
+				params.Temperature = sdk.Float(*s.Temperature)
+			}
+			if s.TopP != nil {
+				params.TopP = sdk.Float(*s.TopP)
+			}
+			// top_k is not in the OpenAI schema. Local servers
+			// (Ollama, LM Studio, vLLM) take it at the top level;
+			// a server that doesn't ignores an unknown field.
+			if s.TopK != nil {
+				opts = append(opts, option.WithJSONSet("top_k", *s.TopK))
+			}
+		}
 		stream := p.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 		defer stream.Close()
 

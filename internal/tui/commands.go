@@ -205,6 +205,8 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/execution":
 		return m.executionCommand(arg)
+	case "/sampling":
+		return m.samplingCommand(arg)
 
 	case "/browser":
 		return m.browserCommand(arg)

@@ -193,6 +193,15 @@ func (p *Provider) buildParams(req llm.Request) (responses.ResponseNewParams, []
 		if req.Effort != llm.EffortDefault {
 			params.Reasoning.Effort = shared.ReasoningEffort(req.Effort)
 		}
+	} else if s := req.Sampling; !s.Empty() {
+		// Reasoning models reject both parameters, so they are sent only
+		// for the rest. The Responses API has no top_k; it is dropped.
+		if s.Temperature != nil {
+			params.Temperature = sdk.Float(*s.Temperature)
+		}
+		if s.TopP != nil {
+			params.TopP = sdk.Float(*s.TopP)
+		}
 	}
 
 	var tools []map[string]any

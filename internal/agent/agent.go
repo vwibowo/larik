@@ -64,6 +64,11 @@ type Options struct {
 	// which may run another model.
 	ExecutionFor func(provider, model string) tools.Execution
 
+	// SamplingFor, if set, gives the decoding parameters for a provider
+	// and model. It is consulted per request, so a model change and a
+	// subagent on another model each get their own. Nil sends none.
+	SamplingFor func(provider, model string) *llm.Sampling
+
 	// LoadTools, if set, supplies the tool set at the start of each fresh
 	// context (first prompt, and after Clear). The set then stays fixed so
 	// the prompt prefix, and provider caches, remain stable. notify reports
@@ -907,6 +912,9 @@ func (a *Agent) stream(ctx context.Context, emit func(Event)) (llm.Message, llm.
 		CacheKey:  a.cacheKey,
 	}
 	provider := a.opts.Provider
+	if a.opts.SamplingFor != nil {
+		req.Sampling = a.opts.SamplingFor(provider.Name(), req.Model)
+	}
 	tr := a.opts.Trace
 	a.mu.Unlock()
 	a.checkTools(ctx, provider, req.Model, len(req.Tools) > 0, emit)
@@ -1128,6 +1136,9 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 	window := a.windowLocked()
 	provider := a.opts.Provider
+	if a.opts.SamplingFor != nil {
+		req.Sampling = a.opts.SamplingFor(provider.Name(), req.Model)
+	}
 	pick := a.opts.CompactWith
 	tr := a.opts.Trace
 	a.mu.Unlock()

@@ -169,6 +169,17 @@ func config(req llm.Request) *genai.GenerateContentConfig {
 	case llm.EffortHigh, llm.EffortXHigh, llm.EffortMax:
 		cfg.ThinkingConfig.ThinkingLevel = genai.ThinkingLevelHigh
 	}
+	if s := req.Sampling; !s.Empty() {
+		if s.Temperature != nil {
+			cfg.Temperature = genai.Ptr(float32(*s.Temperature))
+		}
+		if s.TopP != nil {
+			cfg.TopP = genai.Ptr(float32(*s.TopP))
+		}
+		if s.TopK != nil {
+			cfg.TopK = genai.Ptr(float32(*s.TopK))
+		}
+	}
 	if len(req.Tools) > 0 {
 		var decls []*genai.FunctionDeclaration
 		for _, t := range req.Tools {

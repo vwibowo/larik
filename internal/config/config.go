@@ -62,6 +62,16 @@ type Config struct {
 	// or a bare model id; models without an entry use Execution.
 	ModelExecution map[string]tools.Execution `json:"model_execution,omitempty"`
 
+	// Sampling overrides decoding parameters for models that have no
+	// published default and no ModelSampling entry. Unset sends nothing
+	// and leaves each server's own defaults alone.
+	Sampling *llm.Sampling `json:"sampling,omitempty"`
+	// ModelSampling sets decoding parameters per model, keyed
+	// "provider/model" or a bare model id. An entry is used as given
+	// rather than merged, so an empty one ({}) suppresses the published
+	// default for that model and sends nothing.
+	ModelSampling map[string]*llm.Sampling `json:"model_sampling,omitempty"`
+
 	// CheckpointRetentionDays is how long /undo snapshots are kept: 0
 	// means the default (7), a negative value keeps them forever. The
 	// cleanup covers every project, so only personal files may set it.
@@ -359,6 +369,14 @@ func Load(cwd string) (*Config, error) {
 	if _, err := tools.ParseExecution(string(cfg.Execution)); err != nil {
 		return nil, fmt.Errorf("execution: %w", err)
 	}
+	if err := validateSampling(cfg.Sampling); err != nil {
+		return nil, fmt.Errorf("sampling: %w", err)
+	}
+	for k, sm := range cfg.ModelSampling {
+		if err := validateSampling(sm); err != nil {
+			return nil, fmt.Errorf("model_sampling %q: %w", k, err)
+		}
+	}
 	for k, e := range cfg.ModelExecution {
 		if _, err := tools.ParseExecution(string(e)); err != nil {
 			return nil, fmt.Errorf("model_execution %q: %w", k, err)
@@ -502,6 +520,22 @@ func (c *Config) merge(path string, trusted bool) error {
 		}
 		for k, v := range o.ModelExecution {
 			c.ModelExecution[k] = v
+		}
+	}
+	// Sampling shapes how a model decodes, like execution shapes how it
+	// acts, so a shared project file may not set it.
+	if trusted && o.Sampling != nil {
+		c.Sampling = o.Sampling
+	}
+	if trusted && len(o.ModelSampling) > 0 {
+		if c.ModelSampling == nil {
+			c.ModelSampling = map[string]*llm.Sampling{}
+		}
+		for k, v := range o.ModelSampling {
+			if v == nil {
+				v = &llm.Sampling{} // "key": null reads as "send nothing"
+			}
+			c.ModelSampling[k] = v
 		}
 	}
 	if o.MaxTurns != 0 && (trusted || c.MaxTurns == 0 || o.MaxTurns < c.MaxTurns) {
@@ -1218,6 +1252,89 @@ func (c *Config) ExecutionSource(provider, model string) (tools.Execution, strin
 	}
 	e, _ := tools.ParseExecution(string(c.Execution))
 	return e, ""
+}
+
+// validateSampling rejects values no provider accepts, so a typo fails at
+// startup with the offending key rather than as an opaque server error on
+// the first request.
+func validateSampling(s *llm.Sampling) error {
+	if s == nil {
+		return nil
+	}
+	if v := s.Temperature; v != nil && (*v < 0 || *v > 2) {
+		return fmt.Errorf("temperature %v out of range (0-2)", *v)
+	}
+	if v := s.TopP; v != nil && (*v <= 0 || *v > 1) {
+		return fmt.Errorf("top_p %v out of range (0-1)", *v)
+	}
+	if v := s.TopK; v != nil && *v < 1 {
+		return fmt.Errorf("top_k %d must be at least 1", *v)
+	}
+	return nil
+}
+
+// SamplingFor is the decoding parameters for a model: its model_sampling
+// entry ("provider/model" first, then the bare id), else the parameters its
+// vendor publishes, else Sampling. Nil sends nothing.
+func (c *Config) SamplingFor(provider, model string) *llm.Sampling {
+	return llm.ResolveSampling(provider, model, c.Sampling, c.ModelSampling)
+}
+
+// SamplingSource is SamplingFor plus where the values came from: a
+// model_sampling key, "published" for a vendor default, "sampling" for the
+// configured default, or "" when nothing applies.
+func (c *Config) SamplingSource(provider, model string) (*llm.Sampling, string) {
+	sm := c.SamplingFor(provider, model)
+	for _, k := range []string{provider + "/" + model, model} {
+		if _, ok := c.ModelSampling[k]; ok {
+			return sm, "model_sampling[" + k + "]"
+		}
+	}
+	if llm.ResolveSampling(provider, model, nil, nil) != nil {
+		return sm, "published"
+	}
+	if sm != nil {
+		return sm, "sampling"
+	}
+	return nil, ""
+}
+
+// SetModelSampling saves a model's decoding parameters under key
+// ("provider/model") in the user config. A nil sm removes the entry, so the
+// published or configured default applies again; an empty sm is saved as an
+// empty object, which suppresses a published default.
+func (c *Config) SetModelSampling(key string, sm *llm.Sampling, remove bool) error {
+	err := updateJSON(c.UserConfigPath(), 0o644, func(raw map[string]any) {
+		m, _ := raw["model_sampling"].(map[string]any)
+		if m == nil {
+			m = map[string]any{}
+		}
+		if remove {
+			delete(m, key)
+		} else {
+			m[key] = sm.JSON()
+		}
+		if len(m) == 0 {
+			delete(raw, "model_sampling")
+		} else {
+			raw["model_sampling"] = m
+		}
+	})
+	if err != nil {
+		return err
+	}
+	if remove {
+		delete(c.ModelSampling, key)
+		return nil
+	}
+	if c.ModelSampling == nil {
+		c.ModelSampling = map[string]*llm.Sampling{}
+	}
+	if sm == nil {
+		sm = &llm.Sampling{}
+	}
+	c.ModelSampling[key] = sm
+	return nil
 }
 
 // SetModelExecution saves a model's execution under key ("provider/model")

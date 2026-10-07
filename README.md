@@ -291,6 +291,7 @@ fi
 | `/effort [low…max\|default]`                     | Set and save the default reasoning effort                                                                                                                                                                                                                                |
 | `/mode [default\|accept-edits\|plan\|auto\|yolo]` | Pick and save the default permission mode from a list (`1`–`5`), or set it directly                                                                                                                                                                                     |
 | `/execution [tools\|hybrid\|code\|default]`      | How the model you are using acts: `tools` (a tool call per step), `hybrid` (also `run_code` scripts) or `code` (scripts for ordinary tools), saved for that model; `default` removes it. See [Execution](#execution) |
+| `/sampling [temp=.. top_p=.. top_k=..\|default\|none]` | Show or set the decoding parameters for the model you are using, saved for that model; `default` removes it, `none` sends none. See [Sampling](#sampling) |
 | `/undo`                                          | Revert the file changes of the last turn that made any: edits by the file tools, and in a git repository what `bash` commands changed (files git ignores aren't covered, nor are MCP side effects). See [Undo](#undo)                                                  |
 | `/compact`                                       | Summarize the conversation to free context                                                                                                                                                                                                                               |
 | `/clear`                                         | Fresh context in the same session; also clears the transcript view and reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers                                                                                                                            |
@@ -406,6 +407,31 @@ The right setting depends on the model: a strong model writes reliable scripts, 
 ```
 
 Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execution code` saves a setting for the model you're using, `/execution default` removes it, and `/execution` alone opens a picker for the model you're using, with its saved setting marked. The default is "Default execution" in `/config`. Switching models (`/model`) switches to that model's setting, and subagents use their own model's. Measure before choosing: `larik bench --models <model> --execution tools,hybrid,code --runs 3`.
+
+## Sampling
+
+How a model decodes — its temperature, `top_p` and `top_k` — changes how reliably it emits well-formed tool calls. Larik sends nothing by default and lets each server use its own values, except for models whose vendor publishes a recommendation: Qwen3, for instance, asks for `temp=0.7 top_p=0.8 top_k=20`, where Ollama would otherwise apply 0.8 / 0.9 / 40. Settings for models with no published values stay with the server.
+
+`/sampling` shows what is in force for the model you're using and where it came from. A spec saves it for that model, `/sampling default` drops the model's own setting, and `/sampling none` saves an empty one so nothing is sent at all — the way to turn a published default off:
+
+```bash
+/sampling temp=0.2 top_k=20    # save for the current model
+/sampling default              # back to the published or configured default
+/sampling none                 # send no parameters for this model
+```
+
+You can also set it in your personal config:
+
+```json
+{
+  "sampling": { "temperature": 0.3 },
+  "model_sampling": { "ollama/qwen3-coder": { "temperature": 0.2, "top_k": 20 }, "ollama/qwen3:14b": {} }
+}
+```
+
+Keys are `provider/model` or a bare model id, and `provider/model` wins. An entry replaces the published values rather than merging with them, so an empty entry (`{}`) sends nothing. Precedence runs `model_sampling["provider/model"]`, then `model_sampling["model"]`, then the published values for that model, then `sampling`, then nothing; "Sampling" in `/config` edits the last of those. Changes apply on the next turn, and subagents resolve their own model's. Parameters a provider won't accept are dropped rather than sent: `top_k` isn't in the OpenAI API, and Anthropic's extended thinking fixes temperature and rejects `top_p` and `top_k`, so none are sent while it is on.
+
+Because sampling shapes the model's output the way `execution` shapes its actions, a shared `.larik/settings.json` can't set it; only your personal config can. Measure a change rather than assuming it: `larik bench --models <model> --runs 5`.
 
 ## Web
 

@@ -150,6 +150,25 @@ type Request struct {
 	// caching by a key (OpenAI's prompt_cache_key): requests that share a
 	// prefix and a key reach the same cache. A UUID; "" sends none.
 	CacheKey string
+	// Sampling overrides the server's own decoding defaults. Nil sends
+	// nothing, which is what every provider saw before this existed.
+	Sampling *Sampling
+}
+
+// Sampling overrides a server's default decoding parameters. A nil field
+// sends nothing and leaves that server's default in place, so "unset" stays
+// distinguishable from a deliberate zero. Adapters drop any parameter their
+// provider does not accept rather than failing the request.
+type Sampling struct {
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+	TopK        *int     `json:"top_k,omitempty"`
+}
+
+// Empty reports whether s sets no parameter at all, in which case adapters
+// send nothing.
+func (s *Sampling) Empty() bool {
+	return s == nil || (s.Temperature == nil && s.TopP == nil && s.TopK == nil)
 }
 
 type Usage struct {

@@ -746,3 +746,57 @@ func TestCacheKey(t *testing.T) {
 		t.Error("the key should follow the session, and differ between agents without one")
 	}
 }
+
+// The resolver is consulted per request with the live provider and model, so
+// a model change and a subagent on another model each get their own values.
+func TestSamplingForReachesTheRequest(t *testing.T) {
+	dir := t.TempDir()
+	fp := &fakeProvider{script: []llm.Message{assistant(llm.TextBlock("ok"))}}
+	sess, err := session.Create(filepath.Join(dir, "sessions"), session.Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sess.Close() })
+
+	var askedProvider, askedModel string
+	temp := 0.25
+	a := New(Options{
+		Provider: fp,
+		Model:    "m",
+		Cwd:      dir,
+		Tools:    tools.Default(),
+		Perms:    permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir),
+		Session:  sess,
+		SamplingFor: func(provider, model string) *llm.Sampling {
+			askedProvider, askedModel = provider, model
+			return &llm.Sampling{Temperature: &temp}
+		},
+	})
+	drain(a.Run(context.Background(), "hi"), PermissionReply{})
+
+	if askedProvider != fp.Name() || askedModel != "m" {
+		t.Errorf("resolver asked about %q/%q", askedProvider, askedModel)
+	}
+	if len(fp.requests) == 0 {
+		t.Fatal("no request recorded")
+	}
+	got := fp.requests[0].Sampling
+	if got == nil || got.Temperature == nil || *got.Temperature != 0.25 {
+		t.Errorf("request sampling = %v", got)
+	}
+}
+
+// Without a resolver the request carries none, so an embedder that does not
+// set one is unaffected.
+func TestNoResolverLeavesSamplingUnset(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo, assistant(llm.TextBlock("ok")))
+	drain(a.Run(context.Background(), "hi"), PermissionReply{})
+	if len(fp.requests) == 0 {
+		t.Fatal("no request recorded")
+	}
+	for i, r := range fp.requests {
+		if r.Sampling != nil {
+			t.Errorf("request %d carried sampling %v", i, r.Sampling)
+		}
+	}
+}

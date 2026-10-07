@@ -82,6 +82,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		Tools:         o.Tools,
 		Execution:     exec,
 		ExecutionFor:  execFor,
+		SamplingFor:   a.opts.SamplingFor,
 		Perms:         a.opts.Perms,
 		Session:       o.Session,
 		Checkpoints:   a.opts.Checkpoints,

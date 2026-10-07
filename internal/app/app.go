@@ -434,6 +434,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Sandbox:     sbTool,
 
 		ExecutionFor:  func(provider, model string) tools.Execution { return a.Cfg.ExecutionFor(provider, model) },
+		SamplingFor:   func(provider, model string) *llm.Sampling { return a.Cfg.SamplingFor(provider, model) },
 		NoAutoCompact: !a.Cfg.AutoCompactOn(),
 		TokenSaver:    a.Cfg.TokenSaverOn(),
 		Language:      a.Cfg.Language,

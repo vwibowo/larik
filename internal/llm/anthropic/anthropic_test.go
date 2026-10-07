@@ -248,3 +248,55 @@ func TestPreviousTurnBreakpoint(t *testing.T) {
 		t.Error("first request should rely on the automatic breakpoint only")
 	}
 }
+
+// Extended thinking fixes temperature and rejects top_p/top_k, so configured
+// sampling has to be dropped rather than sent and rejected. Modern models
+// always think; a legacy one only does when an effort is set.
+func TestSamplingIsDroppedWhileThinking(t *testing.T) {
+	temp, topP, topK := 0.2, 0.9, 20
+	sm := &llm.Sampling{Temperature: &temp, TopP: &topP, TopK: &topK}
+
+	for _, tc := range []struct {
+		name   string
+		req    llm.Request
+		wantIn bool
+	}{
+		{"modern model always thinks", llm.Request{Model: "claude-opus-5"}, false},
+		{"legacy model with effort thinks", llm.Request{Model: "claude-haiku-4-5", Effort: llm.EffortMedium}, false},
+		{"legacy model without effort does not", llm.Request{Model: "claude-haiku-4-5"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.req.Messages = []llm.Message{llm.UserText("x")}
+			tc.req.Sampling = sm
+			params, err := buildParams(tc.req, Name, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"temperature", "top_p", "top_k"} {
+				if got := strings.Contains(string(body), `"`+key+`"`); got != tc.wantIn {
+					t.Errorf("%s present = %v, want %v: %s", key, got, tc.wantIn, body)
+				}
+			}
+		})
+	}
+}
+
+// Without configured sampling the request must be unchanged from before.
+func TestNoSamplingSendsNoDecodingParams(t *testing.T) {
+	params, err := buildParams(llm.Request{
+		Model: "claude-haiku-4-5", Messages: []llm.Message{llm.UserText("x")},
+	}, Name, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(params)
+	for _, key := range []string{"temperature", "top_p", "top_k"} {
+		if strings.Contains(string(body), `"`+key+`"`) {
+			t.Errorf("unconfigured request sent %s: %s", key, body)
+		}
+	}
+}

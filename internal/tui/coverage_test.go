@@ -22,6 +22,7 @@ import (
 var panelCoverage = map[string]string{
 	"providers":              "/providers and /connect add, edit, test and remove them",
 	"model_execution":        "/execution, per model",
+	"model_sampling":         "/sampling, per model",
 	"approved_mcp_servers":   "/mcp approve",
 	"approved_project_hooks": "/hooks approve",
 	"browser.enabled":        "/browser on|off",

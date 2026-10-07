@@ -143,3 +143,51 @@ func TestToolResultImagesFollowAsUserMessage(t *testing.T) {
 		}
 	}
 }
+
+// drain runs a request against srv and discards the events, so a test can
+// assert on the body that was sent.
+func drainTo(t *testing.T, p *Provider, req llm.Request) {
+	t.Helper()
+	for _, err := range p.Stream(context.Background(), req) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func okBody() string {
+	return llmtest.SSE(
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+}
+
+// top_k is not in the OpenAI schema, so it rides along as an extra field;
+// temperature and top_p are ordinary parameters.
+func TestSamplingReachesTheRequestBody(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, okBody())
+	p := New("ollama", "", srv.URL)
+	temp, topP, topK := 0.7, 0.8, 20
+	drainTo(t, p, llm.Request{
+		Model: "m", Messages: []llm.Message{llm.UserText("hi")},
+		Sampling: &llm.Sampling{Temperature: &temp, TopP: &topP, TopK: &topK},
+	})
+	sent := srv.LastBody()
+	for _, want := range []string{`"temperature":0.7`, `"top_p":0.8`, `"top_k":20`} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("missing %s in %s", want, sent)
+		}
+	}
+}
+
+func TestNoSamplingSendsNoDecodingParams(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, okBody())
+	p := New("ollama", "", srv.URL)
+	drainTo(t, p, llm.Request{Model: "m", Messages: []llm.Message{llm.UserText("hi")}})
+	sent := srv.LastBody()
+	for _, key := range []string{"temperature", "top_p", "top_k"} {
+		if strings.Contains(sent, `"`+key+`"`) {
+			t.Errorf("unconfigured request sent %s: %s", key, sent)
+		}
+	}
+}
