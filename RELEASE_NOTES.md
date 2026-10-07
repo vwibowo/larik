@@ -1,23 +1,19 @@
-# Larik v0.12.0
+# Larik v0.13.0
 
-_October 6, 2026_
+_October 7, 2026_
 
 ### Added
 
-- **iTerm2 color schemes as themes.** Install a downloaded `.itermcolors` scheme into `~/.config/larik/themes/` and choose it as a theme in `/config` or `/theme <name>`. Its palette recolors the text, accents, syntax highlighting and Markdown, while the background stays transparent so your terminal's own background shows through.
-- **A menu on every prompt.** Click a prompt to open a menu: **Copy** puts it on the clipboard, **Fork** branches into a new session that keeps the turn and its reply, and **Rewind** branches off just before it. `/prompt [n]` opens the same menu from the keyboard.
-- **OpenTelemetry export.** Send each session's traces to an OTLP/HTTP collector (Grafana, Jaeger, Honeycomb, …) from personal settings (`telemetry.otlp_endpoint`) or the `LARIK_OTLP_ENDPOINT` environment variable. Metadata only — prompts, replies, tool input, file contents and paths are never exported. Off until an endpoint is given; Larik writes OTLP/JSON itself with no SDK in the binary, and exporting is best-effort so it never slows the agent.
+- **Prompt suggestions.** When a turn ends normally, Larik suggests a likely next prompt as dim text in the empty input; `tab` puts it in the input to edit or send, and typing anything else ignores it. The request reuses the conversation's cached prompt, and its spend counts toward `/cost` and the session budget. It is skipped after an interrupted or failed turn, while prompts are queued, once a budget is spent, and on the Claude Code CLI runtime. Turn it off with the `prompt_suggestions` setting; a shared `.larik/settings.json` can turn it off but not on.
+- **PDF `@` mentions.** `@spec.pdf` (up to 32 MB) attaches the whole document, so the model reads its layout, tables and figures rather than extracted text. Works on Anthropic, OpenAI and Gemini; any other provider tells you instead of sending a request it would reject. Switching to such a model mid-session keeps the conversation working: the PDF is dropped from later requests and the model keeps a note that it was there.
+- **Per-model sampling.** `/sampling` shows the temperature, `top_p` and `top_k` in force for the current model and where they came from, and saves new values for that model (`default` removes them, `none` sends nothing). Personal config takes `sampling` and `model_sampling`. Larik ships no built-in values, so each server's defaults stand until you set something, and parameters a provider rejects are dropped rather than sent. A shared `.larik/settings.json` can't set it.
+- **Keyless DuckDuckGo search, opt-in.** Set the search provider to `ddg` (or pick DuckDuckGo in `/web-search-config`) for a `web_search` backend that needs no account. It is never selected automatically: its keyless API answers entity lookups but not specific questions, so an empty answer is reported as an error that names the indexed backends.
+- **Sharper `larik bench` metrics.** Each run now reports tool calls the model formed so badly they never reached a tool (unparseable or truncated arguments, schema rejections, unknown tools), broken down by kind and as a share of all calls, and separately counts runs the model ended by talking instead of acting ("stopped without finishing", or "answered without calling a tool").
 
 ### Changed
 
-- **`/rewind` can restore files.** When files changed since the prompt you rewind to, it lists them and asks whether to put them back before branching; `files` restores without asking, `keep` leaves them untouched.
-- **Prompts stand out more.** Your own prompts now sit in a rounded frame, and system notes are hidden from the history view.
-- **MCP tools validate their input.** A tool call whose arguments don't match the server's schema is reported with a clear error instead of failing later.
+- **Every tool's arguments are checked against its schema.** Built-in tools are now held to the schema the model was shown, as MCP tools already were, so a missing or mistyped argument comes back to the model as a clear `INVALID_ARGUMENTS` error before the tool runs. A `null` for an unused argument is ignored, and a schema that can't be compiled isn't enforced.
 
-### Hardened
+### Fixed
 
-- **More robust sessions and sandbox.** A loop guard and decision log catch repeated actions, provider secrets stay protected in the sandbox, and a per-turn token budget bounds a single request, so a wayward turn degrades visibly rather than stalling.
-
-### Documentation
-
-- **A "tests must pass" Stop hook.** A ready-to-use recipe ([docs/examples/require-tests.sh](https://github.com/vwibowo/larik/blob/main/docs/examples/require-tests.sh)) shows how to end a turn only when the test suite is green.
+- **Tool calls written as text are recovered.** When an Ollama or OpenAI-compatible server returns a call as `<tool_call>{…}` text instead of a tool call (usually a server tool-template setting), Larik runs the call instead of ending the turn, never displays the markup, and names the server fix (llama.cpp's `--jinja`, vLLM's `--enable-auto-tool-choice`). Only an explicitly delimited call to a tool that was actually offered is recovered, and it goes through the usual permission checks.
