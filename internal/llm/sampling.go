@@ -6,30 +6,22 @@ import (
 	"strings"
 )
 
-// samplingDefaults holds decoding parameters a model's own vendor publishes,
-// for models whose server defaults are a poor fit for tool calling. Keys are
-// matched as a prefix of the bare model id, lowercased, so an Ollama tag such
-// as "qwen3-coder:30b" finds the "qwen3" entry; the longest key wins.
+// ResolveSampling picks the decoding parameters for one request. More
+// specific settings win: a "provider/model" entry, then a bare model entry,
+// then def. The result is nil when nothing applies, which sends no
+// parameters and leaves the server's own defaults in place.
 //
-// Only add an entry backed by a published recommendation, and keep this table
-// short. A model that is absent sends nothing and keeps its server's defaults.
-var samplingDefaults = map[string]Sampling{
-	// Qwen's model cards recommend Temperature 0.7, TopP 0.8, TopK 20 for
-	// non-thinking generation, which is what a request with no effort set
-	// asks for. Ollama would otherwise apply 0.8 / 0.9 / 40.
-	"qwen3": {Temperature: f(0.7), TopP: f(0.8), TopK: i(20)},
-}
-
-func f(v float64) *float64 { return &v }
-func i(v int) *int         { return &v }
-
-// ResolveSampling picks the decoding parameters for one request. More specific
-// settings win: a "provider/model" entry, then a bare model entry, then the
-// published default for that model, then def. The result is nil when nothing
-// applies, which sends no parameters at all.
+// A perModel entry is used as given rather than merged, so an entry that
+// sets no field (`{}` in settings) sends nothing for that model even when
+// def would otherwise apply.
 //
-// A perModel entry is used as given rather than merged, so an entry that sets
-// no field (`{}` in settings) suppresses a published default.
+// Larik ships no built-in values. Measured against qwen3:4b through Ollama,
+// Qwen's published parameters (0.7/0.8/20) and Ollama's defaults
+// (0.8/0.9/40) produced identical results — 24 of 24 usable tool calls each
+// — so a table of vendor recommendations would have been unearned. Sampling
+// did matter at the extreme (2.0/1.0/0), where the model stopped emitting
+// tool calls altogether, so the knob is worth having; a default for it is
+// not.
 func ResolveSampling(provider, model string, def *Sampling, perModel map[string]*Sampling) *Sampling {
 	if s, ok := perModel[provider+"/"+model]; ok {
 		return nonEmpty(s)
@@ -37,30 +29,7 @@ func ResolveSampling(provider, model string, def *Sampling, perModel map[string]
 	if s, ok := perModel[model]; ok {
 		return nonEmpty(s)
 	}
-	if s, ok := publishedSampling(model); ok {
-		return nonEmpty(&s)
-	}
 	return nonEmpty(def)
-}
-
-// publishedSampling returns the vendor-published parameters for model, found
-// by the longest matching prefix of its lowercased id.
-func publishedSampling(model string) (Sampling, bool) {
-	name := strings.ToLower(model)
-	// An OpenRouter-style "vendor/model" id matches on its last element too.
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
-	}
-	var best string
-	for k := range samplingDefaults {
-		if strings.HasPrefix(name, k) && len(k) > len(best) {
-			best = k
-		}
-	}
-	if best == "" {
-		return Sampling{}, false
-	}
-	return samplingDefaults[best], true
 }
 
 func nonEmpty(s *Sampling) *Sampling {

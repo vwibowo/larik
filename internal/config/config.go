@@ -62,14 +62,14 @@ type Config struct {
 	// or a bare model id; models without an entry use Execution.
 	ModelExecution map[string]tools.Execution `json:"model_execution,omitempty"`
 
-	// Sampling overrides decoding parameters for models that have no
-	// published default and no ModelSampling entry. Unset sends nothing
-	// and leaves each server's own defaults alone.
+	// Sampling overrides decoding parameters for models with no
+	// ModelSampling entry. Unset sends nothing and leaves each server's
+	// own defaults alone.
 	Sampling *llm.Sampling `json:"sampling,omitempty"`
 	// ModelSampling sets decoding parameters per model, keyed
 	// "provider/model" or a bare model id. An entry is used as given
-	// rather than merged, so an empty one ({}) suppresses the published
-	// default for that model and sends nothing.
+	// rather than merged, so an empty one ({}) sends nothing for that
+	// model even when Sampling would otherwise apply.
 	ModelSampling map[string]*llm.Sampling `json:"model_sampling,omitempty"`
 
 	// CheckpointRetentionDays is how long /undo snapshots are kept: 0
@@ -1274,24 +1274,21 @@ func validateSampling(s *llm.Sampling) error {
 }
 
 // SamplingFor is the decoding parameters for a model: its model_sampling
-// entry ("provider/model" first, then the bare id), else the parameters its
-// vendor publishes, else Sampling. Nil sends nothing.
+// entry ("provider/model" first, then the bare id), else Sampling. Nil
+// sends nothing and leaves the server's own defaults alone.
 func (c *Config) SamplingFor(provider, model string) *llm.Sampling {
 	return llm.ResolveSampling(provider, model, c.Sampling, c.ModelSampling)
 }
 
 // SamplingSource is SamplingFor plus where the values came from: a
-// model_sampling key, "published" for a vendor default, "sampling" for the
-// configured default, or "" when nothing applies.
+// model_sampling key, "sampling" for the configured default, or "" when
+// nothing applies and the server's own defaults stand.
 func (c *Config) SamplingSource(provider, model string) (*llm.Sampling, string) {
 	sm := c.SamplingFor(provider, model)
 	for _, k := range []string{provider + "/" + model, model} {
 		if _, ok := c.ModelSampling[k]; ok {
 			return sm, "model_sampling[" + k + "]"
 		}
-	}
-	if llm.ResolveSampling(provider, model, nil, nil) != nil {
-		return sm, "published"
 	}
 	if sm != nil {
 		return sm, "sampling"

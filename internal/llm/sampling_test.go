@@ -2,6 +2,9 @@ package llm
 
 import "testing"
 
+func f(v float64) *float64 { return &v }
+func i(v int) *int         { return &v }
+
 func TestResolveSamplingPrefersTheMostSpecificSetting(t *testing.T) {
 	def := &Sampling{Temperature: f(0.1)}
 	perModel := map[string]*Sampling{
@@ -17,14 +20,9 @@ func TestResolveSamplingPrefersTheMostSpecificSetting(t *testing.T) {
 		t.Errorf("bare model id should win, got %v", *got.Temperature)
 	}
 
-	// A published default beats the configured default...
-	got := ResolveSampling("ollama", "qwen3-coder:30b", def, nil)
-	if got == nil || *got.Temperature != 0.7 || *got.TopK != 20 {
-		t.Errorf("qwen3-coder should take Qwen's published values, got %v", got)
-	}
-	// ...and a model with neither falls back to it.
+	// A model with no entry of its own falls back to the default.
 	if got := ResolveSampling("anthropic", "claude-opus-5", def, nil); *got.Temperature != 0.1 {
-		t.Errorf("unknown model should use the default, got %v", got)
+		t.Errorf("a model with no entry should use the default, got %v", got)
 	}
 	// With nothing configured at all, nothing is sent.
 	if got := ResolveSampling("anthropic", "claude-opus-5", nil, nil); got != nil {
@@ -32,26 +30,16 @@ func TestResolveSamplingPrefersTheMostSpecificSetting(t *testing.T) {
 	}
 }
 
-// An empty entry is how a user turns a published default off, so it must not
-// fall through to the published values it is meant to suppress.
-func TestEmptyEntrySuppressesAPublishedDefault(t *testing.T) {
+// An empty entry is how a user turns sampling off for one model, so it must
+// not fall through to the configured default.
+func TestEmptyEntrySendsNothingForThatModel(t *testing.T) {
 	perModel := map[string]*Sampling{"ollama/qwen3:4b": {}}
 	if got := ResolveSampling("ollama", "qwen3:4b", &Sampling{TopK: i(40)}, perModel); got != nil {
 		t.Errorf("an empty entry should send nothing, got %v", got)
 	}
-}
-
-func TestPublishedSamplingMatchesTheLongestPrefix(t *testing.T) {
-	// Ollama tags and OpenRouter-style ids both reach the family entry.
-	for _, model := range []string{"qwen3:4b", "QWEN3-CODER:30B", "qwen/qwen3-32b"} {
-		if _, ok := publishedSampling(model); !ok {
-			t.Errorf("%s should match the qwen3 entry", model)
-		}
-	}
-	for _, model := range []string{"claude-opus-5", "gpt-5.5", "qwen2.5-coder"} {
-		if _, ok := publishedSampling(model); ok {
-			t.Errorf("%s should not match any entry", model)
-		}
+	// Another model still gets the default.
+	if got := ResolveSampling("ollama", "llama3", &Sampling{TopK: i(40)}, perModel); got == nil || *got.TopK != 40 {
+		t.Errorf("an unrelated model should still get the default, got %v", got)
 	}
 }
 

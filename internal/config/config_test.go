@@ -834,8 +834,8 @@ func TestSamplingLoadsResolvesAndSaves(t *testing.T) {
 	if src != "model_sampling[ollama/qwen3:4b]" {
 		t.Errorf("source = %q", src)
 	}
-	// An empty entry suppresses the published default rather than falling
-	// through to it.
+	// An empty entry sends nothing for that model, rather than falling
+	// through to the configured default.
 	if sm := cfg.SamplingFor("ollama", "qwen3:14b"); sm != nil {
 		t.Errorf("empty entry should send nothing, got %v", sm)
 	}
@@ -857,12 +857,12 @@ func TestSamplingLoadsResolvesAndSaves(t *testing.T) {
 	if sm == nil || sm.Temperature != nil || *sm.TopP != 0.95 {
 		t.Errorf("after save, sampling = %v (entries replace, not merge)", sm)
 	}
-	// Removing the entry brings the published default back.
+	// Removing the entry falls back to the configured default.
 	if err := again.SetModelSampling("ollama/qwen3:4b", nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if sm := again.SamplingFor("ollama", "qwen3:4b"); sm == nil || *sm.Temperature != 0.7 {
-		t.Errorf("expected Qwen's published values back, got %v", sm)
+	if sm := again.SamplingFor("ollama", "qwen3:4b"); sm == nil || *sm.Temperature != 0.1 {
+		t.Errorf("expected the configured default back, got %v", sm)
 	}
 }
 

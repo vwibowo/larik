@@ -410,9 +410,11 @@ Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execu
 
 ## Sampling
 
-How a model decodes — its temperature, `top_p` and `top_k` — changes how reliably it emits well-formed tool calls. Larik sends nothing by default and lets each server use its own values, except for models whose vendor publishes a recommendation: Qwen3, for instance, asks for `temp=0.7 top_p=0.8 top_k=20`, where Ollama would otherwise apply 0.8 / 0.9 / 40. Settings for models with no published values stay with the server.
+How a model decodes — its temperature, `top_p` and `top_k` — can change whether it emits usable tool calls at all. Larik sends nothing of its own, so each server's defaults stand until you set something.
 
-`/sampling` shows what is in force for the model you're using and where it came from. A spec saves it for that model, `/sampling default` drops the model's own setting, and `/sampling none` saves an empty one so nothing is sent at all — the way to turn a published default off:
+It ships no built-in values on purpose. Measured against `qwen3:4b` through Ollama, Qwen's published parameters (0.7 / 0.8 / 20) and Ollama's own defaults (0.8 / 0.9 / 40) gave identical results — 24 of 24 usable tool calls each, none malformed — so a table of vendor recommendations would have claimed a benefit that isn't there. Sampling did matter at the extreme: at `temp=2.0 top_p=1.0 top_k=0` the model stopped emitting tool calls altogether and answered in prose instead. The knob is worth having; a default for it is not. Note the failure mode — nothing malformed appeared at any setting, so what bad sampling costs you is the call itself, not its syntax.
+
+`/sampling` shows what is in force for the model you're using and where it came from. A spec saves it for that model, `/sampling default` drops the model's own setting, and `/sampling none` saves an empty one so nothing is sent for it even when a default would otherwise apply:
 
 ```bash
 /sampling temp=0.2 top_k=20    # save for the current model
@@ -425,15 +427,15 @@ You can also set it in your personal config:
 ```json
 {
   "sampling": { "temperature": 0.3 },
-  "model_sampling": { "ollama/qwen3-coder": { "temperature": 0.2, "top_k": 20 }, "ollama/qwen3:14b": {} }
+  "model_sampling": { "ollama/qwen3-coder": { "temperature": 0.2, "top_k": 20 }, "ollama/qwen3:4b": {} }
 }
 ```
 
-Keys are `provider/model` or a bare model id, and `provider/model` wins. An entry replaces the published values rather than merging with them, so an empty entry (`{}`) sends nothing. Precedence runs `model_sampling["provider/model"]`, then `model_sampling["model"]`, then the published values for that model, then `sampling`, then nothing; "Sampling" in `/config` edits the last of those. Changes apply on the next turn, and subagents resolve their own model's. Parameters a provider won't accept are dropped rather than sent: `top_k` isn't in the OpenAI API, and Anthropic's extended thinking fixes temperature and rejects `top_p` and `top_k`, so none are sent while it is on.
+Keys are `provider/model` or a bare model id, and `provider/model` wins. An entry is used as given rather than merged, so an empty entry (`{}`) sends nothing for that model. Precedence runs `model_sampling["provider/model"]`, then `model_sampling["model"]`, then `sampling`, then nothing; "Sampling" in `/config` edits the last of those. Changes apply on the next turn, and subagents resolve their own model's. Parameters a provider won't accept are dropped rather than sent: `top_k` isn't in the OpenAI API, and Anthropic's extended thinking fixes temperature and rejects `top_p` and `top_k`, so none are sent while it is on.
 
 Because sampling shapes the model's output the way `execution` shapes its actions, a shared `.larik/settings.json` can't set it; only your personal config can.
 
-Measure a change rather than assuming it. `larik bench --models <model> --runs 5` reports malformed tool calls per run and as a share per model, which is what sampling is meant to move; compare it against the same command with `/sampling none` saved for that model. The published values in Larik are the model vendors' own, not Larik's measurements.
+Measure a change rather than assuming it. `larik bench --models <model> --runs 5` reports malformed tool calls per run and as a share per model; compare it against the same command with `/sampling none` saved for that model. Be aware of what that figure can and cannot see: through a server that constrains tool arguments to the tool's schema, as Ollama does, malformed arguments are prevented upstream and the count stays at zero however the sampling is set. A model that answers in prose instead of calling a tool does not register as a malformed call at all.
 
 ## Web
 
