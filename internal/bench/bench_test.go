@@ -416,3 +416,87 @@ func TestACleanRunReportsNoFaults(t *testing.T) {
 		t.Errorf("clean run reported %d faults (%q, rate %v)", res.FaultCalls, res.FaultBreakdown(), res.FaultRate())
 	}
 }
+
+// The failure bad sampling produces: the model answers instead of acting.
+// There is already a task-does-nothing case above; this pins the metric.
+func TestRunFlagsAModelThatAnsweredWithoutActing(t *testing.T) {
+	task := Tasks()[0] // fix-off-by-one
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{llm.TextBlock("I looked and everything seems fine.")}}}}
+
+	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	if res.Pass {
+		t.Fatal("the task is not actually fixed")
+	}
+	if res.Stop != "end_turn" {
+		t.Errorf("Stop = %q, want end_turn", res.Stop)
+	}
+	if !res.StoppedWithoutActing() || !res.NeverActed() {
+		t.Errorf("expected both flags set: stopped=%v never=%v (%d calls)",
+			res.StoppedWithoutActing(), res.NeverActed(), res.ToolCalls)
+	}
+	// Nothing was malformed: the model formed no call at all, which is why
+	// the fault counters cannot see this.
+	if res.FaultCalls != 0 {
+		t.Errorf("faults = %d, want 0", res.FaultCalls)
+	}
+}
+
+// Giving up partway is the same failure, but NeverActed is narrower.
+func TestGivingUpPartwayIsNotNeverActed(t *testing.T) {
+	task := Tasks()[0]
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
+		{Blocks: []llm.Block{llm.TextBlock("This looks correct to me already.")}}}}
+
+	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	if res.Pass {
+		t.Fatal("the task is not actually fixed")
+	}
+	if !res.StoppedWithoutActing() {
+		t.Errorf("a run abandoned partway should be flagged, Stop=%q", res.Stop)
+	}
+	if res.NeverActed() {
+		t.Error("it did call a tool, so NeverActed should be false")
+	}
+}
+
+// A successful run also ends in prose, which is how an agent says it is
+// done. Flagging that would make the metric useless.
+func TestASuccessfulRunIsNotFlagged(t *testing.T) {
+	task := Tasks()[0]
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
+		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}},
+		{Blocks: []llm.Block{llm.TextBlock("Fixed the off-by-one.")}},
+	}}
+	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	if !res.Pass {
+		t.Fatalf("expected a pass: %s", res.Detail)
+	}
+	if res.Stop != "end_turn" {
+		t.Errorf("Stop = %q, want end_turn", res.Stop)
+	}
+	if res.StoppedWithoutActing() || res.NeverActed() {
+		t.Error("a passing run must not be flagged for ending in prose")
+	}
+}
+
+// A timeout is not the model declining to act, so it must not be counted
+// as one; the distinction is the whole point of the metric.
+func TestATimeoutIsNotCountedAsStoppingWithoutActing(t *testing.T) {
+	task := Tasks()[0]
+	var steps []llm.Message
+	for range 50 {
+		steps = append(steps, llm.Message{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}})
+	}
+	p := &scriptedProvider{steps: steps}
+
+	res := Run(context.Background(), task, p, "m", 300*time.Millisecond)
+	if res.Pass {
+		t.Fatal("expected a failure")
+	}
+	if res.StoppedWithoutActing() {
+		t.Errorf("a timeout was counted as the model stopping, Stop=%q", res.Stop)
+	}
+}

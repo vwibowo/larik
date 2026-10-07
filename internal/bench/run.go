@@ -37,6 +37,12 @@ type Result struct {
 	// tokens. This is the number to watch when changing sampling.
 	Faults     map[agent.ToolFault]int
 	FaultCalls int
+	// Stop is why the run ended, as the agent reported it: "end_turn" when
+	// the model stopped on its own, "max_tokens" when it ran past its
+	// output budget, "refusal", "max_turns" at the turn cap, "loop" when
+	// the loop guard caught it repeating, "interrupted" for the timeout,
+	// or "error".
+	Stop string
 	// Usage is the tokens over all requests; PeakContext is the largest
 	// prompt a single request sent.
 	Usage       llm.Usage
@@ -160,6 +166,11 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		case agent.EvAssistant:
 			if e.Message != nil {
 				finalText = e.Message.Text()
+			}
+		case agent.EvDone:
+			// Subagents report their own; the last one is the run's.
+			if e.Agent == "" {
+				res.Stop = e.StopReason
 			}
 		}
 	}
@@ -287,4 +298,26 @@ func (r Result) FaultRate() float64 {
 		return 0
 	}
 	return float64(r.FaultCalls) / float64(r.ToolCalls)
+}
+
+// stoppedTalking lists the stop reasons that mean the model ended its turn
+// by producing prose instead of a tool call: it finished deliberately, or
+// rambled past its output budget, or declined. A turn cap, a timeout, an
+// error or the loop guard are not the model choosing to stop.
+var stoppedTalking = map[string]bool{"end_turn": true, "max_tokens": true, "refusal": true}
+
+// StoppedWithoutActing reports a run the model ended by talking rather than
+// calling a tool, while the task was still unfinished. This is the failure
+// bad sampling actually produces: nothing is malformed, the model simply
+// never commits to a call. It is deliberately paired with Pass, because a
+// run that succeeds also ends in prose — that is how an agent reports it is
+// done — so the prose alone says nothing.
+func (r Result) StoppedWithoutActing() bool {
+	return !r.Pass && stoppedTalking[r.Stop]
+}
+
+// NeverActed is the sharper case: the model answered without calling a
+// single tool. StoppedWithoutActing covers giving up partway too.
+func (r Result) NeverActed() bool {
+	return r.StoppedWithoutActing() && r.ToolCalls == 0
 }

@@ -177,6 +177,14 @@ func printResult(r bench.Result) {
 	if r.FaultCalls > 0 {
 		fmt.Printf("  ·  %d malformed (%s)", r.FaultCalls, r.FaultBreakdown())
 	}
+	switch {
+	case r.NeverActed():
+		fmt.Print("  ·  answered without calling a tool")
+	case r.StoppedWithoutActing():
+		fmt.Print("  ·  stopped talking, work unfinished")
+	case !r.Pass && r.Stop != "":
+		fmt.Printf("  ·  ended: %s", r.Stop)
+	}
 	if r.RetentionTotal > 0 {
 		fmt.Printf("  ·  %d/%d facts retained", r.Retained, r.RetentionTotal)
 	}
@@ -252,7 +260,7 @@ func printSpread(results []bench.Result) {
 		rs := groups[k]
 		pass := 0
 		var in, peak, req, ms, retained, malformed []int
-		retentionTotal, anyMalformed := 0, false
+		retentionTotal, anyMalformed, noAct := 0, false, 0
 		for _, r := range rs {
 			if r.Pass {
 				pass++
@@ -263,6 +271,9 @@ func printSpread(results []bench.Result) {
 			ms = append(ms, int(r.Duration.Milliseconds()))
 			malformed = append(malformed, r.FaultCalls)
 			anyMalformed = anyMalformed || r.FaultCalls > 0
+			if r.StoppedWithoutActing() {
+				noAct++
+			}
 			if r.RetentionTotal > 0 {
 				retained = append(retained, r.Retained)
 				retentionTotal = r.RetentionTotal
@@ -273,6 +284,9 @@ func printSpread(results []bench.Result) {
 			spread(in, kilo), spread(peak, kilo), spread(req, func(n int) string { return fmt.Sprint(n) }), spread(ms, seconds))
 		if anyMalformed {
 			fmt.Printf("  ·  malformed %s", spread(malformed, func(n int) string { return fmt.Sprint(n) }))
+		}
+		if noAct > 0 {
+			fmt.Printf("  ·  %d/%d stopped without finishing", noAct, len(rs))
 		}
 		if len(retained) > 0 {
 			fmt.Printf("  ·  retained %s/%d", spread(retained, func(n int) string { return fmt.Sprint(n) }), retentionTotal)
@@ -311,6 +325,7 @@ func printSummary(results []bench.Result) {
 		measured  bool
 		calls     int
 		malformed int
+		noAct     int
 	}
 	order := []string{}
 	byModel := map[string]*totals{}
@@ -336,6 +351,9 @@ func printSummary(results []bench.Result) {
 		t.compacted += r.Compactions
 		t.calls += r.ToolCalls
 		t.malformed += r.FaultCalls
+		if r.StoppedWithoutActing() {
+			t.noAct++
+		}
 		if r.CompactionMeasured {
 			t.saved += r.CompactionSavedTokens
 			t.measured = true
@@ -354,6 +372,11 @@ func printSummary(results []bench.Result) {
 		// calls and still pass by retrying.
 		if t.calls > 0 {
 			fmt.Printf("  ·  %d/%d calls malformed (%.0f%%)", t.malformed, t.calls, 100*float64(t.malformed)/float64(t.calls))
+		}
+		// Runs the model ended by talking instead of acting: the failure
+		// bad sampling produces, which no malformed-call count can show.
+		if t.noAct > 0 {
+			fmt.Printf("  ·  %d/%d stopped without finishing", t.noAct, t.n)
 		}
 		if t.retention > 0 {
 			fmt.Printf("  ·  %d/%d facts retained", t.retained, t.retention)
