@@ -30,3 +30,5 @@ benchmarks
 /scripts/regrade_extended_code.py
 /scripts/retry_compare_cases.py
 /scripts/verify_dashboard.cjs
+
+.archify
