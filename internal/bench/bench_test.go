@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"larik/internal/agent"
 	"os"
 	"path/filepath"
 	"slices"
@@ -367,5 +368,51 @@ func TestPassingRunsAreNotKept(t *testing.T) {
 	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
 	if !res.Pass || res.Kept != "" {
 		t.Fatalf("a passing run should be discarded: %+v", res)
+	}
+}
+
+// A model that fumbles calls and then recovers still passes, which is why
+// the fault counters exist: the pass rate alone would hide the fumbling.
+func TestRunCountsMalformedCallsAlongsideAPass(t *testing.T) {
+	task := Tasks()[0] // fix-off-by-one
+	truncated := toolUse("read", "")
+	truncated.Input = nil
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("no_such_tool", `{}`)}},
+		{Blocks: []llm.Block{truncated}},
+		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
+		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}},
+		{Blocks: []llm.Block{llm.TextBlock("Fixed it, eventually.")}},
+	}}
+
+	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	if !res.Pass {
+		t.Fatalf("expected a pass despite the bad calls: %s", res.Detail)
+	}
+	if res.FaultCalls != 2 || res.ToolCalls != 4 {
+		t.Errorf("faults = %d of %d calls, want 2 of 4", res.FaultCalls, res.ToolCalls)
+	}
+	if res.Faults[agent.FaultUnknownTool] != 1 || res.Faults[agent.FaultInvalidJSON] != 1 {
+		t.Errorf("breakdown = %v", res.Faults)
+	}
+	if got := res.FaultBreakdown(); got != "invalid_json 1, unknown_tool 1" {
+		t.Errorf("FaultBreakdown() = %q", got)
+	}
+	if got := res.FaultRate(); got != 0.5 {
+		t.Errorf("FaultRate() = %v, want 0.5", got)
+	}
+}
+
+// A clean run must report nothing, so the metric stays quiet by default.
+func TestACleanRunReportsNoFaults(t *testing.T) {
+	task := Tasks()[0]
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
+		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}},
+		{Blocks: []llm.Block{llm.TextBlock("Fixed.")}},
+	}}
+	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	if res.FaultCalls != 0 || res.FaultBreakdown() != "" || res.FaultRate() != 0 {
+		t.Errorf("clean run reported %d faults (%q, rate %v)", res.FaultCalls, res.FaultBreakdown(), res.FaultRate())
 	}
 }

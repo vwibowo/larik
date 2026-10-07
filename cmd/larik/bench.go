@@ -174,6 +174,9 @@ func printResult(r bench.Result) {
 	}
 	fmt.Printf("%-4s  %6.1fs  %-10s  %3d tools  %2d req  %s in  %s out  %s peak ctx", status, r.Duration.Seconds(), costLabel(r.CostUSD), r.ToolCalls, r.Requests,
 		kilo(r.Usage.ContextTokens()), kilo(r.Usage.Output), kilo(r.PeakContext))
+	if r.FaultCalls > 0 {
+		fmt.Printf("  ·  %d malformed (%s)", r.FaultCalls, r.FaultBreakdown())
+	}
 	if r.RetentionTotal > 0 {
 		fmt.Printf("  ·  %d/%d facts retained", r.Retained, r.RetentionTotal)
 	}
@@ -248,8 +251,8 @@ func printSpread(results []bench.Result) {
 	for _, k := range order {
 		rs := groups[k]
 		pass := 0
-		var in, peak, req, ms, retained []int
-		retentionTotal := 0
+		var in, peak, req, ms, retained, malformed []int
+		retentionTotal, anyMalformed := 0, false
 		for _, r := range rs {
 			if r.Pass {
 				pass++
@@ -258,6 +261,8 @@ func printSpread(results []bench.Result) {
 			peak = append(peak, r.PeakContext)
 			req = append(req, r.Requests)
 			ms = append(ms, int(r.Duration.Milliseconds()))
+			malformed = append(malformed, r.FaultCalls)
+			anyMalformed = anyMalformed || r.FaultCalls > 0
 			if r.RetentionTotal > 0 {
 				retained = append(retained, r.Retained)
 				retentionTotal = r.RetentionTotal
@@ -266,6 +271,9 @@ func printSpread(results []bench.Result) {
 		seconds := func(n int) string { return fmt.Sprintf("%.1fs", float64(n)/1000) }
 		fmt.Printf("  %-40s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s", k.model, k.task, pass, len(rs),
 			spread(in, kilo), spread(peak, kilo), spread(req, func(n int) string { return fmt.Sprint(n) }), spread(ms, seconds))
+		if anyMalformed {
+			fmt.Printf("  ·  malformed %s", spread(malformed, func(n int) string { return fmt.Sprint(n) }))
+		}
 		if len(retained) > 0 {
 			fmt.Printf("  ·  retained %s/%d", spread(retained, func(n int) string { return fmt.Sprint(n) }), retentionTotal)
 		}
@@ -301,6 +309,8 @@ func printSummary(results []bench.Result) {
 		compacted int
 		saved     int
 		measured  bool
+		calls     int
+		malformed int
 	}
 	order := []string{}
 	byModel := map[string]*totals{}
@@ -324,6 +334,8 @@ func printSummary(results []bench.Result) {
 		t.retained += r.Retained
 		t.retention += r.RetentionTotal
 		t.compacted += r.Compactions
+		t.calls += r.ToolCalls
+		t.malformed += r.FaultCalls
 		if r.CompactionMeasured {
 			t.saved += r.CompactionSavedTokens
 			t.measured = true
@@ -337,6 +349,12 @@ func printSummary(results []bench.Result) {
 			cost = fmt.Sprintf("$%.4f", t.cost)
 		}
 		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s", model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
+		// The share of calls the model formed unusably: the figure to
+		// compare when changing sampling, since a model can fumble many
+		// calls and still pass by retrying.
+		if t.calls > 0 {
+			fmt.Printf("  ·  %d/%d calls malformed (%.0f%%)", t.malformed, t.calls, 100*float64(t.malformed)/float64(t.calls))
+		}
 		if t.retention > 0 {
 			fmt.Printf("  ·  %d/%d facts retained", t.retained, t.retention)
 		}

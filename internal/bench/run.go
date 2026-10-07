@@ -29,6 +29,14 @@ type Result struct {
 	// make; Requests counts model requests.
 	ToolCalls int
 	Requests  int
+	// Faults counts, by kind, the calls the model formed so badly they
+	// never reached a tool, and FaultCalls their total — a share of
+	// ToolCalls. They measure how reliably the model emits usable tool
+	// calls, which a pass rate alone hides: a model that fumbles a third
+	// of its calls and recovers still passes, more slowly and for more
+	// tokens. This is the number to watch when changing sampling.
+	Faults     map[agent.ToolFault]int
+	FaultCalls int
 	// Usage is the tokens over all requests; PeakContext is the largest
 	// prompt a single request sent.
 	Usage       llm.Usage
@@ -131,6 +139,13 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		case agent.EvToolEnd:
 			if e.ToolName != tools.CodeToolName {
 				res.ToolCalls++
+			}
+			if e.Fault != "" {
+				if res.Faults == nil {
+					res.Faults = map[agent.ToolFault]int{}
+				}
+				res.Faults[e.Fault]++
+				res.FaultCalls++
 			}
 			if o.KeepFailed {
 				calls = append(calls, callRecord{ID: e.ToolID, Tool: e.ToolName, Input: e.Input, Output: tools.Truncate(e.Output, 4000), IsError: e.IsError})
@@ -241,4 +256,35 @@ func writeRecord(root string, sess *session.Session, calls []callRecord) error {
 		}
 	}
 	return f.Close()
+}
+
+// faultOrder lists the fault kinds in a fixed order, so a report reads the
+// same way every run.
+var faultOrder = []agent.ToolFault{
+	agent.FaultInvalidJSON,
+	agent.FaultInvalidArguments,
+	agent.FaultUnknownTool,
+	agent.FaultBadCallTool,
+}
+
+// FaultBreakdown renders the fault kinds that occurred, commonest first in
+// the fixed order above, e.g. "invalid_json 2, unknown_tool 1". It is empty
+// when the model formed every call usably.
+func (r Result) FaultBreakdown() string {
+	var parts []string
+	for _, f := range faultOrder {
+		if n := r.Faults[f]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", f, n))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// FaultRate is the share of tool calls the model formed unusably, 0 when it
+// made none.
+func (r Result) FaultRate() float64 {
+	if r.ToolCalls == 0 {
+		return 0
+	}
+	return float64(r.FaultCalls) / float64(r.ToolCalls)
 }

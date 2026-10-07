@@ -92,17 +92,25 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	if found && unwrapErr == nil && use.Input != nil {
 		inputErr = validateInput(tool, use.Input)
 	}
+	// fault records the calls the model formed badly, which never reach a
+	// tool. An interruption or a refusal is not the model's doing and
+	// stays unmarked.
+	var fault ToolFault
 	switch {
 	case ctx.Err() != nil:
 		res.Content, res.IsError = "interrupted by user", true
 	case !found:
 		res.Content, res.IsError = "unknown tool: "+use.Name, true
+		fault = FaultUnknownTool
 	case use.Input == nil:
 		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
+		fault = FaultInvalidJSON
 	case unwrapErr != nil:
 		res.Content, res.IsError = unwrapErr.Error(), true
+		fault = FaultBadCallTool
 	case inputErr != nil:
 		res.Content, res.IsError = "INVALID_ARGUMENTS: "+inputErr.Error()+"; read the tool's schema (tool_search with select:"+use.Name+") and retry", true
+		fault = FaultInvalidArguments
 	case use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName:
 		// Wrappers delegate their actions through the same authorization
 		// path as direct tool calls (see toolCaller).
@@ -115,7 +123,7 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		}
 		res.Content, res.IsError = reason, true
 	}
-	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: res.Content, IsError: true})
+	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: res.Content, IsError: true, Fault: fault})
 	return approved{}, res, false
 }
 

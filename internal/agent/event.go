@@ -51,6 +51,12 @@ type Event struct {
 	Output   string          `json:"output,omitempty"`
 	Display  string          `json:"display,omitempty"`
 	IsError  bool            `json:"is_error,omitempty"`
+	// Fault, on EvToolEnd, says the call was rejected before the tool ran
+	// because the model did not form it usably, as opposed to the tool
+	// running and failing. Empty whenever the tool actually ran, including
+	// when a permission check or the user refused it, so counting faults
+	// measures the model rather than the task. larik bench reports them.
+	Fault ToolFault `json:"fault,omitempty"`
 
 	// EvPermission: the front end must send exactly one reply.
 	SuggestedRule string `json:"suggested_rule,omitempty"`
@@ -70,6 +76,20 @@ type Event struct {
 	// EvDone.
 	StopReason string `json:"stop_reason,omitempty"`
 }
+
+// ToolFault is why a tool call never reached its tool.
+type ToolFault string
+
+const (
+	// FaultUnknownTool: no tool by that name.
+	FaultUnknownTool ToolFault = "unknown_tool"
+	// FaultInvalidJSON: the arguments were truncated or unparseable.
+	FaultInvalidJSON ToolFault = "invalid_json"
+	// FaultInvalidArguments: valid JSON that the tool's schema rejects.
+	FaultInvalidArguments ToolFault = "invalid_arguments"
+	// FaultBadCallTool: a call_tool wrapper naming no usable tool.
+	FaultBadCallTool ToolFault = "bad_call_tool"
+)
 
 type PermissionReply struct {
 	Allow     bool
