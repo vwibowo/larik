@@ -5,7 +5,7 @@
     "build": "go run .",
     "pages:list": "wrangler pages project list",
     "pages-preview": "wrangler pages preview dist",
-    "deploy": "go run . && wrangler pages deploy dist --project-name larik",
+    "deploy": "go run . && npm run wrangler deploy dist",
     "wrangler": "wrangler"
   },
   "devDependencies": {

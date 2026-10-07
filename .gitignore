@@ -31,3 +31,4 @@ benchmarks
 /scripts/verify_dashboard.cjs
 
 .archify
+website/wrangler.toml
