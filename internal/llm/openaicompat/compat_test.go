@@ -191,3 +191,31 @@ func TestNoSamplingSendsNoDecodingParams(t *testing.T) {
 		}
 	}
 }
+
+// Switching to a local model mid-session leaves document blocks in the
+// transcript. This API has nowhere to put them, so they are dropped rather
+// than sent as something the server would reject; the marker text that
+// Larik attached alongside survives, so the model still knows a document
+// was there.
+func TestDocumentBlocksAreDroppedNotSent(t *testing.T) {
+	srv := llmtest.NewServer(t, 200, okBody())
+	p := New("ollama", "", srv.URL)
+	drainTo(t, p, llm.Request{
+		Model: "m",
+		Messages: []llm.Message{{Role: llm.RoleUser, Blocks: []llm.Block{
+			{Type: llm.BlockText, Text: `<document path="spec.pdf" pages="3"/>`, Attachment: "spec.pdf"},
+			{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "JVBERi0=", Pages: 3, Attachment: "spec.pdf"},
+		}}},
+	})
+	sent := srv.LastBody()
+	if strings.Contains(sent, "JVBERi0=") || strings.Contains(sent, "application/pdf") {
+		t.Errorf("the document payload should not be sent: %s", sent)
+	}
+	if !strings.Contains(sent, "spec.pdf") {
+		t.Errorf("the marker text should survive: %s", sent)
+	}
+	// And the provider does not claim to take documents.
+	if llm.AcceptsDocuments(p, "application/pdf") {
+		t.Error("this API has no document block")
+	}
+}

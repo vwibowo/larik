@@ -300,3 +300,36 @@ func TestNoSamplingSendsNoDecodingParams(t *testing.T) {
 		}
 	}
 }
+
+// A PDF goes to the Messages API as a document block with a base64 source.
+func TestDocumentBecomesADocumentBlock(t *testing.T) {
+	params, err := buildParams(llm.Request{
+		Model: "claude-opus-5",
+		Messages: []llm.Message{{Role: llm.RoleUser, Blocks: []llm.Block{
+			{Type: llm.BlockText, Text: "summarize this"},
+			{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "JVBERi0=", Pages: 3, Attachment: "spec.pdf"},
+		}}},
+	}, Name, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"type":"document"`, `"media_type":"application/pdf"`, `"data":"JVBERi0="`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+}
+
+func TestProviderDeclaresPDFSupport(t *testing.T) {
+	p := New("", "k", "")
+	if !llm.AcceptsDocuments(p, "application/pdf") {
+		t.Error("the Messages API takes PDFs")
+	}
+	if llm.AcceptsDocuments(p, "image/png") {
+		t.Error("only PDF should be claimed as a document")
+	}
+}

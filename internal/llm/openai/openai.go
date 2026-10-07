@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	sdk "github.com/openai/openai-go/v3"
@@ -252,6 +253,18 @@ func inputItems(req llm.Request, name string) []any {
 					content = append(content, map[string]any{"type": "input_text", "text": b.Text})
 				case llm.BlockImage:
 					content = append(content, map[string]any{"type": "input_image", "image_url": "data:" + b.MediaType + ";base64," + b.Data})
+				case llm.BlockDocument:
+					// The Responses API wants a filename alongside the
+					// bytes; the attachment path is the honest one.
+					name := b.Attachment
+					if name == "" {
+						name = "attachment.pdf"
+					}
+					content = append(content, map[string]any{
+						"type":      "input_file",
+						"filename":  filepath.Base(name),
+						"file_data": "data:" + b.MediaType + ";base64," + b.Data,
+					})
 				}
 			}
 			if len(content) > 0 {
@@ -330,4 +343,10 @@ func convertErr(err error) error {
 	return openaisdk.ConvertError(err, func(apiErr *sdk.Error) bool {
 		return apiErr.Code == "context_length_exceeded"
 	})
+}
+
+// AcceptsDocuments reports PDF support: the Responses API takes an
+// input_file, and the model reads the file itself.
+func (p *Provider) AcceptsDocuments(mediaType string) bool {
+	return mediaType == "application/pdf"
 }

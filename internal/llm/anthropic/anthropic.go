@@ -316,6 +316,8 @@ func toParam(b llm.Block) (sdk.ContentBlockParamUnion, bool) {
 		return res, true
 	case llm.BlockImage:
 		return sdk.NewImageBlockBase64(b.MediaType, b.Data), true
+	case llm.BlockDocument:
+		return sdk.NewDocumentBlock(sdk.Base64PDFSourceParam{Data: b.Data}), true
 	}
 	return sdk.ContentBlockParamUnion{}, false
 }
@@ -402,4 +404,10 @@ func convertErr(err error) error {
 		return llm.ClassifyStatus(apiErr.StatusCode, err)
 	}
 	return err
+}
+
+// AcceptsDocuments reports PDF support: the Messages API takes a document
+// block, and the model reads the file itself.
+func (p *Provider) AcceptsDocuments(mediaType string) bool {
+	return mediaType == "application/pdf"
 }

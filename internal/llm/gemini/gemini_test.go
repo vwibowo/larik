@@ -79,3 +79,29 @@ func TestToolResultImagesAreSiblingParts(t *testing.T) {
 		t.Errorf("parts: %+v %+v", cs[0].Parts[0], cs[0].Parts[1])
 	}
 }
+
+// A PDF rides in inline data like an image, decoded from base64.
+func TestDocumentBecomesInlineData(t *testing.T) {
+	cs := contents(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{
+			{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "AAAA", Pages: 2, Attachment: "spec.pdf"},
+		}},
+	}})
+	if len(cs) != 1 || len(cs[0].Parts) != 1 {
+		t.Fatalf("want one inline part: %+v", cs)
+	}
+	d := cs[0].Parts[0].InlineData
+	if d == nil || d.MIMEType != "application/pdf" || len(d.Data) != 3 {
+		t.Errorf("inline data = %+v", d)
+	}
+}
+
+func TestProviderDeclaresPDFSupport(t *testing.T) {
+	p := &Provider{}
+	if !llm.AcceptsDocuments(p, "application/pdf") {
+		t.Error("Gemini takes PDFs as inline data")
+	}
+	if llm.AcceptsDocuments(p, "text/csv") {
+		t.Error("only PDF should be claimed")
+	}
+}

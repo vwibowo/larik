@@ -225,7 +225,7 @@ func contents(req llm.Request) []*genai.Content {
 					c.Parts = append(c.Parts, imgs...)
 					continue
 				}
-			case llm.BlockImage:
+			case llm.BlockImage, llm.BlockDocument:
 				data, err := base64.StdEncoding.DecodeString(b.Data)
 				if err != nil {
 					continue
@@ -291,4 +291,10 @@ func retryDelay(details []map[string]any) time.Duration {
 		}
 	}
 	return 0
+}
+
+// AcceptsDocuments reports PDF support: a PDF rides in inline data like an
+// image, and the model reads the file itself.
+func (p *Provider) AcceptsDocuments(mediaType string) bool {
+	return mediaType == "application/pdf"
 }

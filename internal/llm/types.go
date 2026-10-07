@@ -35,6 +35,11 @@ const (
 	BlockToolUse    BlockType = "tool_use"
 	BlockToolResult BlockType = "tool_result"
 	BlockImage      BlockType = "image"
+	// BlockDocument carries a whole document (a PDF) for the model to read
+	// itself, so it sees the layout, tables and figures that extracting
+	// the text would throw away. Only some provider APIs accept one; see
+	// DocumentCapable.
+	BlockDocument BlockType = "document"
 	// BlockOpaque carries provider-specific items (e.g. OpenAI reasoning items)
 	// that must be replayed verbatim to the same provider and dropped elsewhere.
 	BlockOpaque BlockType = "opaque"
@@ -64,16 +69,20 @@ type Block struct {
 	// send them with the result, or right after it where the API can't.
 	Images []Block `json:"images,omitempty"`
 
-	// image
+	// image and document
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"` // base64
+	// Pages is a document's page count, counted when it was attached so
+	// the token estimate does not have to decode the payload on every
+	// request. 0 means it could not be counted.
+	Pages int `json:"pages,omitempty"`
 
 	// Provider owns Signature/Raw; other providers ignore them.
 	Provider string          `json:"provider,omitempty"`
 	Raw      json.RawMessage `json:"raw,omitempty"`
 
-	// Attachment names the source (a path, or "!command") of a text or
-	// image block Larik attached to a prompt. Adapters send such blocks
+	// Attachment names the source (a path, or "!command") of a text,
+	// image or document block Larik attached to a prompt. Adapters send such blocks
 	// like any other; Text skips them so the prompt shows as typed.
 	Attachment string `json:"attachment,omitempty"`
 }

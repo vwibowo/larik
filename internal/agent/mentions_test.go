@@ -161,3 +161,94 @@ func TestSystemPromptsDontExpandMentions(t *testing.T) {
 		t.Fatalf("system prompt got %d blocks", n)
 	}
 }
+
+// docProvider is a fakeProvider whose API takes PDFs, as Anthropic, OpenAI
+// and Gemini do.
+type docProvider struct{ *fakeProvider }
+
+func (docProvider) AcceptsDocuments(mediaType string) bool { return mediaType == "application/pdf" }
+
+// setupDocs is setup with a provider that accepts documents.
+func setupDocs(t *testing.T, script ...llm.Message) (*Agent, *fakeProvider, string) {
+	t.Helper()
+	a, fp, dir := setup(t, permission.ModeDefault, script...)
+	a.opts.Provider = docProvider{fp}
+	return a, fp, dir
+}
+
+func TestMentionsAttachAPDFWhenTheProviderTakesOne(t *testing.T) {
+	a, fp, dir := setupDocs(t, assistant(llm.TextBlock("ok")))
+	os.WriteFile(filepath.Join(dir, "spec.pdf"), pdfFixture(3), 0o644)
+
+	evs := drain(a.Run(context.Background(), "summarize @spec.pdf"), PermissionReply{})
+	msg := lastPrompt(t, fp)
+
+	var doc, marker llm.Block
+	for _, b := range msg.Blocks {
+		switch {
+		case b.Type == llm.BlockDocument:
+			doc = b
+		case strings.HasPrefix(b.Text, "<document"):
+			marker = b
+		}
+	}
+	if doc.Type != llm.BlockDocument {
+		t.Fatalf("no document block in %+v", msg.Blocks)
+	}
+	if doc.MediaType != "application/pdf" || doc.Data == "" {
+		t.Errorf("document block = %+v", llm.Block{Type: doc.Type, MediaType: doc.MediaType, Pages: doc.Pages})
+	}
+	// The page count rides along so the token estimate never has to decode
+	// the payload.
+	if doc.Pages != 3 {
+		t.Errorf("Pages = %d, want 3", doc.Pages)
+	}
+	if doc.Attachment != "spec.pdf" {
+		t.Errorf("Attachment = %q", doc.Attachment)
+	}
+	if !strings.Contains(marker.Text, `pages="3"`) {
+		t.Errorf("marker = %q", marker.Text)
+	}
+	// The prompt still reads as typed.
+	if got := msg.Text(); got != "summarize @spec.pdf" {
+		t.Errorf("Text() = %q", got)
+	}
+	if n := notices(evs); !strings.Contains(n, "attached @spec.pdf (document, 3 pages") {
+		t.Errorf("notices: %s", n)
+	}
+}
+
+// A provider with no document block would have the request rejected, so
+// Larik says so rather than sending it.
+func TestMentionsRefuseAPDFWhenTheProviderCannotReadOne(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault, assistant(llm.TextBlock("ok")))
+	os.WriteFile(filepath.Join(dir, "spec.pdf"), pdfFixture(2), 0o644)
+
+	evs := drain(a.Run(context.Background(), "summarize @spec.pdf"), PermissionReply{})
+	for _, b := range lastPrompt(t, fp).Blocks {
+		if b.Type == llm.BlockDocument {
+			t.Fatal("a provider that cannot read documents must not be sent one")
+		}
+	}
+	n := notices(evs)
+	if !strings.Contains(n, "not attaching @spec.pdf") || !strings.Contains(n, "can't read documents") {
+		t.Errorf("expected a notice naming the limitation, got: %s", n)
+	}
+}
+
+func TestMentionsRefuseAnOversizedPDF(t *testing.T) {
+	a, fp, dir := setupDocs(t, assistant(llm.TextBlock("ok")))
+	big := make([]byte, MaxDocumentBytes+1)
+	copy(big, pdfFixture(1))
+	os.WriteFile(filepath.Join(dir, "huge.pdf"), big, 0o644)
+
+	evs := drain(a.Run(context.Background(), "read @huge.pdf"), PermissionReply{})
+	for _, b := range lastPrompt(t, fp).Blocks {
+		if b.Type == llm.BlockDocument {
+			t.Fatal("an oversized document should not be attached")
+		}
+	}
+	if n := notices(evs); !strings.Contains(n, "documents are limited to") {
+		t.Errorf("notices: %s", n)
+	}
+}

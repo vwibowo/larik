@@ -174,3 +174,40 @@ func TestToolResultImages(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A PDF goes to the Responses API as an input_file carrying a data URL and
+// a filename, which the API requires.
+func TestDocumentBecomesAnInputFile(t *testing.T) {
+	items := inputItems(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{
+			{Type: llm.BlockText, Text: "summarize this"},
+			{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "JVBERi0=", Pages: 3, Attachment: "docs/spec.pdf"},
+		}},
+	}}, "openai")
+	got, _ := json.Marshal(items)
+	want := `[{"content":[{"text":"summarize this","type":"input_text"},` +
+		`{"file_data":"data:application/pdf;base64,JVBERi0=","filename":"spec.pdf","type":"input_file"}],"role":"user"}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestDocumentWithoutAPathStillSendsAFilename(t *testing.T) {
+	items := inputItems(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "AA=="}}},
+	}}, "openai")
+	got, _ := json.Marshal(items)
+	if !strings.Contains(string(got), `"filename":"attachment.pdf"`) {
+		t.Errorf("want a fallback filename, got %s", got)
+	}
+}
+
+func TestProviderDeclaresPDFSupport(t *testing.T) {
+	p := New("", "k", "")
+	if !llm.AcceptsDocuments(p, "application/pdf") {
+		t.Error("the Responses API takes PDFs")
+	}
+	if llm.AcceptsDocuments(p, "application/zip") {
+		t.Error("only PDF should be claimed")
+	}
+}

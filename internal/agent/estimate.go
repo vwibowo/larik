@@ -20,6 +20,14 @@ const (
 	// payload as if it were text would overstate one screenshot by two
 	// orders of magnitude and compact a conversation that is nearly empty.
 	imageTokens = 1600
+	// documentTokensPerPage stands in for one page of an attached
+	// document. A provider charges for a PDF page roughly as it would for
+	// a page of text plus a picture of it, which runs to a few thousand
+	// tokens however many bytes the page occupies — a scanned page is
+	// twenty times the size of a typed one and costs about the same. This
+	// is the low end of that range, erring low as the rest of this file
+	// does.
+	documentTokensPerPage = 1500
 )
 
 // estimatePrefix approximates the part of every request that does not
@@ -41,6 +49,10 @@ func estimateMessages(msgs []llm.Message) int {
 		for _, b := range m.Blocks {
 			if b.Type == llm.BlockImage {
 				tokens += imageTokens
+				continue
+			}
+			if b.Type == llm.BlockDocument {
+				tokens += documentTokensPerPage * max(b.Pages, 1)
 				continue
 			}
 			chars += len(b.Text) + len(b.Signature) + len(b.Content) +

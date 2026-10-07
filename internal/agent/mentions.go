@@ -79,8 +79,15 @@ var imageTypes = map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".
 const (
 	// MaxImageBytes is the largest image a prompt may attach.
 	MaxImageBytes = 5 << 20
-	maxDirEntries = 200
+	// MaxDocumentBytes is the largest document a prompt may attach. The
+	// providers that accept PDFs cap them around here too.
+	MaxDocumentBytes = 32 << 20
+	maxDirEntries    = 200
 )
+
+// documentTypes are the document formats a provider API can be sent whole,
+// for the model to read itself. Only PDF is accepted by any of them today.
+var documentTypes = map[string]string{".pdf": "application/pdf"}
 
 // resolveMentions reads the files, images and directories a prompt
 // mentions into attachment blocks. Paths that don't exist are prose
@@ -121,6 +128,33 @@ func (a *Agent) resolveMentions(ctx context.Context, text string, emit func(Even
 			}
 			blocks = append(blocks, b)
 			notice("attached @%s (%d entries)", name, n)
+		case documentTypes[strings.ToLower(filepath.Ext(abs))] != "":
+			mediaType := documentTypes[strings.ToLower(filepath.Ext(abs))]
+			// A provider whose API has no document block would reject the
+			// request, so say so rather than send it. The file still reads
+			// as text through the read tool if it has any.
+			if !llm.AcceptsDocuments(a.opts.Provider, mediaType) {
+				notice("not attaching @%s: %s can't read documents; this needs Anthropic, OpenAI or Gemini", name, a.opts.Provider.Name())
+				continue
+			}
+			if fi.Size() > MaxDocumentBytes {
+				notice("not attaching @%s: documents are limited to %d MB", name, MaxDocumentBytes>>20)
+				continue
+			}
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				notice("couldn't attach @%s: %v", name, err)
+				continue
+			}
+			pages := pdfPages(data)
+			blocks = append(blocks,
+				llm.Block{Type: llm.BlockText, Text: fmt.Sprintf("<document path=%q pages=%q/>", name, pageLabel(pages)), Attachment: name},
+				llm.Block{Type: llm.BlockDocument, MediaType: mediaType, Data: base64.StdEncoding.EncodeToString(data), Pages: pages, Attachment: name})
+			if pages > 0 {
+				notice("attached @%s (document, %d pages, %d KB)", name, pages, (len(data)+1023)/1024)
+			} else {
+				notice("attached @%s (document, %d KB)", name, (len(data)+1023)/1024)
+			}
 		case imageTypes[strings.ToLower(filepath.Ext(abs))] != "":
 			if fi.Size() > MaxImageBytes {
 				notice("not attaching @%s: images are limited to %d MB", name, MaxImageBytes>>20)
@@ -255,4 +289,13 @@ func (a *Agent) mentionResource(ctx context.Context, path string, notice func(st
 	}
 	notice("attached @%s (MCP resource)", path)
 	return blocks, true
+}
+
+// pageLabel describes a document's length for the marker the model sees.
+// An uncounted document says so rather than claiming zero pages.
+func pageLabel(pages int) string {
+	if pages <= 0 {
+		return "unknown"
+	}
+	return strconv.Itoa(pages)
 }
