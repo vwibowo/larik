@@ -278,6 +278,7 @@ fi
 - **`!` shell commands.** A prompt starting with `!` runs the command directly and shows its output. The input border turns yellow while you type one. The command runs in the bash sandbox when one is available and doesn't ask for permission, but `bash` deny rules still apply. Its output is sent to the model with your next prompt. `esc` or `ctrl+c` stops it.
 - **History.** `↑` on the first line recalls earlier prompts for this project, and `↓` goes back toward your draft. `ctrl+r` searches them. History is kept in the data directory under `history/`, up to 500 entries per project.
 - **`ctrl+g`** opens the prompt in `$VISUAL` or `$EDITOR` (falling back to `vi`). The text you save becomes the prompt.
+- **Prompt suggestions.** When a turn ends normally, Larik asks the model what you are likely to type next and shows it as dim text in the empty input, for example `run the tests  (tab to use)`. `tab` puts it in the input so you can edit or send it; typing anything else ignores it. The request reuses the conversation's cached prompt, so it costs a cache read and a few output tokens; its spend counts toward `/cost` and the session budget but not the context meter. It is skipped after an interrupted or failed turn, when prompts are queued, once a budget is spent, and on the Claude Code CLI runtime. Turn it off with the `prompt_suggestions` setting. If you bind `tab` to an action in `keybindings`, that binding wins.
 
 **Task list.** For work with distinct phases or multiple deliverables, the model keeps a checklist with the `todo_write` tool. It skips the checklist for a single fix or deliverable with several requirements, avoiding extra model turns. While a turn runs, the open items are pinned under the conversation and the status line names the item in progress. Each update is also printed in the conversation. `/todos` shows the current list. It is restored when you resume a session, and it survives compaction.
 
@@ -671,6 +672,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
   "theme": "auto",
   "appearance": "default",
   "spinner_tips": true,
+  "prompt_suggestions": true,
   "auto_compact": true,
   "notifications": "off",
   "language": "",
@@ -704,6 +706,7 @@ Every editor reports a save the same way, because there are only two outcomes: `
 - `theme`: `auto` (follow the terminal's background, the default), `dark`, `light`, or the name of an installed iTerm2 color scheme. Larik follows the terminal's light/dark background in `auto`; it does not change the terminal application's own theme. To install a scheme, download its `.itermcolors` file from [iTerm2 Color Schemes](https://iterm2colorschemes.com/) into `~/.config/larik/themes/`, then choose it in `/config` or run `/theme <name>`. Larik leaves the background transparent, so the terminal's own background shows through; only diff lines keep a faint green or red tint.
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The legacy `verbose` boolean remains supported.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
+- `prompt_suggestions`: after each turn, suggest a next prompt in the empty input (default on); see [Composer](#composer). A shared `.larik/settings.json` can turn it off but not on, because it spends your tokens.
 - `debug` and `debug_retention_days`: see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `telemetry`: see [OpenTelemetry export](#opentelemetry-export). Honored only from personal settings.
 - `editor_mode`: `normal` or `vim`. See [Vim mode](#vim-mode).

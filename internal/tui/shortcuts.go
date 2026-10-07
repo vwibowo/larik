@@ -15,6 +15,7 @@ var shortcutGroups = []shortcutGroup{
 	{"typing", [][2]string{
 		{"enter", "send"},
 		{"shift+enter", "new line"},
+		{"tab", "use the suggested prompt shown in the empty input"},
 		{"@", "mention a file or folder (@path#L10-20 for lines)"},
 		{"!", "run a shell command; output goes with the next prompt"},
 		{"↑ ↓", "previous and next prompts"},

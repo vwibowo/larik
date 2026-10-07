@@ -174,6 +174,15 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.SpinnerTips = &on
 			m.tips = on
 		}),
+	toggle("prompt_suggestions", "Prompt suggestions", "appearance",
+		(*config.Config).PromptSuggestionsOn,
+		func(m *model, on bool) {
+			m.opts.Config.PromptSuggestions = &on
+			m.suggest = on
+			if !on {
+				m.clearSuggestion()
+			}
+		}),
 	toggle("mouse", "Mouse scrolling", "appearance",
 		(*config.Config).MouseOn,
 		func(m *model, on bool) {

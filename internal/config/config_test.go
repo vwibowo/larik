@@ -574,6 +574,31 @@ func TestThemeSettingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPromptSuggestionsSharedOnlyTurnsOff(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, _ := Load(cwd)
+	if !cfg.PromptSuggestionsOn() {
+		t.Fatal("prompt suggestions are on by default")
+	}
+	shared := filepath.Join(cwd, ".larik", "settings.json")
+	write(t, shared, `{"prompt_suggestions":false}`)
+	if c, err := Load(cwd); err != nil || c.PromptSuggestionsOn() {
+		t.Fatalf("a shared file may turn suggestions off: %v", err)
+	}
+	if err := cfg.SetUserSetting("prompt_suggestions", false); err != nil {
+		t.Fatal(err)
+	}
+	write(t, shared, `{"prompt_suggestions":true}`)
+	if c, err := Load(cwd); err != nil || c.PromptSuggestionsOn() {
+		t.Fatalf("a shared file must not turn on what spends your tokens: %v", err)
+	}
+	write(t, LocalSettingsPath(cwd), `{"prompt_suggestions":true}`)
+	if c, err := Load(cwd); err != nil || !c.PromptSuggestionsOn() {
+		t.Fatalf("private project settings may turn it back on: %v", err)
+	}
+}
+
 func TestUISettings(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

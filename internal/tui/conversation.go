@@ -141,7 +141,8 @@ func (m *model) rewrapConversationWidth(width int) {
 
 func (m *model) resetConversation() {
 	m.outputs, m.outputBytes, m.convLines = nil, 0, nil
-	m.promptMenu = nil // its prompt is no longer on screen
+	m.promptMenu = nil  // its prompt is no longer on screen
+	m.clearSuggestion() // it followed from what was on screen
 	m.setConversation()
 	m.view.GotoTop() // a scrolled-up viewport would sit past the empty content
 }

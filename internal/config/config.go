@@ -111,6 +111,9 @@ type Config struct {
 	Language string `json:"language,omitempty"`
 	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
 	SpinnerTips *bool `json:"spinner_tips,omitempty"`
+	// PromptSuggestions offers a predicted next prompt after each turn.
+	// Nil means on. It spends tokens, so a shared file can only turn it off.
+	PromptSuggestions *bool `json:"prompt_suggestions,omitempty"`
 	// Mouse lets the TUI take the mouse for wheel scrolling. Off leaves the
 	// mouse to the terminal, so text can be selected without a modifier.
 	// Nil means on.
@@ -591,6 +594,9 @@ func (c *Config) merge(path string, trusted bool) error {
 			*b.dst = *b.src
 		}
 	}
+	if o.PromptSuggestions != nil && (trusted || !*o.PromptSuggestions) {
+		c.PromptSuggestions = o.PromptSuggestions // shared files may only turn it off
+	}
 	for _, item := range []struct {
 		key      string
 		src, dst **StatusLine
@@ -1036,6 +1042,10 @@ func (c *Config) VerboseOn() bool { return on(c.Verbose, false) }
 
 // TipsOn reports whether spinner tips are shown (default on).
 func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
+
+// PromptSuggestionsOn reports whether a next prompt is suggested after each
+// turn (default on).
+func (c *Config) PromptSuggestionsOn() bool { return on(c.PromptSuggestions, true) }
 
 func (c *Config) MouseOn() bool { return on(c.Mouse, true) }
 

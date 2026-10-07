@@ -198,6 +198,7 @@ type model struct {
 	appearance   string // compact, default, or verbose
 	compactTools []agent.Event
 	tips         bool   // a tip under the spinner
+	suggest      bool   // prompt suggestions after a turn
 	mouse        bool   // wheel scrolling; off leaves text selection to the terminal
 	tip          string // the tip for the running turn
 	notify       string // off, bell or desktop
@@ -205,6 +206,12 @@ type model struct {
 	// focusKnown is set once the terminal reports focus at all; until
 	// then (or never, in terminals without focus events) alerts go out.
 	focusKnown bool
+	// suggestion is the predicted next prompt shown in the empty composer;
+	// suggestGen and suggestCancel retire one still being asked for.
+	suggestion    string
+	suggestGen    int
+	suggestCancel context.CancelFunc
+	lastStop      string // stop reason of the last main-agent turn
 	// The command palette shows while a bare "/name" is being typed.
 	palette       *picker
 	paletteQ      string // input the palette was built for
@@ -271,7 +278,7 @@ func newModel(opts Options) *model {
 	// synchronously before startup would block and swallow typed input.
 	const termDark = true
 	ta := textarea.New()
-	ta.Placeholder = "Ask larik…  (/ commands · @ files · ! shell)"
+	ta.Placeholder = composerPlaceholder
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
 	ta.MaxWidth = 0 // allow the composer to follow the terminal at any width
@@ -322,6 +329,7 @@ func (m *model) applyUIConfig() {
 		}
 		m.verbose = m.appearance == "verbose"
 		m.tips, m.notify, m.mouse = c.TipsOn(), c.Notifications, c.MouseOn()
+		m.suggest = c.PromptSuggestionsOn()
 		if m.notify == "" {
 			m.notify = "off"
 		}
@@ -577,7 +585,11 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if next := m.nextQueued(); next != nil { // pending background results ride along with it
 			return m, next
 		}
-		return m, tea.Batch(alert, m.deliverBackground(), m.refreshProject())
+		return m, tea.Batch(alert, m.deliverBackground(), m.refreshProject(), m.requestSuggestion())
+
+	case suggestionMsg:
+		m.suggestionArrived(msg)
+		return m, nil
 
 	case bgEventMsg:
 		if msg.from != m.agent {
@@ -910,6 +922,9 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.quitArmed = true
 		return m, nil
 	}
+	if k == "tab" && m.keys.action[k] == "" && m.acceptSuggestion() {
+		return m, m.syncComposer()
+	}
 	if m.vim != nil {
 		if cmd, ok := m.vimKey(msg); ok {
 			return m, cmd
@@ -972,6 +987,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		m.clearSuggestion() // whatever runs next makes it stale
 		if m.vim != nil {
 			m.vim.reset()
 		}
@@ -1025,6 +1041,7 @@ func (m *model) interrupt() {
 
 // submit echoes the prompt and starts an agent run.
 func (m *model) submit(text string) tea.Cmd {
+	m.clearSuggestion()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
@@ -1239,6 +1256,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 	case agent.EvError:
 		return m.println(m.agentLine(e, m.st.err.Render("✗ "+e.Text)))
 	case agent.EvDone:
+		if e.Agent == "" {
+			m.lastStop = e.StopReason
+		}
 		if e.StopReason != "interrupted" && m.appearance == "compact" && len(m.compactTools) > 0 {
 			return m.println(m.compactToolSummary())
 		}
