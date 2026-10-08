@@ -38,6 +38,13 @@ func TestTasksAreSelfChecking(t *testing.T) {
 		"find-undocumented": func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "UNDOCUMENTED.txt"), []byte(strings.Join(surveyAnswer(), "\n")+"\n"), 0o644)
 		},
+		"persistent-script-state": func(dir string) error {
+			data, err := json.Marshal(persistentStateAnswer())
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(dir, "STATE_RESULT.json"), append(data, '\n'), 0o644)
+		},
 		"rename-across-files": func(dir string) error {
 			if err := replaceAll(dir, "order/order.go", "OldName", "NewName"); err != nil {
 				return err
@@ -310,6 +317,45 @@ func TestSurveyRejectsUnsortedAnswer(t *testing.T) {
 	}
 	if pass, _ := task.Verify(dir); pass {
 		t.Fatal("an unsorted answer must not pass")
+	}
+}
+
+func TestPersistentStateBenchmarkRequiresSeparateScripts(t *testing.T) {
+	task := persistentStateTask()
+	want, _ := json.Marshal(persistentStateAnswer())
+	firstCode := `store("benchmark.aggregate", ` + string(want) + `)`
+	secondCode := `tools.write({path: "STATE_RESULT.json", content: JSON.stringify(load("benchmark.aggregate"))})`
+	first, _ := json.Marshal(map[string]string{"code": firstCode})
+	second, _ := json.Marshal(map[string]string{"code": secondCode})
+	p := &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("run_code", string(first))}},
+		{Blocks: []llm.Block{toolUse("run_code", string(second))}},
+		{Blocks: []llm.Block{llm.TextBlock("Done.")}},
+	}}
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecCode, Timeout: 30 * time.Second})
+	if !res.Pass {
+		t.Fatalf("separate store/load scripts should pass: %s", res.Detail)
+	}
+
+	bothCode := firstCode + `; ` + secondCode
+	both, _ := json.Marshal(map[string]string{"code": bothCode})
+	p = &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("run_code", string(both))}},
+		{Blocks: []llm.Block{llm.TextBlock("Done.")}},
+	}}
+	res = RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecCode, Timeout: 30 * time.Second})
+	if res.Pass || !strings.Contains(res.Detail, "separate scripts") {
+		t.Fatalf("one script should fail the benchmark requirement: %+v", res)
+	}
+
+	write, _ := json.Marshal(map[string]string{"path": "STATE_RESULT.json", "content": string(want)})
+	p = &scriptedProvider{steps: []llm.Message{
+		{Blocks: []llm.Block{toolUse("write", string(write))}},
+		{Blocks: []llm.Block{llm.TextBlock("Done.")}},
+	}}
+	res = RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
+	if !res.Pass {
+		t.Fatalf("ordinary tools fallback should pass: %s", res.Detail)
 	}
 }
 

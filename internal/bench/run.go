@@ -140,9 +140,25 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 
 	var calls []callRecord
 	var finalText string
+	var codeScripts, stateStoreScript, stateLoadScript int
 	consume := func(e agent.Event) {
 		switch e.Kind {
 		case agent.EvToolEnd:
+			if e.ToolName == tools.CodeToolName && task.requireScriptState {
+				codeScripts++
+				var in struct {
+					Code string `json:"code"`
+				}
+				if json.Unmarshal(e.Input, &in) == nil {
+					compact := strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(in.Code)
+					if strings.Contains(compact, "store(") {
+						stateStoreScript = codeScripts
+					}
+					if strings.Contains(compact, "load(") {
+						stateLoadScript = codeScripts
+					}
+				}
+			}
 			if e.ToolName != tools.CodeToolName {
 				res.ToolCalls++
 			}
@@ -214,6 +230,10 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		}
 		if runCtx.Err() == nil {
 			res.Pass, res.Detail = task.Verify(dir)
+			if res.Pass && task.requireScriptState && exec != tools.ExecTools && (stateStoreScript == 0 || stateLoadScript == 0 || stateStoreScript == stateLoadScript) {
+				res.Pass = false
+				res.Detail = "run_code was available, but store and load were not used in separate scripts"
+			}
 		}
 	}
 	res.Duration = time.Since(start)

@@ -24,12 +24,13 @@ type Task struct {
 
 	// compaction is set only for a context-retention benchmark. Its source
 	// conversation is compacted before Prompt asks the model to recover it.
-	compaction *compactionCase
+	compaction         *compactionCase
+	requireScriptState bool // hybrid/code must use store and load in separate scripts
 }
 
 // Tasks are the built-in benchmark cases, in a fixed list.
 func Tasks() []Task {
-	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), compactionRetentionTask()}
+	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), persistentStateTask(), compactionRetentionTask()}
 }
 
 // goTest runs `go test ./...` in dir and reports whether it passed.
