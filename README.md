@@ -423,6 +423,13 @@ The permission mode decides what Larik may do without asking. The execution sett
 
 `run_code` runs JavaScript in an embedded interpreter, in a separate process started from the Larik binary, with no file, network or process access of its own. When the [sandbox](#sandbox) is on, that process is also confined more strictly than bash commands: no writes, no network (not even localhost), no API keys in its environment, and no reading home or temp directories. A script can only call tools (`tools.read({path})`, `tools.call(name, args)`), and gets their text back. Only what the script prints returns to the model, so reading forty files to count something costs the context one summary instead of forty results.
 
+Some things work differently in a script:
+
+- **`bash` returns more.** It returns `{output, exit_code, truncated}` with up to 1 MB of output, and a non-zero exit code doesn't throw.
+- **Calls can run at once.** `tools.parallel([{name, args}, …])` runs several calls together, read-only ones side by side, and returns each result or error in order.
+- **MCP tool names are valid JavaScript.** Characters that can't appear in an identifier become `_`, so `mcp__my-server__search` is `tools.mcp__my_server__search`.
+- **Long output is kept.** When a script prints more than fits in a tool result, the model sees the start and end, and `raw_output` reads the rest.
+
 Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
 
 In `code` mode, the model can call `task`, `task_wait` and `task_stop` directly, but scripts cannot invoke them and subagents still cannot start further subagents. Other conversation-level tools such as task-list updates, skills and memory remain unavailable; use `hybrid` or `tools` when you need them. Plan approval remains available directly. Changing execution in an existing conversation saves the choice for the next `/clear` or new session, so the tool list stays stable while that conversation is in context. A new conversation applies the choice immediately.

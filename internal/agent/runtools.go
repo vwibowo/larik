@@ -45,6 +45,18 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 		results[i] = res
 	}
 
+	inGroups(queue, 0, func(job approved) {
+		res := a.execute(ctx, job, emit)
+		res.Name = job.name
+		results[job.idx] = res
+	})
+	return results
+}
+
+// inGroups runs run for each job in order: consecutive jobs that may run
+// in parallel do, at most limit at a time (0 for no limit), and the
+// others run alone.
+func inGroups(queue []approved, limit int, run func(approved)) {
 	for start := 0; start < len(queue); {
 		end := start + 1
 		if tools.Parallel(queue[start].tool) {
@@ -52,20 +64,23 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, emit func(Event)
 				end++
 			}
 		}
+		n := limit
+		if n <= 0 {
+			n = end - start
+		}
+		slots := make(chan struct{}, n)
 		var wg sync.WaitGroup
 		for _, job := range queue[start:end] {
 			wg.Add(1)
+			slots <- struct{}{}
 			go func(job approved) {
-				defer wg.Done()
-				res := a.execute(ctx, job, emit)
-				res.Name = job.name
-				results[job.idx] = res
+				defer func() { <-slots; wg.Done() }()
+				run(job)
 			}(job)
 		}
 		wg.Wait()
 		start = end
 	}
-	return results
 }
 
 // prepare resolves a call to its tool and authorizes it. When the call
@@ -127,9 +142,9 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	return approved{}, res, false
 }
 
-// toolCaller runs delegated calls from run_code and write_files one at a time,
-// with the same permissions, hooks, checkpoints and events as direct calls.
-// Their ids extend the parent tool call's id.
+// toolCaller runs delegated calls from run_code and write_files, with the
+// same permissions, hooks, checkpoints and events as direct calls. Their
+// ids extend the parent tool call's id.
 type toolCaller struct {
 	a      *Agent
 	emit   func(Event)
@@ -138,21 +153,58 @@ type toolCaller struct {
 	n      atomic.Int64
 }
 
+// scriptParallel bounds the calls of one script batch that run at once.
+const scriptParallel = 8
+
+func (c *toolCaller) use(name string, input json.RawMessage) llm.Block {
+	return llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
+}
+
 func (c *toolCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
-	use := llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
-	job, res, ok := c.a.prepare(ctx, use, c.tools, nil, c.emit)
+	job, res, ok := c.a.prepare(ctx, c.use(name, input), c.tools, nil, c.emit)
+	var data any
 	if ok {
-		res = c.a.execute(ctx, job, c.emit)
+		res, data = c.a.executeData(ctx, job, c.emit)
 	}
-	return tools.Result{Content: res.Content, IsError: res.IsError, Images: res.Images}
+	return tools.Result{Content: res.Content, IsError: res.IsError, Images: res.Images, Data: data}
+}
+
+// CallTools runs a script's batch like the model's: every call is
+// authorized in order (asking is interactive), then they run, those that
+// may run in parallel side by side.
+func (c *toolCaller) CallTools(ctx context.Context, calls []tools.Call) []tools.Result {
+	results := make([]tools.Result, len(calls))
+	var queue []approved
+	for i, call := range calls {
+		job, res, ok := c.a.prepare(ctx, c.use(call.Name, call.Input), c.tools, nil, c.emit)
+		if ok {
+			job.idx = i
+			queue = append(queue, job)
+			continue
+		}
+		results[i] = tools.Result{Content: res.Content, IsError: res.IsError}
+	}
+	inGroups(queue, scriptParallel, func(job approved) {
+		res, data := c.a.executeData(ctx, job, c.emit)
+		results[job.idx] = tools.Result{Content: res.Content, IsError: res.IsError, Images: res.Images, Data: data}
+	})
+	return results
 }
 
 func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm.Block {
+	res, _ := a.executeData(ctx, job, emit)
+	return res
+}
+
+// executeData is execute that also returns the tool's Data, for scripts.
+// A hook's note added to the result drops Data, so the script gets the
+// note with the text instead.
+func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event)) (llm.Block, any) {
 	use := job.use
 	res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: use.Name}
 	if ctx.Err() != nil {
 		res.Content, res.IsError = "interrupted by user", true
-		return res
+		return res, nil
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
 	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
@@ -161,6 +213,7 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 	}
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
+	data := out.Data
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: out.Content, Display: out.Display, IsError: out.IsError})
 
 	post := a.runHook(ctx, emit, hooks.Input{
@@ -169,14 +222,16 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 	}, use.Name)
 	if post.Block && post.Reason != "" {
 		res.Content += "\n\n" + hookFeedback("PostToolUse", post.Reason)
+		data = nil
 	}
 	if len(post.Context) > 0 {
 		res.Content += "\n\n" + hookContext("PostToolUse", post.Context)
+		data = nil
 	}
 	if post.Halt {
 		a.requestHalt(post.HaltReason)
 	}
-	return res
+	return res, data
 }
 
 // authorize runs PreToolUse hooks and permission rules, asking the front

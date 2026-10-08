@@ -45,9 +45,14 @@ const (
 	codeTimeoutMax     = 600 * time.Second
 	// codeMaxCalls bounds the tool calls one script may make.
 	codeMaxCalls = 200
-	// codeMaxBuffer bounds the output a script collects before it is
-	// truncated to MaxOutputBytes for the model.
-	codeMaxBuffer = 1 << 20
+	// codeMaxOutput bounds what a script may print. The model sees its
+	// start and end within MaxOutputBytes; raw_output reads the rest.
+	codeMaxOutput = 16 << 20
+	// codeMaxValue bounds the rendering of the script's final value.
+	codeMaxValue = 1 << 20
+	// scriptBashOutput bounds the output a script gets from bash, which
+	// is more than the model sees so that scripts can filter it.
+	scriptBashOutput = 1 << 20
 	// codeMaxStack bounds the script's call depth, so runaway recursion
 	// stops with an error instead of growing until the memory limit.
 	codeMaxStack = 10_000
@@ -84,6 +89,64 @@ func WithCaller(ctx context.Context, c Caller) context.Context {
 func CallerFrom(ctx context.Context) (Caller, bool) {
 	c, ok := ctx.Value(callerKey{}).(Caller)
 	return c, ok
+}
+
+// Call is one delegated tool call.
+type Call struct {
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+// BatchCaller is a Caller that can also run several calls at once: they
+// are authorized in order, then the ones that may run in parallel (see
+// Parallel) do. Results come back in the order of calls.
+type BatchCaller interface {
+	Caller
+	CallTools(ctx context.Context, calls []Call) []Result
+}
+
+type scriptKey struct{}
+
+// InScript reports whether ctx runs a call a run_code script made, so a
+// tool can give the script more than the model would see (see Result.Data).
+func InScript(ctx context.Context) bool {
+	v, _ := ctx.Value(scriptKey{}).(bool)
+	return v
+}
+
+// jsName is the name a tool has in scripts: its own when that is a
+// JavaScript identifier, otherwise with the other characters replaced by _.
+func jsName(name string) string {
+	b := []byte(name)
+	for i, c := range b {
+		if !(c == '_' || c == '$' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' && i > 0) {
+			b[i] = '_'
+		}
+	}
+	return string(b)
+}
+
+// toolsMethods are the tools object's own functions, which no tool may shadow.
+var toolsMethods = map[string]bool{"call": true, "describe": true, "list": true, "parallel": true}
+
+// scriptNames maps each spec's name to the property it is bound to on the
+// tools object: its jsName, unless that is taken (by another tool, an
+// earlier alias or a method), in which case its own name. specs are
+// sorted, so the parent's index and the child's bindings agree.
+func scriptNames(specs []llm.ToolSpec) map[string]string {
+	taken := map[string]bool{}
+	for _, sp := range specs {
+		taken[sp.Name] = true
+	}
+	names := make(map[string]string, len(specs))
+	for _, sp := range specs {
+		names[sp.Name] = sp.Name
+		if js := jsName(sp.Name); js != sp.Name && !taken[js] && !toolsMethods[js] {
+			taken[js] = true
+			names[sp.Name] = js
+		}
+	}
+	return names
 }
 
 // ForExecution returns the registry the model sees under e. Hybrid adds
@@ -154,6 +217,9 @@ func (c codeTool) Spec() llm.ToolSpec {
 			"This is how you use tools: each one below is a function in the script. Do several steps in one script when you can.\n\n")
 	}
 	fmt.Fprintf(&d, "tools.<name>(args) runs a tool with the arguments of its schema and returns its text output, or throws an Error with the tool's message; tools.call(name, args) is the same. "+
+		"tools.bash returns {output, exit_code, truncated, raw_output_id?} instead, with up to 1 MB of output, and doesn't throw for a non-zero exit code. "+
+		"tools.parallel([{name, args}, ...]) runs several calls at once (read-only ones side by side) and returns [{ok: true, value} or {ok: false, error}] in order. "+
+		"In names, characters a JavaScript identifier can't have become _ (mcp__my-server__x is tools.mcp__my_server__x). "+
 		"tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
 		"Calls are synchronous (no await). There is no file, network or process access except through tools, and every call is permission-checked. "+
 		"Print summaries, not raw dumps. Limits per script: %d tool calls, %d MB of memory, and %s (timeout_seconds, up to %d).",
@@ -181,10 +247,12 @@ func (c codeTool) Spec() llm.ToolSpec {
 // index lists the tools with their argument names, falling back to names
 // only past indexBudget.
 func (c codeTool) index() string {
+	bound := scriptNames(c.specs)
 	var lines, names []string
 	for _, sp := range c.listed {
-		lines = append(lines, "- "+signature(sp)+": "+indexLine(sp))
-		names = append(names, sp.Name)
+		name := bound[sp.Name]
+		lines = append(lines, "- "+signature(name, sp)+": "+indexLine(sp))
+		names = append(names, name)
 	}
 	if out := strings.Join(lines, "\n"); len(out) <= indexBudget {
 		return out
@@ -193,7 +261,7 @@ func (c codeTool) index() string {
 }
 
 // signature renders a spec as name({required, optional?}).
-func signature(sp llm.ToolSpec) string {
+func signature(name string, sp llm.ToolSpec) string {
 	var s struct {
 		Properties map[string]json.RawMessage `json:"properties"`
 		Required   []string                   `json:"required"`
@@ -218,5 +286,5 @@ func signature(sp llm.ToolSpec) string {
 			props[i] = p + "?"
 		}
 	}
-	return sp.Name + "({" + strings.Join(props, ", ") + "})"
+	return name + "({" + strings.Join(props, ", ") + "})"
 }

@@ -56,6 +56,55 @@ func TestRunCodeCallsAreAuthorizedOneByOne(t *testing.T) {
 	}
 }
 
+func TestRunCodeParallelBatch(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(runCodeUse("c1", `
+const rs = tools.parallel([
+  {name: "read", args: {path: "a.txt"}},
+  {name: "write", args: {path: "b.txt", content: "B"}},
+  {name: "read", args: {path: "missing.txt"}},
+  {name: "bash", args: {command: "echo out; exit 3"}},
+]);
+console.log(rs.map(r => r.ok ? "ok" : "error").join(","));
+console.log(rs[0].value.includes("A"), rs[3].value.exit_code, rs[3].value.output.trim())`)),
+		assistant(llm.TextBlock("done")))
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.SetExecution(tools.ExecHybrid)
+	evs := drain(a.Run(context.Background(), "go"), PermissionReply{Allow: true})
+
+	if data, _ := os.ReadFile(filepath.Join(dir, "b.txt")); string(data) != "B" {
+		t.Fatalf("the batch's write should have run after approval: %q", data)
+	}
+	var asked []string
+	for _, e := range permissionEvents(evs) {
+		asked = append(asked, e.ToolID+"="+e.ToolName)
+	}
+	if strings.Join(asked, ",") != "c1.2=write,c1.4=bash" {
+		t.Errorf("asked = %v", asked)
+	}
+	res := lastResult(fp, 1)
+	if res.IsError || !strings.Contains(res.Content, "ok,ok,error,ok") || !strings.Contains(res.Content, "true 3 out") || !strings.Contains(res.Content, "4 tool calls") {
+		t.Errorf("result = %s", res.Content)
+	}
+}
+
+func TestRunCodeSavesLongOutput(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(runCodeUse("c1", `for (let i = 0; i < 100000; i++) console.log("row " + i)`)),
+		assistant(runCodeUse("c2", `tools.raw_output({tool_call_id: "c1", offset: 0, limit: 20}).split("\n")[1]`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if res := lastResult(fp, 1); !strings.Contains(res.Content, "raw_output tool_call_id=c1]") || !strings.Contains(res.Content, "row 99999") {
+		t.Fatalf("first result = %.300s", res.Content)
+	}
+	if res := lastResult(fp, 2); res.IsError || !strings.Contains(res.Content, "=> row 0") {
+		t.Fatalf("raw_output should read the script's output: %s", res.Content)
+	}
+}
+
 func TestRunCodeRespectsPlanMode(t *testing.T) {
 	a, fp, dir := setup(t, permission.ModePlan,
 		assistant(runCodeUse("c1", `

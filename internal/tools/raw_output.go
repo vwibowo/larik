@@ -28,14 +28,26 @@ func CallID(ctx context.Context) string {
 	return id
 }
 
-// RawOutput reads a bounded byte range of a prior bash call's exact output.
+// rawOutputFile creates the file raw_output reads for the call id.
+func (e *Env) rawOutputFile(id string) (*os.File, error) {
+	if err := os.MkdirAll(e.RawOutputDir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(e.RawOutputDir, 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(filepath.Join(e.RawOutputDir, session.RawName(id)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+}
+
+// RawOutput reads a bounded byte range of a prior bash or run_code call's
+// exact output.
 type RawOutput struct{}
 
 func (RawOutput) ReadOnly() bool { return true }
 func (RawOutput) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "raw_output",
-		Description: "Read exact output from a previous bash call by tool_call_id. Offset is a zero-based byte position; limit defaults to 20000 bytes (max 20000). Never reruns the command.",
+		Description: "Read exact output from a previous bash or run_code call by tool_call_id. Offset is a zero-based byte position; limit defaults to 20000 bytes (max 20000). Never reruns the command.",
 		Schema:      schema(`{"type":"object","properties":{"tool_call_id":{"type":"string"},"offset":{"type":"integer","description":"Zero-based byte offset (default 0)"},"limit":{"type":"integer","description":"Bytes to return (default and max 20000)"}},"required":["tool_call_id"]}`),
 	}
 }

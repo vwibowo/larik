@@ -18,7 +18,6 @@ import (
 	"larik/internal/llm"
 	"larik/internal/pathpolicy"
 	"larik/internal/procgroup"
-	"larik/internal/session"
 )
 
 const (
@@ -132,17 +131,16 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	// Own process group so cancellation kills children too.
 	procgroup.Configure(cmd)
 	var buffer capBuffer // bounded: a chatty command can't exhaust memory
+	// A script gets more of the output than the model would.
+	script := InScript(ctx)
+	if script {
+		buffer.limit = scriptBashOutput / 2
+	}
 	var rawFile *os.File
 	var captureErr error
 	callID, _ := ctx.Value(callIDKey{}).(string)
 	if env.TokenSaver != nil && env.TokenSaver.Load() && env.RawOutputDir != "" && callID != "" {
-		if err := os.MkdirAll(env.RawOutputDir, 0o700); err != nil {
-			captureErr = err
-		} else if err := os.Chmod(env.RawOutputDir, 0o700); err != nil {
-			captureErr = err
-		} else {
-			rawFile, captureErr = os.OpenFile(filepath.Join(env.RawOutputDir, session.RawName(callID)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		}
+		rawFile, captureErr = env.rawOutputFile(callID)
 	}
 	var outputWriter io.Writer = &buffer
 	if rawFile != nil {
@@ -227,15 +225,43 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 			}
 		}
 	}
+	// notes are what Larik adds to the output; a script gets them apart.
+	var notes []string
+	note := func(s string) {
+		output += "\n" + s
+		notes = append(notes, s)
+	}
 	if leftRunning {
-		output += "\n[a process the command started is still running in the background; its later output isn't captured]"
+		note("[a process the command started is still running in the background; its later output isn't captured]")
 	}
 	if sandboxed {
 		if nb, ok := env.Sandbox.(interface{ NetworkBlocked(time.Time) []string }); ok {
 			if hosts := nb.NetworkBlocked(started); len(hosts) > 0 {
-				output += "\n[sandbox: the network proxy refused " + strings.Join(hosts, ", ") + ": not in sandbox.allowed_domains. The user can add domains to that list in their personal config; or run the command again with \"sandbox\": false, which the user will be asked to approve.]"
+				note("[sandbox: the network proxy refused " + strings.Join(hosts, ", ") + ": not in sandbox.allowed_domains. The user can add domains to that list in their personal config; or run the command again with \"sandbox\": false, which the user will be asked to approve.]")
 			}
 		}
+	}
+	// data is what a script gets: the output, more of it than the model
+	// sees and unfiltered, and the exit code, which isn't an error to it.
+	data := func(code int) any {
+		if !script {
+			return nil
+		}
+		out, complete := buffer.view(scriptBashOutput), buffer.complete()
+		if rawFile != nil && captureErr == nil {
+			var err error
+			if out, complete, err = readEnds(rawFile.Name(), scriptBashOutput); err != nil {
+				out, complete = raw, false
+			}
+		}
+		d := map[string]any{"output": cleanTerminal(out), "exit_code": code, "truncated": !complete}
+		if rawFile != nil && captureErr == nil {
+			d["raw_output_id"] = callID
+		}
+		if len(notes) > 0 {
+			d["notes"] = notes
+		}
+		return d
 	}
 	switch {
 	case errors.Is(runErr, context.DeadlineExceeded):
@@ -245,17 +271,53 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	case errors.As(runErr, &exitErr):
 		content := fmt.Sprintf("%s\n[exit code %d]", output, exitErr.ExitCode())
 		if sandboxed && sandboxBlocked(output) {
-			content += "\n[sandbox: this looks blocked by the sandbox (writes outside the project and temp dirs, and network access, are not allowed). " +
+			hint := "[sandbox: this looks blocked by the sandbox (writes outside the project and temp dirs, and network access, are not allowed). " +
 				"If the command really needs that, run it again with \"sandbox\": false; the user will be asked to approve it.]"
+			content += "\n" + hint
+			notes = append(notes, hint)
 		}
-		return Result{Content: content, IsError: true}
+		return Result{Content: content, IsError: true, Data: data(exitErr.ExitCode())}
 	case runErr != nil:
 		return errorf("%v", runErr)
 	}
 	if output == "" {
 		output = "(no output)"
 	}
-	return Result{Content: output}
+	return Result{Content: output, Data: data(0)}
+}
+
+// readEnds reads the file at path when it is at most budget bytes, and
+// otherwise its start and end around the count of bytes left out.
+func readEnds(path string, budget int) (string, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	if fi.Size() <= int64(budget) {
+		data, err := io.ReadAll(f)
+		return string(data), true, err
+	}
+	head := make([]byte, budget*2/3)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return "", false, err
+	}
+	tail := make([]byte, budget-len(head))
+	if _, err := f.ReadAt(tail, fi.Size()-int64(len(tail))); err != nil && err != io.EOF {
+		return "", false, err
+	}
+	h, t := string(head), string(tail)
+	for !utf8.ValidString(h) && len(h) > 0 {
+		h = h[:len(h)-1]
+	}
+	for !utf8.ValidString(t) && len(t) > 0 {
+		t = t[1:]
+	}
+	return fmt.Sprintf("%s\n\n... [%d bytes truncated] ...\n\n%s", h, fi.Size()-int64(len(h)+len(t)), t), false, nil
 }
 
 func rawPreview(path, callID string) (string, bool, error) {

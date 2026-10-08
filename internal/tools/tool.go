@@ -27,6 +27,11 @@ type Result struct {
 	Display string
 	// Images go to the model with Content (image blocks, base64).
 	Images []llm.Block
+	// Data, when set, is what a run_code script gets in place of Content:
+	// a JSON value. Scripts get it even when IsError is set, because the
+	// call did run (a command that exited non-zero); the model and the
+	// front ends still see Content.
+	Data any
 }
 
 type Tool interface {

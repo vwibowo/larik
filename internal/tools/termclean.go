@@ -56,25 +56,33 @@ func cleanTerminal(s string) string {
 // captureBytes is how much of each end of a command's output is kept.
 const captureBytes = 64 * 1024
 
-// capBuffer keeps the first and last captureBytes written and counts the
-// rest, so a command that prints gigabytes holds bounded memory.
+// capBuffer keeps the first and last captureBytes (or limit) written and
+// counts the rest, so a command that prints gigabytes holds bounded memory.
 type capBuffer struct {
 	head, tail []byte
 	total      int64
+	limit      int // bytes kept at each end; 0 means captureBytes
+}
+
+func (c *capBuffer) size() int {
+	if c.limit > 0 {
+		return c.limit
+	}
+	return captureBytes
 }
 
 func (c *capBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	c.total += int64(n)
-	if room := captureBytes - len(c.head); room > 0 {
+	if room := c.size() - len(c.head); room > 0 {
 		k := min(room, len(p))
 		c.head = append(c.head, p[:k]...)
 		p = p[k:]
 	}
 	if len(p) > 0 {
 		c.tail = append(c.tail, p...)
-		if len(c.tail) > 2*captureBytes {
-			c.tail = append(c.tail[:0], c.tail[len(c.tail)-captureBytes:]...)
+		if len(c.tail) > 2*c.size() {
+			c.tail = append(c.tail[:0], c.tail[len(c.tail)-c.size():]...)
 		}
 	}
 	return n, nil
@@ -84,14 +92,23 @@ func (c *capBuffer) Write(p []byte) (int, error) {
 // and tail, cleaned for the model and laid out like Truncate's output
 // within MaxOutputBytes, around the count of bytes left out.
 func (c *capBuffer) String() string {
+	return c.view(MaxOutputBytes - 100) // the marker fits, so Truncate leaves it be
+}
+
+// complete reports whether the buffer holds everything written.
+func (c *capBuffer) complete() bool {
+	return c.total == int64(len(c.head)+min(len(c.tail), c.size()))
+}
+
+// view is String with budget bytes for the head and tail.
+func (c *capBuffer) view(budget int) string {
 	tail := c.tail
-	if len(tail) > captureBytes {
-		tail = tail[len(tail)-captureBytes:]
+	if len(tail) > c.size() {
+		tail = tail[len(tail)-c.size():]
 	}
-	if c.total == int64(len(c.head)+len(tail)) {
+	if c.complete() {
 		return string(c.head) + string(tail)
 	}
-	budget := MaxOutputBytes - 100 // the marker fits, so Truncate leaves it be
 	head := safeCut(cleanTerminal(string(c.head)), budget*2/3)
 	t := cleanTerminal(string(tail))
 	t = t[max(0, len(t)-(budget-len(head))):]
