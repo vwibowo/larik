@@ -549,6 +549,20 @@ func (s *script) install() {
 	}
 	_ = t.Set("call", func(name string, args goja.Value) goja.Value { return s.invoke(name, args) })
 	_ = t.Set("parallel", s.parallel)
+	_ = t.Set("search", func(query string, limit goja.Value) []map[string]any {
+		n := searchDefault
+		if limit != nil && !goja.IsUndefined(limit) && !goja.IsNull(limit) {
+			n = int(limit.ToInteger())
+		}
+		n = min(max(n, 1), searchMax)
+		found := searchTool{specs: s.specs}.search(query, n)
+		out := make([]map[string]any, len(found))
+		for i, sp := range found {
+			name := s.bound[sp.Name]
+			out[i] = map[string]any{"name": name, "signature": signature(name, sp), "description": indexLine(sp)}
+		}
+		return out
+	})
 	_ = t.Set("describe", func(name string) goja.Value {
 		sp, ok := s.find(name)
 		if !ok {

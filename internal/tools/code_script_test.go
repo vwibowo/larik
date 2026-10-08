@@ -105,6 +105,26 @@ tools["a-b"]({})`)
 	}
 }
 
+func TestScriptSearch(t *testing.T) {
+	c := &scriptCaller{}
+	res := runScript(t, context.Background(), nil, c, `
+const hits = tools.search("ping host");
+console.log(hits.length, hits[0].name, hits[0].signature, hits[0].description);
+console.log(tools.search("tool", 2).length, tools.search("zzz").length, tools.search("tool", 0).length);
+tools[hits[0].name]({host: "h"})`)
+	if res.IsError {
+		t.Fatalf("unexpected error:\n%s", res.Content)
+	}
+	for _, want := range []string{"1 mcp__my_srv__ping mcp__my_srv__ping({host}) mcp__my-srv__ping tool", "2 0 1", `=> got {"host":"h"}`} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("missing %q in:\n%s", want, res.Content)
+		}
+	}
+	if len(c.calls) != 1 {
+		t.Errorf("search should not call tools: %v", c.calls)
+	}
+}
+
 func TestScriptGetsDataInsteadOfAnError(t *testing.T) {
 	res := runScript(t, context.Background(), nil, &scriptCaller{}, `const r = tools.exit({}); console.log(r.exit_code, JSON.stringify(r.output))`)
 	if res.IsError || !strings.Contains(res.Content, `3 "out\n"`) {

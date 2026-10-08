@@ -127,7 +127,7 @@ func jsName(name string) string {
 }
 
 // toolsMethods are the tools object's own functions, which no tool may shadow.
-var toolsMethods = map[string]bool{"call": true, "describe": true, "list": true, "parallel": true}
+var toolsMethods = map[string]bool{"call": true, "describe": true, "list": true, "parallel": true, "search": true}
 
 // scriptNames maps each spec's name to the property it is bound to on the
 // tools object: its jsName, unless that is taken (by another tool, an
@@ -220,7 +220,7 @@ func (c codeTool) Spec() llm.ToolSpec {
 		"tools.bash returns {output, exit_code, truncated, raw_output_id?} instead, with up to 1 MB of output, and doesn't throw for a non-zero exit code. "+
 		"tools.parallel([{name, args}, ...]) runs several calls at once (read-only ones side by side) and returns [{ok: true, value} or {ok: false, error}] in order. "+
 		"In names, characters a JavaScript identifier can't have become _ (mcp__my-server__x is tools.mcp__my_server__x). "+
-		"tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
+		"tools.search(query, limit?) ranks the tools by keywords and returns [{name, signature, description}]; tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
 		"Calls are synchronous (no await). There is no file, network or process access except through tools, and every call is permission-checked. "+
 		"Print summaries, not raw dumps. Limits per script: %d tool calls, %d MB of memory, and %s (timeout_seconds, up to %d).",
 		codeMaxCalls, codeMemoryLimit>>20, codeTimeoutDefault, int(codeTimeoutMax.Seconds()))
@@ -257,7 +257,7 @@ func (c codeTool) index() string {
 	if out := strings.Join(lines, "\n"); len(out) <= indexBudget {
 		return out
 	}
-	return strings.Join(names, ", ") + "\n(Use tools.describe(name) for arguments.)"
+	return strings.Join(names, ", ") + "\n(Use tools.search(query) to find one, tools.describe(name) for its arguments.)"
 }
 
 // signature renders a spec as name({required, optional?}).
