@@ -89,9 +89,34 @@ Larik reads back the window Ollama actually loaded, uses it for the context perc
 
 ### Local speech (STT and TTS)
 
-Larik can use any local server that implements the OpenAI audio API. Speech-to-text uses `POST /v1/audio/transcriptions`; text-to-speech uses `POST /v1/audio/speech`. Qwen3-ASR provides STT. TTS needs a separate TTS model such as Qwen3-TTS. The models and server are independent from Larik's chat model.
+Larik can transcribe and speak through a local command, with no server to keep running, or through any server that implements the OpenAI audio API. Both are independent from Larik's chat model.
 
-Audio is disabled by default and is configured in your personal `~/.config/larik/config.json`:
+Audio is disabled by default and is configured in your personal `~/.config/larik/config.json`. The simplest setup on macOS uses whisper.cpp for speech-to-text and the built-in `say` voice for text-to-speech:
+
+```bash
+brew install whisper-cpp ffmpeg
+mkdir -p ~/models && curl -L -o ~/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+```json
+{
+  "audio": {
+    "enabled": true,
+    "stt": { "command": "whisper-cli -m ~/models/ggml-small.bin -nt -np -l \"${LARIK_STT_LANGUAGE:-auto}\" -f", "language": "id" }
+  }
+}
+```
+
+A `command` replaces the endpoint for that direction. Larik runs it with `sh -c` and appends a temporary WAV path as the final argument, the same way it runs `record_command` and `play_command`:
+
+- An **STT command** reads that 16 kHz mono WAV and prints the transcript on stdout (plain text, or a JSON object with a `text` field). `LARIK_STT_LANGUAGE` holds the current STT language, which `/stt-language` changes, or is empty. If the command exits non-zero, the end of its stderr is shown. The model loads on every recording, which takes about half a second for whisper.cpp's `small` model on Apple Silicon.
+- A **TTS command** reads the text on stdin and writes speech to that WAV path. `LARIK_TTS_VOICE` holds `tts.voice`.
+- With no TTS `command` or `base_url`, macOS uses `say`, so `/speak` works without setup. Set `tts.voice` to any voice listed by `say -v '?'`. Other platforms need a TTS command or endpoint, such as `piper --model en_US-lessac-medium.onnx --output_file`.
+
+Commands run as local processes outside the bash sandbox, so like the rest of the audio section they come only from personal settings.
+
+To keep a model loaded between recordings, run a server instead. Speech-to-text uses `POST /v1/audio/transcriptions` and text-to-speech uses `POST /v1/audio/speech`. Qwen3-ASR, whisper.cpp's `whisper-server` (started with `--inference-path /v1/audio/transcriptions`) and Speaches all provide STT. TTS needs a separate model such as Qwen3-TTS or Kokoro:
 
 ```json
 {
@@ -333,7 +358,7 @@ fi
 | `/mcp-config`                                    | Edit named personal MCP servers; reload to apply |
 | `/tasks` / `/tasks stop <id>`                    | Background subagent tasks                                                                                                                                                                                                                                                |
 | `/worktrees` / `/worktrees remove <branch\|all>` | Git worktrees kept by isolated subagents                                                                                                                                                                                                                                 |
-| `/web-search-config` / `/stt-config` / `/tts-config` | Edit personal search and speech endpoints (masked secrets; reload to apply) |
+| `/web-search-config` / `/stt-config` / `/tts-config` | Edit personal search and speech endpoints or commands (masked secrets; reload to apply) |
 | `/sandbox`                                       | Sandbox status                                                                                                                                                                                                                                                           |
 | `/<skill-name> [args]`                           | Run a skill                                                                                                                                                                                                                                                              |
 
@@ -1083,7 +1108,7 @@ internal/lsp        language server client, edit diagnostics, lsp tool
 internal/sandbox    Seatbelt / bubblewrap confinement for bash
 internal/web        web_fetch (HTML to Markdown) and web_search backends
 internal/browsercdp browser_* tools driving Chrome over the DevTools Protocol
-internal/audio       OpenAI-compatible local STT/TTS HTTP client and OS audio commands
+internal/audio       local STT/TTS through OpenAI-compatible HTTP or commands, and OS audio commands
 internal/permission rules and modes
 internal/session    append-only JSONL transcripts
 internal/checkpoint file snapshots for /undo

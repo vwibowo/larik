@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/audio"
 	"larik/internal/config"
 	"larik/internal/llm"
 	"larik/internal/permission"
@@ -502,7 +503,7 @@ var settingSpecs = []settingSpec{
 	{
 		key: "audio_enabled", path: "audio.enabled", title: "Audio", section: "audio", kind: kindToggle,
 		applies: applyReload,
-		later:   "recording and speech need stt and tts endpoints as well",
+		later:   "recording needs an stt command or endpoint; speech uses say on macOS unless configured",
 		get:     func(m *model) string { return onOff(m.opts.Config.Audio.Enabled) },
 		store:   func(v string) any { return v == "on" },
 		set:     func(m *model, v string) { m.opts.Config.Audio.Enabled = v == "on" },
@@ -582,8 +583,8 @@ var settingSpecs = []settingSpec{
 	}},
 
 	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
-	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return m.opts.Config.Audio.STT.Model }, cmd: "/stt-config", open: (*model).openSTTEditor},
-	{key: "audio_tts", title: "Text-to-speech endpoint", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return m.opts.Config.Audio.TTS.Model }, cmd: "/tts-config", open: (*model).openTTSEditor},
+	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.STT, "") }, cmd: "/stt-config", open: (*model).openSTTEditor},
+	{key: "audio_tts", title: "Text-to-speech endpoint", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.TTS, audio.DefaultSpeechName()) }, cmd: "/tts-config", open: (*model).openTTSEditor},
 	{
 		key: "sandbox", title: "Bash sandbox", section: "security", kind: kindAction,
 		get: func(m *model) string {

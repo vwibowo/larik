@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/audio"
 	"larik/internal/config"
 )
 
@@ -56,6 +57,53 @@ func TestEndpointEditorsKeepPersonalLeavesAndSecretsPrivate(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("secret config mode %o", info.Mode().Perm())
+	}
+}
+
+func TestEndpointEditorSavesAudioCommand(t *testing.T) {
+	m := testModel(t)
+	path := m.opts.Config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"audio":{"enabled":true,"stt":{"base_url":"http://127.0.0.1:8000/v1","model":"asr"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.command("/stt-config")
+	e := m.settings.endpoint
+	if !strings.Contains(m.endpointEditorView(), "Command") {
+		t.Fatal("STT editor has no command row")
+	}
+	e.startInput("command", m.width)
+	e.input.SetValue("whisper-cli -m model.bin -nt -f")
+	e.finishInput()
+	m.saveEndpointEditor()
+	data := savedConfig(t, m)
+	for _, s := range []string{`"command": "whisper-cli -m model.bin -nt -f"`, `"model": "asr"`, `"enabled": true`} {
+		if !strings.Contains(data, s) {
+			t.Errorf("missing %s: %s", s, data)
+		}
+	}
+	m.command("/stt-config")
+	if got := m.settings.endpoint.fields["command"]; got != "whisper-cli -m model.bin -nt -f" {
+		t.Fatalf("command not loaded back: %q", got)
+	}
+}
+
+func TestSpeechSummaryPrefersCommand(t *testing.T) {
+	for _, tc := range []struct {
+		e        audio.EndpointConfig
+		fallback string
+		want     string
+	}{
+		{audio.EndpointConfig{Command: "whisper-cli -f", Model: "asr"}, "", "whisper-cli -f"},
+		{audio.EndpointConfig{BaseURL: "http://x", Model: "asr"}, "say (built-in)", "asr"},
+		{audio.EndpointConfig{}, "say (built-in)", "say (built-in)"},
+		{audio.EndpointConfig{}, "", ""},
+	} {
+		if got := speechSummary(tc.e, tc.fallback); got != tc.want {
+			t.Errorf("speechSummary(%+v, %q) = %q, want %q", tc.e, tc.fallback, got, tc.want)
+		}
 	}
 }
 

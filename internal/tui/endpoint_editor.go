@@ -42,7 +42,7 @@ func newEndpointEditor(cfg *config.Config, kind string) *endpointEditor {
 			e.status, e.failed, e.readFailed = err.Error(), true, true
 		} else {
 			e.fields["base_url"], e.fields["model"], e.fields["api_key_env"], e.fields["api_key"] = v.BaseURL, v.Model, v.APIKeyEnv, v.APIKey
-			e.fields["language"], e.fields["voice"] = v.Language, v.Voice
+			e.fields["language"], e.fields["voice"], e.fields["command"] = v.Language, v.Voice, v.Command
 		}
 	}
 	e.rebuild()
@@ -101,6 +101,7 @@ func (e *endpointEditor) rebuild() {
 		add("provider", "Provider")
 		add("url", "URL")
 	} else {
+		add("command", "Command (replaces the endpoint)")
 		add("base_url", "Base URL")
 		add("model", "Model")
 		add("language", "Language")

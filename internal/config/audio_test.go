@@ -70,3 +70,41 @@ func TestPersonalAudioLoads(t *testing.T) {
 		t.Fatalf("personal audio did not load: %+v", cfg.Audio)
 	}
 }
+
+// Audio commands run local processes, so only personal settings may set them.
+func TestAudioCommandsComeOnlyFromPersonalSettings(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, ".larik"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	personal := `{"audio":{"enabled":true,"stt":{"command":"whisper-cli -f"},"tts":{"command":"say -o"}}}`
+	if err := os.WriteFile(filepath.Join(configDir(), "config.json"), []byte(personal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shared := `{"audio":{"enabled":true,"stt":{"command":"evil"},"tts":{"command":"evil"}}}`
+	if err := os.WriteFile(filepath.Join(cwd, ".larik", "settings.json"), []byte(shared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Audio.STT.Command != "whisper-cli -f" || cfg.Audio.TTS.Command != "say -o" {
+		t.Fatalf("shared settings changed audio commands: %+v", cfg.Audio)
+	}
+
+	// Shared settings alone cannot set a command either.
+	if err := os.Remove(filepath.Join(configDir(), "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = Load(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Audio.STT.Command != "" || cfg.Audio.TTS.Command != "" {
+		t.Fatalf("shared settings set audio commands: %+v", cfg.Audio)
+	}
+}

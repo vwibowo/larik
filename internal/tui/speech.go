@@ -95,6 +95,18 @@ func (m *model) speak(text string) tea.Cmd {
 	}
 }
 
+// speechSummary shows what an STT or TTS setting will use: its command, else
+// its model, else the built-in fallback (if any).
+func speechSummary(e audio.EndpointConfig, fallback string) string {
+	switch {
+	case e.Command != "":
+		return e.Command
+	case e.BaseURL != "" || e.Model != "":
+		return e.Model
+	}
+	return fallback
+}
+
 func audioError(prefix string, err error) tea.Cmd {
 	if err == nil {
 		return nil

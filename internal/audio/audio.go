@@ -1,5 +1,6 @@
 // Package audio provides local speech input and output through an
-// OpenAI-compatible audio API. It deliberately knows nothing about the agent
+// OpenAI-compatible audio API or local commands (such as whisper.cpp's
+// whisper-cli, or macOS say). It deliberately knows nothing about the agent
 // loop or the TUI.
 package audio
 
@@ -49,6 +50,11 @@ type Config struct {
 }
 
 type EndpointConfig struct {
+	// Command, when set, replaces the HTTP endpoint: Larik runs it with sh -c
+	// and appends a WAV path as the final argument. An STT command reads that
+	// file and prints the transcript; a TTS command reads text on stdin and
+	// writes speech to that file.
+	Command   string `json:"command,omitempty"`
 	BaseURL   string `json:"base_url,omitempty"`
 	APIKey    string `json:"api_key,omitempty"`
 	APIKeyEnv string `json:"api_key_env,omitempty"`
@@ -84,8 +90,11 @@ func (s *OpenAICompatible) Transcribe(ctx context.Context, data []byte, name str
 	if !s.cfg.Enabled {
 		return "", ErrDisabled
 	}
+	if s.cfg.STT.Command != "" {
+		return s.transcribeCommand(ctx, data)
+	}
 	if s.cfg.STT.BaseURL == "" || s.cfg.STT.Model == "" {
-		return "", errors.New("STT base_url and model must be configured")
+		return "", errors.New("configure audio.stt.command, or audio.stt.base_url and model")
 	}
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -126,6 +135,33 @@ func (s *OpenAICompatible) Transcribe(ctx context.Context, data []byte, name str
 	return transcriptionText(b), nil
 }
 
+// transcribeCommand runs the STT command on a temporary WAV file and reads
+// the transcript from its stdout.
+func (s *OpenAICompatible) transcribeCommand(ctx context.Context, data []byte) (string, error) {
+	f, err := os.CreateTemp("", "larik-stt-*.wav")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	defer os.Remove(path)
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err = f.Close(); err != nil {
+		return "", err
+	}
+	out, err := runCommand(ctx, s.cfg.STT.Command, path, nil, "LARIK_STT_LANGUAGE="+s.cfg.STT.Language)
+	if err != nil {
+		return "", fmt.Errorf("STT command failed: %w", err)
+	}
+	text := transcriptionText(out)
+	if text == "" {
+		return "", errors.New("STT command produced no text")
+	}
+	return text, nil
+}
+
 // transcriptionText accepts both the OpenAI text response and compatible
 // servers that return a JSON transcription object despite response_format=text.
 func transcriptionText(data []byte) string {
@@ -142,7 +178,16 @@ func (s *OpenAICompatible) Synthesize(ctx context.Context, text string) ([]byte,
 	if !s.cfg.Enabled {
 		return nil, "", ErrDisabled
 	}
-	if s.cfg.TTS.BaseURL == "" || s.cfg.TTS.Model == "" {
+	if s.cfg.TTS.Command != "" {
+		return s.synthesizeCommand(ctx, s.cfg.TTS.Command, text)
+	}
+	if s.cfg.TTS.BaseURL == "" {
+		if command := defaultSpeakCommand(); command != "" {
+			return s.synthesizeCommand(ctx, command, text)
+		}
+		return nil, "", errors.New("configure audio.tts.command, or audio.tts.base_url and model")
+	}
+	if s.cfg.TTS.Model == "" {
 		return nil, "", errors.New("TTS base_url and model must be configured")
 	}
 	payload := map[string]string{"model": s.cfg.TTS.Model, "input": text, "voice": s.cfg.TTS.Voice, "response_format": "wav"}
@@ -165,6 +210,80 @@ func (s *OpenAICompatible) Synthesize(ctx context.Context, text string) ([]byte,
 	data, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
 	return data, res.Header.Get("Content-Type"), err
 }
+
+// synthesizeCommand pipes text to the TTS command, which writes speech to the
+// WAV path appended to it.
+func (s *OpenAICompatible) synthesizeCommand(ctx context.Context, command, text string) ([]byte, string, error) {
+	f, err := os.CreateTemp("", "larik-tts-*.wav")
+	if err != nil {
+		return nil, "", err
+	}
+	path := f.Name()
+	f.Close()
+	defer os.Remove(path)
+	if _, err = runCommand(ctx, command, path, strings.NewReader(text), "LARIK_TTS_VOICE="+s.cfg.TTS.Voice); err != nil {
+		return nil, "", fmt.Errorf("TTS command failed: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) == 0 {
+		return nil, "", errors.New("TTS command produced no audio")
+	}
+	return data, "audio/wav", nil
+}
+
+// runCommand runs command with path appended as its final argument and
+// returns stdout (capped at 1 MB). A failure carries the end of stderr.
+func runCommand(ctx context.Context, command, path string, stdin io.Reader, env ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", command+" "+shellQuote(path))
+	cmd.Env = append(os.Environ(), env...)
+	cmd.Stdin = stdin
+	stdout := &limitedBuffer{max: 1 << 20}
+	stderr := &tailBuffer{max: 4 << 10}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%v: %s", err, msg)
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
+// limitedBuffer keeps the first max bytes written and discards the rest.
+type limitedBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); room > 0 {
+		b.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+// tailBuffer keeps the last max bytes written.
+type tailBuffer struct {
+	buf []byte
+	max int
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	if over := len(b.buf) - b.max; over > 0 {
+		b.buf = append(b.buf[:0], b.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string { return string(b.buf) }
+
 func (s *OpenAICompatible) Play(ctx context.Context, data []byte, mime string) error {
 	if !s.cfg.Enabled {
 		return ErrDisabled
@@ -270,4 +389,25 @@ func defaultPlayCommand() string {
 	}
 	return "ffplay -nodisp -autoexit -loglevel quiet"
 }
+
+// defaultSpeakCommand is the TTS used when no endpoint or command is set: the
+// built-in macOS voice. It is a variable so tests need not produce real audio.
+var defaultSpeakCommand = func() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	if _, err := exec.LookPath("say"); err != nil {
+		return ""
+	}
+	return `say ${LARIK_TTS_VOICE:+-v "$LARIK_TTS_VOICE"} --file-format=WAVE --data-format=LEI16@22050 -o`
+}
+
+// DefaultSpeechName names the built-in TTS for display, or "" when there is none.
+func DefaultSpeechName() string {
+	if defaultSpeakCommand() == "" {
+		return ""
+	}
+	return "say (built-in)"
+}
+
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }

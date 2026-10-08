@@ -11,7 +11,7 @@ flowchart TD
     main["cmd/larik"] --> tui & headless & server & app & trace
     tui["tui"] --> app & agent & trace & clipboard & audio
     headless["headless"] --> agent
-    audio["audio"] --> config-independent local HTTP + OS audio commands
+    audio["audio"] --> config-independent local HTTP + CLI speech + OS audio commands
     server["server"] --> app & agent
     app["app"] --> agent & config & providers & subagent & mcp & lsp & skills & sandbox & web & session & checkpoint & hooks & trace & telemetry
     telemetry["telemetry"] --> agent
