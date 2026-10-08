@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,11 +17,43 @@ import (
 // scriptCaller answers like fakeCaller, plus "exit", which fails with
 // Data, and runs batches concurrently, recording how many ran at once.
 type scriptCaller struct {
-	mu      sync.Mutex
-	calls   []string
-	batches int
-	active  int
-	peak    int
+	mu         sync.Mutex
+	calls      []string
+	batches    int
+	active     int
+	peak       int
+	state      map[string]json.RawMessage
+	commits    int
+	commitFail error
+}
+
+func (c *scriptCaller) CodeState() map[string]json.RawMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]json.RawMessage, len(c.state))
+	for key, value := range c.state {
+		out[key] = append(json.RawMessage(nil), value...)
+	}
+	return out
+}
+
+func (c *scriptCaller) CommitCodeState(change CodeStateChange) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commitFail != nil {
+		return c.commitFail
+	}
+	if c.state == nil {
+		c.state = map[string]json.RawMessage{}
+	}
+	for key, value := range change.Set {
+		c.state[key] = append(json.RawMessage(nil), value...)
+	}
+	for _, key := range change.Delete {
+		delete(c.state, key)
+	}
+	c.commits++
+	return nil
 }
 
 func (c *scriptCaller) CallTool(ctx context.Context, name string, input json.RawMessage) Result {
@@ -122,6 +155,75 @@ tools[hits[0].name]({host: "h"})`)
 	}
 	if len(c.calls) != 1 {
 		t.Errorf("search should not call tools: %v", c.calls)
+	}
+}
+
+func TestScriptStoreLoadPersistsAndDeletes(t *testing.T) {
+	c := &scriptCaller{}
+	res := runScript(t, context.Background(), nil, c, `
+store("item", {n: 2, tags: ["a", null]});
+const v = load("item");
+v.n + " " + v.tags.length + " " + (load("missing") === undefined)`)
+	if res.IsError || !strings.Contains(res.Content, "=> 2 2 true") || c.commits != 1 {
+		t.Fatalf("first script: commits=%d\n%s", c.commits, res.Content)
+	}
+	res = runScript(t, context.Background(), nil, c, `const v = load("item"); store("item", undefined); v.tags[0]`)
+	if res.IsError || !strings.Contains(res.Content, "=> a") || c.commits != 2 {
+		t.Fatalf("second script: commits=%d\n%s", c.commits, res.Content)
+	}
+	res = runScript(t, context.Background(), nil, c, `load("item") === undefined`)
+	if res.IsError || !strings.Contains(res.Content, "=> true") || c.commits != 2 {
+		t.Fatalf("delete did not persist: commits=%d\n%s", c.commits, res.Content)
+	}
+}
+
+func TestScriptStoreRollsBackOnFailure(t *testing.T) {
+	c := &scriptCaller{}
+	res := runScript(t, context.Background(), nil, c, `store("x", 1); throw new Error("nope")`)
+	if !res.IsError || c.commits != 0 || len(c.state) != 0 {
+		t.Fatalf("failed script committed: %+v\n%s", c.state, res.Content)
+	}
+	res = runScript(t, context.Background(), nil, c, `load("x") === undefined`)
+	if res.IsError || !strings.Contains(res.Content, "=> true") {
+		t.Fatalf("rollback not visible: %s", res.Content)
+	}
+	c.commitFail = errors.New("disk full")
+	res = runScript(t, context.Background(), nil, c, `store("x", 2)`)
+	if !res.IsError || !strings.Contains(res.Content, "saving script state: disk full") || len(c.state) != 0 {
+		t.Fatalf("commit failure: %+v\n%s", c.state, res.Content)
+	}
+}
+
+func TestScriptStoreLimits(t *testing.T) {
+	for name, tc := range map[string]struct{ code, want string }{
+		"empty key":   {`store("", 1)`, "non-empty string"},
+		"long key":    {`store("k".repeat(257), 1)`, "over the 256-byte limit"},
+		"non-json":    {`store("x", () => 1)`, "value isn't JSON"},
+		"large value": {`store("x", "v".repeat(262144))`, "over the 262144-byte limit"},
+		"large total": {`for (let i=0;i<5;i++) store("k"+i, "v".repeat(220000))`, "over the 1048576-byte limit"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := &scriptCaller{}
+			res := runScript(t, context.Background(), nil, c, tc.code)
+			if !res.IsError || !strings.Contains(res.Content, tc.want) || c.commits != 0 || len(c.state) != 0 {
+				t.Fatalf("commits=%d state=%v\n%s", c.commits, c.state, res.Content)
+			}
+		})
+	}
+}
+
+func TestCodeStateParentValidation(t *testing.T) {
+	if err := validateCodeState(nil, CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`)}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]CodeStateChange{
+		"bad json":   {Set: map[string]json.RawMessage{"x": json.RawMessage(`{`)}},
+		"long key":   {Set: map[string]json.RawMessage{strings.Repeat("k", codeStateKeyMax+1): json.RawMessage(`1`)}},
+		"bad delete": {Delete: []string{""}},
+	} {
+		if err := validateCodeState(nil, change); err == nil {
+			t.Errorf("%s: expected validation error", name)
+		}
 	}
 }
 

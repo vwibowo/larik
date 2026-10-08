@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime/debug"
 	"runtime/metrics"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,8 @@ type codeMsg struct {
 	Memory   uint64         `json:"memory,omitempty"`
 	// Deadline is when the child stops by itself, in case its parent
 	// can no longer stop it.
-	Deadline time.Time `json:"deadline,omitzero"`
+	Deadline time.Time                  `json:"deadline,omitzero"`
+	State    map[string]json.RawMessage `json:"state,omitempty"`
 
 	// call
 	Name  string          `json:"name,omitempty"`
@@ -66,6 +68,9 @@ type codeMsg struct {
 	Truncated bool   `json:"truncated,omitempty"`
 	// Value is a result's Data, which the script gets in place of Text.
 	Value json.RawMessage `json:"value,omitempty"`
+	// done: transactional store/load changes, applied only on success.
+	StateSet    map[string]json.RawMessage `json:"state_set,omitempty"`
+	StateDelete []string                   `json:"state_delete,omitempty"`
 }
 
 // Confiner is implemented by sandboxes that can run a program with no
@@ -121,7 +126,12 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	runCtx, cancel := context.WithTimeout(context.WithValue(ctx, scriptKey{}, true), timeout)
 	defer cancel()
 
-	r := &codeRun{caller: caller, ctx: runCtx, env: env, callID: CallID(ctx)}
+	var state map[string]json.RawMessage
+	stateCaller, hasState := caller.(StateCaller)
+	if hasState {
+		state = stateCaller.CodeState()
+	}
+	r := &codeRun{caller: caller, ctx: runCtx, env: env, callID: CallID(ctx), state: state}
 	done, err := r.run(c, in.Code)
 	if r.stopped || done.Truncated {
 		r.newline()
@@ -135,6 +145,13 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 		msg = "Error: interrupted by user"
 	case err != nil:
 		msg = "Error: " + err.Error()
+	case done.Error == "" && hasState && (len(done.StateSet) > 0 || len(done.StateDelete) > 0):
+		change := CodeStateChange{Set: done.StateSet, Delete: done.StateDelete}
+		if stateErr := validateCodeState(state, change); stateErr != nil {
+			msg = "Error: invalid script state: " + stateErr.Error()
+		} else if commitErr := stateCaller.CommitCodeState(change); commitErr != nil {
+			msg = "Error: saving script state: " + commitErr.Error()
+		}
 	}
 	switch {
 	case msg != "":
@@ -181,6 +198,7 @@ type codeRun struct {
 	callID     string
 	file       *os.File
 	fileFailed bool
+	state      map[string]json.RawMessage
 }
 
 // print adds what the script printed to the output, up to codeMaxOutput.
@@ -334,7 +352,7 @@ func (r *codeRun) run(c codeTool, code string) (codeMsg, error) {
 	}
 	enc, dec := json.NewEncoder(stdin), json.NewDecoder(stdout)
 	deadline, _ := r.ctx.Deadline()
-	done, protoErr := r.converse(enc, dec, codeMsg{Type: "start", Code: code, Specs: c.specs, MaxCalls: codeMaxCalls, Memory: codeMemoryLimit, Deadline: deadline})
+	done, protoErr := r.converse(enc, dec, codeMsg{Type: "start", Code: code, Specs: c.specs, MaxCalls: codeMaxCalls, Memory: codeMemoryLimit, Deadline: deadline, State: r.state})
 	stdin.Close()
 	waitErr := cmd.Wait()
 	if protoErr == nil {
@@ -431,6 +449,8 @@ func serveCode(r io.Reader, w io.Writer) int {
 		maxCalls: start.MaxCalls,
 		send:     (&codeSender{enc: json.NewEncoder(w)}).send,
 		dec:      dec,
+		state:    start.State,
+		dirty:    map[string]*json.RawMessage{},
 	}
 	s.vm.SetMaxCallStackSize(codeMaxStack)
 	s.install()
@@ -441,6 +461,19 @@ func serveCode(r io.Reader, w io.Writer) int {
 		done.Error = scriptError(err)
 	case v != nil && !goja.IsUndefined(v) && !goja.IsNull(v):
 		done.HasValue, done.Text = true, safeCut(s.show(v), codeMaxValue)
+	}
+	if done.Error == "" {
+		for key, value := range s.dirty {
+			if value == nil {
+				done.StateDelete = append(done.StateDelete, key)
+			} else {
+				if done.StateSet == nil {
+					done.StateSet = map[string]json.RawMessage{}
+				}
+				done.StateSet[key] = *value
+			}
+		}
+		sort.Strings(done.StateDelete)
 	}
 	if s.send(done) != nil {
 		return 1
@@ -518,11 +551,67 @@ type script struct {
 	bound  map[string]string
 	byName map[string]llm.ToolSpec
 	parse  goja.Callable // JSON.parse
+	state  map[string]json.RawMessage
+	dirty  map[string]*json.RawMessage // nil value means delete
 }
 
 func (s *script) find(name string) (llm.ToolSpec, bool) {
 	sp, ok := s.byName[name]
 	return sp, ok
+}
+
+func (s *script) stateKey(v goja.Value) string {
+	key, ok := v.Export().(string)
+	if !ok || key == "" {
+		s.throw("store/load key must be a non-empty string")
+	}
+	if len(key) > codeStateKeyMax {
+		s.throw("store/load key is %d bytes, over the %d-byte limit", len(key), codeStateKeyMax)
+	}
+	return key
+}
+
+func (s *script) load(call goja.FunctionCall) goja.Value {
+	key := s.stateKey(call.Argument(0))
+	raw, ok := s.state[key]
+	if !ok {
+		return goja.Undefined()
+	}
+	v, err := s.parse(goja.Undefined(), s.vm.ToValue(string(raw)))
+	if err != nil {
+		s.throw("stored value for %q is invalid JSON", key)
+	}
+	return v
+}
+
+func (s *script) store(call goja.FunctionCall) goja.Value {
+	key := s.stateKey(call.Argument(0))
+	value := call.Argument(1)
+	if goja.IsUndefined(value) {
+		delete(s.state, key)
+		s.dirty[key] = nil
+		return goja.Undefined()
+	}
+	raw, err := json.Marshal(value.Export())
+	if err != nil {
+		s.throw("store(%q): value isn't JSON: %v", key, err)
+	}
+	if len(raw) > codeStateValueMax {
+		s.throw("store(%q): value is %d bytes, over the %d-byte limit", key, len(raw), codeStateValueMax)
+	}
+	total := len(raw)
+	for k, v := range s.state {
+		if k != key {
+			total += len(v)
+		}
+	}
+	if total > codeStateTotalMax {
+		s.throw("store: values total %d bytes, over the %d-byte limit", total, codeStateTotalMax)
+	}
+	copyRaw := append(json.RawMessage(nil), raw...)
+	s.state[key] = copyRaw
+	s.dirty[key] = &copyRaw
+	return goja.Undefined()
 }
 
 func (s *script) install() {
@@ -535,6 +624,11 @@ func (s *script) install() {
 
 	parse, _ := goja.AssertFunction(s.vm.Get("JSON").ToObject(s.vm).Get("parse"))
 	s.parse = parse
+	if s.state == nil {
+		s.state = map[string]json.RawMessage{}
+	}
+	_ = s.vm.Set("load", s.load)
+	_ = s.vm.Set("store", s.store)
 
 	s.bound = scriptNames(s.specs)
 	s.byName = make(map[string]llm.ToolSpec, 2*len(s.specs))

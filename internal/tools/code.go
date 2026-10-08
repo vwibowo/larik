@@ -52,7 +52,10 @@ const (
 	codeMaxValue = 1 << 20
 	// scriptBashOutput bounds the output a script gets from bash, which
 	// is more than the model sees so that scripts can filter it.
-	scriptBashOutput = 1 << 20
+	scriptBashOutput  = 1 << 20
+	codeStateKeyMax   = 256
+	codeStateValueMax = 256 << 10
+	codeStateTotalMax = 1 << 20
 	// codeMaxStack bounds the script's call depth, so runaway recursion
 	// stops with an error instead of growing until the memory limit.
 	codeMaxStack = 10_000
@@ -103,6 +106,49 @@ type Call struct {
 type BatchCaller interface {
 	Caller
 	CallTools(ctx context.Context, calls []Call) []Result
+}
+
+// CodeStateChange is one successful script's transactional store changes.
+type CodeStateChange struct {
+	Set    map[string]json.RawMessage
+	Delete []string
+}
+
+// StateCaller gives run_code branch-local state without coupling tools to
+// session persistence. Commit must apply all changes or none.
+type StateCaller interface {
+	CodeState() map[string]json.RawMessage
+	CommitCodeState(CodeStateChange) error
+}
+
+func validateCodeState(state map[string]json.RawMessage, change CodeStateChange) error {
+	next := make(map[string]json.RawMessage, len(state)+len(change.Set))
+	for key, value := range state {
+		next[key] = value
+	}
+	for key, value := range change.Set {
+		if key == "" || len(key) > codeStateKeyMax {
+			return fmt.Errorf("invalid key length for %q", key)
+		}
+		if len(value) > codeStateValueMax || !json.Valid(value) {
+			return fmt.Errorf("invalid JSON value for %q", key)
+		}
+		next[key] = value
+	}
+	for _, key := range change.Delete {
+		if key == "" || len(key) > codeStateKeyMax {
+			return fmt.Errorf("invalid delete key length for %q", key)
+		}
+		delete(next, key)
+	}
+	total := 0
+	for _, value := range next {
+		total += len(value)
+	}
+	if total > codeStateTotalMax {
+		return fmt.Errorf("values total %d bytes, over the %d-byte limit", total, codeStateTotalMax)
+	}
+	return nil
 }
 
 type scriptKey struct{}
@@ -220,6 +266,7 @@ func (c codeTool) Spec() llm.ToolSpec {
 		"tools.bash returns {output, exit_code, truncated, raw_output_id?} instead, with up to 1 MB of output, and doesn't throw for a non-zero exit code. "+
 		"tools.parallel([{name, args}, ...]) runs several calls at once (read-only ones side by side) and returns [{ok: true, value} or {ok: false, error}] in order. "+
 		"In names, characters a JavaScript identifier can't have become _ (mcp__my-server__x is tools.mcp__my_server__x). "+
+		"store(key, value) and load(key) keep small JSON values across successful scripts in this session; store(key, undefined) deletes. Changes commit only when the script succeeds. "+
 		"tools.search(query, limit?) ranks the tools by keywords and returns [{name, signature, description}]; tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
 		"Calls are synchronous (no await). There is no file, network or process access except through tools, and every call is permission-checked. "+
 		"Print summaries, not raw dumps. Limits per script: %d tool calls, %d MB of memory, and %s (timeout_seconds, up to %d).",

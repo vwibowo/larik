@@ -11,6 +11,7 @@ import (
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/session"
 	"larik/internal/tools"
 )
 
@@ -102,6 +103,77 @@ func TestRunCodeSavesLongOutput(t *testing.T) {
 	}
 	if res := lastResult(fp, 2); res.IsError || !strings.Contains(res.Content, "=> row 0") {
 		t.Fatalf("raw_output should read the script's output: %s", res.Content)
+	}
+}
+
+func TestRunCodeStateSurvivesClearAndResume(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeYolo,
+		assistant(runCodeUse("c1", `store("cursor", {page: 3}); load("cursor").page`)), assistant(llm.TextBlock("saved")),
+		assistant(runCodeUse("c2", `load("cursor").page`)), assistant(llm.TextBlock("loaded")))
+	a.SetExecution(tools.ExecHybrid)
+	drain(a.Run(context.Background(), "save"), PermissionReply{})
+	if res := lastResult(fp, 1); res.IsError || !strings.Contains(res.Content, "=> 3") {
+		t.Fatalf("store result = %+v", res)
+	}
+	st, err := session.Load(a.opts.Session.Path)
+	if err != nil || string(st.CodeState["cursor"]) != `{"page":3}` {
+		t.Fatalf("persisted state = %q, %v", st.CodeState, err)
+	}
+
+	a.Clear()
+	drain(a.Run(context.Background(), "load after clear"), PermissionReply{})
+	if res := lastResult(fp, 3); res.IsError || !strings.Contains(res.Content, "=> 3") {
+		t.Fatalf("state after Clear = %+v", res)
+	}
+
+	path := a.opts.Session.Path
+	if err := a.opts.Session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sess, restored, err := session.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	fp2 := &fakeProvider{script: []llm.Message{
+		assistant(runCodeUse("c3", `load("cursor").page`)), assistant(llm.TextBlock("resumed")),
+	}}
+	a2 := New(Options{Provider: fp2, Model: "m", Cwd: dir, Tools: tools.Default(), Execution: tools.ExecHybrid,
+		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir), Session: sess})
+	a2.Restore(restored)
+	drain(a2.Run(context.Background(), "load after resume"), PermissionReply{})
+	if res := lastResult(fp2, 1); res.IsError || !strings.Contains(res.Content, "=> 3") {
+		t.Fatalf("state after resume = %+v", res)
+	}
+}
+
+func TestRunCodeStateWithoutSessionSurvivesClear(t *testing.T) {
+	dir := t.TempDir()
+	fp := &fakeProvider{script: []llm.Message{
+		assistant(runCodeUse("c1", `store("x", 7)`)), assistant(llm.TextBlock("saved")),
+		assistant(runCodeUse("c2", `load("x")`)), assistant(llm.TextBlock("loaded")),
+	}}
+	a := New(Options{Provider: fp, Model: "m", Cwd: dir, Tools: tools.Default(), Execution: tools.ExecHybrid,
+		Perms: permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir)})
+	drain(a.Run(context.Background(), "save"), PermissionReply{})
+	a.Clear()
+	drain(a.Run(context.Background(), "load"), PermissionReply{})
+	if res := lastResult(fp, 3); res.IsError || !strings.Contains(res.Content, "=> 7") {
+		t.Fatalf("in-memory state after Clear = %+v", res)
+	}
+}
+
+func TestRunCodeStateSaveFailureRollsBack(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(runCodeUse("c1", `store("x", 1)`)), assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecHybrid)
+	a.opts.Session.Close()
+	drain(a.Run(context.Background(), "save"), PermissionReply{})
+	if res := lastResult(fp, 1); !res.IsError || !strings.Contains(res.Content, "saving script state: session closed") {
+		t.Fatalf("save failure result = %+v", res)
+	}
+	if a.codeState["x"] != nil {
+		t.Fatalf("failed save changed memory: %q", a.codeState)
 	}
 }
 

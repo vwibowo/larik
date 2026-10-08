@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -198,6 +199,7 @@ type Agent struct {
 	delegated      llm.Usage
 	delegatedCost  float64
 	delegatedTasks int
+	codeState      map[string]json.RawMessage // run_code store/load values
 
 	// baseSystem is opts.System without the language line. In a nonempty
 	// context, a language change waits in nextLang for the next fresh context,
@@ -260,6 +262,7 @@ func (a *Agent) Restore(st *session.State) {
 	a.byModel = maps.Clone(st.ByModel)
 	a.delegated, a.delegatedCost, a.delegatedTasks = st.Delegated, st.DelegatedCost, st.DelegatedTasks
 	a.compactions, a.compactionMeasurements, a.compactionSavedTokens = st.Compactions, st.CompactionMeasurements, st.CompactionSavedTokens
+	a.codeState = cloneCodeState(st.CodeState)
 	a.startSource = "resume"
 }
 

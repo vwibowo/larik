@@ -430,6 +430,7 @@ Some things work differently in a script:
 - **MCP tool names are valid JavaScript.** Characters that can't appear in an identifier become `_`, so `mcp__my-server__search` is `tools.mcp__my_server__search`.
 - **Long output is kept.** When a script prints more than fits in a tool result, the model sees the start and end, and `raw_output` reads the rest.
 - **Tools can be found by keyword.** `tools.search(query)` ranks the tools a script can call, which helps when many MCP tools are connected and the list in `run_code`'s description shows only their names.
+- **Small values can survive between scripts.** `store(key, value)` keeps a JSON value for later `run_code` calls and `load(key)` reads it (`undefined` when absent); `store(key, undefined)` deletes it. Changes commit together only when the script succeeds, survive `/clear` and resume, and follow the retained history when a session branches. A key is limited to 256 bytes, one encoded value to 256 KB, and all values together to 1 MB.
 
 Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
 

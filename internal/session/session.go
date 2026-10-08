@@ -31,10 +31,11 @@ const (
 	EntryMeta       EntryType = "meta"
 	EntryMessage    EntryType = "message"
 	EntryCompaction EntryType = "compaction"
-	EntryUsage      EntryType = "usage"    // spend not tied to a message, e.g. subagents
-	EntryTask       EntryType = "task"     // a subagent task was started
-	EntryRecovery   EntryType = "recovery" // marks a torn line repaired on resume
-	EntryDecision   EntryType = "decision" // how a tool call was authorized, for audit
+	EntryUsage      EntryType = "usage"      // spend not tied to a message, e.g. subagents
+	EntryTask       EntryType = "task"       // a subagent task was started
+	EntryRecovery   EntryType = "recovery"   // marks a torn line repaired on resume
+	EntryDecision   EntryType = "decision"   // how a tool call was authorized, for audit
+	EntryCodeState  EntryType = "code_state" // committed run_code store/load changes
 )
 
 type Entry struct {
@@ -50,6 +51,14 @@ type Entry struct {
 	Source     string           `json:"source,omitempty"` // "subagent" for delegated usage
 	Meta       *Meta            `json:"meta,omitempty"`
 	Decision   *Decision        `json:"decision,omitempty"`
+	CodeState  *CodeStateChange `json:"code_state,omitempty"`
+}
+
+// CodeStateChange is one successful run_code script's transactional changes.
+// Values are encoded JSON. A key in Delete is removed after Set is applied.
+type CodeStateChange struct {
+	Set    map[string]json.RawMessage `json:"set,omitempty"`
+	Delete []string                   `json:"delete,omitempty"`
 }
 
 // Decision records how one tool call was authorized: by a rule, a hook,
@@ -168,6 +177,7 @@ type State struct {
 	Compactions            int
 	CompactionMeasurements int
 	CompactionSavedTokens  int
+	CodeState              map[string]json.RawMessage // run_code store/load values
 }
 
 func (st *State) addUsage(model string, u llm.Usage) {
@@ -327,6 +337,8 @@ func (s *Session) read() (*State, error) {
 			}
 		case EntryTask:
 			st.DelegatedTasks++
+		case EntryCodeState:
+			applyCodeState(&st.CodeState, e.CodeState)
 		case EntryCompaction:
 			st.Messages = []llm.Message{CompactionMessage(e.Summary, s.Path)}
 			if e.Compaction == nil || !e.Compaction.Inherited {
@@ -378,6 +390,26 @@ func (s *Session) AppendDecision(d Decision) error {
 
 // AppendTask records that a subagent task was started.
 func (s *Session) AppendTask() error { return s.append(Entry{Type: EntryTask}) }
+
+// AppendCodeState records one successful script's store/load changes.
+func (s *Session) AppendCodeState(change CodeStateChange) error {
+	return s.append(Entry{Type: EntryCodeState, CodeState: &change})
+}
+
+func applyCodeState(state *map[string]json.RawMessage, change *CodeStateChange) {
+	if change == nil {
+		return
+	}
+	if *state == nil && len(change.Set) > 0 {
+		*state = map[string]json.RawMessage{}
+	}
+	for key, value := range change.Set {
+		(*state)[key] = append(json.RawMessage(nil), value...)
+	}
+	for _, key := range change.Delete {
+		delete(*state, key)
+	}
+}
 
 func (s *Session) AppendCompaction(summary string, stats ...CompactionStats) error {
 	e := Entry{Type: EntryCompaction, Summary: summary}
@@ -574,7 +606,7 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 				msgs = append(msgs, *e.Message)
 				entries = append(entries, e)
 			}
-		case EntryCompaction:
+		case EntryCompaction, EntryCodeState:
 			entries = append(entries, e)
 		}
 	})
@@ -602,8 +634,10 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 			}
 			n++
 			err = s.append(Entry{Type: EntryMessage, Message: e.Message})
-		} else {
+		} else if e.Type == EntryCompaction {
 			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary, Compaction: &CompactionStats{Inherited: true}})
+		} else {
+			err = s.append(Entry{Type: EntryCodeState, CodeState: e.CodeState})
 		}
 		if err != nil {
 			s.Close()

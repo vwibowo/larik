@@ -165,6 +165,88 @@ func TestPrompts(t *testing.T) {
 	}
 }
 
+func TestCodeStatePersistsCompactsAndForksAtMessageBoundary(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// First complete turn: its state must survive a fork before prompt two.
+	s.AppendMessage(text(llm.RoleUser, "first"), nil)        // 1
+	s.AppendMessage(text(llm.RoleAssistant, "calling"), nil) // 2
+	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`{"n":1}`)}})
+	s.AppendMessage(text(llm.RoleUser, "result"), nil)      // 3
+	s.AppendMessage(text(llm.RoleAssistant, "answer"), nil) // 4
+	s.AppendCompaction("summary")
+	// Second turn changes x and adds y.
+	s.AppendMessage(text(llm.RoleUser, "second"), nil)             // 5
+	s.AppendMessage(text(llm.RoleAssistant, "calling again"), nil) // 6
+	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`2`), "y": json.RawMessage(`true`)}})
+	s.AppendMessage(text(llm.RoleUser, "result two"), nil)      // 7
+	s.AppendMessage(text(llm.RoleAssistant, "answer two"), nil) // 8
+
+	st, err := Load(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(st.CodeState["x"]) != "2" || string(st.CodeState["y"]) != "true" {
+		t.Fatalf("loaded code state = %q", st.CodeState)
+	}
+	// Compaction changes model context, not script state.
+	if len(st.Messages) == 0 || st.Compactions != 1 {
+		t.Fatalf("compaction state = %+v", st)
+	}
+
+	branch, bst, err := Fork(dir, s.Path, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer branch.Close()
+	if string(bst.CodeState["x"]) != `{"n":1}` || bst.CodeState["y"] != nil {
+		t.Fatalf("branch copied state past its message cut: %q", bst.CodeState)
+	}
+	if err := branch.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`"branch"`)}}); err != nil {
+		t.Fatal(err)
+	}
+	bst, err = Load(branch.Path)
+	if err != nil || string(bst.CodeState["x"]) != `"branch"` {
+		t.Fatalf("branch divergence: %q, %v", bst.CodeState, err)
+	}
+	st, _ = Load(s.Path)
+	if string(st.CodeState["x"]) != "2" {
+		t.Fatalf("branch changed source state: %q", st.CodeState)
+	}
+
+	full, fst, err := Fork(dir, s.Path, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer full.Close()
+	if string(fst.CodeState["x"]) != "2" || string(fst.CodeState["y"]) != "true" {
+		t.Fatalf("full fork state = %q", fst.CodeState)
+	}
+}
+
+func TestCodeStateDeleteAndAppendOnlyEntry(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`), "y": json.RawMessage(`2`)}})
+	s.AppendCodeState(CodeStateChange{Delete: []string{"x"}})
+	s.Close()
+	st, err := Load(s.Path)
+	if err != nil || st.CodeState["x"] != nil || string(st.CodeState["y"]) != "2" {
+		t.Fatalf("deleted state = %q, %v", st.CodeState, err)
+	}
+	data, _ := os.ReadFile(s.Path)
+	if strings.Count(string(data), `"type":"code_state"`) != 2 {
+		t.Fatalf("state changes should be two append-only entries:\n%s", data)
+	}
+}
+
 func TestFork(t *testing.T) {
 	dir := t.TempDir()
 	src := seed(t, dir)

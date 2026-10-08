@@ -160,6 +160,48 @@ func (c *toolCaller) use(name string, input json.RawMessage) llm.Block {
 	return llm.Block{Type: llm.BlockToolUse, ID: fmt.Sprintf("%s.%d", c.parent, c.n.Add(1)), Name: name, Input: input}
 }
 
+func cloneCodeState(in map[string]json.RawMessage) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(in))
+	for key, value := range in {
+		out[key] = append(json.RawMessage(nil), value...)
+	}
+	return out
+}
+
+// CodeState returns a snapshot for one run_code script.
+func (c *toolCaller) CodeState() map[string]json.RawMessage {
+	c.a.mu.Lock()
+	defer c.a.mu.Unlock()
+	return cloneCodeState(c.a.codeState)
+}
+
+// CommitCodeState persists a successful script's changes, then updates the
+// in-memory snapshot. Never hold Agent.mu across the session write.
+func (c *toolCaller) CommitCodeState(change tools.CodeStateChange) error {
+	if len(change.Set) == 0 && len(change.Delete) == 0 {
+		return nil
+	}
+	if c.a.opts.Session != nil {
+		err := c.a.opts.Session.AppendCodeState(session.CodeStateChange{Set: change.Set, Delete: change.Delete})
+		if err != nil {
+			c.a.saveFailed(err)
+			return err
+		}
+	}
+	c.a.mu.Lock()
+	if c.a.codeState == nil && len(change.Set) > 0 {
+		c.a.codeState = map[string]json.RawMessage{}
+	}
+	for key, value := range change.Set {
+		c.a.codeState[key] = append(json.RawMessage(nil), value...)
+	}
+	for _, key := range change.Delete {
+		delete(c.a.codeState, key)
+	}
+	c.a.mu.Unlock()
+	return nil
+}
+
 func (c *toolCaller) CallTool(ctx context.Context, name string, input json.RawMessage) tools.Result {
 	job, res, ok := c.a.prepare(ctx, c.use(name, input), c.tools, nil, c.emit)
 	var data any
