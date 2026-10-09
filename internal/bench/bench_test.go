@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"larik/internal/agent"
 	"os"
@@ -401,6 +402,32 @@ func TestKeepFailedKeepsTheTranscriptAndScriptCalls(t *testing.T) {
 		if !strings.Contains(string(calls), want) {
 			t.Errorf("calls.jsonl lacks %s:\n%s", want, calls)
 		}
+	}
+}
+
+// failingProvider fails every request, as an API that rejects them does.
+type failingProvider struct{ err error }
+
+func (failingProvider) Name() string { return "fake" }
+
+func (p failingProvider) Stream(context.Context, llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) { yield(llm.StreamEvent{}, p.err) }
+}
+
+// A run the provider ended says why: the bench used to show only
+// "ended: error", which can't tell an outage from a rate limit.
+func TestRunKeepsTheProvidersError(t *testing.T) {
+	p := failingProvider{err: errors.New("429 Too Many Requests: rate limit reached for gpt-6-sol")}
+	res := RunWith(context.Background(), Tasks()[0], p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	if res.Kept != "" {
+		t.Cleanup(func() { os.RemoveAll(res.Kept) })
+	}
+	if res.Pass || res.Stop != "error" || !strings.Contains(res.Error, "rate limit reached") {
+		t.Fatalf("stop %q, error %q", res.Stop, res.Error)
+	}
+	md, _ := os.ReadFile(filepath.Join(res.Kept, "transcript.md"))
+	if !strings.Contains(string(md), "## Error") || !strings.Contains(string(md), "rate limit reached") {
+		t.Errorf("transcript.md should end with the error:\n%s", md)
 	}
 }
 

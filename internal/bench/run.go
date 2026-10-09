@@ -67,6 +67,11 @@ type Result struct {
 	// the loop guard caught it repeating, "interrupted" for the timeout,
 	// or "error".
 	Stop string
+	// Error is the last error the agent itself reported, such as the
+	// provider's message for a failed request; a subagent's are left out.
+	// It says why a run that ended in "error" did, which Detail (the
+	// verifier's view of the unfinished work) doesn't.
+	Error string
 	// Usage is the tokens over all requests; PeakContext is the largest
 	// prompt a single request sent.
 	Usage       llm.Usage
@@ -200,6 +205,10 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 			if e.Message != nil {
 				finalText = e.Message.Text()
 			}
+		case agent.EvError:
+			if e.Agent == "" {
+				res.Error = e.Text
+			}
 		case agent.EvDone:
 			// Subagents report their own; the last one is the run's.
 			if e.Agent == "" {
@@ -265,7 +274,7 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		sess.Close()
 		if !res.Pass {
 			keep = true
-			if err := writeRecord(root, sess, calls); err != nil {
+			if err := writeRecord(root, sess, calls, res.Error); err != nil {
 				res.Detail += "\n(keeping the transcript failed: " + err.Error() + ")"
 			}
 		}
@@ -282,14 +291,19 @@ type callRecord struct {
 	IsError bool            `json:"is_error,omitempty"`
 }
 
-// writeRecord saves a failed run's conversation as Markdown and its tool
-// calls, including the ones scripts made, as JSON lines.
-func writeRecord(root string, sess *session.Session, calls []callRecord) error {
+// writeRecord saves a failed run's conversation as Markdown, ending with
+// runErr, the agent's error if it had one, and its tool calls, including
+// the ones scripts made, as JSON lines.
+func writeRecord(root string, sess *session.Session, calls []callRecord, runErr string) error {
 	st, err := session.Load(sess.Path)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(root, "transcript.md"), []byte(session.Markdown(st, sess.ID)), 0o644); err != nil {
+	transcript := session.Markdown(st, sess.ID)
+	if runErr != "" {
+		transcript = strings.TrimRight(transcript, "\n") + "\n\n## Error\n\n```\n" + runErr + "\n```\n"
+	}
+	if err := os.WriteFile(filepath.Join(root, "transcript.md"), []byte(transcript), 0o644); err != nil {
 		return err
 	}
 	f, err := os.Create(filepath.Join(root, "calls.jsonl"))

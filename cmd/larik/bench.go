@@ -196,6 +196,9 @@ func printResult(r bench.Result) {
 		}
 	}
 	fmt.Println()
+	if !r.Pass && r.Error != "" {
+		fmt.Println(indent("error: " + truncate(r.Error, 300)))
+	}
 	if !r.Pass && r.Detail != "" {
 		fmt.Println(indent(truncate(r.Detail, 400)))
 	}
