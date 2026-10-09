@@ -583,8 +583,8 @@ var settingSpecs = []settingSpec{
 	}},
 
 	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
-	{key: "audio_stt", title: "Speech-to-text endpoint", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.STT, "") }, cmd: "/stt-config", open: (*model).openSTTEditor},
-	{key: "audio_tts", title: "Text-to-speech endpoint", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.TTS, audio.DefaultSpeechName()) }, cmd: "/tts-config", open: (*model).openTTSEditor},
+	{key: "audio_stt", title: "Speech-to-text", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.STT, "") }, cmd: "/stt-config", open: (*model).openSTTEditor},
+	{key: "audio_tts", title: "Text-to-speech", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.TTS, audio.DefaultSpeechName()) }, cmd: "/tts-config", open: (*model).openTTSEditor},
 	{
 		key: "sandbox", title: "Bash sandbox", section: "security", kind: kindAction,
 		get: func(m *model) string {

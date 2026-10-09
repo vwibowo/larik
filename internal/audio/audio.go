@@ -19,7 +19,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
+
+	"larik/internal/procgroup"
 )
 
 var (
@@ -65,6 +68,7 @@ type EndpointConfig struct {
 
 type OpenAICompatible struct {
 	cfg      Config
+	langMu   sync.Mutex // guards cfg.STT.Language, which /stt-language changes mid-use
 	http     *http.Client
 	recorder *commandRecorder
 	player   *commandPlayer
@@ -77,7 +81,15 @@ func New(cfg Config) *OpenAICompatible {
 	return &OpenAICompatible{cfg: cfg, http: &http.Client{Timeout: 10 * time.Minute}, recorder: newCommandRecorder(cfg.RecordCommand, cfg.MaxDurationSeconds), player: newCommandPlayer(cfg.PlayCommand)}
 }
 func (s *OpenAICompatible) SetSTTLanguage(language string) {
+	s.langMu.Lock()
 	s.cfg.STT.Language = language
+	s.langMu.Unlock()
+}
+
+func (s *OpenAICompatible) sttLanguage() string {
+	s.langMu.Lock()
+	defer s.langMu.Unlock()
+	return s.cfg.STT.Language
 }
 
 func (s *OpenAICompatible) StartRecording(ctx context.Context) (Recording, error) {
@@ -106,8 +118,8 @@ func (s *OpenAICompatible) Transcribe(ctx context.Context, data []byte, name str
 		return "", err
 	}
 	_ = mw.WriteField("model", s.cfg.STT.Model)
-	if s.cfg.STT.Language != "" {
-		_ = mw.WriteField("language", s.cfg.STT.Language)
+	if language := s.sttLanguage(); language != "" {
+		_ = mw.WriteField("language", language)
 	}
 	_ = mw.WriteField("response_format", "text")
 	if err = mw.Close(); err != nil {
@@ -151,15 +163,27 @@ func (s *OpenAICompatible) transcribeCommand(ctx context.Context, data []byte) (
 	if err = f.Close(); err != nil {
 		return "", err
 	}
-	out, err := runCommand(ctx, s.cfg.STT.Command, path, nil, "LARIK_STT_LANGUAGE="+s.cfg.STT.Language)
+	out, err := runCommand(ctx, s.cfg.STT.Command, path, nil, "LARIK_STT_LANGUAGE="+s.sttLanguage())
 	if err != nil {
 		return "", fmt.Errorf("STT command failed: %w", err)
 	}
 	text := transcriptionText(out)
-	if text == "" {
+	if onlyMarkers(text) {
 		return "", errors.New("STT command produced no text")
 	}
 	return text, nil
+}
+
+// onlyMarkers reports whether a transcript has no words, only markers like
+// whisper.cpp's [BLANK_AUDIO] or (silence) for a recording with no speech.
+func onlyMarkers(text string) bool {
+	for _, field := range strings.Fields(text) {
+		if !(strings.HasPrefix(field, "[") && strings.HasSuffix(field, "]")) &&
+			!(strings.HasPrefix(field, "(") && strings.HasSuffix(field, ")")) {
+			return false
+		}
+	}
+	return true
 }
 
 // transcriptionText accepts both the OpenAI text response and compatible
@@ -238,6 +262,11 @@ func (s *OpenAICompatible) synthesizeCommand(ctx context.Context, command, text 
 // returns stdout (capped at 1 MB). A failure carries the end of stderr.
 func runCommand(ctx context.Context, command, path string, stdin io.Reader, env ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command+" "+shellQuote(path))
+	// Its own process group, so a cancel stops what sh started too, and a
+	// child left holding the output can't keep Run waiting.
+	procgroup.Configure(cmd)
+	cmd.Cancel = func() error { return procgroup.Kill(cmd) }
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = stdin
 	stdout := &limitedBuffer{max: 1 << 20}
@@ -391,8 +420,9 @@ func defaultPlayCommand() string {
 }
 
 // defaultSpeakCommand is the TTS used when no endpoint or command is set: the
-// built-in macOS voice. It is a variable so tests need not produce real audio.
-var defaultSpeakCommand = func() string {
+// built-in macOS voice. It looks once, since settings show it on every render,
+// and is a variable so tests need not produce real audio.
+var defaultSpeakCommand = sync.OnceValue(func() string {
 	if runtime.GOOS != "darwin" {
 		return ""
 	}
@@ -400,7 +430,7 @@ var defaultSpeakCommand = func() string {
 		return ""
 	}
 	return `say ${LARIK_TTS_VOICE:+-v "$LARIK_TTS_VOICE"} --file-format=WAVE --data-format=LEI16@22050 -o`
-}
+})
 
 // DefaultSpeechName names the built-in TTS for display, or "" when there is none.
 func DefaultSpeechName() string {

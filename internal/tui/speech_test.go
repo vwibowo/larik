@@ -81,6 +81,14 @@ func TestSTTLanguageCommandSwitchesLanguage(t *testing.T) {
 	if got := m.opts.Config.Audio.STT.Language; got != "id" || f.language != "id" {
 		t.Fatalf("language config=%q service=%q", got, f.language)
 	}
+	m.sttLanguageCommand("auto", info, fail)
+	if got := m.opts.Config.Audio.STT.Language; got != "" || f.language != "" || !strings.Contains(message, "auto") {
+		t.Fatalf("auto: language config=%q service=%q message=%q", got, f.language, message)
+	}
+	m.sttLanguageCommand("", info, fail)
+	if message != "STT language: auto" {
+		t.Fatalf("message=%q", message)
+	}
 }
 
 func TestRecordingReplacesComposerAndPreservesDraft(t *testing.T) {

@@ -96,12 +96,20 @@ func (m *model) speak(text string) tea.Cmd {
 }
 
 // speechSummary shows what an STT or TTS setting will use: its command, else
-// its model, else the built-in fallback (if any).
+// its model, else the built-in fallback (if any). An endpoint missing half
+// its setup says so, since it can't work.
 func speechSummary(e audio.EndpointConfig, fallback string) string {
 	switch {
 	case e.Command != "":
 		return e.Command
-	case e.BaseURL != "" || e.Model != "":
+	case e.BaseURL != "" && e.Model == "":
+		return "model not set"
+	case e.Model != "" && e.BaseURL == "":
+		if fallback != "" {
+			return fallback + " (base_url not set)"
+		}
+		return "base_url not set"
+	case e.BaseURL != "":
 		return e.Model
 	}
 	return fallback

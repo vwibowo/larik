@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/audio"
 	"larik/internal/config"
 )
 
@@ -54,9 +55,9 @@ func newEndpointEditor(cfg *config.Config, kind string) *endpointEditor {
 func (e *endpointEditor) title() string {
 	switch e.kind {
 	case "stt":
-		return "Speech-to-text endpoint"
+		return "Speech-to-text"
 	case "tts":
-		return "Text-to-speech endpoint"
+		return "Text-to-speech"
 	}
 	return "Web search"
 }
@@ -83,6 +84,9 @@ func (e *endpointEditor) change(field string, value any) {
 
 func (e *endpointEditor) rebuild() {
 	p := &picker{}
+	// A command replaces the endpoint, so its fields do nothing meanwhile.
+	command := e.kind != "web" && e.fields["command"] != ""
+	endpointOnly := map[string]bool{"base_url": true, "model": true, "api_key_env": true, "api_key": true}
 	add := func(field, label string) {
 		detail := e.fields[field]
 		if field == "api_key" {
@@ -93,18 +97,31 @@ func (e *endpointEditor) rebuild() {
 			}
 		} else if detail == "" {
 			detail = "not set"
+			if field == "command" && e.kind == "tts" && e.fields["base_url"] == "" {
+				if name := audio.DefaultSpeechName(); name != "" {
+					detail = "not set · uses " + name
+				}
+			}
+		}
+		if command && endpointOnly[field] {
+			detail += " · ignored: command set"
 		}
 		p.items = append(p.items, pickItem{section: "configuration", label: label, detail: detail, value: field})
 	}
-	if e.kind == "web" {
+	switch e.kind {
+	case "web":
 		add("disabled", "Disabled")
 		add("provider", "Provider")
 		add("url", "URL")
-	} else {
+	case "stt":
 		add("command", "Command (replaces the endpoint)")
 		add("base_url", "Base URL")
 		add("model", "Model")
 		add("language", "Language")
+	default:
+		add("command", "Command (replaces the endpoint)")
+		add("base_url", "Base URL")
+		add("model", "Model")
 		add("voice", "Voice")
 	}
 	add("api_key_env", "API key environment variable")

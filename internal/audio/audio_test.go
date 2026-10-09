@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenAICompatibleAudioEndpoints(t *testing.T) {
@@ -79,6 +80,30 @@ func TestSTTCommandFailureCarriesStderr(t *testing.T) {
 	s = New(Config{Enabled: true, STT: EndpointConfig{Command: "true"}})
 	if _, err := s.Transcribe(context.Background(), []byte("audio"), "recording.wav"); err == nil || !strings.Contains(err.Error(), "no text") {
 		t.Fatalf("empty transcript err=%v", err)
+	}
+}
+
+func TestSTTCommandTreatsSilenceMarkersAsNoText(t *testing.T) {
+	for _, out := range []string{" [BLANK_AUDIO]\n", "[BLANK_AUDIO] (silence)"} {
+		s := New(Config{Enabled: true, STT: EndpointConfig{Command: "printf '%s' '" + out + "'; true"}})
+		if text, err := s.Transcribe(context.Background(), []byte("audio"), "recording.wav"); err == nil || !strings.Contains(err.Error(), "no text") {
+			t.Errorf("%q: transcribe=%q err=%v", out, text, err)
+		}
+	}
+	s := New(Config{Enabled: true, STT: EndpointConfig{Command: "printf '[music] hello'; true"}})
+	if text, err := s.Transcribe(context.Background(), []byte("audio"), "recording.wav"); err != nil || text != "[music] hello" {
+		t.Fatalf("words around a marker are kept: transcribe=%q err=%v", text, err)
+	}
+}
+
+func TestCommandCancelStopsBackgroundChildren(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	start := time.Now()
+	// The background sleep would hold stdout open after sh is killed.
+	_, err := runCommand(ctx, "sleep 30 & wait; true", "/dev/null", nil)
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("err=%v after %v", err, time.Since(start))
 	}
 }
 

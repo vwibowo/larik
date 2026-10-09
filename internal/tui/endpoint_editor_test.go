@@ -88,6 +88,27 @@ func TestEndpointEditorSavesAudioCommand(t *testing.T) {
 	if got := m.settings.endpoint.fields["command"]; got != "whisper-cli -m model.bin -nt -f" {
 		t.Fatalf("command not loaded back: %q", got)
 	}
+	// With a command set, the endpoint's own rows say they do nothing.
+	for _, it := range m.settings.endpoint.list.items {
+		ignored := strings.Contains(it.detail, "ignored: command set")
+		if want := it.value == "base_url" || it.value == "model" || it.value == "api_key_env" || it.value == "api_key"; ignored != want {
+			t.Errorf("%s detail = %q", it.value, it.detail)
+		}
+	}
+}
+
+func TestEndpointEditorShowsOnlyItsKindsFields(t *testing.T) {
+	m := testModel(t)
+	m.command("/stt-config")
+	stt := plain(m.endpointEditorView())
+	m.command("/tts-config")
+	tts := plain(m.endpointEditorView())
+	if !strings.Contains(stt, "Language") || strings.Contains(stt, "Voice") || !strings.Contains(tts, "Voice") || strings.Contains(tts, "Language") {
+		t.Fatalf("stt:\n%s\ntts:\n%s", stt, tts)
+	}
+	if name := audio.DefaultSpeechName(); name != "" && !strings.Contains(tts, "uses "+name) {
+		t.Errorf("TTS editor should name the built-in voice it falls back to:\n%s", tts)
+	}
 }
 
 func TestSpeechSummaryPrefersCommand(t *testing.T) {
@@ -100,6 +121,9 @@ func TestSpeechSummaryPrefersCommand(t *testing.T) {
 		{audio.EndpointConfig{BaseURL: "http://x", Model: "asr"}, "say (built-in)", "asr"},
 		{audio.EndpointConfig{}, "say (built-in)", "say (built-in)"},
 		{audio.EndpointConfig{}, "", ""},
+		{audio.EndpointConfig{BaseURL: "http://x"}, "say (built-in)", "model not set"},
+		{audio.EndpointConfig{Model: "asr"}, "", "base_url not set"},
+		{audio.EndpointConfig{Model: "tts"}, "say (built-in)", "say (built-in) (base_url not set)"},
 	} {
 		if got := speechSummary(tc.e, tc.fallback); got != tc.want {
 			t.Errorf("speechSummary(%+v, %q) = %q, want %q", tc.e, tc.fallback, got, tc.want)
