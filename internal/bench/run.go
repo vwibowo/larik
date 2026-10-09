@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,29 @@ import (
 	"larik/internal/session"
 	"larik/internal/tools"
 )
+
+var (
+	storeCall = regexp.MustCompile(`(^|[^\w.$])store\s*\(`)
+	loadCall  = regexp.MustCompile(`(^|[^\w.$])load\s*\(`)
+)
+
+// scriptState follows the successful run_code scripts of a run, to check
+// that a value was stored by one and loaded by a later, different one.
+type scriptState struct {
+	scripts int
+	stored  int // the first script that called store, or 0
+	loaded  bool
+}
+
+func (s *scriptState) see(code string) {
+	s.scripts++
+	if s.stored > 0 && s.scripts > s.stored && loadCall.MatchString(code) {
+		s.loaded = true
+	}
+	if s.stored == 0 && storeCall.MatchString(code) {
+		s.stored = s.scripts
+	}
+}
 
 // Result is one task run against one model.
 type Result struct {
@@ -140,23 +164,16 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 
 	var calls []callRecord
 	var finalText string
-	var codeScripts, stateStoreScript, stateLoadScript int
+	var state scriptState
 	consume := func(e agent.Event) {
 		switch e.Kind {
 		case agent.EvToolEnd:
-			if e.ToolName == tools.CodeToolName && task.requireScriptState {
-				codeScripts++
+			if e.ToolName == tools.CodeToolName && task.requireScriptState && !e.IsError {
 				var in struct {
 					Code string `json:"code"`
 				}
 				if json.Unmarshal(e.Input, &in) == nil {
-					compact := strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(in.Code)
-					if strings.Contains(compact, "store(") {
-						stateStoreScript = codeScripts
-					}
-					if strings.Contains(compact, "load(") {
-						stateLoadScript = codeScripts
-					}
+					state.see(in.Code)
 				}
 			}
 			if e.ToolName != tools.CodeToolName {
@@ -230,7 +247,7 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		}
 		if runCtx.Err() == nil {
 			res.Pass, res.Detail = task.Verify(dir)
-			if res.Pass && task.requireScriptState && exec != tools.ExecTools && (stateStoreScript == 0 || stateLoadScript == 0 || stateStoreScript == stateLoadScript) {
+			if res.Pass && task.requireScriptState && exec != tools.ExecTools && !state.loaded {
 				res.Pass = false
 				res.Detail = "run_code was available, but store and load were not used in separate scripts"
 			}

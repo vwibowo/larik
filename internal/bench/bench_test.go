@@ -546,3 +546,26 @@ func TestATimeoutIsNotCountedAsStoppingWithoutActing(t *testing.T) {
 		t.Errorf("a timeout was counted as the model stopping, Stop=%q", res.Stop)
 	}
 }
+
+func TestScriptStateNeedsStoreThenLaterLoad(t *testing.T) {
+	cases := []struct {
+		scripts []string
+		want    bool
+	}{
+		{[]string{`store("k", 1)`, `load("k")`}, true},
+		{[]string{`store("k", 1)`, `const v = load("k"); store("k", v)`}, true},
+		{[]string{`load("k")`, `store("k", 1)`}, false},
+		{[]string{`store("k", 1); load("k")`}, false},
+		{[]string{`restore("k")`, `download("k")`}, false},
+		{[]string{`store ("k", 1)`, `x.load("k")`}, false},
+	}
+	for _, c := range cases {
+		var s scriptState
+		for _, code := range c.scripts {
+			s.see(code)
+		}
+		if s.loaded != c.want {
+			t.Errorf("%q: loaded = %v, want %v", c.scripts, s.loaded, c.want)
+		}
+	}
+}
