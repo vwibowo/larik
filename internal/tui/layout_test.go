@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,6 +11,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/llm"
+	"larik/internal/session"
 )
 
 func TestConversationWrapsOnceAndRewrapsOnResize(t *testing.T) {
@@ -239,6 +242,20 @@ func TestClearResetsTheTranscriptView(t *testing.T) {
 	}
 	if !strings.Contains(view, "context cleared") {
 		t.Fatalf("/clear should print its divider:\n%s", view)
+	}
+}
+
+func TestClearDeletesScriptState(t *testing.T) {
+	m := testModel(t)
+	m.agent.Restore(&session.State{CodeState: map[string]json.RawMessage{"cursor": json.RawMessage(`3`)}})
+	m.command("/clear")
+	path := m.agent.SessionPath()
+	st, err := session.Load(path)
+	if err != nil || len(st.CodeState) != 0 {
+		t.Fatalf("state after /clear = %q, %v", st.CodeState, err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"deleted":["cursor"]`) {
+		t.Fatalf("/clear should record the deletion in the session:\n%s", data)
 	}
 }
 
