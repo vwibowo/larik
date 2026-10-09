@@ -373,6 +373,7 @@ func (a *App) Open(o Options) (*Session, error) {
 			if o.Fork { // a branch nobody will ever use
 				_ = os.Remove(sess.Path)
 				_ = os.RemoveAll(session.RawDir(sess.Path))
+				_ = os.Remove(session.StatePath(sess.Path))
 			}
 		}
 		return nil, err

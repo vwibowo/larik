@@ -175,6 +175,9 @@ func TestRunCodeStateSaveFailureRollsBack(t *testing.T) {
 	if a.codeState["x"] != nil {
 		t.Fatalf("failed save changed memory: %q", a.codeState)
 	}
+	if _, err := os.Stat(session.StatePath(a.opts.Session.Path)); !os.IsNotExist(err) {
+		t.Fatalf("failed save wrote the state file: %v", err)
+	}
 }
 
 func TestRunCodeRespectsPlanMode(t *testing.T) {

@@ -177,28 +177,32 @@ func (c *toolCaller) CodeState() map[string]json.RawMessage {
 }
 
 // CommitCodeState persists a successful script's changes, then updates the
-// in-memory snapshot. Never hold Agent.mu across the session write.
+// in-memory snapshot. Never hold Agent.mu across the session write;
+// codeStateMu keeps commits whole against each other meanwhile.
 func (c *toolCaller) CommitCodeState(change tools.CodeStateChange) error {
 	if len(change.Set) == 0 && len(change.Delete) == 0 {
 		return nil
 	}
+	c.a.codeStateMu.Lock()
+	defer c.a.codeStateMu.Unlock()
+	c.a.mu.Lock()
+	next := cloneCodeState(c.a.codeState)
+	c.a.mu.Unlock()
+	for key, value := range change.Set {
+		next[key] = append(json.RawMessage(nil), value...)
+	}
+	for _, key := range change.Delete {
+		delete(next, key)
+	}
 	if c.a.opts.Session != nil {
-		err := c.a.opts.Session.AppendCodeState(session.CodeStateChange{Set: change.Set, Delete: change.Delete})
+		err := c.a.opts.Session.SaveCodeState(next, session.CodeStateChange{Set: change.Set, Delete: change.Delete})
 		if err != nil {
 			c.a.saveFailed(err)
 			return err
 		}
 	}
 	c.a.mu.Lock()
-	if c.a.codeState == nil && len(change.Set) > 0 {
-		c.a.codeState = map[string]json.RawMessage{}
-	}
-	for key, value := range change.Set {
-		c.a.codeState[key] = append(json.RawMessage(nil), value...)
-	}
-	for _, key := range change.Delete {
-		delete(c.a.codeState, key)
-	}
+	c.a.codeState = next
 	c.a.mu.Unlock()
 	return nil
 }

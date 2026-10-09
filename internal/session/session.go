@@ -56,9 +56,15 @@ type Entry struct {
 
 // CodeStateChange is one successful run_code script's transactional changes.
 // Values are encoded JSON. A key in Delete is removed after Set is applied.
+//
+// Only sessions written before StatePath existed log Set and Delete; their
+// entries still replay. A session now logs just the keys a script stored
+// and deleted (Stored, Deleted), and keeps the values in StatePath.
 type CodeStateChange struct {
-	Set    map[string]json.RawMessage `json:"set,omitempty"`
-	Delete []string                   `json:"delete,omitempty"`
+	Set     map[string]json.RawMessage `json:"set,omitempty"`
+	Delete  []string                   `json:"delete,omitempty"`
+	Stored  []string                   `json:"stored,omitempty"`
+	Deleted []string                   `json:"deleted,omitempty"`
 }
 
 // Decision records how one tool call was authorized: by a rule, a hook,
@@ -121,6 +127,13 @@ func Dir(dataDir, cwd string) string {
 
 // RawDir holds exact shell output outside the model transcript.
 func RawDir(sessionPath string) string { return strings.TrimSuffix(sessionPath, ".jsonl") + ".raw" }
+
+// StatePath holds the session's current run_code store/load values. It is
+// rewritten whole on each change, so its size stays within the store's
+// limits however many scripts write to it.
+func StatePath(sessionPath string) string {
+	return strings.TrimSuffix(sessionPath, ".jsonl") + ".state.json"
+}
 
 // TraceDir is where debug mode records a session's trace.
 func TraceDir(sessionPath string) string { return strings.TrimSuffix(sessionPath, ".jsonl") + ".trace" }
@@ -354,7 +367,65 @@ func (s *Session) read() (*State, error) {
 		return nil, err
 	}
 	s.torn = torn
+	// The state file, once there is one, is the state: it supersedes what
+	// an older version logged.
+	if state, ok, err := readStateFile(s.Path); err != nil {
+		return nil, err
+	} else if ok {
+		st.CodeState = state
+	}
 	return st, nil
+}
+
+// readStateFile reads StatePath, reporting whether it exists.
+func readStateFile(sessionPath string) (map[string]json.RawMessage, bool, error) {
+	data, err := os.ReadFile(StatePath(sessionPath))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, false, fmt.Errorf("run_code state %s: %w", StatePath(sessionPath), err)
+	}
+	return state, true, nil
+}
+
+// writeStateFile replaces StatePath with state, atomically, so a crash
+// leaves the old state or the new one.
+func writeStateFile(sessionPath string, state map[string]json.RawMessage) error {
+	if state == nil {
+		state = map[string]json.RawMessage{} // {} still supersedes the log
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	path := StatePath(sessionPath)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, 0o600)
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 // CompactionMessage is how a summary re-enters the context. When the
@@ -391,9 +462,21 @@ func (s *Session) AppendDecision(d Decision) error {
 // AppendTask records that a subagent task was started.
 func (s *Session) AppendTask() error { return s.append(Entry{Type: EntryTask}) }
 
-// AppendCodeState records one successful script's store/load changes.
-func (s *Session) AppendCodeState(change CodeStateChange) error {
-	return s.append(Entry{Type: EntryCodeState, CodeState: &change})
+// SaveCodeState commits one successful script's store/load changes: it
+// logs the keys the script changed, then replaces the state file with
+// state, the whole state after them. Values are kept only in the state
+// file, so the log grows by key names, not values. Neither happens if the
+// log can't be written.
+func (s *Session) SaveCodeState(state map[string]json.RawMessage, change CodeStateChange) error {
+	marker := CodeStateChange{Deleted: change.Delete}
+	for key := range change.Set {
+		marker.Stored = append(marker.Stored, key)
+	}
+	sort.Strings(marker.Stored)
+	if err := s.append(Entry{Type: EntryCodeState, CodeState: &marker}); err != nil {
+		return err
+	}
+	return writeStateFile(s.Path, state)
 }
 
 func applyCodeState(state *map[string]json.RawMessage, change *CodeStateChange) {
@@ -583,7 +666,8 @@ func Prompts(msgs []llm.Message) []int {
 // Fork creates a new session in dir holding the first keep messages of
 // the session at src (all of them if keep < 0). keep must fall on a turn
 // boundary: the end, or the index of a prompt. Usage is not copied, so
-// each branch reports only its own spend.
+// each branch reports only its own spend. The run_code state is the
+// source's current state, wherever the branch is cut.
 func Fork(dir, src string, keep int) (*Session, *State, error) {
 	f, err := os.Open(src)
 	if err != nil {
@@ -594,6 +678,7 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 		meta    Meta
 		entries []Entry
 		msgs    []llm.Message
+		state   map[string]json.RawMessage // the source's run_code state now
 	)
 	_, err = scanEntries(src, f, func(e Entry) {
 		switch e.Type {
@@ -606,12 +691,19 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 				msgs = append(msgs, *e.Message)
 				entries = append(entries, e)
 			}
-		case EntryCompaction, EntryCodeState:
+		case EntryCompaction:
 			entries = append(entries, e)
+		case EntryCodeState:
+			applyCodeState(&state, e.CodeState)
 		}
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	if current, ok, err := readStateFile(src); err != nil {
+		return nil, nil, err
+	} else if ok {
+		state = current
 	}
 	if keep < 0 {
 		keep = len(msgs)
@@ -634,10 +726,8 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 			}
 			n++
 			err = s.append(Entry{Type: EntryMessage, Message: e.Message})
-		} else if e.Type == EntryCompaction {
-			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary, Compaction: &CompactionStats{Inherited: true}})
 		} else {
-			err = s.append(Entry{Type: EntryCodeState, CodeState: e.CodeState})
+			err = s.append(Entry{Type: EntryCompaction, Summary: e.Summary, Compaction: &CompactionStats{Inherited: true}})
 		}
 		if err != nil {
 			s.Close()
@@ -679,6 +769,16 @@ func Fork(dir, src string, keep int) (*Session, *State, error) {
 				os.RemoveAll(RawDir(s.Path))
 				return nil, nil, err
 			}
+		}
+	}
+	// A branch starts from the source's state as it is now: the values
+	// aren't logged, so the state at the branch point can't be rebuilt.
+	if len(state) > 0 {
+		if err := writeStateFile(path, state); err != nil {
+			s.Close()
+			os.Remove(path)
+			os.RemoveAll(RawDir(path))
+			return nil, nil, err
 		}
 	}
 	s.Close()

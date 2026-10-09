@@ -200,6 +200,7 @@ type Agent struct {
 	delegatedCost  float64
 	delegatedTasks int
 	codeState      map[string]json.RawMessage // run_code store/load values
+	codeStateMu    sync.Mutex                 // serializes commits to codeState
 
 	// baseSystem is opts.System without the language line. In a nonempty
 	// context, a language change waits in nextLang for the next fresh context,

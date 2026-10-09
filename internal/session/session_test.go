@@ -165,85 +165,156 @@ func TestPrompts(t *testing.T) {
 	}
 }
 
-func TestCodeStatePersistsCompactsAndForksAtMessageBoundary(t *testing.T) {
+// saveState commits change on top of state, the way the agent does, and
+// returns the state after it.
+func saveState(t *testing.T, s *Session, state map[string]json.RawMessage, change CodeStateChange) map[string]json.RawMessage {
+	t.Helper()
+	next := map[string]json.RawMessage{}
+	for k, v := range state {
+		next[k] = v
+	}
+	applyCodeState(&next, &change)
+	if err := s.SaveCodeState(next, change); err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestCodeStateLivesOutsideTheLog(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A script that rewrites a 100 KB value 50 times must not log 5 MB.
+	big := json.RawMessage(`"` + strings.Repeat("v", 100<<10) + `"`)
+	var state map[string]json.RawMessage
+	for i := 0; i < 50; i++ {
+		state = saveState(t, s, state, CodeStateChange{Set: map[string]json.RawMessage{"big": big, "n": json.RawMessage(fmt.Sprint(i))}})
+	}
+	state = saveState(t, s, state, CodeStateChange{Set: map[string]json.RawMessage{"y": json.RawMessage(`2`)}, Delete: []string{"n"}})
+	s.AppendCompaction("summary") // compaction changes model context, not script state
+	s.Close()
+
+	logInfo, _ := os.Stat(s.Path)
+	if logInfo.Size() > 32<<10 {
+		t.Fatalf("the log grew to %d bytes", logInfo.Size())
+	}
+	stateInfo, err := os.Stat(StatePath(s.Path))
+	if err != nil || stateInfo.Size() > 110<<10 || stateInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("state file: %v %v", stateInfo, err)
+	}
+	data, _ := os.ReadFile(s.Path)
+	if n := strings.Count(string(data), `"type":"code_state"`); n != 51 || !strings.Contains(string(data), `"stored":["big","n"]`) || !strings.Contains(string(data), `"deleted":["n"]`) {
+		t.Fatalf("%d markers; the log should name the changed keys:\n%.600s", n, data)
+	}
+
+	st, err := Load(s.Path)
+	if err != nil || len(st.CodeState) != 2 || string(st.CodeState["big"]) != string(big) || string(st.CodeState["y"]) != "2" {
+		t.Fatalf("loaded %d keys, %v", len(st.CodeState), err)
+	}
+	// Deleting every key leaves {} on file, which still wins over the log.
+	s2, _, err := Open(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveState(t, s2, state, CodeStateChange{Delete: []string{"big", "y"}})
+	s2.Close()
+	if st, err := Load(s.Path); err != nil || len(st.CodeState) != 0 {
+		t.Fatalf("after deleting all: %q, %v", st.CodeState, err)
+	}
+}
+
+func TestLegacyCodeStateEntriesStillLoad(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What earlier versions logged: the values themselves.
+	s.append(Entry{Type: EntryCodeState, CodeState: &CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`), "y": json.RawMessage(`2`)}}})
+	s.append(Entry{Type: EntryCodeState, CodeState: &CodeStateChange{Delete: []string{"x"}}})
+	s.Close()
+	st, err := Load(s.Path)
+	if err != nil || st.CodeState["x"] != nil || string(st.CodeState["y"]) != "2" {
+		t.Fatalf("legacy state = %q, %v", st.CodeState, err)
+	}
+	// A branch of a legacy session gets its state in a file.
+	branch, bst, err := Fork(dir, s.Path, -1)
+	if err != nil || string(bst.CodeState["y"]) != "2" {
+		t.Fatalf("legacy fork state = %q, %v", bst.CodeState, err)
+	}
+	branch.Close()
+	if _, err := os.Stat(StatePath(branch.Path)); err != nil {
+		t.Fatalf("legacy fork state file: %v", err)
+	}
+	// The first new commit writes the whole state to the file, which then
+	// supersedes the logged values.
+	s2, st, err := Open(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveState(t, s2, st.CodeState, CodeStateChange{Set: map[string]json.RawMessage{"z": json.RawMessage(`3`)}})
+	s2.Close()
+	if st, err := Load(s.Path); err != nil || string(st.CodeState["y"]) != "2" || string(st.CodeState["z"]) != "3" || len(st.CodeState) != 2 {
+		t.Fatalf("legacy then new state = %q, %v", st.CodeState, err)
+	}
+}
+
+func TestForkCopiesCurrentCodeState(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Create(dir, Meta{Cwd: dir, Model: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	// First complete turn: its state must survive a fork before prompt two.
-	s.AppendMessage(text(llm.RoleUser, "first"), nil)        // 1
-	s.AppendMessage(text(llm.RoleAssistant, "calling"), nil) // 2
-	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`{"n":1}`)}})
-	s.AppendMessage(text(llm.RoleUser, "result"), nil)      // 3
-	s.AppendMessage(text(llm.RoleAssistant, "answer"), nil) // 4
-	s.AppendCompaction("summary")
-	// Second turn changes x and adds y.
-	s.AppendMessage(text(llm.RoleUser, "second"), nil)             // 5
-	s.AppendMessage(text(llm.RoleAssistant, "calling again"), nil) // 6
-	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`2`), "y": json.RawMessage(`true`)}})
-	s.AppendMessage(text(llm.RoleUser, "result two"), nil)      // 7
-	s.AppendMessage(text(llm.RoleAssistant, "answer two"), nil) // 8
+	s.AppendMessage(text(llm.RoleUser, "first"), nil)
+	state := saveState(t, s, nil, CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`)}})
+	s.AppendMessage(text(llm.RoleAssistant, "answer"), nil)
+	s.AppendMessage(text(llm.RoleUser, "second"), nil)
+	saveState(t, s, state, CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`2`), "y": json.RawMessage(`true`)}})
+	s.AppendMessage(text(llm.RoleAssistant, "answer two"), nil)
 
-	st, err := Load(s.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(st.CodeState["x"]) != "2" || string(st.CodeState["y"]) != "true" {
-		t.Fatalf("loaded code state = %q", st.CodeState)
-	}
-	// Compaction changes model context, not script state.
-	if len(st.Messages) == 0 || st.Compactions != 1 {
-		t.Fatalf("compaction state = %+v", st)
-	}
-
-	branch, bst, err := Fork(dir, s.Path, 4)
+	// Cut before the second prompt, the branch still has the state now.
+	branch, bst, err := Fork(dir, s.Path, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer branch.Close()
-	if string(bst.CodeState["x"]) != `{"n":1}` || bst.CodeState["y"] != nil {
-		t.Fatalf("branch copied state past its message cut: %q", bst.CodeState)
+	if len(bst.All) != 2 || string(bst.CodeState["x"]) != "2" || string(bst.CodeState["y"]) != "true" {
+		t.Fatalf("branch: %d messages, state %q", len(bst.All), bst.CodeState)
 	}
-	if err := branch.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`"branch"`)}}); err != nil {
-		t.Fatal(err)
-	}
-	bst, err = Load(branch.Path)
-	if err != nil || string(bst.CodeState["x"]) != `"branch"` {
+	saveState(t, branch, bst.CodeState, CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`"branch"`)}})
+	if bst, err := Load(branch.Path); err != nil || string(bst.CodeState["x"]) != `"branch"` {
 		t.Fatalf("branch divergence: %q, %v", bst.CodeState, err)
 	}
-	st, _ = Load(s.Path)
-	if string(st.CodeState["x"]) != "2" {
+	if st, _ := Load(s.Path); string(st.CodeState["x"]) != "2" {
 		t.Fatalf("branch changed source state: %q", st.CodeState)
 	}
-
-	full, fst, err := Fork(dir, s.Path, -1)
+	// A session with no state gets no state file in a branch.
+	plain := seed(t, t.TempDir())
+	plain.Close()
+	b2, _, err := Fork(filepath.Dir(plain.Path), plain.Path, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer full.Close()
-	if string(fst.CodeState["x"]) != "2" || string(fst.CodeState["y"]) != "true" {
-		t.Fatalf("full fork state = %q", fst.CodeState)
+	b2.Close()
+	if _, err := os.Stat(StatePath(b2.Path)); !os.IsNotExist(err) {
+		t.Fatalf("stateless branch got a state file: %v", err)
 	}
 }
 
-func TestCodeStateDeleteAndAppendOnlyEntry(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Create(dir, Meta{Cwd: dir})
+func TestCorruptStateFileIsReported(t *testing.T) {
+	s, err := Create(t.TempDir(), Meta{Cwd: "/w"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.AppendCodeState(CodeStateChange{Set: map[string]json.RawMessage{"x": json.RawMessage(`1`), "y": json.RawMessage(`2`)}})
-	s.AppendCodeState(CodeStateChange{Delete: []string{"x"}})
 	s.Close()
-	st, err := Load(s.Path)
-	if err != nil || st.CodeState["x"] != nil || string(st.CodeState["y"]) != "2" {
-		t.Fatalf("deleted state = %q, %v", st.CodeState, err)
+	if err := os.WriteFile(StatePath(s.Path), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(s.Path)
-	if strings.Count(string(data), `"type":"code_state"`) != 2 {
-		t.Fatalf("state changes should be two append-only entries:\n%s", data)
+	if _, err := Load(s.Path); err == nil || !strings.Contains(err.Error(), ".state.json") {
+		t.Fatalf("corrupt state file: %v", err)
 	}
 }
 
