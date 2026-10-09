@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,29 @@ func TestCheckAvailableRejectsMissingChrome(t *testing.T) {
 	}
 }
 
+// testStartupTimeout is how long tests let Chrome take to start.
+const testStartupTimeout = 45 * time.Second
+
+// A Chrome that never answers is reported as a timeout, not as the
+// cancel the startup timer uses to stop it.
+func TestSlowChromeStartIsATimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Chrome is a shell script")
+	}
+	fake := filepath.Join(t.TempDir(), "chrome")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := checkAvailable(Options{ChromePath: fake}, 300*time.Millisecond)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || !strings.Contains(err.Error(), "no response within 300ms") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("the timeout took %s", time.Since(start))
+	}
+}
+
 func chrome(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {
@@ -124,7 +148,10 @@ func chrome(t *testing.T) string {
 	if path == "" {
 		t.Skip("no Chrome or Chromium installed")
 	}
-	if err := CheckAvailable(Options{Headless: true, ChromePath: path}); err != nil {
+	// The suite runs packages in parallel, which can slow Chrome's start
+	// past the product's timeouts, so tests give it longer. A timeout then
+	// reads as one; "context canceled" still means Chrome was killed.
+	if err := checkAvailable(Options{Headless: true, ChromePath: path}, testStartupTimeout); err != nil {
 		if strings.Contains(err.Error(), "context canceled") {
 			t.Fatalf("Chrome started but its context was canceled during the availability probe: %v", err)
 		}
@@ -183,6 +210,7 @@ func newSession(t *testing.T) (*Session, *httptest.Server) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(downloads) })
 	s := New(Options{Headless: true, ChromePath: path, ProfileDir: profile, DownloadDir: downloads})
+	s.startupTimeout = testStartupTimeout
 	t.Cleanup(s.Close)
 	return s, srv
 }
@@ -561,6 +589,7 @@ func TestProfileInUse(t *testing.T) {
 	_ = os.Remove(lock)
 	_ = os.Symlink(host+"-"+strconv.Itoa(os.Getpid()), lock)
 	s := New(Options{Headless: true, ChromePath: path, ProfileDir: dir})
+	s.startupTimeout = testStartupTimeout
 	defer s.Close()
 	if _, err := s.Tab(context.Background()); err != nil {
 		t.Fatal(err)

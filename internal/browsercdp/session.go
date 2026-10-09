@@ -149,17 +149,21 @@ func New(opts Options) *Session {
 
 // CheckAvailable verifies Chrome can actually start and speak DevTools without
 // opening a visible window or touching the user's persistent browser profile.
-func CheckAvailable(opts Options) error {
+func CheckAvailable(opts Options) error { return checkAvailable(opts, browserProbeTimeout) }
+
+// checkAvailable is CheckAvailable giving Chrome timeout to start and to
+// load the probe page.
+func checkAvailable(opts Options, timeout time.Duration) error {
 	opts.Headless = true
 	opts.ProfileDir = ""
 	opts.DownloadDir = ""
 	s := New(opts)
-	s.startupTimeout = browserProbeTimeout
+	s.startupTimeout = timeout
 	defer s.Close()
 	if err := s.start(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(s.root, browserProbeTimeout)
+	ctx, cancel := context.WithTimeout(s.root, timeout)
 	defer cancel()
 	var title string
 	if err := chromedp.Run(ctx,
@@ -269,7 +273,11 @@ func (s *Session) launch(profile string) error {
 	// canceling the long-lived root only if the deadline expires.
 	stopStartupTimer := time.AfterFunc(startupTimeout, cancelRoot)
 	err := chromedp.Run(root, s.guard())
-	stopStartupTimer.Stop()
+	if !stopStartupTimer.Stop() && err != nil {
+		// The timer canceled root, which chromedp reports as a cancel;
+		// say what happened instead.
+		err = fmt.Errorf("no response within %s: %w", startupTimeout, context.DeadlineExceeded)
+	}
 	if err != nil {
 		cancelRoot()
 		cancelAlloc()
