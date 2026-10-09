@@ -84,12 +84,44 @@ func TestTurnStatsAggregateRequestsAndToolDurations(t *testing.T) {
 	m.handleEvent(agent.Event{Kind: agent.EvUsage, Usage: &agent.UsageInfo{RequestMS: 7200, TTFTMS: 10800}})
 	input := json.RawMessage("{\"path\":\"main.go\"}")
 	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "read-1", ToolName: "read", Input: input})
-	m.tools[0].started = time.Now().Add(-2500 * time.Millisecond)
+	m.turnStats.toolsSince = time.Now().Add(-2500 * time.Millisecond)
 	m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: "read-1", ToolName: "read", Input: input, Output: "package main"})
 	if m.turnStats.Steps != 1 || m.turnStats.ModelTime != 7200*time.Millisecond || m.turnStats.TTFTCount != 1 || m.turnStats.TTFTTotal != 10800*time.Millisecond {
 		t.Fatalf("model metrics = %+v", m.turnStats)
 	}
 	if m.turnStats.ToolTime < 2*time.Second {
 		t.Fatalf("tool time = %s", m.turnStats.ToolTime)
+	}
+}
+
+// A run_code script whose two parallel calls ran inside it took as long
+// as the script, not three times as long.
+func TestTurnStatsCountOverlappingToolsOnce(t *testing.T) {
+	m := testModel(t)
+	start := func(id, name string) {
+		m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: id, ToolName: name, Input: json.RawMessage(`{}`)})
+	}
+	end := func(id, name string) {
+		m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: id, ToolName: name, Input: json.RawMessage(`{}`)})
+	}
+	start("c1", "run_code")
+	m.turnStats.toolsSince = time.Now().Add(-2 * time.Second)
+	start("c1.1", "read")
+	start("c1.2", "read")
+	end("c1.1", "read")
+	end("c1.2", "read")
+	if m.turnStats.ToolTime != 0 {
+		t.Fatalf("tool time counted while a tool still runs: %s", m.turnStats.ToolTime)
+	}
+	end("c1", "run_code")
+	if got := m.turnStats.ToolTime; got < 2*time.Second || got > 3*time.Second {
+		t.Fatalf("overlapping tools: tool time = %s, want about 2s", got)
+	}
+	// A run interrupted mid-tool still counts the time so far.
+	start("c2", "bash")
+	m.turnStats.toolsSince = time.Now().Add(-time.Second)
+	m.resetStream()
+	if got := m.turnStats.ToolTime; got < 3*time.Second || got > 4*time.Second {
+		t.Fatalf("after an interrupted tool: tool time = %s, want about 3s", got)
 	}
 }

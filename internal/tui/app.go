@@ -1075,7 +1075,17 @@ func (m *model) resetStream() {
 	m.thinking.Reset()
 	m.calling = ""
 	m.tools = nil
+	m.stopToolClock() // a run that ends with tools running
 	m.thinkStart, m.thinkDur = time.Time{}, 0
+}
+
+// stopToolClock adds the span since tools started running to the turn's
+// tool time, when one is open.
+func (m *model) stopToolClock() {
+	if !m.turnStats.toolsSince.IsZero() {
+		m.turnStats.ToolTime += time.Since(m.turnStats.toolsSince)
+		m.turnStats.toolsSince = time.Time{}
+	}
 }
 
 // doneThinking records how long the in-flight message thought, once it
@@ -1157,16 +1167,19 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		return shown
 	case agent.EvToolStart:
+		if len(m.tools) == 0 {
+			m.turnStats.toolsSince = time.Now()
+		}
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
 	case agent.EvToolEnd:
 		for i, t := range m.tools {
 			if t.id == e.ToolID && t.agent == e.Agent {
-				if !t.started.IsZero() {
-					m.turnStats.ToolTime += time.Since(t.started)
-				}
 				m.tools = append(m.tools[:i], m.tools[i+1:]...)
 				break
 			}
+		}
+		if len(m.tools) == 0 {
+			m.stopToolClock()
 		}
 		if m.updateTodos(e) {
 			return m.println(m.completedTodosCard())

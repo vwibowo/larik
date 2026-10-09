@@ -26,8 +26,12 @@ type projectInfo struct {
 type projectInfoMsg struct{ info projectInfo }
 
 type turnStats struct {
-	ModelTime              time.Duration
+	ModelTime time.Duration
+	// ToolTime is how long at least one tool was running, so calls that
+	// overlap (parallel calls, a script's calls, a subagent's under its
+	// task) count once.
 	ToolTime               time.Duration
+	toolsSince             time.Time // when the running tools last went from none to some
 	TTFTTotal              time.Duration
 	TTFTCount              int
 	Steps                  int
