@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -239,8 +240,7 @@ func (a *Agent) execute(ctx context.Context, job approved, emit func(Event)) llm
 }
 
 // executeData is execute that also returns the tool's Data, for scripts.
-// A hook's note added to the result drops Data, so the script gets the
-// note with the text instead.
+// A hook's note added to the result goes in Data too (see withHookNotes).
 func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event)) (llm.Block, any) {
 	use := job.use
 	res := llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: use.Name}
@@ -262,18 +262,35 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 		HookEventName: hooks.PostToolUse, ToolName: use.Name, ToolInput: use.Input, ToolUseID: use.ID,
 		ToolResponse: &hooks.ToolResponse{Output: out.Content, IsError: out.IsError},
 	}, use.Name)
+	var notes []string
 	if post.Block && post.Reason != "" {
-		res.Content += "\n\n" + hookFeedback("PostToolUse", post.Reason)
-		data = nil
+		notes = append(notes, hookFeedback("PostToolUse", post.Reason))
 	}
 	if len(post.Context) > 0 {
-		res.Content += "\n\n" + hookContext("PostToolUse", post.Context)
-		data = nil
+		notes = append(notes, hookContext("PostToolUse", post.Context))
+	}
+	for _, note := range notes {
+		res.Content += "\n\n" + note
 	}
 	if post.Halt {
 		a.requestHalt(post.HaltReason)
 	}
-	return res, data
+	return res, withHookNotes(data, notes)
+}
+
+// withHookNotes adds a hook's notes to a tool's Data, so a script sees
+// them without the Data's shape changing: an object gets a hook_notes
+// field, and any other value is wrapped as {value, hook_notes}.
+func withHookNotes(data any, notes []string) any {
+	if data == nil || len(notes) == 0 {
+		return data
+	}
+	if m, ok := data.(map[string]any); ok {
+		out := maps.Clone(m)
+		out["hook_notes"] = notes
+		return out
+	}
+	return map[string]any{"value": data, "hook_notes": notes}
 }
 
 // authorize runs PreToolUse hooks and permission rules, asking the front

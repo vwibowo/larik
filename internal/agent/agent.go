@@ -523,6 +523,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 // notifications), which skip prompt hooks and skill expansion.
 func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit func(Event)) string {
 	emit = a.traceEvents(a.reportingSaveErrors(emit))
+	// A subagent a script started runs its own tools for its model.
+	ctx = tools.OutsideScript(ctx)
 	stop := a.runTurn(ctx, prompt, system, emit)
 	a.tracer().TurnEnd(stop)
 	a.observe(Event{Kind: EvDone, StopReason: stop})

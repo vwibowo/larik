@@ -210,6 +210,19 @@ func TestRunCodeCallsRunHooks(t *testing.T) {
 	}
 }
 
+func TestRunCodeBashKeepsItsShapeWithHookNotes(t *testing.T) {
+	a, fp, _ := withHooks(t, permission.ModeYolo, permission.Rules{},
+		hook(hooks.PostToolUse, "bash", `echo "lint: check output" >&2; exit 2`),
+		assistant(runCodeUse("c1", `const r = tools.bash({command: "echo hi; exit 4"}); console.log(r.exit_code, r.output.trim(), r.hook_notes.length)`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecHybrid)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+
+	if res := lastResult(fp, 1); res.IsError || !strings.Contains(res.Content, "4 hi 1") {
+		t.Errorf("a hook note must not change what tools.bash returns: %s", res.Content)
+	}
+}
+
 func TestExecutionSetsTheDeclaredTools(t *testing.T) {
 	a, fp, _ := setup(t, permission.ModeYolo,
 		assistant(runCodeUse("c1", `1`)), assistant(llm.TextBlock("done")),

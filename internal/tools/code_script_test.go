@@ -350,6 +350,10 @@ func TestBashInScriptReturnsData(t *testing.T) {
 	if res := (Bash{}).Run(context.Background(), env, json.RawMessage(`{"command":"echo hi"}`)); res.Data != nil {
 		t.Fatalf("data outside a script: %+v", res.Data)
 	}
+	// Nor for a subagent a script started.
+	if res := (Bash{}).Run(OutsideScript(ctx), env, json.RawMessage(`{"command":"echo hi"}`)); res.Data != nil {
+		t.Fatalf("data outside a script: %+v", res.Data)
+	}
 }
 
 func TestJSName(t *testing.T) {

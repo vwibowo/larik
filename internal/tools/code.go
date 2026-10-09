@@ -160,6 +160,15 @@ func InScript(ctx context.Context) bool {
 	return v
 }
 
+// OutsideScript returns ctx for calls a model makes itself, such as a
+// subagent's started by a script, so they get what the model would see.
+func OutsideScript(ctx context.Context) context.Context {
+	if !InScript(ctx) {
+		return ctx
+	}
+	return context.WithValue(ctx, scriptKey{}, false)
+}
+
 // jsName is the name a tool has in scripts: its own when that is a
 // JavaScript identifier, otherwise with the other characters replaced by _.
 func jsName(name string) string {
