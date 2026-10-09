@@ -147,6 +147,35 @@ func TestRunCodeStateSurvivesClearAndResume(t *testing.T) {
 	}
 }
 
+func TestClearCodeStateDeletesStateAcrossResume(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(runCodeUse("c1", `store("x", 1); store("y", 2)`)), assistant(llm.TextBlock("saved")),
+		assistant(runCodeUse("c2", `String(load("x"))`)), assistant(llm.TextBlock("loaded")))
+	a.SetExecution(tools.ExecHybrid)
+	drain(a.Run(context.Background(), "save"), PermissionReply{})
+
+	a.Clear()
+	if err := a.ClearCodeState(); err != nil {
+		t.Fatal(err)
+	}
+	drain(a.Run(context.Background(), "load after /clear"), PermissionReply{})
+	if res := lastResult(fp, 3); res.IsError || !strings.Contains(res.Content, "=> undefined") {
+		t.Fatalf("state after /clear = %+v", res)
+	}
+	st, err := session.Load(a.opts.Session.Path)
+	if err != nil || len(st.CodeState) != 0 {
+		t.Fatalf("a resume would bring back %q, %v", st.CodeState, err)
+	}
+	// Nothing to clear is not a change, and logs nothing.
+	data, _ := os.ReadFile(a.opts.Session.Path)
+	if err := a.ClearCodeState(); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(a.opts.Session.Path); len(again) != len(data) {
+		t.Fatal("clearing empty state wrote to the session")
+	}
+}
+
 func TestRunCodeStateWithoutSessionSurvivesClear(t *testing.T) {
 	dir := t.TempDir()
 	fp := &fakeProvider{script: []llm.Message{

@@ -30,7 +30,7 @@ var commands = []command{
 	{"/permissions", "", "edit personal allow and deny rules for all projects or this project", "model and mode", ""},
 	{"/routing", "[role=provider/model]", "delegate routine work: policy, cheaper models, fallbacks and a budget", "model and mode", ""},
 	{"/compact", "", "summarize the conversation to free context", "conversation", ""},
-	{"/clear", "", "fresh context, clears the view (history stays in the session file)", "conversation", ""},
+	{"/clear", "", "fresh context, clears the view and script state (history stays in the session file)", "conversation", ""},
 	{"/undo", "", "revert file changes from the last turn that made any", "conversation", ""},
 	{"/rewind", "[n]", "list prompts, or branch off just before prompt n to redo it (offers to restore files)", "conversation", ""},
 	{"/prompt", "[n]", "copy, fork from or rewind to prompt n (default: the last); clicking a prompt opens the same menu", "conversation", ""},

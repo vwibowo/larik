@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,33 +178,49 @@ func (c *toolCaller) CodeState() map[string]json.RawMessage {
 }
 
 // CommitCodeState persists a successful script's changes, then updates the
-// in-memory snapshot. Never hold Agent.mu across the session write;
-// codeStateMu keeps commits whole against each other meanwhile.
+// in-memory snapshot.
 func (c *toolCaller) CommitCodeState(change tools.CodeStateChange) error {
+	return c.a.changeCodeState(session.CodeStateChange{Set: change.Set, Delete: change.Delete})
+}
+
+// ClearCodeState deletes every run_code store/load value, as /clear does,
+// and records that in the session so a resume doesn't bring them back.
+// Clear alone keeps them: it also starts the fresh context a reload or a
+// setting change needs, which shouldn't cost scripts their state.
+func (a *Agent) ClearCodeState() error {
+	a.mu.Lock()
+	keys := slices.Sorted(maps.Keys(a.codeState))
+	a.mu.Unlock()
+	return a.changeCodeState(session.CodeStateChange{Delete: keys})
+}
+
+// changeCodeState persists change, then updates the in-memory snapshot.
+// Never hold Agent.mu across the session write; codeStateMu keeps changes
+// whole against each other meanwhile.
+func (a *Agent) changeCodeState(change session.CodeStateChange) error {
 	if len(change.Set) == 0 && len(change.Delete) == 0 {
 		return nil
 	}
-	c.a.codeStateMu.Lock()
-	defer c.a.codeStateMu.Unlock()
-	c.a.mu.Lock()
-	next := cloneCodeState(c.a.codeState)
-	c.a.mu.Unlock()
+	a.codeStateMu.Lock()
+	defer a.codeStateMu.Unlock()
+	a.mu.Lock()
+	next := cloneCodeState(a.codeState)
+	a.mu.Unlock()
 	for key, value := range change.Set {
 		next[key] = append(json.RawMessage(nil), value...)
 	}
 	for _, key := range change.Delete {
 		delete(next, key)
 	}
-	if c.a.opts.Session != nil {
-		err := c.a.opts.Session.SaveCodeState(next, session.CodeStateChange{Set: change.Set, Delete: change.Delete})
-		if err != nil {
-			c.a.saveFailed(err)
+	if a.opts.Session != nil {
+		if err := a.opts.Session.SaveCodeState(next, change); err != nil {
+			a.saveFailed(err)
 			return err
 		}
 	}
-	c.a.mu.Lock()
-	c.a.codeState = next
-	c.a.mu.Unlock()
+	a.mu.Lock()
+	a.codeState = next
+	a.mu.Unlock()
 	return nil
 }
 

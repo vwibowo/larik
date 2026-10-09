@@ -644,7 +644,7 @@ func (s *Server) undo(w http.ResponseWriter, r *http.Request, l *live) {
 }
 
 func (s *Server) clear(w http.ResponseWriter, r *http.Request, l *live) {
-	if err := l.idleDo(r.Context(), func(context.Context) error { l.a.Clear(); return nil }); err != nil {
+	if err := l.idleDo(r.Context(), func(context.Context) error { l.a.Clear(); return l.a.ClearCodeState() }); err != nil {
 		writeErr(w, statusFor(err), err.Error())
 		return
 	}

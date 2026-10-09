@@ -3,6 +3,7 @@
 ### Changed
 
 - **`run_code` state no longer grows the transcript.** Values from `store` now live in a state file beside the session, rewritten on each change and so never larger than the 1 MB limit. The transcript records only which keys a script stored or deleted, however often large values are rewritten. Sessions from v0.13.1 still load their logged values. A branch now starts with the session's current state wherever it is cut, rather than the state at the cut.
+- **`/clear` also clears `run_code` state.** A cleared context now starts scripts fresh too, and a resume doesn't bring the old values back. `/reload` and setting changes that need a fresh context still keep them.
 
 # Larik v0.13.1
 

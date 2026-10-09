@@ -244,11 +244,16 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/clear":
 		m.agent.Clear()
+		stateErr := m.agent.ClearCodeState() // a fresh start for scripts too
 		m.stats = m.agent.Stats()
 		m.todos = nil // the model no longer sees it
 		m.todoCompletionPrinted = false
 		m.resetConversation() // what is on screen matches what the model sees
-		return m.println(m.st.dim.Render("── context cleared ──"))
+		cleared := m.println(m.st.dim.Render("── context cleared ──"))
+		if stateErr != nil {
+			return tea.Sequence(cleared, fail("couldn't clear run_code state: "+stateErr.Error()))
+		}
+		return cleared
 
 	case "/init":
 		if !m.idle() {
