@@ -1,4 +1,6 @@
-# Larik v0.14.0 (pending local release)
+# Larik v0.14.0
+
+_October 10, 2026_
 
 ### Added
 
@@ -34,8 +36,6 @@
 ### Benchmark results
 
 - **Prompt-trim smoke test.** The build before the prompt changes (`40ea63e`, with the two benchmark-method fixes applied) and the current build (`c6f682a`) each passed 6/6 runs with `codex/gpt-5.6-sol` in `hybrid` mode: three runs each of `fix-off-by-one` and `implement-validation`, with no malformed calls. Results were mixed: total input was 93.3k before and 95.2k after; `implement-validation` improved from median 15.4k input and 6 requests to 11.8k and 5, while `fix-off-by-one` moved from 16.5k and 7 to 23.7k and 9. Six runs are a functional smoke test, not a performance conclusion. Opus was not measured because the Claude subscription session limit was reached; its zero-request failures are not benchmark results.
-
-This is a locally prepared release. It has no publication date yet; website downloads remain on the latest published release, v0.13.1.
 
 # Larik v0.13.1
 

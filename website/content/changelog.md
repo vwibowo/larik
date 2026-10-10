@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.14.0
+
+<p class="release-meta"><time datetime="2026-10-10">October 10, 2026</time></p>
 
 ### Added
 
@@ -21,8 +23,6 @@
 
 - **Bounded search, rendering, and fetch memory.** Fallback search reuses buffers, live thinking renders only its visible tail, Markdown rendering uses a bounded cache, and the web fetch cache expires old entries and evicts least-recently-used results within memory limits.
 - **Faster startup and ready screens.** Setup work runs behind an early loading screen, the ready TUI receives the terminal's current size, and repeated Git root lookups were removed.
-
-This release is prepared locally and is not published. Website version and download metadata remain on v0.13.1 until v0.14.0 assets are available.
 
 ## v0.13.1
 
