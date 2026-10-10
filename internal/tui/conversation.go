@@ -9,6 +9,8 @@ import (
 // maxConversationBytes bounds the printed conversation kept for scrolling;
 // the oldest output is dropped past it. The session file keeps everything.
 const maxConversationBytes = 2 << 20
+const maxConversationRenderCacheBytes = 2 << 20
+const maxRenderedWidthsPerOutput = 2
 
 type conversationRenderer func(*model, int) string
 
@@ -17,11 +19,18 @@ type conversationOutput struct {
 	sourceSize int
 	size       int
 	render     conversationRenderer
+	rendered   []renderedConversationOutput
 	// prompt is set when the output shows one of your prompts, so a click
 	// on it can open the prompt menu.
 	prompt *promptRef
 	// firstLine and lines place the output in convLines.
 	firstLine, lines int
+}
+
+type renderedConversationOutput struct {
+	width int
+	text  string
+	used  uint64
 }
 
 // appendOutput adds already-rendered output to the conversation. Output is
@@ -50,6 +59,7 @@ func (m *model) appendConversationOutput(out conversationOutput) {
 		drop := 0
 		for m.outputBytes > maxConversationBytes*3/4 && drop < len(m.outputs)-1 {
 			m.outputBytes -= m.outputs[drop].size
+			m.forgetRenderedConversationOutput(&m.outputs[drop])
 			drop++
 		}
 		m.outputs = append([]conversationOutput(nil), m.outputs[drop:]...)
@@ -89,6 +99,7 @@ func (m *model) restyleOutput(o *conversationOutput) {
 		return
 	}
 	m.outputBytes -= o.size
+	m.forgetRenderedConversationOutput(o)
 	o.renderAt(m, m.convWidth)
 	m.outputBytes += o.size
 	wrapped := wrapOutput(o.text, m.convWidth)
@@ -102,7 +113,12 @@ func (m *model) restyleOutput(o *conversationOutput) {
 
 func (o *conversationOutput) renderAt(m *model, width int) string {
 	if o.render != nil {
-		o.text = o.render(m, width)
+		if cached, ok := m.cachedConversationOutput(o, width); ok {
+			o.text = cached
+		} else {
+			o.text = o.render(m, width)
+			m.cacheConversationOutput(o, width, o.text)
+		}
 	}
 	o.measure()
 	return o.text
@@ -128,6 +144,7 @@ func (m *model) rewrapConversationWidth(width int) {
 		drop := 0
 		for m.outputBytes > maxConversationBytes*3/4 && drop < len(m.outputs)-1 {
 			m.outputBytes -= m.outputs[drop].size
+			m.forgetRenderedConversationOutput(&m.outputs[drop])
 			drop++
 		}
 		m.outputs = append([]conversationOutput(nil), m.outputs[drop:]...)
@@ -141,10 +158,90 @@ func (m *model) rewrapConversationWidth(width int) {
 
 func (m *model) resetConversation() {
 	m.outputs, m.outputBytes, m.convLines = nil, 0, nil
+	m.renderedConversationBytes = 0
+	m.renderedConversationClock = 0
 	m.promptMenu = nil  // its prompt is no longer on screen
 	m.clearSuggestion() // it followed from what was on screen
 	m.setConversation()
 	m.view.GotoTop() // a scrolled-up viewport would sit past the empty content
+}
+
+func (m *model) cachedConversationOutput(o *conversationOutput, width int) (string, bool) {
+	for i := range o.rendered {
+		if o.rendered[i].width == width {
+			m.renderedConversationClock++
+			o.rendered[i].used = m.renderedConversationClock
+			return o.rendered[i].text, true
+		}
+	}
+	return "", false
+}
+
+func (m *model) cacheConversationOutput(o *conversationOutput, width int, text string) {
+	if len(text) == 0 || len(text) > maxConversationRenderCacheBytes {
+		return
+	}
+	for i := range o.rendered {
+		if o.rendered[i].width == width {
+			m.removeRenderedConversationOutput(o, i)
+			break
+		}
+	}
+	for len(o.rendered) >= maxRenderedWidthsPerOutput {
+		oldest := 0
+		for i := 1; i < len(o.rendered); i++ {
+			if o.rendered[i].used < o.rendered[oldest].used {
+				oldest = i
+			}
+		}
+		m.removeRenderedConversationOutput(o, oldest)
+	}
+	for m.renderedConversationBytes+len(text) > maxConversationRenderCacheBytes {
+		if !m.evictOldestRenderedConversationOutput() {
+			return
+		}
+	}
+	m.renderedConversationClock++
+	o.rendered = append(o.rendered, renderedConversationOutput{width: width, text: text, used: m.renderedConversationClock})
+	m.renderedConversationBytes += len(text)
+}
+
+func (m *model) removeRenderedConversationOutput(o *conversationOutput, index int) {
+	m.renderedConversationBytes -= len(o.rendered[index].text)
+	o.rendered = append(o.rendered[:index], o.rendered[index+1:]...)
+}
+
+func (m *model) forgetRenderedConversationOutput(o *conversationOutput) {
+	for _, cached := range o.rendered {
+		m.renderedConversationBytes -= len(cached.text)
+	}
+	o.rendered = nil
+}
+
+func (m *model) evictOldestRenderedConversationOutput() bool {
+	var oldestOutput *conversationOutput
+	oldestIndex := -1
+	var oldestUsed uint64
+	for i := range m.outputs {
+		for j := range m.outputs[i].rendered {
+			entry := &m.outputs[i].rendered[j]
+			if oldestIndex < 0 || entry.used < oldestUsed {
+				oldestOutput, oldestIndex, oldestUsed = &m.outputs[i], j, entry.used
+			}
+		}
+	}
+	if oldestIndex < 0 {
+		return false
+	}
+	m.removeRenderedConversationOutput(oldestOutput, oldestIndex)
+	return true
+}
+
+func (m *model) clearRenderedConversationOutputs() {
+	for i := range m.outputs {
+		m.outputs[i].rendered = nil
+	}
+	m.renderedConversationBytes = 0
 }
 
 func (m *model) setConversation() {

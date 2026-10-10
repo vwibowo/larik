@@ -705,7 +705,7 @@ func (m *model) liveView(widths ...int) string {
 	var b []string
 	thinkingNow := m.thinking.Len() > 0 && m.stream.Len() == 0 && m.calling == ""
 	if thinkingNow && m.showThinking {
-		b = append(b, m.st.thinking.Render("✻ "+lastLines(wrap(strings.TrimSpace(m.thinking.String()), width-4), 8)))
+		b = append(b, m.st.thinking.Render("✻ "+wrapLiveTail(strings.TrimSpace(m.thinking.String()), width-4, 8)))
 	}
 	if s := m.stream.String(); s != "" {
 		limit := max(m.height-12, 5)
@@ -1447,8 +1447,59 @@ func (m *model) renderMarkdown(s string) string {
 	return m.renderMarkdownWidth(s, m.currentConversationWidth())
 }
 
+const maxMarkdownRenderers = 4
+
+type markdownRendererCache struct {
+	byWidth map[int]*glamour.TermRenderer
+	widths  []int // least recently used first
+}
+
+func (m *model) markdownRenderer(width int) (*glamour.TermRenderer, error) {
+	if renderer := m.markdownRenderers.byWidth[width]; renderer != nil {
+		m.markdownRenderers.widths = moveMarkdownWidthToEnd(m.markdownRenderers.widths, width)
+		return renderer, nil
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(markdownStyleWithPalette(m.isDark, m.themePalette)),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if m.markdownRenderers.byWidth == nil {
+		m.markdownRenderers.byWidth = make(map[int]*glamour.TermRenderer)
+	}
+	if len(m.markdownRenderers.byWidth) == maxMarkdownRenderers {
+		oldest := m.markdownRenderers.widths[0]
+		_ = m.markdownRenderers.byWidth[oldest].Close()
+		delete(m.markdownRenderers.byWidth, oldest)
+		m.markdownRenderers.widths = m.markdownRenderers.widths[1:]
+	}
+	m.markdownRenderers.byWidth[width] = renderer
+	m.markdownRenderers.widths = append(m.markdownRenderers.widths, width)
+	return renderer, nil
+}
+
+func moveMarkdownWidthToEnd(widths []int, width int) []int {
+	for i, cachedWidth := range widths {
+		if cachedWidth == width {
+			copy(widths[i:], widths[i+1:])
+			widths[len(widths)-1] = width
+			break
+		}
+	}
+	return widths
+}
+
+func (m *model) clearMarkdownRenderers() {
+	for _, renderer := range m.markdownRenderers.byWidth {
+		_ = renderer.Close()
+	}
+	m.markdownRenderers = markdownRendererCache{}
+}
+
 func (m *model) renderMarkdownWidth(s string, width int) string {
-	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyleWithPalette(m.isDark, m.themePalette)), glamour.WithWordWrap(max(width-6, 20)))
+	renderer, err := m.markdownRenderer(max(width-6, 20))
 	if err != nil {
 		return s
 	}

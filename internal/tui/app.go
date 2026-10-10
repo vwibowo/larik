@@ -65,6 +65,27 @@ func Run(opts Options) error {
 	}
 	m := newModel(opts)
 	_, err := tea.NewProgram(m).Run()
+	cleanupModel(m)
+	return err
+}
+
+// RunWithStartup shows the TUI immediately while setup opens the app and
+// session in the background. The interactive model takes over once ready.
+func RunWithStartup(start func(context.Context) (Options, error)) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &startupModel{ctx: ctx, cancel: cancel, start: start}
+	_, runErr := tea.NewProgram(m).Run()
+	cancel()
+	if m.live != nil {
+		cleanupModel(m.live)
+	}
+	if m.err != nil {
+		return m.err
+	}
+	return runErr
+}
+
+func cleanupModel(m *model) {
 	if m.recording != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, _ = m.recording.Stop(ctx)
@@ -84,7 +105,69 @@ func Run(opts Options) error {
 	if id := m.agent.SessionID(); id != "" && m.prompted {
 		fmt.Printf("session %s · resume with: larik --resume %s\n", id, id)
 	}
-	return err
+}
+
+type startupResult struct {
+	opts Options
+	err  error
+}
+
+type startupModel struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	start  func(context.Context) (Options, error)
+	live   *model
+	err    error
+	size   *tea.WindowSizeMsg
+}
+
+func (m *startupModel) Init() tea.Cmd {
+	return func() tea.Msg {
+		opts, err := m.start(m.ctx)
+		if m.ctx.Err() != nil {
+			if opts.Session != nil {
+				opts.Session.Close("other")
+			}
+			if opts.App != nil {
+				opts.App.Close()
+			}
+			return nil
+		}
+		return startupResult{opts: opts, err: err}
+	}
+}
+
+func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case startupResult:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, tea.Quit
+		}
+		if msg.opts.Session != nil {
+			msg.opts.Agent, msg.opts.Hooks, msg.opts.History = msg.opts.Session.Agent, msg.opts.Session.Hooks, msg.opts.Session.History
+		}
+		m.live = newModel(msg.opts)
+		if m.size != nil {
+			m.live.Update(*m.size)
+		}
+		return m.live, m.live.Init()
+	case tea.WindowSizeMsg:
+		m.size = &msg
+	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" || msg.String() == "esc" {
+			m.cancel()
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m *startupModel) View() tea.View {
+	v := tea.NewView("Starting Larik…")
+	v.AltScreen = true
+	v.WindowTitle = "larik"
+	return v
 }
 
 type toolRun struct {
@@ -95,14 +178,15 @@ type toolRun struct {
 }
 
 type model struct {
-	opts         Options
-	agent        *agent.Agent
-	sess         *app.Session  // nil when the caller manages the session
-	bgStop       chan struct{} // closed when switching away from agent
-	ownedApps    []*app.App    // apps created by in-TUI reload; initial app belongs to caller
-	st           styles
-	themePalette *config.ThemePalette
-	isDark       bool
+	opts              Options
+	agent             *agent.Agent
+	sess              *app.Session  // nil when the caller manages the session
+	bgStop            chan struct{} // closed when switching away from agent
+	ownedApps         []*app.App    // apps created by in-TUI reload; initial app belongs to caller
+	st                styles
+	themePalette      *config.ThemePalette
+	isDark            bool
+	markdownRenderers markdownRendererCache
 	// termDark is what the terminal reported; the theme setting may
 	// override it.
 	termDark bool
@@ -124,10 +208,12 @@ type model struct {
 	panelKind string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
-	outputs     []conversationOutput
-	outputBytes int
-	convLines   []string
-	convWidth   int
+	outputs                   []conversationOutput
+	outputBytes               int
+	convLines                 []string
+	convWidth                 int
+	renderedConversationBytes int
+	renderedConversationClock uint64
 	// Layout of the last frame, for routing mouse events: the panel's rows,
 	// and the conversation's visible rows and width.
 	panelTop, panelRows int
@@ -287,6 +373,12 @@ func newModel(opts Options) *model {
 	ta.MaxHeight = 10
 	ta.Focus()
 
+	projectRoot := ""
+	if opts.App != nil && opts.App.ProjectRoot != "" {
+		projectRoot = opts.App.ProjectRoot
+	} else {
+		projectRoot = projectRootFor(opts.Agent.Cwd())
+	}
 	m := &model{
 		opts:        opts,
 		agent:       opts.Agent,
@@ -298,7 +390,7 @@ func newModel(opts Options) *model {
 		panelView:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
 		width:       80,
 		stats:       opts.Agent.Stats(),
-		projectRoot: projectRootFor(opts.Agent.Cwd()),
+		projectRoot: projectRoot,
 
 		termDark: termDark,
 		focused:  true,
@@ -370,6 +462,8 @@ func (m *model) wantDark() bool {
 }
 
 func (m *model) applyTheme(isDark bool) {
+	m.clearMarkdownRenderers()
+	m.clearRenderedConversationOutputs()
 	m.isDark = isDark
 	m.themePalette = nil
 	if name := m.theme(); name != "auto" && name != "dark" && name != "light" {

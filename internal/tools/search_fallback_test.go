@@ -27,6 +27,25 @@ func TestGoGrepOrderedAndTruncatedAcrossBatches(t *testing.T) {
 	}
 }
 
+func TestGoGrepLongLineAndBinaryHandling(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("x", 128*1024) + "needle\nlast needle\n"
+	if err := os.WriteFile(filepath.Join(dir, "long.txt"), []byte(long), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "binary.txt"), []byte("text\x00needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := newSearchLines(dir)
+	if err := goGrep(context.Background(), dir, grepInput{Pattern: "needle"}, out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String("more")
+	if strings.Count(got, "needle") != 1 || !strings.Contains(got, "long.txt:2:last needle") || strings.Contains(got, "binary.txt") {
+		t.Fatalf("unexpected long-line or binary results: %q", got)
+	}
+}
+
 func BenchmarkGoGrepFirstMatches(b *testing.B) {
 	dir := b.TempDir()
 	for i := range 700 {

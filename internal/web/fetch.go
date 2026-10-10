@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	maxBodyBytes = 5 << 20
-	fetchTimeout = 30 * time.Second
-	cacheTTL     = 15 * time.Minute
-	userAgent    = "Larik/0.1 (terminal coding agent; +https://github.com/)"
+	maxBodyBytes    = 5 << 20
+	fetchTimeout    = 30 * time.Second
+	cacheTTL        = 15 * time.Minute
+	maxCacheEntries = 128
+	maxCacheBytes   = 16 << 20
+	userAgent       = "Larik/0.1 (terminal coding agent; +https://github.com/)"
 )
 
 // Page is a fetched document converted to text.
@@ -43,13 +45,16 @@ type Page struct {
 type Fetcher struct {
 	client *http.Client
 
-	mu    sync.Mutex
-	cache map[string]cached
+	mu         sync.Mutex
+	cache      map[string]cached
+	cacheBytes int
 }
 
 type cached struct {
-	page Page
-	at   time.Time
+	page     Page
+	at       time.Time
+	lastUsed time.Time
+	bytes    int
 }
 
 // ErrBlockedAddress is returned for link-local and similar addresses
@@ -151,7 +156,10 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (Page, error) {
 	}
 	key := u.String()
 	f.mu.Lock()
+	f.pruneCache(time.Now())
 	if c, ok := f.cache[key]; ok && time.Since(c.at) < cacheTTL {
+		c.lastUsed = time.Now()
+		f.cache[key] = c
 		f.mu.Unlock()
 		return c.page, nil
 	}
@@ -212,9 +220,64 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (Page, error) {
 	}
 
 	f.mu.Lock()
-	f.cache[key] = cached{page, time.Now()}
+	now := time.Now()
+	f.storeCache(key, page, now)
 	f.mu.Unlock()
 	return page, nil
+}
+
+func pageCacheBytes(key string, page Page) int {
+	return len(key) + len(page.URL) + len(page.ContentType) + len(page.Title) + len(page.Text) + len(page.RedirectTo)
+}
+
+// storeCache stores a result and evicts expired or least-recently-used pages.
+// The caller must hold f.mu.
+func (f *Fetcher) storeCache(key string, page Page, now time.Time) {
+	entryBytes := pageCacheBytes(key, page)
+	if entryBytes > maxCacheBytes {
+		return
+	}
+	f.pruneCache(now)
+	if old, ok := f.cache[key]; ok {
+		f.cacheBytes -= old.bytes
+		delete(f.cache, key)
+	}
+	for len(f.cache) >= maxCacheEntries || f.cacheBytes+entryBytes > maxCacheBytes {
+		if !f.evictLeastRecentlyUsed() {
+			break
+		}
+	}
+	if len(f.cache) < maxCacheEntries && f.cacheBytes+entryBytes <= maxCacheBytes {
+		f.cache[key] = cached{page: page, at: now, lastUsed: now, bytes: entryBytes}
+		f.cacheBytes += entryBytes
+	}
+}
+
+// pruneCache removes expired entries and repairs accounting while holding f.mu.
+func (f *Fetcher) pruneCache(now time.Time) {
+	for key, entry := range f.cache {
+		if now.Sub(entry.at) >= cacheTTL {
+			delete(f.cache, key)
+			f.cacheBytes -= entry.bytes
+		}
+	}
+}
+
+// evictLeastRecentlyUsed removes one entry while holding f.mu.
+func (f *Fetcher) evictLeastRecentlyUsed() bool {
+	var oldestKey string
+	var oldest time.Time
+	for key, entry := range f.cache {
+		if oldestKey == "" || entry.lastUsed.Before(oldest) {
+			oldestKey, oldest = key, entry.lastUsed
+		}
+	}
+	if oldestKey == "" {
+		return false
+	}
+	f.cacheBytes -= f.cache[oldestKey].bytes
+	delete(f.cache, oldestKey)
+	return true
 }
 
 // noise elements are removed before conversion.

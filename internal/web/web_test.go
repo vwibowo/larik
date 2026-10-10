@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const page = `<!doctype html><html><head><title> Go  Docs </title><script>var tracking=1</script><style>.x{}</style></head>
@@ -93,6 +95,67 @@ func TestFetchHTML(t *testing.T) {
 	}
 	if out, isErr := run(t, tl, `{"url":"ftp://example.com/x"}`); !isErr || !strings.Contains(out, "only http and https") {
 		t.Errorf("scheme: %s", out)
+	}
+}
+
+func TestFetchCacheExpiresAndHonorsEntryLimit(t *testing.T) {
+	f := NewFetcher()
+	now := time.Now()
+	f.mu.Lock()
+	for i := 0; i < maxCacheEntries; i++ {
+		key := fmt.Sprintf("https://example.test/%03d", i)
+		f.storeCache(key, Page{URL: key, Text: "body"}, now)
+		entry := f.cache[key]
+		entry.lastUsed = now.Add(time.Duration(i) * time.Second)
+		f.cache[key] = entry
+	}
+	// Make the newest page most recently used, then force one more insertion.
+	newest := "https://example.test/127"
+	entry := f.cache[newest]
+	entry.lastUsed = now.Add(time.Hour)
+	f.cache[newest] = entry
+	f.storeCache("https://example.test/new", Page{Text: "new"}, now.Add(time.Second))
+	if len(f.cache) != maxCacheEntries {
+		t.Fatalf("cache entries = %d, want %d", len(f.cache), maxCacheEntries)
+	}
+	if _, ok := f.cache["https://example.test/000"]; ok {
+		t.Fatal("least recently used entry was not evicted")
+	}
+	if _, ok := f.cache[newest]; !ok {
+		t.Fatal("most recently used entry was evicted")
+	}
+	if f.cacheBytes > maxCacheBytes {
+		t.Fatalf("cache bytes = %d, limit %d", f.cacheBytes, maxCacheBytes)
+	}
+	f.pruneCache(now.Add(20 * time.Minute))
+	if len(f.cache) != 0 || f.cacheBytes != 0 {
+		t.Fatalf("expired entries remain: entries=%d bytes=%d", len(f.cache), f.cacheBytes)
+	}
+	f.mu.Unlock()
+}
+
+func TestFetchCacheRejectsOversizedEntry(t *testing.T) {
+	f := NewFetcher()
+	f.mu.Lock()
+	f.storeCache("https://example.test/large", Page{Text: strings.Repeat("x", maxCacheBytes+1)}, time.Now())
+	f.mu.Unlock()
+	if len(f.cache) != 0 || f.cacheBytes != 0 {
+		t.Fatalf("oversized entry was cached: entries=%d bytes=%d", len(f.cache), f.cacheBytes)
+	}
+}
+
+func TestFetchCacheHonorsByteLimit(t *testing.T) {
+	f := NewFetcher()
+	f.mu.Lock()
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("https://example.test/large-%d", i)
+		f.storeCache(key, Page{Text: strings.Repeat("x", 2<<20)}, time.Now())
+	}
+	got := f.cacheBytes
+	entries := len(f.cache)
+	f.mu.Unlock()
+	if got > maxCacheBytes || entries >= 10 {
+		t.Fatalf("byte cap not enforced: bytes=%d entries=%d", got, entries)
 	}
 }
 

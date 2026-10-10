@@ -89,6 +89,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	app.LoadCatwalkCache(cfg.DataDir)
 	sessDir := session.Dir(cfg.DataDir, cwd)
 
 	if *list {
@@ -128,12 +129,45 @@ func run() error {
 		}
 		*model = spec
 	}
+	if !*print {
+		return tui.RunWithStartup(func(ctx context.Context) (tui.Options, error) {
+			a, err := app.Setup(cwd, version)
+			if err != nil {
+				return tui.Options{}, err
+			}
+			if ctx.Err() != nil {
+				a.Close()
+				return tui.Options{}, ctx.Err()
+			}
+			app.RefreshCatwalkCache(cfg.DataDir)
+			if *debug || envDebug() {
+				a.Debug = true
+			}
+			s, err := a.Open(app.Options{Model: *model, Effort: *effort, Mode: *mode, ResumeID: *resume, Continue: *cont, Fork: *fork})
+			if err != nil {
+				a.Close()
+				return tui.Options{}, err
+			}
+			if ctx.Err() != nil {
+				s.Close("other")
+				a.Close()
+				return tui.Options{}, ctx.Err()
+			}
+			return tui.Options{
+				App: a, Session: s, Config: a.Cfg, InitialPrompt: prompt,
+				SessionDir: a.SessionDir, MCP: a.MCP, Skills: a.Skills, Memory: a.Memory,
+				Agents: a.AgentDefs, LSP: a.LSP, Sandbox: a.Sandbox, SandboxNote: a.SandboxNote,
+				SearchNote: a.SearchNote, BrowserNote: a.BrowserNote, Audio: a.Audio, Version: version,
+			}, nil
+		})
+	}
 
 	a, err := app.Setup(cwd, version)
 	if err != nil {
 		return err
 	}
 	defer a.Close()
+	app.RefreshCatwalkCache(cfg.DataDir)
 	if *debug || envDebug() {
 		a.Debug = true
 	}
@@ -179,24 +213,7 @@ func run() error {
 		return err
 	}
 
-	// The TUI owns the session from here: it can switch to others and
-	// closes whichever is current when it exits.
-	return tui.Run(tui.Options{
-		App:           a,
-		Session:       s,
-		Config:        a.Cfg,
-		InitialPrompt: prompt,
-		SessionDir:    a.SessionDir,
-		MCP:           a.MCP,
-		Skills:        a.Skills,
-		Memory:        a.Memory,
-		Agents:        a.AgentDefs,
-		LSP:           a.LSP,
-		Sandbox:       a.Sandbox,
-		SandboxNote:   a.SandboxNote,
-		SearchNote:    a.SearchNote,
-		BrowserNote:   a.BrowserNote,
-		Audio:         a.Audio,
-		Version:       version,
-	})
+	return tui.Run(tui.Options{App: a, Session: s, Config: a.Cfg, InitialPrompt: prompt, SessionDir: a.SessionDir, MCP: a.MCP,
+		Skills: a.Skills, Memory: a.Memory, Agents: a.AgentDefs, LSP: a.LSP, Sandbox: a.Sandbox, SandboxNote: a.SandboxNote,
+		SearchNote: a.SearchNote, BrowserNote: a.BrowserNote, Audio: a.Audio, Version: version})
 }

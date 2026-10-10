@@ -154,13 +154,38 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	// Installed isn't the same as working: inside a container, or under
 	// another sandbox, the OS can refuse what the sandbox needs. Then every
 	// command would fail, so fall back as if there were no sandbox.
-	if err := s.probe(); err != nil {
-		s.Close()
-		return nil, "the " + s.kind + " sandbox can't start here (" + err.Error() + "); bash commands run unsandboxed and ask for approval" + probeHint(s.kind, err.Error(), inContainer())
+	var probeErr, confineErr error
+	if s.kind == "seatbelt" {
+		// The two Seatbelt policies are independent. Running their startup
+		// checks together avoids paying the process launch cost twice.
+		type result struct {
+			confine bool
+			err     error
+		}
+		results := make(chan result, 2)
+		go func() { results <- result{err: s.probe()} }()
+		go func() { results <- result{confine: true, err: s.probeConfine()} }()
+		for range 2 {
+			r := <-results
+			if r.confine {
+				confineErr = r.err
+			} else {
+				probeErr = r.err
+			}
+		}
+	} else {
+		probeErr = s.probe()
+		if probeErr == nil {
+			confineErr = s.probeConfine()
+		}
 	}
-	if err := s.probeConfine(); err != nil {
+	if probeErr != nil {
+		s.Close()
+		return nil, "the " + s.kind + " sandbox can't start here (" + probeErr.Error() + "); bash commands run unsandboxed and ask for approval" + probeHint(s.kind, probeErr.Error(), inContainer())
+	}
+	if confineErr != nil {
 		s.noConfine = true
-		warning = strings.TrimPrefix(warning+"; ", "; ") + "Larik's helpers (the run_code script runner) can't be confined here (" + err.Error() + ") and run unconfined"
+		warning = strings.TrimPrefix(warning+"; ", "; ") + "Larik's helpers (the run_code script runner) can't be confined here (" + confineErr.Error() + ") and run unconfined"
 	}
 	return s, warning
 }

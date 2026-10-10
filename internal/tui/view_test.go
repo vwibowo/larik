@@ -21,6 +21,106 @@ import (
 
 func plain(s string) string { return ansi.Strip(s) }
 
+func TestMarkdownRendererCacheReuseEvictionAndThemeReset(t *testing.T) {
+	m := testModel(t)
+	const markdown = "# Heading\n\nA short paragraph."
+	first := m.renderMarkdownWidth(markdown, 80)
+	if got := m.renderMarkdownWidth(markdown, 80); got != first {
+		t.Fatalf("cached render changed output: got %q, want %q", got, first)
+	}
+	if len(m.markdownRenderers.byWidth) != 1 {
+		t.Fatalf("same-width renders cached %d renderers, want 1", len(m.markdownRenderers.byWidth))
+	}
+	for _, width := range []int{90, 100, 110, 120} {
+		m.renderMarkdownWidth(markdown, width)
+	}
+	if len(m.markdownRenderers.byWidth) != maxMarkdownRenderers {
+		t.Fatalf("cache retained %d renderers, want limit %d", len(m.markdownRenderers.byWidth), maxMarkdownRenderers)
+	}
+	if _, ok := m.markdownRenderers.byWidth[74]; ok {
+		t.Fatal("least recently used renderer was not evicted")
+	}
+	m.applyTheme(false)
+	if len(m.markdownRenderers.byWidth) != 0 || len(m.markdownRenderers.widths) != 0 {
+		t.Fatal("theme change should clear cached renderers")
+	}
+}
+
+func TestConversationRenderCacheReusesWidthsAndStaysBounded(t *testing.T) {
+	m := testModel(t)
+	var renders int
+	for i := 0; i < 3; i++ {
+		m.appendConversationOutput(conversationOutput{
+			text:       "initial",
+			sourceSize: 7,
+			render: func(_ *model, width int) string {
+				renders++
+				return fmt.Sprintf("rendered at %d", width)
+			},
+		})
+	}
+	m.rewrapConversationWidth(80)
+	m.rewrapConversationWidth(90)
+	renderCount := renders
+	m.rewrapConversationWidth(80)
+	if renders != renderCount {
+		t.Fatalf("returning to cached width rendered again: got %d renders, want %d", renders, renderCount)
+	}
+	if m.renderedConversationBytes == 0 || m.renderedConversationBytes > maxConversationRenderCacheBytes {
+		t.Fatalf("render cache uses %d bytes, want 1..%d", m.renderedConversationBytes, maxConversationRenderCacheBytes)
+	}
+	m.clearRenderedConversationOutputs()
+	if m.renderedConversationBytes != 0 {
+		t.Fatalf("cleared render cache retains %d bytes", m.renderedConversationBytes)
+	}
+	m.outputs = make([]conversationOutput, 2)
+	largeA, largeB := strings.Repeat("a", maxConversationRenderCacheBytes*3/4), strings.Repeat("b", maxConversationRenderCacheBytes*3/4)
+	m.cacheConversationOutput(&m.outputs[0], 80, largeA)
+	m.cacheConversationOutput(&m.outputs[1], 80, largeB)
+	if m.renderedConversationBytes != len(largeB) || len(m.outputs[0].rendered) != 0 {
+		t.Fatalf("global cache budget did not evict its oldest entry: bytes=%d old=%d new=%d", m.renderedConversationBytes, len(m.outputs[0].rendered), len(m.outputs[1].rendered))
+	}
+}
+
+func TestRestylingOutputInvalidatesItsCachedRender(t *testing.T) {
+	m := testModel(t)
+	selected := false
+	out := conversationOutput{
+		text:       "plain",
+		sourceSize: len("plain"),
+		render: func(_ *model, _ int) string {
+			if selected {
+				return "selected"
+			}
+			return "plain"
+		},
+	}
+	m.outputs = []conversationOutput{out}
+	m.convWidth = 80
+	m.outputs[0].place(&m.convLines, m.convWidth)
+	m.outputBytes = len("plain")
+	m.outputs[0].renderAt(m, m.convWidth)
+	selected = true
+	m.restyleOutput(&m.outputs[0])
+	if got := m.outputs[0].text; got != "selected" {
+		t.Fatalf("restyle used stale cached output %q", got)
+	}
+}
+
+func TestThemeChangeClearsConversationRenderCache(t *testing.T) {
+	m := testModel(t)
+	m.outputs = []conversationOutput{{text: "rendered", sourceSize: len("source")}}
+	m.convWidth = m.currentConversationWidth()
+	m.cacheConversationOutput(&m.outputs[0], m.convWidth, "cached rendering")
+	if m.renderedConversationBytes == 0 {
+		t.Fatal("test setup did not populate the render cache")
+	}
+	m.applyTheme(!m.isDark)
+	if m.renderedConversationBytes != 0 || len(m.outputs[0].rendered) != 0 {
+		t.Fatal("theme change retained rendered conversation output")
+	}
+}
+
 func TestWrapLiveTailBoundsLargeStreamingResponses(t *testing.T) {
 	short := "first line\nsecond line"
 	if got, want := wrapLiveTail(short, 20, 5), wrap(short, 20); got != want {
@@ -42,6 +142,18 @@ func TestWrapLiveTailBoundsLargeStreamingResponses(t *testing.T) {
 	ansiText := "before \x1b[31mred\x1b[0m after"
 	if got, want := wrapLiveTail(ansiText, 20, 5), wrap(ansiText, 20); got != want {
 		t.Fatalf("ANSI stream should use the full-wrap path: %q, want %q", got, want)
+	}
+}
+
+func TestLiveThinkingUsesBoundedTail(t *testing.T) {
+	m := testModel(t)
+	m.showThinking = true
+	m.running = true
+	m.width, m.height = 24, 20
+	m.thinking.WriteString(strings.Repeat("old thought line\n", 300) + "latest thought")
+	got := plain(m.liveView())
+	if !strings.Contains(got, "latest thought") || strings.Count(got, "old thought line") >= 300 {
+		t.Fatalf("thinking tail not bounded or latest text lost: %q", got)
 	}
 }
 

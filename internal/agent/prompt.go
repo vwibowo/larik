@@ -43,7 +43,13 @@ var instructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
 // BuildSystemPrompt assembles the system prompt. It is built once per
 // session and kept byte-stable so provider prompt caches stay warm.
 func BuildSystemPrompt(cwd, configDir string) string {
-	return basePrompt + "\n\n" + ContextSections(cwd, configDir)
+	return BuildSystemPromptWithRoot(cwd, GitRoot(cwd), configDir)
+}
+
+// BuildSystemPromptWithRoot assembles a prompt using a repository root the
+// caller already discovered, avoiding another Git subprocess.
+func BuildSystemPromptWithRoot(cwd, root, configDir string) string {
+	return basePrompt + "\n\n" + ContextSectionsWithRoot(cwd, root, configDir)
 }
 
 // WithLanguage adds an instruction to reply in lang, when set.
@@ -58,7 +64,12 @@ func WithLanguage(system, lang string) string {
 // ContextSections is the environment block plus project instruction files,
 // shared by the main agent and subagents.
 func ContextSections(cwd, configDir string) string {
-	root := GitRoot(cwd)
+	return ContextSectionsWithRoot(cwd, GitRoot(cwd), configDir)
+}
+
+// ContextSectionsWithRoot builds environment context using a known
+// repository root. An empty root means cwd is not inside a Git repository.
+func ContextSectionsWithRoot(cwd, root, configDir string) string {
 	return contextSections(cwd, root, instructionFilesUnder(cwd, root, configDir))
 }
 

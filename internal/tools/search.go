@@ -194,18 +194,42 @@ func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) er
 // grepFile returns path's matching lines as path:line:text, at most 50 as
 // rg --max-count gives. A file with a NUL in its first 8 KB is binary.
 func grepFile(path string, re *regexp.Regexp) []string {
+	return grepFileWithBuffers(path, re, nil)
+}
+
+// grepBuffers are reused across files so the fallback search does not
+// allocate two 64 KiB buffers for every file it visits. Scanner buffers that
+// grow for an unusually long line are owned by that scanner and discarded.
+var grepBuffersPool = sync.Pool{New: func() any {
+	return &grepBuffers{reader: bufio.NewReaderSize(nil, 64*1024), scan: make([]byte, 64*1024)}
+}}
+
+type grepBuffers struct {
+	reader *bufio.Reader
+	scan   []byte
+}
+
+func grepFileWithBuffers(path string, re *regexp.Regexp, supplied *grepBuffers) []string {
+	bufs := supplied
+	if bufs == nil {
+		bufs = grepBuffersPool.Get().(*grepBuffers)
+		defer func() {
+			bufs.reader.Reset(bytes.NewReader(nil))
+			grepBuffersPool.Put(bufs)
+		}()
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
-	r := bufio.NewReaderSize(f, 64*1024)
-	if head, _ := r.Peek(8192); bytes.IndexByte(head, 0) >= 0 {
+	bufs.reader.Reset(f)
+	if head, _ := bufs.reader.Peek(8192); bytes.IndexByte(head, 0) >= 0 {
 		return nil
 	}
 	var out []string
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc := bufio.NewScanner(bufs.reader)
+	sc.Buffer(bufs.scan, 1024*1024)
 	for n := 1; sc.Scan() && len(out) < 50; n++ {
 		line := sc.Text()
 		if strings.ContainsRune(line, 0) {

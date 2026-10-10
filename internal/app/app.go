@@ -5,9 +5,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,31 +37,123 @@ import (
 	"larik/internal/web"
 )
 
-var catwalkOnce sync.Once
+const (
+	catwalkCacheName = "catwalk.json"
+	catwalkCacheTTL  = 7 * 24 * time.Hour
+)
 
-func loadCatwalkCatalog() {
-	catwalkOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		catwalkProviders, err := llm.FetchCatwalk(ctx, nil, "")
-		if err != nil {
-			return // built-in providers and catalog remain available offline
+// LoadCatwalkCache adds previously fetched public metadata before users choose
+// a model or provider. Configured model entries already in the catalog win.
+func LoadCatwalkCache(dataDir string) {
+	entries, err := readCatwalkCache(filepath.Join(dataDir, catwalkCacheName))
+	if err != nil {
+		return // built-in providers and models remain available offline
+	}
+	providers.SetCatwalkProviders(entries)
+	for id, info := range llm.CatalogEntries(entries) {
+		if _, exists := llm.Catalog[id]; !exists {
+			llm.Catalog[id] = info
 		}
-		providers.SetCatwalkProviders(catwalkProviders)
-		for id, info := range llm.CatalogEntries(catwalkProviders) {
-			if _, exists := llm.Catalog[id]; !exists {
-				llm.Catalog[id] = info
+	}
+}
+
+// RefreshCatwalkCache fetches metadata in the background for the next launch.
+// It never updates the process-wide catalog, which is read without a lock.
+func RefreshCatwalkCache(dataDir string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = refreshCatwalkCache(ctx, filepath.Join(dataDir, catwalkCacheName), llm.CatwalkURL, nil)
+	}()
+}
+
+func readCatwalkCache(path string) ([]llm.CatwalkProvider, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() <= 0 || info.Size() > 16<<20 || time.Since(info.ModTime()) > catwalkCacheTTL {
+		return nil, errors.New("invalid Catwalk cache file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var entries []llm.CatwalkProvider
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 || len(entries) > 10_000 {
+		return nil, errors.New("invalid Catwalk cache entries")
+	}
+	models := 0
+	for i := range entries {
+		entries[i].ID = strings.TrimSpace(entries[i].ID)
+		for j := range entries[i].Models {
+			m := &entries[i].Models[j]
+			m.ID = strings.TrimSpace(m.ID)
+			models++
+			if len(m.ID) > 256 || m.ContextWindow < 0 || m.MaxOutput < 0 || m.InputPrice < 0 || m.OutputPrice < 0 || m.CacheRead < 0 || m.CacheWrite < 0 {
+				return nil, fmt.Errorf("invalid Catwalk model metadata")
 			}
 		}
-	})
+	}
+	if models > 100_000 {
+		return nil, errors.New("too many Catwalk models")
+	}
+	return entries, nil
+}
+
+func refreshCatwalkCache(ctx context.Context, path, url string, client *http.Client) error {
+	entries, err := llm.FetchCatwalk(ctx, client, url)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return errors.New("empty Catwalk catalog")
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	if len(data) > 16<<20 {
+		return errors.New("Catwalk cache exceeds size limit")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".catwalk-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // App holds everything shared by the sessions of one project directory.
 type App struct {
-	Cfg        *config.Config
-	Cwd        string
-	SessionDir string
-	Version    string
+	Cfg         *config.Config
+	Cwd         string
+	RepoRoot    string
+	ProjectRoot string
+	SessionDir  string
+	Version     string
 
 	Skills    *skills.Set
 	AgentDefs *subagent.Set
@@ -96,21 +192,19 @@ type App struct {
 // Setup loads config for cwd and starts the shared services. Call Close
 // when done.
 func Setup(cwd, version string) (*App, error) {
-	// Catwalk metadata is best-effort and time-bounded. Load it before the
-	// user's config so explicit per-model metadata always wins.
-	loadCatwalkCatalog()
 	cfg, err := config.Load(cwd)
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Cwd: cwd, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve, Debug: cfg.DebugOn()}
-
-	home, _ := os.UserHomeDir()
 	gitRoot := agent.GitRoot(cwd)
 	projectRoot := gitRoot
 	if projectRoot == "" {
 		projectRoot = cwd
 	}
+	LoadCatwalkCache(cfg.DataDir)
+	a := &App{Cfg: cfg, Cwd: cwd, RepoRoot: gitRoot, ProjectRoot: projectRoot, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve, Debug: cfg.DebugOn()}
+
+	home, _ := os.UserHomeDir()
 	if keep := cfg.CheckpointRetention(); keep > 0 {
 		_ = checkpoint.Prune(filepath.Join(cfg.DataDir, "checkpoints"), keep)
 	}
@@ -201,7 +295,7 @@ func Setup(cwd, version string) (*App, error) {
 // once per fresh context (a new session or /clear), never mid-context.
 func (a *App) SystemPrompt() string {
 	a.Skills.Reload()
-	system := agent.BuildSystemPrompt(a.Cwd, a.Cfg.ConfigDir) + a.sandboxSection()
+	system := agent.BuildSystemPromptWithRoot(a.Cwd, a.RepoRoot, a.Cfg.ConfigDir) + a.sandboxSection()
 	if idx := a.Skills.Index(); idx != "" {
 		system += "\n\n" + idx
 	}
