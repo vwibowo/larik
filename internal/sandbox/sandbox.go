@@ -461,8 +461,11 @@ func (s *Sandbox) Summary() string {
 	case s.proxy != nil:
 		net = "only to " + strings.Join(s.proxy.allowed, ", ") + " (and their subdomains), through a proxy set in HTTP_PROXY/HTTPS_PROXY; other hosts are refused, and tools that ignore those variables can't connect"
 	}
-	return fmt.Sprintf("bash commands run in a %s sandbox: writes allowed only in %s, its own private temp directory (%s) and build caches; network %s; "+
-		".git/hooks, .git/config, .larik, .claude and .mcp.json are read-only", s.kind, s.root, s.tmpDir, net)
+	// The temp directory is named by $TMPDIR rather than its path, which
+	// differs per run: the summary is in the system prompt, ahead of
+	// sections that should stay cached across sessions.
+	return fmt.Sprintf("bash commands run in a %s sandbox: writes allowed only in %s, its own private temp directory ($TMPDIR) and build caches; network %s; "+
+		".git/hooks, .git/config, .larik, .claude and .mcp.json are read-only", s.kind, s.root, net)
 }
 
 // Writable lists paths commands may write to.

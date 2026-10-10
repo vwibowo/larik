@@ -251,6 +251,20 @@ func TestClosePerSandboxTempDir(t *testing.T) {
 	}
 }
 
+// TestSummaryIsStableAcrossRuns checks that the summary, which is in the
+// system prompt, doesn't name the per-run temp directory.
+func TestSummaryIsStableAcrossRuns(t *testing.T) {
+	a, root, home := newTest(t, Config{})
+	b, _ := New(Config{}, root, home)
+	if b == nil {
+		t.Skip("no sandbox on this machine")
+	}
+	defer b.Close()
+	if a.Summary() != b.Summary() || strings.Contains(a.Summary(), a.tmpDir) || !strings.Contains(a.Summary(), "$TMPDIR") {
+		t.Errorf("summary should be the same for every sandbox on a root:\n%s\n%s", a.Summary(), b.Summary())
+	}
+}
+
 func TestGitDirCannotBeRedirected(t *testing.T) {
 	sb, root, _ := newTest(t, Config{})
 	for _, script := range []string{
