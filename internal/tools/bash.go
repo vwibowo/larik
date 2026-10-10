@@ -36,11 +36,10 @@ func (Bash) ReadOnly() bool { return false }
 func (Bash) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "bash",
-		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB. Default timeout 120s, max 600s. Avoid interactive commands. " +
-			"In a git repository, files the command changes (tracked, or untracked and not ignored) are recorded so /undo can restore them. " +
-			"For files git ignores, or outside a repository, list the ones the command may change in checkpoint_paths; other changes there can't be undone. " +
-			"When the system prompt has a <sandbox> section, commands run confined as it describes. " +
-			"If a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false; the user will be asked to approve it.",
+		Description: "Run a shell command with bash in the working directory. Output (stdout+stderr) is truncated to ~30KB; the default timeout is 120s. Avoid interactive commands. " +
+			"Changes to files git tracks (or would track) are recorded for /undo; to make other changes undoable (ignored files, or outside a repository), list those files in checkpoint_paths. " +
+			"When the system prompt has a <sandbox> section, commands run confined as it describes; " +
+			"if a command genuinely needs more (installing packages, network access, writing elsewhere), run it again with sandbox set to false, which asks the user.",
 		Schema: schema(`{"type":"object","properties":{
 			"command":{"type":"string"},
 			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"},

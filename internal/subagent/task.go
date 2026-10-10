@@ -89,26 +89,29 @@ func (t *Tool) ReadOnly() bool { return true }
 func (t *Tool) Spec() llm.ToolSpec {
 	var names []string
 	var b strings.Builder
-	b.WriteString("Delegate a task to a subagent with its own fresh context window. Use it for broad searches, multi-step research, " +
-		"or self-contained changes whose details you don't need to keep in your own context. The subagent cannot see this conversation: " +
-		"give it a complete, self-contained prompt with all needed context and say exactly what to report back. Its final message is returned to you. " +
-		"For independent work, call task several times in the same turn to run subagents in parallel; don't parallelize tasks that edit the same files. " +
-		"Set run_in_background to keep working while a subagent runs: the call returns a task id at once, and the result is delivered to you in a later message when it finishes (use task_wait to block on it, task_stop to cancel).")
+	b.WriteString("Delegate a task to a subagent with its own fresh context window: broad searches, multi-step research, " +
+		"or self-contained changes whose details you don't need to keep in your context. The subagent can't see this conversation: " +
+		"give it a complete prompt with all needed context and say exactly what to report back; its final message is returned to you. " +
+		"For independent work, call task several times in one turn to run subagents in parallel, but not for tasks that edit the same files. " +
+		"With run_in_background the call returns a task id at once and the result arrives in a later message (task_wait blocks on it, task_stop cancels).")
 	if t.Repo != "" {
-		b.WriteString(" Set isolation to \"worktree\" to run the subagent in its own git worktree on a new branch, starting from the current HEAD commit " +
-			"(uncommitted changes in your working tree are not included). Use it for parallel tasks that edit code, or to try a change without touching your working tree. " +
-			"Its changes come back as a branch for you to review and merge; the result says how.")
+		b.WriteString(" Set isolation to \"worktree\" to run it in its own git worktree, on a new branch from HEAD (uncommitted changes aren't included): " +
+			"for parallel tasks that edit code, or to try a change without touching your working tree. Its changes come back as a branch to review and merge.")
 	}
 	offered := t.offeredRoles()
 	if len(offered) > 0 {
-		b.WriteString("\n\nSet model to run a subagent on another model, chosen by role. Spend the strong model on judgement and the cheap ones on volume: " +
-			"give well-specified, mechanical work (searches, routine edits, tests, boilerplate) to a cheap role with a precise prompt, " +
-			"and keep design decisions, ambiguous debugging and final review for yourself or the smart role. Without model, the agent's own default applies.")
+		b.WriteString("\n\nSet model to run a subagent on another model, by role. Give well-specified, mechanical work " +
+			"(searches, routine edits, tests, boilerplate) to a cheap role with a precise prompt; keep design decisions, " +
+			"ambiguous debugging and final review for yourself or the smart role. Without model, the agent's own default applies.")
 		switch t.policy() {
 		case "balanced":
-			b.WriteString("\n\nDelegation policy: balanced. Before doing broad repository exploration or well-specified multi-step mechanical work yourself, delegate it to the appropriate cheap role. Delegate early, before duplicating the investigation in your own context. Keep one-read/one-edit tasks local when subagent startup and review would cost more, and personally verify important results.")
+			b.WriteString("\n\nDelegation policy: balanced. Delegate broad exploration and well-specified multi-step mechanical work to a cheap role " +
+				"instead of doing it yourself. Delegate early, before duplicating the investigation in your own context. Keep one-read/one-edit tasks local, " +
+				"and verify important results yourself.")
 		case "aggressive":
-			b.WriteString("\n\nDelegation policy: aggressive. Proactively delegate separable searches, routine implementation, tests, and boilerplate to the appropriate cheap or local role, preferably in parallel. Keep architectural decisions, ambiguous debugging, integration, and final review yourself. Avoid delegation only for truly trivial one-step work or when the handoff would duplicate work already done.")
+			b.WriteString("\n\nDelegation policy: aggressive. Proactively delegate separable searches, routine implementation, tests and boilerplate " +
+				"to a cheap or local role, in parallel where you can, and keep integration yourself. Skip delegation only for trivial one-step work " +
+				"or when the handoff would duplicate work already done.")
 		}
 		b.WriteString("\nModel roles:\n")
 		for _, r := range offered {

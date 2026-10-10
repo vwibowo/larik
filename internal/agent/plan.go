@@ -23,10 +23,11 @@ func (ExitPlanTool) ReadOnly() bool { return true }
 func (ExitPlanTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: permission.ExitPlanTool,
-		Description: "In plan mode, present your finished plan to the user for approval. If they approve, plan mode ends and you can " +
-			"make the changes; if not, you get their feedback and stay in plan mode to revise the plan. Use it only when the task needs " +
-			"changes you have planned (not for research or questions, which you just answer), and only once the plan is complete: " +
-			"which files change and how, in what order, and how you will check the result. Write the plan in Markdown, concise but specific.",
+		// When to use it at all (changes, not questions) is in planModeNote,
+		// which is there whenever plan mode is on; this goes with every request.
+		Description: "In plan mode, present your finished plan for the user's approval. If they approve, plan mode ends and you make " +
+			"the changes; if not, you get their feedback and revise the plan. The plan says which files change and how, in what order, " +
+			"and how you will check the result: Markdown, concise but specific.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"plan":{"type":"string","description":"The plan, in Markdown"}},
 			"required":["plan"]}`),

@@ -284,8 +284,8 @@ func (MultiEdit) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: MultiEditToolName,
 		Description: "Make several exact-string replacements in one file in a single call. Edits apply in order, each to the result of " +
-			"the ones before, and either all succeed or the file is left unchanged. Each old_string follows the edit tool's rules: an " +
-			"exact match (including whitespace), unique unless replace_all is true. Prefer it over repeated edit calls on the same file. Read the file first.",
+			"the ones before, and either all succeed or the file is left unchanged. Each old_string follows edit's rules. " +
+			"Prefer it over repeated edit calls on the same file. Read the file first.",
 		Schema: schema(`{"type":"object","properties":{
 			"path":{"type":"string"},
 			"edits":{"type":"array","minItems":1,"description":"Replacements, applied in order","items":{"type":"object","properties":{

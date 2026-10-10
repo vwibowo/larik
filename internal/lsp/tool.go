@@ -30,7 +30,7 @@ func (t Tool) Spec() llm.ToolSpec {
 		Description: "Semantic code navigation via language servers (" + strings.Join(langs, " ") + "). " +
 			"Operations: definition, references, hover (type/docs), symbols (outline of a file), workspace_symbols (search by name), diagnostics (errors in a file), " +
 			"code_actions (the server's fixes and refactorings for a line, e.g. add a missing import; apply one with apply_code_action). " +
-			"Positions are 1-based line and column, as shown by the read tool. Prefer this over grep for finding where a symbol is defined or used.",
+			"Prefer this over grep for finding where a symbol is defined or used.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"operation":{"type":"string","enum":["definition","references","hover","symbols","workspace_symbols","diagnostics","code_actions"]},
 			"path":{"type":"string","description":"File path (required except for workspace_symbols, where it selects the language)"},

@@ -12,6 +12,7 @@
   - Skill descriptions in the index are clipped at 160 characters instead of 250.
   - The plan-mode note no longer mentions graphify, and it names `run_code` only when the model has it.
   - The safety rules now say not to commit, push or create branches unless asked or allowed to.
+  - Shorter tool descriptions for `task`, `bash`, `todo_write`, `exit_plan_mode`, `memory`, `multi_edit` and `lsp`: the built-in tool definitions are 7% smaller, and `task` with model roles and a delegation policy is 15% smaller.
 - **The sandbox summary is the same in every run.** The system prompt calls the sandbox's temp directory `$TMPDIR` instead of giving its per-run path, so the parts that follow (skills, memory) stay in the provider's prompt cache from one session to the next.
 - **`run_code` state no longer grows the transcript.** Values from `store` now live in a state file beside the session, rewritten on each change and so never larger than the 1 MB limit. The transcript records only which keys a script stored or deleted, however often large values are rewritten. Sessions from v0.13.1 still load their logged values. A branch now starts with the session's current state wherever it is cut, rather than the state at the cut.
 - **`/clear` also clears `run_code` state.** A cleared context now starts scripts fresh too, and a resume doesn't bring the old values back. `/reload` and setting changes that need a fresh context still keep them.

@@ -43,10 +43,10 @@ func (TodoWrite) ReadOnly() bool { return true }
 func (TodoWrite) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: TodoToolName,
-		Description: "Keep a task list for the current work, shown to the user as a checklist. Use it when work has distinct phases or multiple independent deliverables that need progress tracking; skip it for a single bug fix, a question, or one deliverable with several requirements. " +
-			"Each call replaces the whole list, so send every item each time. Mark an item in_progress before starting it, with exactly one " +
-			"in_progress at a time, and completed as soon as it is done (not in batches). Only mark completed what is fully done: if tests fail " +
-			"or the work is blocked, keep it in_progress and add an item for what is needed. Remove items that no longer apply.",
+		Description: "Keep a task list for the current work, shown to the user as a checklist. Use it for work with distinct phases or several independent deliverables; " +
+			"skip it for a single bug fix, a question, or one deliverable with several requirements. Each call replaces the whole list. " +
+			"Mark an item in_progress before starting it, one at a time, and completed as soon as it is done, not in batches. " +
+			"If tests fail or the work is blocked, the item isn't done: keep it in_progress and add an item for what is needed. Remove items that no longer apply.",
 		Schema: schema(`{"type":"object","properties":{
 			"todos":{"type":"array","description":"The complete, updated list","items":{"type":"object","properties":{
 				"content":{"type":"string","description":"What to do, in the imperative (\"Run the tests\")"},
