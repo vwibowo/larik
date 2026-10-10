@@ -1139,8 +1139,7 @@ func (m *model) permDetail(e *agent.Event) string {
 }
 
 // statusLine is the footer: the permission mode on the left; model,
-// effort, context use and cost on the right. Hints drop out first when
-// the terminal is narrow.
+// effort and cost on the right. Hints drop out first when narrow.
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
 	modeChip := m.st.modeStyle(mode).Render(modeLabels[mode]) + m.execTag() + m.vimTag()
@@ -1168,26 +1167,6 @@ func (m *model) statusLine() string {
 			sandbox = m.st.err.Bold(true).Render("⚠ no sandbox")
 		}
 	}
-	// "31%", "▰▰▰▱▱▱▱▱▱▱ " and "62k/1.0M": how much of the model's context
-	// window is in use. The window is known before the first response, so it
-	// shows from the start.
-	ctxPct, ctxBar, ctxTokens := "", "", ""
-	if w := m.stats.ContextWindow; w > 0 {
-		used := max(m.stats.ContextTokens, 0)
-		pct := contextPercent(m.stats)
-		style := m.st.accent
-		switch {
-		case pct >= 90:
-			style = m.st.err
-		case pct >= 70:
-			style = m.st.warn
-		}
-		const cells = 10
-		full := (pct*cells + 50) / 100
-		ctxBar = style.Render(strings.Repeat("▰", full)) + m.st.dim.Render(strings.Repeat("▱", cells-full)) + " "
-		ctxPct = style.Render(fmt.Sprintf("%d%%", pct))
-		ctxTokens = m.st.dim.Render(humanTokens(used) + "/" + humanTokens(w))
-	}
 	var tail []string
 	if m.stats.CostUSD > 0 {
 		tail = append(tail, m.costText())
@@ -1200,7 +1179,7 @@ func (m *model) statusLine() string {
 	}
 
 	sep := m.st.dim.Render(" · ")
-	build := func(hint, withProvider, withBar, withTokens, withSandbox bool) string {
+	build := func(hint, withProvider, withSandbox bool) string {
 		left := modeChip
 		if len(customLines) > 0 {
 			left += " " + customLines[0]
@@ -1215,17 +1194,6 @@ func (m *model) statusLine() string {
 			parts = append(parts, sandbox)
 		}
 		parts = append(parts, extra...)
-		if ctxPct != "" {
-			ctx := m.st.dim.Render("ctx ")
-			if withBar {
-				ctx += ctxBar
-			}
-			ctx += ctxPct
-			if withTokens {
-				ctx += sep + ctxTokens
-			}
-			parts = append(parts, ctx)
-		}
 		parts = append(parts, tail...)
 		right := strings.Join(parts, sep)
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -1240,17 +1208,15 @@ func (m *model) statusLine() string {
 		}
 		return line
 	}
-	// Hints go first when the terminal is narrow, then the token counts, the
-	// bar, the provider and finally the sandbox state.
-	for _, v := range [][5]bool{
-		{true, true, true, true, true},
-		{false, true, true, true, true},
-		{false, true, true, false, true},
-		{false, true, false, false, true},
-		{false, false, false, false, true},
-		{false, false, false, false, false},
+	// Hints go first when the terminal is narrow, then the provider and
+	// finally the sandbox state.
+	for _, v := range [][3]bool{
+		{true, true, true},
+		{false, true, true},
+		{false, false, true},
+		{false, false, false},
 	} {
-		if line := build(v[0], v[1], v[2], v[3], v[4]); line != "" {
+		if line := build(v[0], v[1], v[2]); line != "" {
 			return line
 		}
 	}

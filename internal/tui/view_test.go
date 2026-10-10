@@ -242,7 +242,7 @@ func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 
 	m.width = 120
 	wide := plain(m.statusLine())
-	for _, want := range []string{"default", "shift+tab", "◆ m ollama", "effort high", "▰▰▰▱", "31%", "310/1k"} {
+	for _, want := range []string{"default", "shift+tab", "◆ m ollama", "effort high"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide footer lacks %q: %q", want, wide)
 		}
@@ -250,22 +250,13 @@ func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 
 	m.width = 50
 	narrow := plain(m.statusLine())
-	if strings.Contains(narrow, "shift+tab") || strings.Contains(narrow, "▰") || strings.Contains(narrow, "310/1k") || strings.Contains(narrow, "\n") {
-		t.Errorf("narrow footer should drop hints, the token counts and the bar and stay on one line: %q", narrow)
-	}
-	if !strings.Contains(narrow, "31%") || lipgloss.Width(narrow) > 50 {
-		t.Errorf("narrow footer should keep the percentage and fit: %q", narrow)
+	if strings.Contains(narrow, "shift+tab") || strings.Contains(narrow, "\n") || lipgloss.Width(narrow) > 50 {
+		t.Errorf("narrow footer should drop hints and fit on one line: %q", narrow)
 	}
 
-	// The token counts go before the bar, which goes before the provider.
 	m.width = 74
-	for _, want := range []string{"▰▰▰▱", "31%", "ollama"} {
-		if got := plain(m.statusLine()); !strings.Contains(got, want) {
-			t.Errorf("footer at 74 columns lacks %q: %q", want, got)
-		}
-	}
-	if got := plain(m.statusLine()); strings.Contains(got, "310/1k") {
-		t.Errorf("footer at 74 columns should have dropped the token counts: %q", got)
+	if got := plain(m.statusLine()); !strings.Contains(got, "ollama") {
+		t.Errorf("footer at 74 columns should keep the provider: %q", got)
 	}
 
 	m.agent.Perms().SetMode(permission.ModeYolo)
@@ -274,28 +265,30 @@ func TestFooterDropsHintsWhenNarrow(t *testing.T) {
 	}
 }
 
-// The window is known from the catalog or a probe before the first
-// response, so the footer shows it right away.
-func TestFooterShowsContextWindowBeforeAnyResponse(t *testing.T) {
+// Context usage is available in /info and status hook input, not in the
+// built-in footer, where the estimate is easy to misinterpret.
+func TestFooterOmitsContextUsage(t *testing.T) {
 	m := testModel(t)
-	m.width = 120
-	m.stats = agent.UsageInfo{ContextWindow: 200_000}
-	got := plain(m.statusLine())
-	for _, want := range []string{"ctx", "0%", "0/200k"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("footer lacks %q before the first response: %q", want, got)
+	for _, width := range []int{50, 74, 120} {
+		m.width = width
+		for _, stats := range []agent.UsageInfo{
+			{ContextWindow: 200_000},
+			{ContextWindow: 1_000_000, ContextTokens: 62_300},
+		} {
+			m.stats = stats
+			got := plain(m.statusLine())
+			for _, unwanted := range []string{"ctx", "▰", "▱", "%", "62k/1M", "0/200k"} {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("footer at width %d shows context %q: %q", width, unwanted, got)
+				}
+			}
 		}
-	}
-	m.stats = agent.UsageInfo{ContextWindow: 1_000_000, ContextTokens: 62_300}
-	if got := plain(m.statusLine()); !strings.Contains(got, "62k/1M") {
-		t.Errorf("footer should read used tokens over the window: %q", got)
 	}
 }
 
-// A window can turn out smaller than the provider ran with, so the share can
-// genuinely exceed the window. Every place that shows it caps it the same way:
-// one pane reading 118% while another reads 100% looks like a bug in larik.
-func TestContextPercentIsCappedEverywhere(t *testing.T) {
+// A window can turn out smaller than the provider ran with. Both /info and
+// the status hook input cap the share so neither reports more than 100%.
+func TestContextPercentIsCappedInInfoAndStatusPayload(t *testing.T) {
 	m := testModel(t)
 	m.width = 200
 	m.showInfo = true
@@ -303,7 +296,7 @@ func TestContextPercentIsCappedEverywhere(t *testing.T) {
 	if got := contextPercent(m.stats); got != 100 {
 		t.Errorf("contextPercent = %d, want it capped at 100", got)
 	}
-	panes := map[string]string{"footer": plain(m.statusLine()), "status hook": m.statusPayload()}
+	panes := map[string]string{"status hook": m.statusPayload()}
 	for _, rows := range m.sessionSections(60, 0) {
 		panes["sidebar"] += plain(strings.Join(rows, "\n"))
 	}

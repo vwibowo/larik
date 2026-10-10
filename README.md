@@ -236,13 +236,12 @@ Each thing you should recognize at a glance has its own color in the footer:
 | Effort `low` … `max` | one magenta hue that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
 | `◈ sandbox` / `⚠ no sandbox` | green when the sandbox is on; amber when it is off (red if you are also in `yolo`) |
 | Cost | plain; with a session budget it reads `$0.68/$2.00`, amber at the warning threshold and red at the cap |
-| Context | reads `ctx ▰▰▰▱▱▱▱▱▱▱ 31% · 62k/200k`: the share of the model's context window in use, the tokens in it and the window's size. The bar and the percentage turn amber at 70% and red at 90%; the counts are dropped first on a narrow terminal |
 
 Teal is kept for Larik's own chrome: the model marker, the spinner, headings and borders. A subagent that is waiting for a permission answer is shown in amber.
 
 ### Status line
 
-`status_line` adds a command's output to the left side of the footer while keeping Larik's model, context, cost and other safety information on the right. The permission mode stays at the start. Use `/statusline` or **Custom status line** in `/config` to edit the command and refresh interval, test a preview with current session data, or disable it:
+`status_line` adds a command's output to the left side of the footer while keeping Larik's model, cost and other safety information on the right. Context usage is available in `/info` and the status command's JSON input, but not in the built-in footer because its estimate can be misinterpreted. The permission mode stays at the start. Use `/statusline` or **Custom status line** in `/config` to edit the command and refresh interval, test a preview with current session data, or disable it:
 
 ```json
 { "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
