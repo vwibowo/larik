@@ -168,3 +168,11 @@ func TestTool(t *testing.T) {
 		t.Errorf("empty list: %s", out)
 	}
 }
+
+// TestGuidanceSizeBudget caps the memory guidance, which is in every
+// request's system prompt; see agent.TestPromptSizeBudget.
+func TestGuidanceSizeBudget(t *testing.T) {
+	if limit := 1300; len(guidance) > limit {
+		t.Errorf("memory guidance is %d bytes, over its %d-byte budget: trim it, or raise the limit on purpose", len(guidance), limit)
+	}
+}

@@ -28,3 +28,23 @@ func TestMinimalContextDropsGlobalInstructions(t *testing.T) {
 		t.Errorf("MinimalContextSections should still include the env block:\n%s", minimal)
 	}
 }
+
+// TestPromptSizeBudget caps the fixed prompt text sent with every request
+// (the plan-mode note with every prompt in plan mode). Growing it costs
+// tokens on every turn of every session, so it should be a decision: if a
+// change needs more room, raise the limit in the same change and say why
+// in its message. Sizes are bytes, about four per token.
+func TestPromptSizeBudget(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		text  string
+		limit int
+	}{
+		{"basePrompt (with SafetySection)", basePrompt, 1800},
+		{"planModeNote with run_code", planModeNote + planCodeClause, 450},
+	} {
+		if len(c.text) > c.limit {
+			t.Errorf("%s is %d bytes, over its %d-byte budget: trim it, or raise the limit on purpose", c.name, len(c.text), c.limit)
+		}
+	}
+}

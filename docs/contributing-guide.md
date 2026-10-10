@@ -121,6 +121,7 @@ Consume `Agent.Run` and `Agent.Background()` and answer every `EvPermission` exa
 These are easy to break by accident and expensive to debug:
 
 - **Don't change the prompt prefix mid-context.** System prompt, tool list and earlier messages must stay byte-identical between requests. New tools, prompt text or settings that affect the prompt apply from the next fresh context: build them in `App.SystemPrompt` or `App.loadTools`, which run at session start and on `Clear`.
+- **Keep fixed prompt text within its budget.** The base prompt, the plan-mode note and the memory guidance are sent with every request, so `TestPromptSizeBudget` and `TestGuidanceSizeBudget` cap their size. Don't repeat what a tool's description already says. If new text needs the room, raise the limit in the same commit and say why. Text that changes from run to run (paths, IDs) doesn't belong in the system prompt: it ends the cached prefix at that point.
 - **Don't rewrite the transcript.** Append entries; express corrections as notes on the next user message.
 - **Every `tool_use` gets exactly one `tool_result`**, in order, even on error or interrupt.
 - **Branch only at turn boundaries** (`session.IsPrompt`).
