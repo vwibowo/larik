@@ -142,9 +142,22 @@ func TestHide(t *testing.T) {
 	set.Reload()
 	check("after Reload")
 
+	if sk, _ := set.Get("cmux-browser"); !sk.Hidden {
+		t.Error("a hidden skill should say so, for /skills")
+	}
+
+	mk(t, root, "deploy", "---\nname: deploy\ndescription: Deploy\ndisable-model-invocation: true\n---\nShip.\n")
+	set.Reload()
 	set.Hide([]string{"*"})
 	if set.Index() != "" {
 		t.Errorf("with every skill hidden there is no index: %q", set.Index())
+	}
+	if sk, _ := set.Get("deploy"); sk.Hidden {
+		t.Error("a manual-only skill isn't hidden by the setting; its frontmatter keeps it manual")
+	}
+	set.Hide(nil)
+	if idx := set.Index(); !strings.Contains(idx, "cmux-browser") || strings.Contains(idx, "deploy") {
+		t.Errorf("unhiding should offer the hidden skills again, and only those:\n%s", idx)
 	}
 }
 

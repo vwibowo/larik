@@ -30,6 +30,9 @@ type Skill struct {
 	Scope       string // "user" or "project"
 	// ModelInvocable skills appear in the system prompt index.
 	ModelInvocable bool
+	// Hidden marks a skill the skills.hide setting keeps from the model (see
+	// Set.Hide); it would otherwise be ModelInvocable.
+	Hidden bool
 	// UserInvocable skills can be run as /name.
 	UserInvocable bool
 	// Command marks a Claude Code-style custom command: a single
@@ -111,9 +114,7 @@ func Discover(roots []Root) *Set { return discover(roots, nil) }
 func discover(roots []Root, hide []string) *Set {
 	s := &Set{roots: roots, hide: hide, byName: map[string]Skill{}}
 	add := func(sk Skill) {
-		if hidden(sk.Name, hide) {
-			sk.ModelInvocable = false
-		}
+		sk = applyHide(sk, hide)
 		// Replacing a built-in command with your own is not a conflict.
 		if prev, ok := s.byName[sk.Name]; ok && !prev.Builtin && !sameFile(prev.Path, sk.Path) {
 			s.Shadowed = append(s.Shadowed, prev)
@@ -281,11 +282,21 @@ func (s *Set) Hide(patterns []string) {
 	defer s.mu.Unlock()
 	s.hide = append([]string(nil), patterns...)
 	for name, sk := range s.byName {
-		if hidden(name, s.hide) {
-			sk.ModelInvocable = false
-			s.byName[name] = sk
-		}
+		s.byName[name] = applyHide(sk, s.hide)
 	}
+}
+
+// applyHide hides or unhides sk for patterns. Only a skill the model could
+// otherwise invoke is marked Hidden, so unhiding never offers one that
+// disable-model-invocation (or a missing description) keeps manual.
+func applyHide(sk Skill, patterns []string) Skill {
+	switch h := hidden(sk.Name, patterns); {
+	case h && sk.ModelInvocable:
+		sk.ModelInvocable, sk.Hidden = false, true
+	case !h && sk.Hidden:
+		sk.ModelInvocable, sk.Hidden = true, false
+	}
+	return sk
 }
 
 func hidden(name string, patterns []string) bool {

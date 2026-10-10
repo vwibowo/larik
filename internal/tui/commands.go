@@ -534,7 +534,10 @@ func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 		if sk.Command {
 			flags[0] += " command"
 		}
-		if !sk.ModelInvocable {
+		switch {
+		case sk.Hidden:
+			flags = append(flags, "hidden by skills.hide")
+		case !sk.ModelInvocable:
 			flags = append(flags, "manual only")
 		}
 		if !sk.UserInvocable {

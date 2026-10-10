@@ -6,7 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"larik/internal/config"
+	"larik/internal/skills"
 )
 
 // TestHiddenSkillsSetting: the row edits your own patterns for this
@@ -54,5 +57,37 @@ func TestHiddenSkillsSetting(t *testing.T) {
 	}
 	if got := strings.Join(cfg.Skills.Hide, ","); got != "shared-*" || len(config.ListAt(local, "skills.hide")) != 0 {
 		t.Errorf("empty clears only yours: in force %q", got)
+	}
+}
+
+// TestSkillsCommandSaysWhatHidesASkill: /skills tells a skill hidden by
+// skills.hide apart from one its own frontmatter keeps manual.
+func TestSkillsCommandSaysWhatHidesASkill(t *testing.T) {
+	m := testModel(t)
+	root := t.TempDir()
+	for name, fm := range map[string]string{
+		"cmux-browser": "description: Drive a browser",
+		"deploy":       "description: Deploy\ndisable-model-invocation: true",
+	} {
+		dir := filepath.Join(root, name)
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+name+"\n"+fm+"\n---\nbody\n"), 0o644)
+	}
+	set := skills.Discover([]skills.Root{{Dir: root, Scope: "user"}})
+	set.Hide([]string{"cmux-*"})
+	m.opts.Skills = set
+	var got string
+	m.skillsCommand(func(s string) tea.Cmd { got = ansi.Strip(s); return nil })
+	lines := map[string]string{}
+	for _, l := range strings.Split(got, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			lines[strings.TrimPrefix(f[0], "/")] = l
+		}
+	}
+	if !strings.Contains(lines["cmux-browser"], "hidden by skills.hide") || strings.Contains(lines["cmux-browser"], "manual only") {
+		t.Errorf("hidden skill: %q", lines["cmux-browser"])
+	}
+	if !strings.Contains(lines["deploy"], "manual only") || strings.Contains(lines["deploy"], "skills.hide") {
+		t.Errorf("manual-only skill: %q", lines["deploy"])
 	}
 }

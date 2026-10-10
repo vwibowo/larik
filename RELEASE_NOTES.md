@@ -2,7 +2,7 @@
 
 ### Added
 
-- **`skills.hide` setting.** `"skills": {"hide": ["cmux-*"]}` takes matching skills out of the model's index and the `skill` tool, so skills that don't apply to a project don't take up prompt tokens. You can still run them as `/name`. A shared `.larik/settings.json` may set it too. In the TUI it's the "Hidden skills" row of `/config`, which saves to your private settings for the current project.
+- **`skills.hide` setting.** `"skills": {"hide": ["cmux-*"]}` takes matching skills out of the model's index and the `skill` tool, so skills that don't apply to a project don't take up prompt tokens. You can still run them as `/name`, and `/skills` marks them as hidden. A shared `.larik/settings.json` may set it too. In the TUI it's the "Hidden skills" row of `/config`, which saves to your private settings for the current project.
 
 ### Changed
 
