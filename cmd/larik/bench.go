@@ -109,7 +109,7 @@ func runBench(args []string) error {
 						fmt.Println("interrupted")
 						return ctx.Err()
 					}
-					res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed})
+					res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime})
 					res.Model = row
 					all = append(all, res)
 					printResult(res)

@@ -132,6 +132,31 @@ func toolUse(name, input string) llm.Block {
 	return llm.Block{Type: llm.BlockToolUse, ID: "x", Name: name, Input: json.RawMessage(input)}
 }
 
+// fixingRuntime stands in for a whole-turn runtime such as claude-code-cli:
+// it fixes the first benchmark fixture through the agent's tool bridge.
+type fixingRuntime struct{ requests int }
+
+func (r *fixingRuntime) Run(_ context.Context, req llm.AgentRuntimeRequest) (<-chan llm.AgentRuntimeEvent, error) {
+	r.requests++
+	out := make(chan llm.AgentRuntimeEvent, 6)
+	read := llm.Block{Type: llm.BlockToolUse, ID: "read", Name: "read", Input: json.RawMessage(`{"path":"calc/calc.go"}`)}
+	edit := llm.Block{Type: llm.BlockToolUse, ID: "edit", Name: "edit", Input: json.RawMessage(`{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}
+	go func() {
+		defer close(out)
+		for _, call := range []llm.Block{read, edit} {
+			assistant := llm.Message{Role: llm.RoleAssistant, Model: req.Model, Blocks: []llm.Block{call}}
+			out <- llm.AgentRuntimeEvent{Assistant: &assistant}
+			result := make(chan llm.Block, 1)
+			out <- llm.AgentRuntimeEvent{Tool: &llm.AgentRuntimeToolRequest{Call: call, Result: result}}
+			<-result
+		}
+		final := llm.Message{Role: llm.RoleAssistant, Model: req.Model, Blocks: []llm.Block{llm.TextBlock("Fixed.")}}
+		out <- llm.AgentRuntimeEvent{Assistant: &final}
+		out <- llm.AgentRuntimeEvent{Done: true}
+	}()
+	return out, nil
+}
+
 func TestCompactionRetentionScoring(t *testing.T) {
 	task := compactionRetentionTask()
 	c := task.compaction
@@ -253,6 +278,17 @@ func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {
 	}
 	if strings.Contains(system, "Larik is a terminal coding agent written in Go") {
 		t.Error("bench loaded this repository's AGENTS.md instead of only the fixture's instructions")
+	}
+}
+
+func TestRunUsesWholeTurnRuntime(t *testing.T) {
+	task := Tasks()[0]
+	runtime := &fixingRuntime{}
+	// The provider has no steps and would panic if RunWith streamed through it.
+	p := &scriptedProvider{}
+	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, Runtime: runtime})
+	if !res.Pass || runtime.requests != 1 || len(p.requests) != 0 {
+		t.Fatalf("runtime run = %+v, runtime requests %d, provider requests %d", res, runtime.requests, len(p.requests))
 	}
 }
 

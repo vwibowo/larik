@@ -6,7 +6,7 @@
 
 ### Changed
 
-- **`larik bench` now measures Larik's system prompt.** Runs use the base prompt and the fixture's project instructions, without personal instructions, skills or memory. Previously bench sent no system prompt; agent runtimes such as `claude-code-cli` could substitute their own, and prompt changes weren't measured. Results from before this change aren't directly comparable.
+- **`larik bench` now measures Larik's system prompt.** Runs use the base prompt and the fixture's project instructions, without personal instructions, skills or memory. Previously bench sent no system prompt; agent runtimes such as `claude-code-cli` could substitute their own, and prompt changes weren't measured. Results from before this change aren't directly comparable. Bench also passes whole-turn runtimes through, so `claude-code-cli/*` models work instead of failing before a request.
 - **A leaner system prompt.**
   - The base prompt drops guidance that the `edit`, `write` and `todo_write` descriptions already give.
   - The memory section is about a fifth shorter.

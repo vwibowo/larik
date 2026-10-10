@@ -97,6 +97,9 @@ type Options struct {
 	// KeepFailed keeps a failed run's directory and transcript instead of
 	// deleting it, to see why it failed.
 	KeepFailed bool
+	// Runtime handles a whole agent turn (for example claude-code-cli),
+	// instead of streaming through Provider.
+	Runtime llm.AgentRuntime
 }
 
 // Run sets up task in a fresh temporary directory, gives its prompt to a
@@ -160,6 +163,7 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 	}
 	a := agent.New(agent.Options{
 		Provider:  provider,
+		Runtime:   o.Runtime,
 		Model:     model,
 		System:    system,
 		Cwd:       dir,
