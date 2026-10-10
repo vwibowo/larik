@@ -443,6 +443,27 @@ func TestMemorySetting(t *testing.T) {
 	}
 }
 
+func TestSkillsHideAddsUp(t *testing.T) {
+	cwd := t.TempDir()
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	// Hiding only narrows what the model is offered, so a shared file may
+	// add patterns alongside personal ones.
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"skills":{"hide":["cmux-*"]}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"skills":{"hide":["pdf"]}}`)
+	cfg, err := Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Skills.Hide, ",") != "cmux-*,pdf" {
+		t.Errorf("skills.hide = %v", cfg.Skills.Hide)
+	}
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"skills":{"hide":["[bad"]}}`)
+	if _, err := Load(cwd); err == nil || !strings.Contains(err.Error(), "skills.hide") {
+		t.Errorf("a malformed pattern should fail the load: %v", err)
+	}
+}
+
 func TestAutoModeOnlyFromPersonalSettings(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()

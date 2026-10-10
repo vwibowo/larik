@@ -17,6 +17,7 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -171,6 +172,10 @@ type Config struct {
 	// Memory configures the notes Larik keeps across sessions. Shared
 	// files may only switch it off.
 	Memory MemoryConfig `json:"memory,omitempty"`
+
+	// Skills narrows which skills the model is offered. Every file's
+	// hide patterns add up, since hiding only takes access away.
+	Skills SkillsConfig `json:"skills,omitempty"`
 
 	// AutoMode configures auto mode's safety check. Only personal files
 	// may set it: a shared file choosing the model that approves its own
@@ -351,16 +356,7 @@ func Load(cwd string) (*Config, error) {
 		ApprovedMCP: map[string]string{},
 	}
 	cfg.ConfigDir, cfg.DataDir, cfg.Cwd = configDir(), dataDir(), cwd
-	layers := []struct {
-		path    string
-		trusted bool // servers from this file start without approval
-	}{
-		{filepath.Join(cfg.ConfigDir, "config.json"), true},
-		{filepath.Join(cwd, ".mcp.json"), false},
-		{filepath.Join(cwd, ".larik", "settings.json"), false},
-		{LocalSettingsPath(cwd), true},
-	}
-	for _, l := range layers {
+	for _, l := range layers(cfg.ConfigDir, cwd) {
 		if err := cfg.merge(l.path, l.trusted); err != nil {
 			return nil, err
 		}
@@ -385,10 +381,30 @@ func Load(cwd string) (*Config, error) {
 			return nil, fmt.Errorf("model_execution %q: %w", k, err)
 		}
 	}
+	for _, p := range cfg.Skills.Hide {
+		if _, err := path.Match(p, ""); err != nil {
+			return nil, fmt.Errorf("skills.hide %q: %w", p, err)
+		}
+	}
 	if cfg.MaxTurns == 0 {
 		cfg.MaxTurns = 200
 	}
 	return cfg, nil
+}
+
+type layer struct {
+	path    string
+	trusted bool // servers from this file start without approval
+}
+
+// layers lists the settings files Load merges, in order.
+func layers(configDir, cwd string) []layer {
+	return []layer{
+		{filepath.Join(configDir, "config.json"), true},
+		{filepath.Join(cwd, ".mcp.json"), false},
+		{filepath.Join(cwd, ".larik", "settings.json"), false},
+		{LocalSettingsPath(cwd), true},
+	}
 }
 
 func (c *Config) merge(path string, trusted bool) error {
@@ -440,6 +456,7 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.Memory.Enabled != nil && (trusted || !*o.Memory.Enabled) {
 		c.Memory.Enabled = o.Memory.Enabled
 	}
+	c.Skills.Hide = append(c.Skills.Hide, o.Skills.Hide...)
 	if trusted && o.AutoMode.Model != "" {
 		c.AutoMode.Model = o.AutoMode.Model
 	}
@@ -1220,6 +1237,48 @@ func RemoveListItem(file, path, item string) error {
 	})
 }
 
+// ListAt reads the string list at a dotted path in the settings file at
+// file; nil when the file or the list is missing or unreadable.
+func ListAt(file, path string) []string {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil
+	}
+	var raw map[string]any
+	if json.Unmarshal(data, &raw) != nil {
+		return nil
+	}
+	return listAt(raw, strings.Split(path, "."))
+}
+
+// ProjectSkillsHide is your own skills.hide list for this project, from
+// LocalSettingsPath: what /config edits, without the patterns other files
+// add.
+func (c *Config) ProjectSkillsHide() []string {
+	return ListAt(LocalSettingsPath(c.Cwd), "skills.hide")
+}
+
+// SetProjectSkillsHide saves your skills.hide list for this project (none
+// when patterns is empty) and updates c.Skills.Hide to what Load would
+// now give. It goes in your private project settings, not the user
+// config: hiding is usually about one project, and a list shown merged
+// with a shared file's patterns must not carry them into every project.
+func (c *Config) SetProjectSkillsHide(patterns []string) error {
+	var value any
+	if len(patterns) > 0 {
+		value = patterns
+	}
+	if err := c.SetProjectSettingPath("skills.hide", value); err != nil {
+		return err
+	}
+	var hide []string
+	for _, l := range layers(c.ConfigDir, c.Cwd) {
+		hide = append(hide, ListAt(l.path, "skills.hide")...)
+	}
+	c.Skills.Hide = hide
+	return nil
+}
+
 // SetBrowserEnabled updates only the personal browser switch, preserving
 // headless and chrome_path. Browser tools remain off by default.
 func (c *Config) SetBrowserEnabled(enabled bool) error {
@@ -1623,6 +1682,14 @@ type MemoryConfig struct {
 
 // MemoryOn reports whether memory is enabled (default on).
 func (c *Config) MemoryOn() bool { return on(c.Memory.Enabled, true) }
+
+// SkillsConfig is the "skills" settings section.
+type SkillsConfig struct {
+	// Hide lists skill names or glob patterns ("cmux-*") to leave out of
+	// the system prompt's index and the skill tool. Hidden skills stay
+	// available to the user as /name.
+	Hide []string `json:"hide,omitempty"`
+}
 
 // AutoModeConfig is the "auto_mode" settings section.
 type AutoModeConfig struct {

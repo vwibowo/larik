@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -101,6 +102,10 @@ type settingSpec struct {
 	// covers names the settings an action row is responsible for, when they
 	// are not its key: /routing is one row over four of them.
 	covers []string
+	// save, when set, writes the checked value somewhere other than the user
+	// config and updates the config to match, returning the file it wrote;
+	// store and set are then unused.
+	save func(m *model, v string) (string, error)
 }
 
 // configPath is the dotted path the setting is written at.
@@ -125,6 +130,18 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// splitList splits a comma-separated text setting into its trimmed,
+// non-empty items.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // orEmpty stores v, or removes the key when v is the default.
@@ -450,6 +467,26 @@ var settingSpecs = []settingSpec{
 		get:     func(m *model) string { return onOff(m.opts.Config.MemoryOn()) },
 		store:   func(v string) any { return v == "on" },
 		set:     func(m *model, v string) { on := v == "on"; m.opts.Config.Memory.Enabled = &on },
+	},
+	{
+		key: "skills_hide", path: "skills.hide", title: "Hidden skills", section: "tools", kind: kindText,
+		placeholder: "skill names or patterns, comma-separated, e.g. cmux-*, pdf; empty hides none",
+		applies:     applyReload,
+		later:       "for this project only; patterns from other settings files still apply, and you can still run hidden skills as /name",
+		valid: func(v string) error {
+			for _, p := range splitList(v) {
+				if _, err := path.Match(p, ""); err != nil {
+					return fmt.Errorf("%q is not a valid pattern", p)
+				}
+			}
+			return nil
+		},
+		// Only your own patterns for this project: the merged list would
+		// copy a shared file's patterns into your settings.
+		get: func(m *model) string { return strings.Join(m.opts.Config.ProjectSkillsHide(), ", ") },
+		save: func(m *model, v string) (string, error) {
+			return config.LocalSettingsPath(m.opts.Config.Cwd), m.opts.Config.SetProjectSkillsHide(splitList(v))
+		},
 	},
 	{
 		key: "web_fetch", path: "web.fetch_disabled", title: "Web fetch", section: "tools", kind: kindToggle,
@@ -880,15 +917,22 @@ func (m *model) saveSetting(key, raw string) (settingSpec, string, error) {
 	if busy := m.busySetting(spec, v); busy != "" {
 		return spec, "", fmt.Errorf("%s", busy)
 	}
-	if err := m.opts.Config.SetUserSettingPath(spec.configPath(), spec.store(v)); err != nil {
-		return spec, "", fmt.Errorf("couldn't save: %w", err)
+	file := m.opts.Config.UserConfigPath()
+	if spec.save != nil {
+		if file, err = spec.save(m, v); err != nil {
+			return spec, "", fmt.Errorf("couldn't save: %w", err)
+		}
+	} else {
+		if err := m.opts.Config.SetUserSettingPath(spec.configPath(), spec.store(v)); err != nil {
+			return spec, "", fmt.Errorf("couldn't save: %w", err)
+		}
+		spec.set(m, v)
 	}
-	spec.set(m, v)
 	shown := spec.label(v)
 	if spec.kind == kindText && v == "" {
 		shown = "not set"
 	}
-	return spec, spec.title + " set to " + shown + " · saved to " + shortHome(m.opts.Config.UserConfigPath()), nil
+	return spec, spec.title + " set to " + shown + " · saved to " + shortHome(file), nil
 }
 
 // configCommand handles /config key=value (or "key value").
@@ -1017,7 +1061,7 @@ func (m *model) buildSettings() {
 	files := []struct{ path, label, what string }{
 		{cfg.UserConfigPath(), shortHome(cfg.UserConfigPath()), "yours, all projects · /config saves here"},
 		{filepath.Join(cfg.Cwd, ".larik", "settings.json"), ".larik/settings.json", "this project, shared"},
-		{config.LocalSettingsPath(cfg.Cwd), "private project settings", "this project, yours"},
+		{config.LocalSettingsPath(cfg.Cwd), "private project settings", "this project, yours · Hidden skills saves here"},
 	}
 	for _, f := range files {
 		note := "not created"

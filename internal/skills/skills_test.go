@@ -118,6 +118,36 @@ func TestReload(t *testing.T) {
 	}
 }
 
+// TestHide: hidden skills leave the index and the skill tool, stay
+// available as /name, and stay hidden after a reload.
+func TestHide(t *testing.T) {
+	root := t.TempDir()
+	mk(t, root, "cmux-browser", "---\nname: cmux-browser\ndescription: Drive a browser\n---\nBrowse.\n")
+	mk(t, root, "pdf", "---\nname: pdf\ndescription: Fill PDFs\n---\nFill.\n")
+	set := Discover([]Root{{Dir: root, Scope: "user"}})
+	set.Hide([]string{"cmux-*"})
+	check := func(when string) {
+		t.Helper()
+		if idx := set.Index(); strings.Contains(idx, "cmux-browser") || !strings.Contains(idx, "- pdf: Fill PDFs") {
+			t.Errorf("%s: index:\n%s", when, idx)
+		}
+		if r := (Tool{Set: set}).Run(context.Background(), nil, json.RawMessage(`{"name":"cmux-browser"}`)); !r.IsError {
+			t.Errorf("%s: a hidden skill must not load through the tool: %+v", when, r)
+		}
+		if got, ok := set.Expand("/cmux-browser"); !ok || !strings.Contains(got, "Browse.") {
+			t.Errorf("%s: the user may still run a hidden skill: %q", when, got)
+		}
+	}
+	check("after Hide")
+	set.Reload()
+	check("after Reload")
+
+	set.Hide([]string{"*"})
+	if set.Index() != "" {
+		t.Errorf("with every skill hidden there is no index: %q", set.Index())
+	}
+}
+
 // TestIndexBudget: long descriptions are clipped and, past the budget,
 // skills are still named so the model can load them.
 func TestIndexBudget(t *testing.T) {

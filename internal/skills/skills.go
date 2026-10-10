@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -55,6 +56,7 @@ type frontmatter struct {
 type Set struct {
 	mu       sync.RWMutex
 	roots    []Root
+	hide     []string // name patterns kept from the model (see Hide)
 	byName   map[string]Skill
 	Shadowed []Skill  // lower-precedence duplicates
 	Warnings []string // unreadable or malformed skills
@@ -104,9 +106,14 @@ func Roots(home, configDir, cwd, repoRoot string) []Root {
 }
 
 // Discover loads skills from roots; later roots override earlier ones.
-func Discover(roots []Root) *Set {
-	s := &Set{roots: roots, byName: map[string]Skill{}}
+func Discover(roots []Root) *Set { return discover(roots, nil) }
+
+func discover(roots []Root, hide []string) *Set {
+	s := &Set{roots: roots, hide: hide, byName: map[string]Skill{}}
 	add := func(sk Skill) {
+		if hidden(sk.Name, hide) {
+			sk.ModelInvocable = false
+		}
 		// Replacing a built-in command with your own is not a conflict.
 		if prev, ok := s.byName[sk.Name]; ok && !prev.Builtin && !sameFile(prev.Path, sk.Path) {
 			s.Shadowed = append(s.Shadowed, prev)
@@ -253,10 +260,41 @@ func (s *Set) Reload() {
 	if s == nil {
 		return
 	}
-	fresh := Discover(s.roots)
+	s.mu.RLock()
+	hide := s.hide
+	s.mu.RUnlock()
+	fresh := discover(s.roots, hide)
 	s.mu.Lock()
 	s.byName, s.Shadowed, s.Warnings = fresh.byName, fresh.Shadowed, fresh.Warnings
 	s.mu.Unlock()
+}
+
+// Hide keeps skills whose names match any of patterns (path.Match globs,
+// e.g. "cmux-*") from the model: they leave the system prompt's index and
+// the skill tool, as with disable-model-invocation, but stay available to
+// the user as /name. It lasts across Reload.
+func (s *Set) Hide(patterns []string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hide = append([]string(nil), patterns...)
+	for name, sk := range s.byName {
+		if hidden(name, s.hide) {
+			sk.ModelInvocable = false
+			s.byName[name] = sk
+		}
+	}
+}
+
+func hidden(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func sameFile(a, b string) bool {

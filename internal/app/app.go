@@ -119,6 +119,7 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	a.Telemetry, a.TelemetryNote = startTelemetry(cfg, version)
 	a.Skills = skills.Discover(skills.Roots(home, cfg.ConfigDir, cwd, gitRoot))
+	a.Skills.Hide(cfg.Skills.Hide)
 	baseTools := tools.Builtin()
 	sbCfg := cfg.Sandbox
 	sbCfg.SecretEnv, sbCfg.SecretPaths = secretEnv(cfg), secretPaths(cfg)
