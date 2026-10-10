@@ -146,6 +146,11 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 			return res
 		}
 	}
+	// Bench uses Larik's real base prompt, not a blank prompt (which lets
+	// agent runtimes such as claude-code-cli substitute their own). Keep the
+	// config directory empty so a benchmark never depends on the runner's
+	// personal instructions; project instructions in the fixture still apply.
+	system := agent.BuildSystemPrompt(dir, filepath.Join(root, "config")) + "\n\n" + agent.DateSection()
 	registry := tools.Default()
 	if task.compaction != nil {
 		// The recovery answer must come from the summary alone. In particular,
@@ -156,6 +161,7 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 	a := agent.New(agent.Options{
 		Provider:  provider,
 		Model:     model,
+		System:    system,
 		Cwd:       dir,
 		MaxTurns:  40,
 		Tools:     registry,

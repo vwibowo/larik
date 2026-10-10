@@ -244,6 +244,16 @@ func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {
 	if res.Duration <= 0 {
 		t.Errorf("duration should be recorded")
 	}
+	if len(p.requests) == 0 {
+		t.Fatal("the provider got no request")
+	}
+	system := p.requests[0].System
+	if !strings.Contains(system, "You are Larik, a coding agent") || !strings.Contains(system, "Working directory:") || !strings.Contains(system, "Today's date:") {
+		t.Errorf("bench should send Larik's real base prompt: %q", system)
+	}
+	if strings.Contains(system, "Larik is a terminal coding agent written in Go") {
+		t.Error("bench loaded this repository's AGENTS.md instead of only the fixture's instructions")
+	}
 }
 
 func TestRunFailsWhenTheAgentDoesNothing(t *testing.T) {
