@@ -378,7 +378,7 @@ func (s *Set) Body(name string) (Skill, string, error) {
 // remaining skills are listed by name only. The index is in every
 // request's system prompt.
 const (
-	maxIndexDesc = 250
+	maxIndexDesc = 160
 	indexBudget  = 8000
 )
 

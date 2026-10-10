@@ -46,8 +46,11 @@ func TestExitPlanModeApproved(t *testing.T) {
 	}
 	note := fp.requests[0].Messages[0].Text()
 	if !strings.Contains(note, "Plan mode is on") || !strings.Contains(note, "Bash is blocked") ||
-		!strings.Contains(note, "including graphify queries") || !strings.Contains(note, "do not retry") {
+		!strings.Contains(note, "do not retry") {
 		t.Errorf("the model should be told to use read-only tools, not bash: %q", note)
+	}
+	if strings.Contains(note, "run_code") || strings.Contains(note, "graphify") {
+		t.Errorf("the note should name only tools the model has, and nothing project-specific: %q", note)
 	}
 	if got := a.Perms().Mode(); got != permission.ModeAcceptEdits {
 		t.Fatalf("mode after approval = %s", got)
@@ -75,6 +78,9 @@ func TestCodeExecutionCanPresentPlan(t *testing.T) {
 	}
 	if strings.Join(declared, ",") != "run_code,exit_plan_mode" {
 		t.Fatalf("code execution tools = %v", declared)
+	}
+	if note := fp.requests[0].Messages[0].Text(); !strings.Contains(note, "wrapping bash in run_code does not bypass this") {
+		t.Errorf("with run_code, the note should say it can't get around plan mode: %q", note)
 	}
 }
 

@@ -58,10 +58,12 @@ func PlanOf(input json.RawMessage) string {
 // rather than the system prompt so the cached prefix stays the same.
 const (
 	planModeNote = "Plan mode is on: explore and plan with read-only tools, and don't change anything. " +
-		"Bash is blocked even for commands that look read-only (including graphify queries); wrapping bash in run_code does not bypass this. " +
+		"Bash is blocked even for commands that look read-only%s. " +
 		"Use read, grep, and glob instead, and do not retry a denied command. When the plan is ready, present it with " +
 		"exit_plan_mode for the user's approval; if the request is a question rather than a change, just answer it."
-	planEndedNote = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
+	// planCodeClause joins planModeNote when the model has run_code.
+	planCodeClause = "; wrapping bash in run_code does not bypass this"
+	planEndedNote  = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
 )
 
 // planNotesLocked adds the plan-mode note for the next prompt. a.mu must be held.
@@ -71,7 +73,13 @@ func (a *Agent) planNotesLocked() {
 	}
 	switch {
 	case a.opts.Perms.Mode() == permission.ModePlan:
-		a.notes = append(a.notes, planModeNote)
+		clause := ""
+		if reg := a.activeLocked(); reg != nil {
+			if _, ok := reg.Get(tools.CodeToolName); ok {
+				clause = planCodeClause
+			}
+		}
+		a.notes = append(a.notes, fmt.Sprintf(planModeNote, clause))
 		a.planNoted = true
 	case a.planNoted:
 		a.notes = append(a.notes, planEndedNote)
