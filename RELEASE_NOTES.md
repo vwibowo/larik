@@ -1,8 +1,10 @@
-# Unreleased
+# Larik v0.14.0 (pending local release)
 
 ### Added
 
 - **`skills.hide` setting.** `"skills": {"hide": ["cmux-*"]}` takes matching skills out of the model's index and the `skill` tool, so skills that don't apply to a project don't take up prompt tokens. You can still run them as `/name`, and `/skills` marks them as hidden. A shared `.larik/settings.json` may set it too. In the TUI it's the "Hidden skills" row of `/config`, which saves to your private settings for the current project.
+
+- **Offline-safe provider catalog.** Larik uses its private cached provider and model metadata at startup when available, then refreshes it in the background for the next launch.
 
 ### Changed
 
@@ -24,9 +26,16 @@
 - **Tool time counts overlapping calls once.** The turn's tool time no longer adds up calls that ran at the same time (parallel calls, a script's calls, a subagent's calls under its task); it measures how long any tool was running.
 - **A slow browser start says so.** When Chrome doesn't start in time, the browser tool now reports `no response within 12s` instead of `context canceled`.
 
+### Performance
+
+- **Bounded local work and caches.** Fallback search reuses scanner buffers, long live-thought output renders only its visible tail, rendered Markdown is cached within a memory limit, and the web fetch cache expires and evicts entries within entry and text limits.
+- **Faster TUI startup.** The loading screen appears before setup finishes, the ready screen receives the terminal's actual size, and Larik avoids duplicate Git root lookups during TUI and prompt initialization.
+
 ### Benchmark results
 
 - **Prompt-trim smoke test.** The build before the prompt changes (`40ea63e`, with the two benchmark-method fixes applied) and the current build (`c6f682a`) each passed 6/6 runs with `codex/gpt-5.6-sol` in `hybrid` mode: three runs each of `fix-off-by-one` and `implement-validation`, with no malformed calls. Results were mixed: total input was 93.3k before and 95.2k after; `implement-validation` improved from median 15.4k input and 6 requests to 11.8k and 5, while `fix-off-by-one` moved from 16.5k and 7 to 23.7k and 9. Six runs are a functional smoke test, not a performance conclusion. Opus was not measured because the Claude subscription session limit was reached; its zero-request failures are not benchmark results.
+
+This is a locally prepared release. It has no publication date yet; website downloads remain on the latest published release, v0.13.1.
 
 # Larik v0.13.1
 

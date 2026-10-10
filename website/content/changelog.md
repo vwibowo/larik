@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`skills.hide` setting.** Hide matching skills from the model's index and `skill` tool to save prompt space; hidden skills remain available as slash commands. The setting can be configured in shared project settings or privately for one project through `/config`.
+- **Offline-safe provider catalog.** Larik uses its private cached provider and model metadata at startup when available, then refreshes it in the background for the next launch.
+
+### Changed
+
+- **`run_code` state stays out of the transcript.** Stored values now live in a bounded state file beside the session. `/clear` removes them, while resume and compaction preserve them; branches start with the session's current values.
+- **A leaner and more measurable prompt.** Tool descriptions and fixed prompt text were shortened, and `larik bench` now uses Larik's base system prompt and reports provider errors clearly.
+- **More accurate tool timing.** Overlapping tool calls count once toward a turn's tool time.
+
+### Fixed
+
+- **Slow browser startup reports a timeout.** A Chrome launch that exceeds its limit reports that no response arrived instead of showing `context canceled`.
+
+### Performance
+
+- **Bounded search, rendering, and fetch memory.** Fallback search reuses buffers, live thinking renders only its visible tail, Markdown rendering uses a bounded cache, and the web fetch cache expires old entries and evicts least-recently-used results within memory limits.
+- **Faster startup and ready screens.** Setup work runs behind an early loading screen, the ready TUI receives the terminal's current size, and repeated Git root lookups were removed.
+
+This release is prepared locally and is not published. Website version and download metadata remain on v0.13.1 until v0.14.0 assets are available.
+
 ## v0.13.1
 
 <p class="release-meta"><time datetime="2026-10-09">October 9, 2026</time></p>

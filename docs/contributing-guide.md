@@ -14,7 +14,7 @@ go test ./...
 
 ## Prepare a GitHub release
 
-The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The latest published version is `v0.13.1`. For the next release, replace `vX.Y.Z` below with its version; keep website downloads on the latest published version until the new assets are available.
+The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The latest published version is `v0.13.1`; `v0.14.0` is prepared locally and remains unpublished until its assets are available. Keep website downloads on the latest published version until then.
 
 1. Review and commit the changes intended for the release; the script refuses a dirty checkout. This repository keeps remotes and publishing under explicit manual control.
 2. Run `scripts/package-release.sh vX.Y.Z`. It runs `go test ./...`, builds the website to check links, and creates five archives plus `SHA256SUMS` in `dist/release/vX.Y.Z/`. The archives cover macOS and Linux on arm64 and amd64, plus Windows on amd64. Check the archives and checksums before publishing.
