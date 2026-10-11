@@ -18,6 +18,17 @@ import (
 	"larik/internal/tools"
 )
 
+type inputReadOnly interface {
+	ReadOnlyFor(json.RawMessage) bool
+}
+
+func toolReadOnly(tool tools.Tool, input json.RawMessage) bool {
+	if conditional, ok := tool.(inputReadOnly); ok {
+		return conditional.ReadOnlyFor(input)
+	}
+	return tool.ReadOnly()
+}
+
 type approved struct {
 	idx  int
 	use  llm.Block
@@ -337,14 +348,15 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	if perms == nil {
 		return true, "", input
 	}
-	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: tool.ReadOnly(), Input: input})
+	readOnly := toolReadOnly(tool, input)
+	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: readOnly, Input: input})
 	tr := a.tracer()
 	record := func(answer, why string, asked time.Time) {
 		rule := permission.SuggestRule(use.Name, input)
 		tr.Permission(use.ID, use.Name, rule, answer, why, asked)
 		// Reads allowed by rules or mode are the bulk of a session and
 		// carry no decision worth auditing.
-		if tool.ReadOnly() && answer == "allow (rules or mode)" {
+		if readOnly && answer == "allow (rules or mode)" {
 			return
 		}
 		a.logDecision(use, answer, why, rule)

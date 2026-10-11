@@ -16,7 +16,7 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 		case !m.opts.Config.Browser.Enabled:
 			return info("browser tools: off · /browser on to enable")
 		case m.opts.App == nil:
-			return info("browser tools: configured on · reload or start a new session to check availability")
+			return info("browser tools: configured on · Chrome starts on first use")
 		case m.opts.App.BrowserNote != "":
 			return info(m.opts.App.BrowserNote)
 		case m.opts.App.Browser == nil:

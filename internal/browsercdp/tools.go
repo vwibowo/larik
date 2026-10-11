@@ -307,35 +307,50 @@ func (t PressKeyTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessa
 	return withSnapshot(ctx, t.S, "Pressed "+in.Key+".")
 }
 
-// ScreenshotTool is browser_screenshot. It only reads the page (labels are
-// drawn on it and removed again).
+// ScreenshotTool is browser_screenshot. Captures are read-only unless save_path
+// writes the image to the project (labels are drawn and removed again).
 type ScreenshotTool struct{ S *Session }
 
-func (ScreenshotTool) ReadOnly() bool { return true }
+func (ScreenshotTool) ReadOnly() bool { return false }
+
+// ReadOnlyFor keeps ordinary captures read-only; saving a file is a write.
+func (ScreenshotTool) ReadOnlyFor(input json.RawMessage) bool {
+	var in struct {
+		SavePath string `json:"save_path"`
+	}
+	return json.Unmarshal(input, &in) == nil && in.SavePath == ""
+}
 func (ScreenshotTool) Spec() llm.ToolSpec {
 	return spec("browser_screenshot",
 		"Take a screenshot of the active tab and see it as an image: the visible viewport by default, the whole page (cut at 5000px), or one element by ref. "+
 			"Use it to check layout, styling, charts, canvases or images, which the text snapshot can't show. Set labels to draw each element's ref on the image, to match what you see with what you can click. "+
-			"Only call it if you can see images. "+untrusted,
+			"Set save_path to also save the JPEG in the project. Only call it if you can see images. "+untrusted,
 		`{"type":"object","properties":{
 			"ref":{"type":"string","description":"Capture just this element"},
 			"full_page":{"type":"boolean","description":"Capture the whole page, not just the viewport"},
-			"labels":{"type":"boolean","description":"Draw element refs on the screenshot"}}}`)
+			"labels":{"type":"boolean","description":"Draw element refs on the screenshot"},
+			"save_path":{"type":"string","description":"Optional project-relative path to save the JPEG screenshot"}}}`)
 }
-func (t ScreenshotTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tools.Result {
+func (t ScreenshotTool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
 	var in struct {
 		Ref      string `json:"ref"`
 		FullPage bool   `json:"full_page"`
 		Labels   bool   `json:"labels"`
+		SavePath string `json:"save_path"`
 	}
 	if len(input) > 0 {
-		if r := parse(input, &in, `{"ref"?, "full_page"?, "labels"?}`); r != nil {
+		if r := parse(input, &in, `{"ref"?, "full_page"?, "labels"?, "save_path"?}`); r != nil {
 			return *r
 		}
 	}
 	shot, err := t.S.Screenshot(ctx, ShotOptions{Ref: in.Ref, FullPage: in.FullPage, Labels: in.Labels})
 	if err != nil {
 		return fail(err)
+	}
+	if in.SavePath != "" {
+		if err := env.WriteFile(in.SavePath, shot.JPEG); err != nil {
+			return fail(err)
+		}
 	}
 	what := "the viewport"
 	switch {
@@ -345,6 +360,9 @@ func (t ScreenshotTool) Run(ctx context.Context, _ *tools.Env, input json.RawMes
 		what = "the full page"
 	}
 	content := fmt.Sprintf("Screenshot of %s of %s (%d×%d).", what, shot.URL, shot.Width, shot.Height)
+	if in.SavePath != "" {
+		content += " Saved JPEG to " + env.Abs(in.SavePath) + "."
+	}
 	if shot.Cut {
 		content += fmt.Sprintf(" The page is taller than %dpx; the rest is cut off: scroll with browser_eval and take a viewport screenshot to see it.", maxShotHeight)
 	}

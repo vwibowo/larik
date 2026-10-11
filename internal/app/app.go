@@ -241,15 +241,9 @@ func Setup(cwd, version string) (*App, error) {
 			ProfileDir:  filepath.Join(cfg.DataDir, "browser-profile"),
 			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
 		}
-		// Check launchability before advertising browser tools. The probe is
-		// headless and uses a temporary profile, so it does not steal focus or
-		// collide with a Chrome window owned by the user or another app.
-		if err := browsercdp.CheckAvailable(browserOpts); err != nil {
-			a.BrowserNote = "browser tools disabled: " + err.Error()
-		} else {
-			a.Browser = browsercdp.New(browserOpts)
-			baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
-		}
+		// Browser startup is deferred until the first browser tool call.
+		a.Browser = browsercdp.New(browserOpts)
+		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))

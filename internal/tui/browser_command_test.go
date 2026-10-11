@@ -50,14 +50,14 @@ func TestBrowserToggleReloadsServices(t *testing.T) {
 	}
 	m := newModel(Options{App: a, Config: a.Cfg, Agent: s.Agent, Session: s})
 	m.command("/browser on")
-	if !m.opts.Config.Browser.Enabled || m.opts.App == a || m.opts.App.BrowserNote == "" || m.agent.HasContext() {
-		t.Fatal("enabling must persist and reload into a fresh context; unavailable Chrome must not advertise tools")
+	if !m.opts.Config.Browser.Enabled || m.opts.App == a || m.opts.App.Browser == nil || m.opts.App.BrowserNote != "" || m.agent.HasContext() {
+		t.Fatal("enabling must persist and reload into a fresh context; browser availability is checked on first use")
 	}
 	if !strings.Contains(savedConfig(t, m), `"enabled": true`) {
 		t.Fatal("browser switch was not saved")
 	}
 	m.command("/browser off")
-	if m.opts.Config.Browser.Enabled || m.opts.App.BrowserNote != "" || !strings.Contains(savedConfig(t, m), `"enabled": false`) {
+	if m.opts.Config.Browser.Enabled || !strings.Contains(savedConfig(t, m), `"enabled": false`) {
 		t.Fatal("disabling must persist and rebuild services")
 	}
 	t.Cleanup(func() { m.sess.Close("other"); m.opts.App.Close() })

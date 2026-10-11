@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"larik/internal/app"
+	"larik/internal/browserbroker"
 	"larik/internal/config"
 	"larik/internal/headless"
 	"larik/internal/providers"
@@ -43,6 +44,21 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "browser-broker" {
+		if len(os.Args) != 3 {
+			return errors.New("usage: larik browser-broker install|uninstall|run")
+		}
+		switch os.Args[2] {
+		case "install":
+			return browserbroker.Install()
+		case "uninstall":
+			return browserbroker.Uninstall()
+		case "run":
+			return browserbroker.Serve()
+		default:
+			return errors.New("usage: larik browser-broker install|uninstall|run")
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		return runServe(os.Args[2:])
 	}

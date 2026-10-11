@@ -147,14 +147,17 @@ type Call struct {
 // path for file tools, empty otherwise.
 func Subject(tool string, input json.RawMessage) string {
 	var in struct {
-		Command string `json:"command"`
-		Path    string `json:"path"`
-		URL     string `json:"url"`
+		Command  string `json:"command"`
+		Path     string `json:"path"`
+		SavePath string `json:"save_path"`
+		URL      string `json:"url"`
 	}
 	_ = json.Unmarshal(input, &in)
 	switch tool {
 	case "bash":
 		return in.Command
+	case "browser_screenshot":
+		return in.SavePath
 	case "web_fetch", "browser_navigate":
 		return urlHost(in.URL)
 	}
@@ -180,7 +183,7 @@ const ExitPlanTool = "exit_plan_mode"
 const MemoryTool = "memory"
 
 // fileWriteTools write one file named by their path argument.
-var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "apply_code_action": true}
+var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "apply_code_action": true, "browser_screenshot": true}
 
 // networkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
@@ -195,7 +198,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	subject := Subject(call.Tool, call.Input)
-	if fileWriteTools[call.Tool] {
+	if fileWriteTools[call.Tool] && subject != "" {
 		if _, err := pathpolicy.WritePath(c.cwd, subject); err != nil {
 			return Deny, err.Error()
 		}
@@ -232,7 +235,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		if safeCommand(subject) {
 			return Allow, ""
 		}
-	case "write", "edit", "multi_edit", "apply_code_action":
+	case "write", "edit", "multi_edit", "apply_code_action", "browser_screenshot":
 		if (c.mode == ModeAcceptEdits || c.mode == ModeAuto) && c.insideCwd(subject) {
 			return Allow, ""
 		}

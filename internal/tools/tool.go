@@ -101,6 +101,41 @@ func (e *Env) ForgetShown() {
 
 func NewEnv(cwd string) *Env { return &Env{Cwd: cwd, reads: map[string]readMark{}} }
 
+// WriteFile writes bytes to a project path using the same freshness,
+// checkpointing, and path-boundary rules as the built-in file tools.
+func (e *Env) WriteFile(path string, data []byte) error {
+	if e == nil {
+		return fmt.Errorf("file writes need a tool environment")
+	}
+	path = e.Abs(path)
+	root, rel, err := e.writeRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := e.checkFresh(path); err != nil {
+		return err
+	}
+	_, statErr := root.Stat(rel)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if err := e.beforeWrite(path); err != nil {
+		return fmt.Errorf("cannot checkpoint %s: %w", path, err)
+	}
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+		return err
+	}
+	if _, err := pathpolicy.WritePath(e.Cwd, path); err != nil {
+		return err
+	}
+	if err := replaceFile(root, rel, data); err != nil {
+		return err
+	}
+	e.markRead(path)
+	return nil
+}
+
 // readMark is a file's modification time and size when it was read. Size
 // catches a change within the file system's timestamp granularity.
 type readMark struct {

@@ -11,7 +11,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +29,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
+	"larik/internal/browserbroker"
 	"larik/internal/tools"
 	"larik/internal/web"
 )
@@ -67,9 +71,10 @@ type Session struct {
 
 	// tempProfile is a throwaway profile used when ProfileDir is taken by
 	// another Chrome; it's removed on shutdown.
-	tempProfile string
-	downloadDir string
-	downloads   map[string]string // download GUID -> suggested file name
+	tempProfile       string
+	tempProfileBroker bool
+	downloadDir       string
+	downloads         map[string]string // download GUID -> suggested file name
 
 	// notes are told to the model with the next tool result: a fallback
 	// profile, finished downloads.
@@ -196,8 +201,14 @@ func (s *Session) shutdown() {
 	s.root, s.cancelRoot, s.cancelAlloc = nil, nil, nil
 	s.tabs, s.active = nil, nil
 	if s.tempProfile != "" {
-		_ = os.RemoveAll(s.tempProfile)
-		s.tempProfile = ""
+		if s.tempProfileBroker {
+			if err := browserbroker.RemoveProfile(context.Background(), s.tempProfile); errors.Is(err, browserbroker.ErrUnavailable) {
+				_ = os.RemoveAll(s.tempProfile)
+			}
+		} else {
+			_ = os.RemoveAll(s.tempProfile)
+		}
+		s.tempProfile, s.tempProfileBroker = "", false
 	}
 }
 
@@ -231,13 +242,77 @@ func (s *Session) start() error {
 
 // launch starts Chrome with profile, or a temporary profile when empty.
 func (s *Session) launch(profile string) error {
+	startupTimeout := s.startupTimeout
+	if startupTimeout <= 0 {
+		startupTimeout = browserStartupTimeout
+	}
+	if goruntime.GOOS == "darwin" {
+		if appPath := chromeAppPath(s.opts.ChromePath); appPath != "" {
+			wsURL, brokerProfile, err := browserbroker.Launch(context.Background(), appPath, profile, s.opts.Headless)
+			if err == nil {
+				if profile == "" {
+					s.tempProfile, s.tempProfileBroker = brokerProfile, true
+				}
+				if err := s.attachRemote(wsURL, startupTimeout); err != nil {
+					if s.tempProfileBroker {
+						_ = browserbroker.RemoveProfile(context.Background(), s.tempProfile)
+						s.tempProfile, s.tempProfileBroker = "", false
+					}
+					return fmt.Errorf("connecting to Chrome started by LaunchAgent: %w", err)
+				}
+				s.note("Chrome was started by the trusted macOS LaunchAgent.")
+				return nil
+			}
+			if !errors.Is(err, browserbroker.ErrUnavailable) {
+				return fmt.Errorf("trusted browser LaunchAgent failed: %w", err)
+			}
+		}
+	}
 	if profile == "" {
-		dir, err := os.MkdirTemp("", "larik-browser-")
+		cacheDir, err := os.UserCacheDir()
+		if err != nil {
+			return err
+		}
+		profileRoot := filepath.Join(cacheDir, "Larik")
+		if err := os.MkdirAll(profileRoot, 0o700); err != nil {
+			return err
+		}
+		dir, err := os.MkdirTemp(profileRoot, "browser-profile-")
 		if err != nil {
 			return err
 		}
 		s.tempProfile, profile = dir, dir
 	}
+	var err error
+	if goruntime.GOOS == "darwin" {
+		started, launchErr := s.launchViaOpen(profile, startupTimeout)
+		if launchErr == nil {
+			s.note("Chrome was started through macOS Launch Services.")
+			return nil
+		}
+		if started {
+			err = fmt.Errorf("macOS launched Chrome but DevTools connection failed: %w", launchErr)
+		} else {
+			err = s.launchExec(profile, startupTimeout)
+			if err != nil {
+				err = fmt.Errorf("%w; trusted macOS launcher fallback failed: %v", err, launchErr)
+			}
+		}
+	} else {
+		err = s.launchExec(profile, startupTimeout)
+	}
+	if err != nil {
+		if s.tempProfile != "" {
+			_ = os.RemoveAll(s.tempProfile)
+			s.tempProfile = ""
+		}
+		return fmt.Errorf("starting Chrome: %w (install Google Chrome or Chromium, or set browser.chrome_path)", err)
+	}
+	return nil
+}
+
+// launchExec starts Chrome as a child process and connects over DevTools.
+func (s *Session) launchExec(profile string, startupTimeout time.Duration) error {
 	opts := []chromedp.ExecAllocatorOption{
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
@@ -263,10 +338,6 @@ func (s *Session) launch(profile string) error {
 	root, cancelRoot := chromedp.NewContext(allocCtx)
 	t := &tab{ctx: root}
 	s.watch(t)
-	startupTimeout := s.startupTimeout
-	if startupTimeout <= 0 {
-		startupTimeout = browserStartupTimeout
-	}
 	// The first Run allocates Chrome using the context passed to it. Running it
 	// with a short-lived child context would kill Chrome as soon as that
 	// context is canceled, even after a successful launch. Bound startup by
@@ -274,24 +345,123 @@ func (s *Session) launch(profile string) error {
 	stopStartupTimer := time.AfterFunc(startupTimeout, cancelRoot)
 	err := chromedp.Run(root, s.guard())
 	if !stopStartupTimer.Stop() && err != nil {
-		// The timer canceled root, which chromedp reports as a cancel;
-		// say what happened instead.
 		err = fmt.Errorf("no response within %s: %w", startupTimeout, context.DeadlineExceeded)
 	}
 	if err != nil {
 		cancelRoot()
 		cancelAlloc()
-		if s.tempProfile != "" {
-			_ = os.RemoveAll(s.tempProfile)
-			s.tempProfile = ""
-		}
-		return fmt.Errorf("starting Chrome: %w (install Google Chrome or Chromium, or set browser.chrome_path)", err)
+		return err
 	}
+	s.adopt(root, cancelRoot, cancelAlloc, t)
+	return nil
+}
+
+func (s *Session) adopt(root context.Context, cancelRoot, cancelAlloc context.CancelFunc, t *tab) {
 	s.root, s.cancelRoot, s.cancelAlloc = root, cancelRoot, cancelAlloc
 	t.id = chromedp.FromContext(root).Target.TargetID
 	s.tabs, s.active = []*tab{t}, map[string]*tab{"": t}
 	s.setupDownloads()
+}
+
+// launchViaOpen starts Chrome through macOS Launch Services as the fallback
+// when the per-user trusted LaunchAgent is not installed.
+func (s *Session) launchViaOpen(profile string, startupTimeout time.Duration) (bool, error) {
+	appPath := chromeAppPath(s.opts.ChromePath)
+	if appPath == "" {
+		return false, errors.New("could not locate a Chrome .app bundle for Launch Services")
+	}
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		return false, err
+	}
+	activePort := filepath.Join(profile, "DevToolsActivePort")
+	_ = os.Remove(activePort) // ignore a stale port file from the failed direct launch
+	args := []string{
+		"--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+		"--disable-sync", "--disable-features=Translate", "--metrics-recording-only",
+		"--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+		"--disable-renderer-backgrounding", "--window-size=1280,900",
+		"--user-data-dir=" + profile, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
+	}
+	if s.opts.Headless {
+		args = append(args, "--headless")
+	}
+	cmd := exec.Command("/usr/bin/open", append([]string{"-n", "-a", appPath, "--args"}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("open Chrome app: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	deadline := time.NewTimer(startupTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if data, err := os.ReadFile(activePort); err == nil {
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(lines) >= 2 {
+				port, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+				path := strings.TrimSpace(lines[1])
+				if err == nil && port > 0 && port < 65536 && strings.HasPrefix(path, "/devtools/browser/") {
+					wsURL := fmt.Sprintf("ws://127.0.0.1:%d%s", port, path)
+					if err := s.attachRemote(wsURL, startupTimeout); err != nil {
+						return true, err
+					}
+					return true, nil
+				}
+			}
+		}
+		select {
+		case <-deadline.C:
+			return true, fmt.Errorf("Chrome did not publish a DevTools endpoint within %s", startupTimeout)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Session) attachRemote(wsURL string, startupTimeout time.Duration) error {
+	allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
+	root, cancelRoot := chromedp.NewContext(allocCtx)
+	t := &tab{ctx: root}
+	s.watch(t)
+	stopStartupTimer := time.AfterFunc(startupTimeout, cancelRoot)
+	err := chromedp.Run(root, s.guard())
+	if !stopStartupTimer.Stop() && err != nil {
+		err = fmt.Errorf("no response within %s: %w", startupTimeout, context.DeadlineExceeded)
+	}
+	if err != nil {
+		cancelRoot()
+		cancelAlloc()
+		return err
+	}
+	s.adopt(root, cancelRoot, cancelAlloc, t)
 	return nil
+}
+
+// chromeAppPath resolves the configured binary to its containing app bundle,
+// or finds a standard Chrome/Chromium bundle when no path is configured.
+func chromeAppPath(configured string) string {
+	if configured != "" {
+		if resolved, err := exec.LookPath(configured); err == nil {
+			configured = resolved
+		}
+		for dir := filepath.Clean(configured); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if strings.HasSuffix(strings.ToLower(dir), ".app") {
+				return dir
+			}
+		}
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		"/Applications/Google Chrome.app", filepath.Join(home, "Applications", "Google Chrome.app"),
+		"/Applications/Chromium.app", filepath.Join(home, "Applications", "Chromium.app"),
+		"/Applications/Google Chrome Beta.app", "/Applications/Google Chrome Canary.app",
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(filepath.Join(candidate, "Contents", "MacOS")); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // profileInUse reports whether a running Chrome holds the profile. Chrome

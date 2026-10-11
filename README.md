@@ -521,7 +521,9 @@ For pages that need JavaScript, a sign-in or clicking through, Larik can drive a
 { "browser": { "enabled": true } }
 ```
 
-Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. When browser support is enabled, Larik first checks that Chrome can start headlessly with a temporary profile; if the check fails, browser tools are disabled for that run and the TUI shows a warning instead of letting the model repeatedly hit a startup error. Chrome then starts on the first browser call and keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions. If another larik session already has that profile open, the browser starts with a temporary one instead, and the model is told its sign-ins aren't there.
+Chrome (or Chromium) must be installed; set `"chrome_path"` if Larik can't find it, and `"headless": true` to hide the window. Chrome starts on the first browser tool call, so enabling browser support does not launch Chrome during Larik startup. If Chrome is unavailable, the first browser call reports the startup error. The browser keeps its own profile under `~/.local/share/larik/browser-profile`, so sign-ins you make in that window last between sessions. If another larik session already has that profile open, the browser starts with a temporary one instead, and the model is told its sign-ins aren't there.
+
+On macOS, if Larik itself is started inside a restrictive outer sandbox, install the optional trusted Chrome launcher once from an unsandboxed terminal with `larik browser-broker install`. This registers a per-user LaunchAgent that accepts only constrained Chrome/Chromium launches over a private, owner-only Unix socket; browser tools use it when available. The surrounding sandbox must permit the app to connect to that socket and to localhost for DevTools. Remove it with `larik browser-broker uninstall`. Installation is explicit and is never done automatically. Without the broker, Larik uses its normal in-process launcher.
 
 The model gets these tools:
 
@@ -529,7 +531,7 @@ The model gets these tools:
 | --- | --- |
 | `browser_navigate` | Opens a URL and returns a snapshot of the page |
 | `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12`. A long page comes in parts (`start`), and `ref` reads just one form, table or frame |
-| `browser_screenshot` | An image of the viewport, the full page or one element; `labels` draws each ref on it |
+| `browser_screenshot` | An image of the viewport, the full page or one element; `labels` draws each ref on it, and `save_path` saves a JPEG in the project |
 | `browser_click` | Clicks (or hovers) an element by ref with a real mouse event |
 | `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
 | `browser_select` | Picks options in a `<select>` |
@@ -543,7 +545,7 @@ The model gets these tools:
 | `browser_network` | The requests the page made: method, URL, status and time, with failures marked; and a response's body |
 
 - `browser_navigate` asks per domain like `web_fetch` ("always allow" saves `browser_navigate(domain:github.com)`) and only opens http(s). Every request the page makes (images, scripts, redirects, links clicked) is checked against link-local and cloud-metadata addresses and blocked, with a note in `browser_console`. Clicks and typing ask per call unless you allow the tool.
-- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_screenshot`, `browser_wait_for`, `browser_console` and `browser_network` only read, so they never ask.
+- Plan mode asks before opening a page and blocks everything that could change something on a site. `browser_snapshot`, `browser_wait_for`, `browser_console` and `browser_network` only read, so they never ask. `browser_screenshot` is read-only unless `save_path` is set; saving a screenshot writes a project file and follows normal write permissions.
 - A click fails, naming what's in the way, when something such as a cookie banner covers the element, instead of clicking the banner.
 - Downloads are saved to `~/.local/share/larik/browser-downloads`, and the model is told each file's path. File inputs never open a system dialog; the model uses `browser_upload`.
 - **Frames:** the contents of an iframe from the same site are part of the snapshot, and you can click and type inside it. A frame from another site is listed with its URL only; the browser doesn't let a page read it.

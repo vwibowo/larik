@@ -144,7 +144,7 @@ func (a *Agent) prefetchAuto(ctx context.Context, uses []llm.Block, registry *to
 		if name == tools.CodeToolName || name == tools.WriteFilesToolName || name == permission.ExitPlanTool {
 			continue // authorized call by call, or always the user's
 		}
-		if d, _ := perms.Decide(permission.Call{Tool: name, ReadOnly: tool.ReadOnly(), Input: input}); d == permission.Ask {
+		if d, _ := perms.Decide(permission.Call{Tool: name, ReadOnly: toolReadOnly(tool, input), Input: input}); d == permission.Ask {
 			calls = append(calls, call{name, input})
 		}
 	}

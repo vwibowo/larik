@@ -92,6 +92,17 @@ Promise.allSettled([fetch('/data.json').then(r => r.json()), fetch('/missing'), 
 <button onclick="setTimeout(() => { document.getElementById('h').textContent = 'Quick result' }, 150); setTimeout(() => { document.body.append('Results ready') }, 1200)">Search</button>`,
 }
 
+func TestChromeAppPath(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Custom Chrome.app")
+	binary := filepath.Join(app, "Contents", "MacOS", "Chrome")
+	if got := chromeAppPath(binary); got != app {
+		t.Fatalf("chromeAppPath(%q) = %q, want %q", binary, got, app)
+	}
+	if got := chromeAppPath(filepath.Join(t.TempDir(), "chrome")); got != "" {
+		t.Fatalf("unbundled executable app path = %q, want empty", got)
+	}
+}
+
 func TestCheckAvailableRejectsMissingChrome(t *testing.T) {
 	err := CheckAvailable(Options{ChromePath: filepath.Join(t.TempDir(), "missing-chrome")})
 	if err == nil || !strings.Contains(err.Error(), "starting Chrome") {
@@ -356,6 +367,21 @@ func TestScreenshot(t *testing.T) {
 	}
 	if !strings.Contains(r.Content, "the viewport of "+srv.URL+"/visual") {
 		t.Errorf("content: %s", r.Content)
+	}
+	// Saving writes the captured JPEG through the project write environment.
+	cwd := t.TempDir()
+	env := tools.NewEnv(cwd)
+	path := filepath.Join(cwd, "artifacts", "google.jpg")
+	saved := ScreenshotTool{s}.Run(ctx, env, json.RawMessage(`{"save_path":"artifacts/google.jpg"}`))
+	if saved.IsError {
+		t.Fatal(saved.Content)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte{0xff, 0xd8}) || !strings.Contains(saved.Content, path) {
+		t.Fatalf("saved screenshot result=%q, file header=%x", saved.Content, data[:min(len(data), 2)])
 	}
 
 	// One element: the red box, below the fold, with padding around it.

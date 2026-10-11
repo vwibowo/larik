@@ -42,6 +42,11 @@ func TestDecide(t *testing.T) {
 		want Decision
 	}{
 		{"read allowed", ModeDefault, call("read", true, `{"path":"main.go"}`), Allow},
+		{"screenshot without save is read-only", ModePlan, call("browser_screenshot", true, `{}`), Allow},
+		{"screenshot save asks", ModeDefault, call("browser_screenshot", false, `{"save_path":"shots/page.jpg"}`), Ask},
+		{"screenshot save in plan denied", ModePlan, call("browser_screenshot", false, `{"save_path":"shots/page.jpg"}`), Deny},
+		{"screenshot save protected path denied", ModeYolo, call("browser_screenshot", false, `{"save_path":".git/config"}`), Deny},
+		{"screenshot save accepted in accept-edits", ModeAcceptEdits, call("browser_screenshot", false, `{"save_path":"shots/page.jpg"}`), Allow},
 		{"deny beats read-only", ModeDefault, call("read", true, `{"path":".env"}`), Deny},
 		{"deny beats yolo", ModeYolo, call("bash", false, `{"command":"rm -rf /"}`), Deny},
 		{"allow rule bash", ModeDefault, call("bash", false, `{"command":"go test ./..."}`), Allow},
