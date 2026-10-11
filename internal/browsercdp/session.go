@@ -81,6 +81,9 @@ type Session struct {
 	// another Chrome; it's removed on shutdown.
 	tempProfile       string
 	tempProfileBroker bool
+	brokerLease       string
+	brokerLeaseCancel context.CancelFunc
+	brokerLeaseDone   chan struct{}
 	downloadDir       string
 	downloads         map[string]string // download GUID -> suggested file name
 
@@ -217,6 +220,18 @@ func (s *Session) shutdown() {
 	if remote {
 		stopProcess(pid, remoteCloseTimeout)
 	}
+	if s.brokerLeaseCancel != nil {
+		s.brokerLeaseCancel()
+		s.brokerLeaseCancel = nil
+	}
+	if s.brokerLeaseDone != nil {
+		<-s.brokerLeaseDone
+		s.brokerLeaseDone = nil
+	}
+	if s.brokerLease != "" {
+		_ = brokerLeaseRelease(context.Background(), s.brokerLease)
+		s.brokerLease = ""
+	}
 	if s.tempProfile != "" {
 		if s.tempProfileBroker {
 			if err := browserbroker.RemoveProfile(context.Background(), s.tempProfile); errors.Is(err, browserbroker.ErrUnavailable) {
@@ -282,6 +297,25 @@ func (s *Session) ensureProfile(profile string) (string, error) {
 	return dir, nil
 }
 
+func (s *Session) keepBrokerLease(token string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	s.brokerLease, s.brokerLeaseCancel, s.brokerLeaseDone = token, cancel, done
+	go func() {
+		defer close(done)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = brokerLeaseRenew(context.Background(), token)
+			}
+		}
+	}()
+}
+
 // launch starts Chrome with profile, or a temporary profile when empty.
 func (s *Session) launch(profile string) error {
 	startupTimeout := s.startupTimeout
@@ -302,7 +336,18 @@ func (s *Session) launch(profile string) error {
 	}
 	if goruntime.GOOS == "darwin" {
 		if appPath := chromeAppPath(s.opts.ChromePath); appPath != "" {
-			wsURL, brokerProfile, err := brokerLaunch(context.Background(), appPath, profile, s.opts.Headless)
+			lease, leaseErr := brokerLeaseAcquire(context.Background())
+			var wsURL, brokerProfile string
+			err := leaseErr
+			if leaseErr == nil {
+				wsURL, brokerProfile, err = brokerLaunch(context.Background(), appPath, profile, s.opts.Headless)
+			}
+			if err == nil {
+				s.keepBrokerLease(lease)
+			}
+			if err != nil && leaseErr == nil {
+				_ = brokerLeaseRelease(context.Background(), lease)
+			}
 			switch {
 			case err == nil:
 				used := profile
@@ -542,7 +587,12 @@ func (s *Session) noteVisibleWindow() {
 }
 
 // brokerLaunch is browserbroker.Launch, replaced in tests.
-var brokerLaunch = browserbroker.Launch
+var (
+	brokerLaunch       = browserbroker.Launch
+	brokerLeaseAcquire = browserbroker.NewLease
+	brokerLeaseRenew   = browserbroker.RenewLease
+	brokerLeaseRelease = browserbroker.ReleaseLease
+)
 
 // quitRemote stops a Chrome that was started for us but that we could not
 // attach to: without it the browser stays running with nobody holding a

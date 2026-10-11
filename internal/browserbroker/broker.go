@@ -2,6 +2,8 @@ package browserbroker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,9 +45,63 @@ const (
 	clientDeadline = 60 * time.Second
 	// maxHandlers bounds the requests served at once; each can start Chrome.
 	maxHandlers = 4
+	leaseTTL    = 30 * time.Second
+	leaseSweep  = 5 * time.Second
+	brokerIdle  = 20 * time.Second
 )
 
 var ErrUnavailable = errors.New("browser launch broker is unavailable")
+
+var leases = struct {
+	sync.Mutex
+	clients map[string]time.Time
+}{clients: make(map[string]time.Time)}
+
+func updateLease(op, token string) error {
+	if len(token) < 32 || len(token) > 128 {
+		return errors.New("invalid broker lease")
+	}
+	leases.Lock()
+	defer leases.Unlock()
+	switch op {
+	case "lease":
+		leases.clients[token] = time.Now()
+	case "release":
+		delete(leases.clients, token)
+	default:
+		return errors.New("unsupported lease operation")
+	}
+	return nil
+}
+func liveLeases(now time.Time) int {
+	leases.Lock()
+	defer leases.Unlock()
+	for id, last := range leases.clients {
+		if now.Sub(last) > leaseTTL {
+			delete(leases.clients, id)
+		}
+	}
+	return len(leases.clients)
+}
+func NewLease(ctx context.Context) (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(b)
+	if _, err := requestBroker(ctx, request{Op: "lease", Lease: token}); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+func RenewLease(ctx context.Context, token string) error {
+	_, err := requestBroker(ctx, request{Op: "lease", Lease: token})
+	return err
+}
+func ReleaseLease(ctx context.Context, token string) error {
+	_, err := requestBroker(ctx, request{Op: "release", Lease: token})
+	return err
+}
 
 // Replaced in tests.
 var (
@@ -55,6 +112,7 @@ var (
 
 type request struct {
 	Op       string `json:"op"`
+	Lease    string `json:"lease,omitempty"`
 	AppPath  string `json:"app_path,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 	Headless bool   `json:"headless,omitempty"`
@@ -242,19 +300,40 @@ func Serve() error {
 		return e
 	}
 	sem := make(chan struct{}, maxHandlers)
+	_ = ln.(*net.UnixListener).SetDeadline(time.Now().Add(time.Second))
+	ticker := time.NewTicker(leaseSweep)
+	defer ticker.Stop()
+	idleSince := time.Now()
 	for {
 		c, e := ln.Accept()
 		if e != nil {
+			if ne, ok := e.(net.Error); ok && ne.Timeout() {
+				if liveLeases(time.Now()) > 0 || len(sem) > 0 {
+					idleSince = time.Time{}
+					continue
+				}
+				select {
+				case <-ticker.C:
+				default:
+				}
+				if idleSince.IsZero() {
+					idleSince = time.Now()
+				}
+				if time.Since(idleSince) >= brokerIdle {
+					if err := Uninstall(); err != nil {
+						return err
+					}
+					return nil
+				}
+				continue
+			}
 			return e
 		}
+		idleSince = time.Time{}
 		select {
 		case sem <- struct{}{}:
-			go func() {
-				defer func() { <-sem }()
-				handle(c)
-			}()
+			go func() { defer func() { <-sem }(); handle(c) }()
 		default:
-			// Each handler can start a browser, so refuse rather than queue.
 			_ = c.SetDeadline(time.Now().Add(2 * time.Second))
 			_ = json.NewEncoder(c).Encode(response{Error: "the browser launch broker is busy"})
 			_ = c.Close()
@@ -275,6 +354,12 @@ func handle(c net.Conn) {
 		return
 	}
 	switch q.Op {
+	case "lease", "release":
+		if e := updateLease(q.Op, q.Lease); e != nil {
+			r.Error = e.Error()
+		}
+		reply()
+		return
 	case "remove":
 		if e := validateTemporaryProfile(q.Profile); e != nil {
 			r.Error = e.Error()

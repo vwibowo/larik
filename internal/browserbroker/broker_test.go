@@ -94,6 +94,34 @@ func TestBrokerRequestProtocolJSON(t *testing.T) {
 
 // The deadlines have to grow outward, or the side that gives up first leaves a
 // browser running that nobody knows the profile of.
+func TestLeaseHeartbeatAndStaleCleanup(t *testing.T) {
+	leases.Lock()
+	leases.clients = make(map[string]time.Time)
+	leases.Unlock()
+	id := strings.Repeat("a", 48)
+	if err := updateLease("lease", id); err != nil {
+		t.Fatal(err)
+	}
+	if got := liveLeases(time.Now()); got != 1 {
+		t.Fatalf("live leases = %d", got)
+	}
+	if err := updateLease("release", id); err != nil {
+		t.Fatal(err)
+	}
+	if got := liveLeases(time.Now()); got != 0 {
+		t.Fatalf("released lease count = %d", got)
+	}
+	if err := updateLease("lease", id); err != nil {
+		t.Fatal(err)
+	}
+	if got := liveLeases(time.Now().Add(leaseTTL + time.Second)); got != 0 {
+		t.Fatalf("stale lease count = %d", got)
+	}
+	if err := updateLease("lease", "bad"); err == nil {
+		t.Fatal("accepted an invalid lease id")
+	}
+}
+
 func TestDeadlinesGrowOutward(t *testing.T) {
 	if !(launchWait < serverDeadline && serverDeadline < clientDeadline) {
 		t.Fatalf("launchWait=%s serverDeadline=%s clientDeadline=%s", launchWait, serverDeadline, clientDeadline)

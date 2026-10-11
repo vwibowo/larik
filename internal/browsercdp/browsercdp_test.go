@@ -177,12 +177,13 @@ func TestBrokerRefusalFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	old := brokerLaunch
+	old, oldAcquire := brokerLaunch, brokerLeaseAcquire
+	brokerLeaseAcquire = func(context.Context) (string, error) { return strings.Repeat("a", 48), nil }
 	brokerLaunch = func(context.Context, string, string, bool) (string, string, error) {
 		calls++
 		return "", "", errors.New("test refusal")
 	}
-	t.Cleanup(func() { brokerLaunch = old })
+	t.Cleanup(func() { brokerLaunch, brokerLeaseAcquire = old, oldAcquire })
 	s := New(Options{Headless: true, ChromePath: fake})
 	s.startupTimeout = 2 * time.Second
 	defer s.Close()
@@ -198,6 +199,23 @@ func TestBrokerRefusalFallsBack(t *testing.T) {
 	}
 	if notes := strings.Join(s.takeNotes(), " "); !strings.Contains(notes, "refused") {
 		t.Errorf("the model should be told why the broker was skipped: %q", notes)
+	}
+}
+
+func TestBrokerLeaseReleasedOnClose(t *testing.T) {
+	oldRelease := brokerLeaseRelease
+	var released string
+	brokerLeaseRelease = func(_ context.Context, token string) error { released = token; return nil }
+	t.Cleanup(func() { brokerLeaseRelease = oldRelease })
+	s := New(Options{})
+	token := strings.Repeat("b", 48)
+	s.keepBrokerLease(token)
+	s.Close()
+	if released != token {
+		t.Fatalf("released lease %q, want %q", released, token)
+	}
+	if s.brokerLeaseDone != nil || s.brokerLeaseCancel != nil || s.brokerLease != "" {
+		t.Fatal("lease state remained after close")
 	}
 }
 
