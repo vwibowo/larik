@@ -898,10 +898,21 @@ func (s *Session) syncTabs() {
 		if _, known := owners[info.TargetID]; known || info.Type != "page" || strings.HasPrefix(info.URL, "devtools://") {
 			continue
 		}
-		ctx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
-		t := &tab{id: info.TargetID, ctx: ctx, cancel: cancel, owner: owners[info.OpenerID]}
+		// Launch Services can create a new-tab page just after the startup
+		// cleanup queried the target list. Never adopt it as an agent tab.
+		if startupPages[info.URL] {
+			_ = target.CloseTarget(info.TargetID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(s.root).Browser))
+			continue
+		}
+		tabCtx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
+		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: owners[info.OpenerID]}
 		s.watch(t)
-		if chromedp.Run(ctx, s.guard()) != nil {
+		// A target may disappear between GetTargets and attachTarget. Bound
+		// initialization separately from the lifetime of the adopted tab.
+		attachCtx, cancelAttach := context.WithTimeout(tabCtx, 5*time.Second)
+		err := chromedp.Run(attachCtx, s.guard())
+		cancelAttach()
+		if err != nil {
 			cancel()
 			continue
 		}
