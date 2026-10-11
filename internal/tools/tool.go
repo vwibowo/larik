@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,9 +127,6 @@ func (e *Env) WriteFile(path string, data []byte) error {
 	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return err
 	}
-	if _, err := pathpolicy.WritePath(e.Cwd, path); err != nil {
-		return err
-	}
 	if err := replaceFile(root, rel, data); err != nil {
 		return err
 	}
@@ -162,6 +160,17 @@ func (e *Env) markRead(path string) {
 	}
 }
 
+// ErrStale reports that a write was refused because the file's current content
+// was never read. Tools whose output isn't text, such as a screenshot, use it
+// to suggest another path instead of telling the model to read a JPEG.
+var ErrStale = errors.New("the file was not read before writing")
+
+// stale carries a freshness message that errors.Is recognizes as ErrStale,
+// without the sentinel's own text being appended to what the model reads.
+type stale struct{ error }
+
+func (stale) Unwrap() error { return ErrStale }
+
 // checkFresh ensures an existing file was read and hasn't changed since, so
 // the model never overwrites content it hasn't seen.
 func (e *Env) checkFresh(path string) error {
@@ -176,10 +185,10 @@ func (e *Env) checkFresh(path string) error {
 	seen, ok := e.reads[path]
 	e.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("%s exists but has not been read yet; read it first", path)
+		return stale{fmt.Errorf("%s exists but has not been read yet; read it first", path)}
 	}
 	if !fi.ModTime().Equal(seen.mod) || fi.Size() != seen.size {
-		return fmt.Errorf("%s was modified since it was last read; read it again", path)
+		return stale{fmt.Errorf("%s was modified since it was last read; read it again", path)}
 	}
 	return nil
 }

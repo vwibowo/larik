@@ -177,6 +177,9 @@ type App struct {
 	// Warnings for front ends to surface.
 	SandboxNote string
 	SearchNote  string
+	// BrowserNote warns that Chrome may not be usable. Browser tools are
+	// offered anyway: Chrome starts on the first call, and that call reports
+	// the real error.
 	BrowserNote string
 	// TelemetryNote says why trace export is off although it was asked for.
 	TelemetryNote string
@@ -242,6 +245,12 @@ func Setup(cwd, version string) (*App, error) {
 			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
 		}
 		// Browser startup is deferred until the first browser tool call.
+		// Looking for Chrome costs nothing and starts nothing, so it is only
+		// an early warning: the tools stay available either way, since
+		// chromedp finds installations this check doesn't know about.
+		if err := browsercdp.FindChrome(browserOpts); err != nil {
+			a.BrowserNote = "browser tools may not work: " + err.Error()
+		}
 		a.Browser = browsercdp.New(browserOpts)
 		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
 	}

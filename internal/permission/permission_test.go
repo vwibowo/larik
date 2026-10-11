@@ -47,6 +47,11 @@ func TestDecide(t *testing.T) {
 		{"screenshot save in plan denied", ModePlan, call("browser_screenshot", false, `{"save_path":"shots/page.jpg"}`), Deny},
 		{"screenshot save protected path denied", ModeYolo, call("browser_screenshot", false, `{"save_path":".git/config"}`), Deny},
 		{"screenshot save accepted in accept-edits", ModeAcceptEdits, call("browser_screenshot", false, `{"save_path":"shots/page.jpg"}`), Allow},
+		// Only browser_screenshot may leave its path out; for a real write
+		// tool a missing path is a bad call, not an unnamed file to allow.
+		{"write without a path denied", ModeAcceptEdits, call("write", false, `{}`), Deny},
+		{"edit without a path denied", ModeAcceptEdits, call("edit", false, `{}`), Deny},
+		{"code action without a path denied", ModeAuto, call("apply_code_action", false, `{}`), Deny},
 		{"deny beats read-only", ModeDefault, call("read", true, `{"path":".env"}`), Deny},
 		{"deny beats yolo", ModeYolo, call("bash", false, `{"command":"rm -rf /"}`), Deny},
 		{"allow rule bash", ModeDefault, call("bash", false, `{"command":"go test ./..."}`), Allow},

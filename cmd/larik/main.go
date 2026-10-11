@@ -50,7 +50,12 @@ func run() error {
 		}
 		switch os.Args[2] {
 		case "install":
-			return browserbroker.Install()
+			msg, err := browserbroker.Install()
+			if err != nil {
+				return err
+			}
+			fmt.Println(msg)
+			return nil
 		case "uninstall":
 			return browserbroker.Uninstall()
 		case "run":
@@ -85,7 +90,8 @@ func run() error {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n"+
 			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n"+
-			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n\n")
+			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n"+
+			"       larik browser-broker install|uninstall   (macOS: the optional trusted Chrome launcher)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

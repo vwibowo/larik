@@ -47,9 +47,11 @@ type Options struct {
 const (
 	actionTimeout         = 30 * time.Second
 	browserStartupTimeout = 12 * time.Second
-	browserProbeTimeout   = 5 * time.Second
-	maxConsole            = 200
-	maxRequests           = 300
+	// remoteCloseTimeout bounds asking a Chrome we don't own to quit, and
+	// waiting for it to let go of a temporary profile.
+	remoteCloseTimeout = 3 * time.Second
+	maxConsole         = 200
+	maxRequests        = 300
 )
 
 // Session is one Chrome process and its tabs. Each agent has its own tabs
@@ -65,8 +67,14 @@ type Session struct {
 	tabs        []*tab
 	active      map[string]*tab // owner -> its active tab
 
+	// remote is set when Chrome was started by the LaunchAgent or by Launch
+	// Services instead of as our child process, so shutdown has to stop it
+	// itself rather than relying on the allocator to kill it. remotePID is
+	// that process, read from the profile lock while it holds it.
+	remote    bool
+	remotePID int
+
 	// startupTimeout bounds Chrome launch and the initial DevTools guard.
-	// The availability probe overrides this with a shorter timeout.
 	startupTimeout time.Duration
 
 	// tempProfile is a throwaway profile used when ProfileDir is taken by
@@ -152,35 +160,28 @@ func New(opts Options) *Session {
 	return &Session{opts: opts, startupTimeout: browserStartupTimeout}
 }
 
-// CheckAvailable verifies Chrome can actually start and speak DevTools without
-// opening a visible window or touching the user's persistent browser profile.
-func CheckAvailable(opts Options) error { return checkAvailable(opts, browserProbeTimeout) }
-
-// checkAvailable is CheckAvailable giving Chrome timeout to start and to
-// load the probe page.
-func checkAvailable(opts Options, timeout time.Duration) error {
-	opts.Headless = true
-	opts.ProfileDir = ""
-	opts.DownloadDir = ""
-	s := New(opts)
-	s.startupTimeout = timeout
-	defer s.Close()
-	if err := s.start(); err != nil {
-		return err
+// FindChrome reports whether a Chrome or Chromium that the browser tools can
+// drive is installed, without starting it. Chrome is launched on the first
+// browser tool call, so this is only used for an early warning: a path this
+// misses still works, since chromedp finds Chrome on its own.
+func FindChrome(opts Options) error {
+	if goruntime.GOOS == "darwin" {
+		if chromeAppPath(opts.ChromePath) != "" {
+			return nil
+		}
 	}
-	ctx, cancel := context.WithTimeout(s.root, timeout)
-	defer cancel()
-	var title string
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate("data:text/html,<title>larik</title>"),
-		chromedp.Title(&title),
-	); err != nil {
-		return fmt.Errorf("browser probe page failed: %w", err)
+	if opts.ChromePath != "" {
+		if _, err := exec.LookPath(opts.ChromePath); err != nil {
+			return fmt.Errorf("browser.chrome_path %q: %w", opts.ChromePath, err)
+		}
+		return nil
 	}
-	if title != "larik" {
-		return fmt.Errorf("browser probe returned unexpected title %q", title)
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("no Google Chrome or Chromium found; install one or set browser.chrome_path")
 }
 
 // Close quits Chrome, if it was started.
@@ -194,12 +195,28 @@ func (s *Session) Close() {
 }
 
 func (s *Session) shutdown() {
+	remote, pid := s.remote, s.remotePID
 	if s.cancelRoot != nil {
+		// Chrome started by the LaunchAgent or by Launch Services is not our
+		// child process: canceling a remote allocator only drops the
+		// websocket. Close the browser over DevTools first, so it writes its
+		// profile out and stops cleanly.
+		if remote && s.root != nil && s.root.Err() == nil {
+			ctx, cancel := context.WithTimeout(s.root, remoteCloseTimeout)
+			_ = chromedp.Cancel(ctx)
+			cancel()
+		}
 		s.cancelRoot()
 		s.cancelAlloc()
 	}
 	s.root, s.cancelRoot, s.cancelAlloc = nil, nil, nil
+	s.remote, s.remotePID = false, 0
 	s.tabs, s.active = nil, nil
+	// Closing the browser is not enough for one that Launch Services owns, so
+	// make sure the process is gone before its profile is removed.
+	if remote {
+		stopProcess(pid, remoteCloseTimeout)
+	}
 	if s.tempProfile != "" {
 		if s.tempProfileBroker {
 			if err := browserbroker.RemoveProfile(context.Background(), s.tempProfile); errors.Is(err, browserbroker.ErrUnavailable) {
@@ -240,54 +257,87 @@ func (s *Session) start() error {
 	return nil
 }
 
+// ensureProfile returns profile, or a temporary profile directory when it is
+// empty, remembered for removal on shutdown.
+func (s *Session) ensureProfile(profile string) (string, error) {
+	if profile != "" {
+		return profile, nil
+	}
+	if s.tempProfile != "" {
+		return s.tempProfile, nil // a launcher that already failed made it
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	profileRoot := filepath.Join(cacheDir, "Larik")
+	if err := os.MkdirAll(profileRoot, 0o700); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(profileRoot, "browser-profile-")
+	if err != nil {
+		return "", err
+	}
+	s.tempProfile = dir
+	return dir, nil
+}
+
 // launch starts Chrome with profile, or a temporary profile when empty.
 func (s *Session) launch(profile string) error {
 	startupTimeout := s.startupTimeout
 	if startupTimeout <= 0 {
 		startupTimeout = browserStartupTimeout
 	}
+	// A hidden window is only possible when larik starts Chrome itself: macOS
+	// Launch Services starts the bundle as an application, which opens a
+	// visible window and ignores --headless. Try the in-process launcher
+	// first for it; an environment that forbids starting Chrome falls through
+	// to the launchers below, as it would have anyway.
+	if goruntime.GOOS == "darwin" && s.opts.Headless {
+		if dir, err := s.ensureProfile(profile); err == nil {
+			if err := s.launchExec(dir, startupTimeout); err == nil {
+				return nil
+			}
+		}
+	}
 	if goruntime.GOOS == "darwin" {
 		if appPath := chromeAppPath(s.opts.ChromePath); appPath != "" {
-			wsURL, brokerProfile, err := browserbroker.Launch(context.Background(), appPath, profile, s.opts.Headless)
-			if err == nil {
+			wsURL, brokerProfile, err := brokerLaunch(context.Background(), appPath, profile, s.opts.Headless)
+			switch {
+			case err == nil:
+				used := profile
 				if profile == "" {
 					s.tempProfile, s.tempProfileBroker = brokerProfile, true
+					used = brokerProfile
 				}
-				if err := s.attachRemote(wsURL, startupTimeout); err != nil {
+				if err := s.attachRemote(wsURL, used, startupTimeout); err != nil {
+					quitRemote(wsURL, used)
 					if s.tempProfileBroker {
 						_ = browserbroker.RemoveProfile(context.Background(), s.tempProfile)
 						s.tempProfile, s.tempProfileBroker = "", false
 					}
-					return fmt.Errorf("connecting to Chrome started by LaunchAgent: %w", err)
+					return fmt.Errorf("connecting to Chrome started by the LaunchAgent: %w", err)
 				}
-				s.note("Chrome was started by the trusted macOS LaunchAgent.")
+				s.noteVisibleWindow()
 				return nil
-			}
-			if !errors.Is(err, browserbroker.ErrUnavailable) {
-				return fmt.Errorf("trusted browser LaunchAgent failed: %w", err)
+			case !errors.Is(err, browserbroker.ErrUnavailable):
+				// The broker refused this launch (an unverified bundle, a
+				// profile outside its allowed roots). Its whole purpose is to
+				// be optional, so fall through to our own launcher instead of
+				// leaving the session without a browser.
+				s.note("The trusted macOS Chrome launcher refused this launch (%v), so larik started Chrome itself.", err)
 			}
 		}
 	}
-	if profile == "" {
-		cacheDir, err := os.UserCacheDir()
-		if err != nil {
-			return err
-		}
-		profileRoot := filepath.Join(cacheDir, "Larik")
-		if err := os.MkdirAll(profileRoot, 0o700); err != nil {
-			return err
-		}
-		dir, err := os.MkdirTemp(profileRoot, "browser-profile-")
-		if err != nil {
-			return err
-		}
-		s.tempProfile, profile = dir, dir
+	profile, perr := s.ensureProfile(profile)
+	if perr != nil {
+		return perr
 	}
 	var err error
 	if goruntime.GOOS == "darwin" {
 		started, launchErr := s.launchViaOpen(profile, startupTimeout)
 		if launchErr == nil {
-			s.note("Chrome was started through macOS Launch Services.")
+			s.noteVisibleWindow()
 			return nil
 		}
 		if started {
@@ -352,12 +402,12 @@ func (s *Session) launchExec(profile string, startupTimeout time.Duration) error
 		cancelAlloc()
 		return err
 	}
-	s.adopt(root, cancelRoot, cancelAlloc, t)
+	s.adopt(root, cancelRoot, cancelAlloc, t, false)
 	return nil
 }
 
-func (s *Session) adopt(root context.Context, cancelRoot, cancelAlloc context.CancelFunc, t *tab) {
-	s.root, s.cancelRoot, s.cancelAlloc = root, cancelRoot, cancelAlloc
+func (s *Session) adopt(root context.Context, cancelRoot, cancelAlloc context.CancelFunc, t *tab, remote bool) {
+	s.root, s.cancelRoot, s.cancelAlloc, s.remote = root, cancelRoot, cancelAlloc, remote
 	t.id = chromedp.FromContext(root).Target.TargetID
 	s.tabs, s.active = []*tab{t}, map[string]*tab{"": t}
 	s.setupDownloads()
@@ -385,7 +435,12 @@ func (s *Session) launchViaOpen(profile string, startupTimeout time.Duration) (b
 	if s.opts.Headless {
 		args = append(args, "--headless")
 	}
-	cmd := exec.Command("/usr/bin/open", append([]string{"-n", "-a", appPath, "--args"}, args...)...)
+	openArgs := []string{"-n"}
+	if s.opts.Headless {
+		openArgs = append(openArgs, "-g") // a window nobody sees must not take focus
+	}
+	openArgs = append(openArgs, "-a", appPath, "--args")
+	cmd := exec.Command("/usr/bin/open", append(openArgs, args...)...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("open Chrome app: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -402,7 +457,8 @@ func (s *Session) launchViaOpen(profile string, startupTimeout time.Duration) (b
 				path := strings.TrimSpace(lines[1])
 				if err == nil && port > 0 && port < 65536 && strings.HasPrefix(path, "/devtools/browser/") {
 					wsURL := fmt.Sprintf("ws://127.0.0.1:%d%s", port, path)
-					if err := s.attachRemote(wsURL, startupTimeout); err != nil {
+					if err := s.attachRemote(wsURL, profile, startupTimeout); err != nil {
+						quitRemote(wsURL, profile)
 						return true, err
 					}
 					return true, nil
@@ -417,7 +473,9 @@ func (s *Session) launchViaOpen(profile string, startupTimeout time.Duration) (b
 	}
 }
 
-func (s *Session) attachRemote(wsURL string, startupTimeout time.Duration) error {
+// attachRemote connects to a Chrome that was started for us. profile is the
+// user data directory it was given, which names the process in its lock.
+func (s *Session) attachRemote(wsURL, profile string, startupTimeout time.Duration) error {
 	allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
 	root, cancelRoot := chromedp.NewContext(allocCtx)
 	t := &tab{ctx: root}
@@ -432,8 +490,78 @@ func (s *Session) attachRemote(wsURL string, startupTimeout time.Duration) error
 		cancelAlloc()
 		return err
 	}
-	s.adopt(root, cancelRoot, cancelAlloc, t)
+	s.adopt(root, cancelRoot, cancelAlloc, t, true)
+	// Chrome holds the lock while it runs and removes it when it exits, so
+	// the pid has to be read now, not during shutdown.
+	s.remotePID = profileLockPID(profile)
+	s.closeStartupTabs(root, t.id)
 	return nil
+}
+
+// startupPages are the pages Chrome opens for a new window of its own. Only
+// these are closed after attaching, so a profile that restores real pages
+// keeps them.
+var startupPages = map[string]bool{
+	"": true, "about:blank": true, "chrome://newtab/": true,
+	"chrome://new-tab-page/": true, "chrome://new-tab-page-third-party/": true,
+}
+
+// closeStartupTabs closes the pages a Chrome we attached to opened by itself.
+// Launch Services tells a newly started application to open an untitled
+// window, so the browser has a new-tab page besides the one chromedp adopted;
+// left alone it shifts every tab index, shows up in browser_tabs, and gives
+// each agent a tab it never opened.
+func (s *Session) closeStartupTabs(root context.Context, keep target.ID) {
+	c := chromedp.FromContext(root)
+	if c == nil || c.Browser == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(root, actionTimeout)
+	defer cancel()
+	exec := cdp.WithExecutor(ctx, c.Browser)
+	infos, err := target.GetTargets().Do(exec)
+	if err != nil {
+		return
+	}
+	for _, info := range infos {
+		if info.Type != "page" || info.TargetID == keep {
+			continue
+		}
+		if startupPages[info.URL] {
+			_ = target.CloseTarget(info.TargetID).Do(exec)
+		}
+	}
+}
+
+// noteVisibleWindow says that a browser asked to be headless isn't, because
+// macOS Launch Services had to start it and starts it as an application.
+func (s *Session) noteVisibleWindow() {
+	if s.opts.Headless {
+		s.note("Chrome had to be started through macOS Launch Services, which starts it as an application and ignores headless mode, so its window is visible.")
+	}
+}
+
+// brokerLaunch is browserbroker.Launch, replaced in tests.
+var brokerLaunch = browserbroker.Launch
+
+// quitRemote stops a Chrome that was started for us but that we could not
+// attach to: without it the browser stays running with nobody holding a
+// handle on it, and its temporary profile is deleted underneath it.
+func quitRemote(wsURL, profile string) {
+	pid := profileLockPID(profile)
+	func() {
+		allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
+		defer cancelAlloc()
+		ctx, cancel := context.WithTimeout(allocCtx, remoteCloseTimeout)
+		defer cancel()
+		root, cancelRoot := chromedp.NewContext(ctx)
+		defer cancelRoot()
+		if err := chromedp.Run(root); err != nil {
+			return
+		}
+		_ = chromedp.Cancel(root)
+	}()
+	stopProcess(pid, remoteCloseTimeout)
 }
 
 // chromeAppPath resolves the configured binary to its containing app bundle,
@@ -464,25 +592,33 @@ func chromeAppPath(configured string) string {
 	return ""
 }
 
-// profileInUse reports whether a running Chrome holds the profile. Chrome
-// marks it with a SingletonLock symlink to "host-pid" (macOS and Linux).
-func profileInUse(dir string) bool {
+// profileLockPID is the Chrome holding dir, from the SingletonLock symlink to
+// "host-pid" that it keeps while it runs (macOS and Linux), or 0. Chrome
+// removes the lock when it exits, so a process we want to stop has to be read
+// while it is still attached.
+func profileLockPID(dir string) int {
 	link, err := os.Readlink(filepath.Join(dir, "SingletonLock"))
 	if err != nil {
-		return false
+		return 0
 	}
 	i := strings.LastIndexByte(link, '-')
 	if i < 0 {
-		return false
+		return 0
 	}
 	var pid int
 	if _, err := fmt.Sscan(link[i+1:], &pid); err != nil || pid <= 0 {
-		return false
+		return 0
 	}
 	if host, _ := os.Hostname(); host != "" && link[:i] != host {
-		return false // locked from another machine (a shared home directory)
+		return 0 // locked from another machine (a shared home directory)
 	}
-	return processAlive(pid)
+	return pid
+}
+
+// profileInUse reports whether a running Chrome holds the profile.
+func profileInUse(dir string) bool {
+	pid := profileLockPID(dir)
+	return pid > 0 && processAlive(pid)
 }
 
 // guard turns on request interception for a tab, so every request (not

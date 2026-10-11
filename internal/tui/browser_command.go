@@ -17,10 +17,11 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 			return info("browser tools: off · /browser on to enable")
 		case m.opts.App == nil:
 			return info("browser tools: configured on · Chrome starts on first use")
-		case m.opts.App.BrowserNote != "":
-			return info(m.opts.App.BrowserNote)
 		case m.opts.App.Browser == nil:
 			return info("browser tools: unavailable (project settings may disable them)")
+		case m.opts.App.BrowserNote != "":
+			// The tools are on; the note says Chrome may not start.
+			return tea.Batch(info("browser tools: on · /browser off to disable"), m.println(m.st.warn.Render(m.opts.App.BrowserNote)))
 		default:
 			return info("browser tools: on · /browser off to disable")
 		}

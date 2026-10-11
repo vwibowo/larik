@@ -50,8 +50,13 @@ func TestBrowserToggleReloadsServices(t *testing.T) {
 	}
 	m := newModel(Options{App: a, Config: a.Cfg, Agent: s.Agent, Session: s})
 	m.command("/browser on")
-	if !m.opts.Config.Browser.Enabled || m.opts.App == a || m.opts.App.Browser == nil || m.opts.App.BrowserNote != "" || m.agent.HasContext() {
+	if !m.opts.Config.Browser.Enabled || m.opts.App == a || m.opts.App.Browser == nil || m.agent.HasContext() {
 		t.Fatal("enabling must persist and reload into a fresh context; browser availability is checked on first use")
+	}
+	// A chrome_path that isn't there is a warning, not a reason to take the
+	// tools away: Chrome starts on the first call, which reports the error.
+	if m.opts.App.BrowserNote == "" {
+		t.Fatal("a missing chrome_path should be warned about")
 	}
 	if !strings.Contains(savedConfig(t, m), `"enabled": true`) {
 		t.Fatal("browser switch was not saved")

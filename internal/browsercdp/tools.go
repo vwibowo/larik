@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -313,12 +314,21 @@ type ScreenshotTool struct{ S *Session }
 
 func (ScreenshotTool) ReadOnly() bool { return false }
 
+// ConcurrencySafe lets captures run alongside other parallel calls, as they
+// did before save_path existed: each save replaces one file of its own.
+func (ScreenshotTool) ConcurrencySafe() bool { return true }
+
 // ReadOnlyFor keeps ordinary captures read-only; saving a file is a write.
+// Input that can't be read carries no save_path and so writes nothing: it is
+// reported as an invalid call, not asked about.
 func (ScreenshotTool) ReadOnlyFor(input json.RawMessage) bool {
 	var in struct {
 		SavePath string `json:"save_path"`
 	}
-	return json.Unmarshal(input, &in) == nil && in.SavePath == ""
+	if len(input) == 0 || json.Unmarshal(input, &in) != nil {
+		return true
+	}
+	return in.SavePath == ""
 }
 func (ScreenshotTool) Spec() llm.ToolSpec {
 	return spec("browser_screenshot",
@@ -347,9 +357,15 @@ func (t ScreenshotTool) Run(ctx context.Context, env *tools.Env, input json.RawM
 	if err != nil {
 		return fail(err)
 	}
+	// A capture the model paid for is returned even when saving it fails, so
+	// it can fix the path without taking the screenshot again.
+	saveErr := ""
 	if in.SavePath != "" {
 		if err := env.WriteFile(in.SavePath, shot.JPEG); err != nil {
-			return fail(err)
+			if errors.Is(err, tools.ErrStale) {
+				err = fmt.Errorf("%s already exists and has not been read; choose another save_path", env.Abs(in.SavePath))
+			}
+			saveErr = err.Error()
 		}
 	}
 	what := "the viewport"
@@ -360,7 +376,10 @@ func (t ScreenshotTool) Run(ctx context.Context, env *tools.Env, input json.RawM
 		what = "the full page"
 	}
 	content := fmt.Sprintf("Screenshot of %s of %s (%d×%d).", what, shot.URL, shot.Width, shot.Height)
-	if in.SavePath != "" {
+	switch {
+	case saveErr != "":
+		content += " NOT saved: " + saveErr + "."
+	case in.SavePath != "":
 		content += " Saved JPEG to " + env.Abs(in.SavePath) + "."
 	}
 	if shot.Cut {

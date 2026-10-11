@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,6 +60,44 @@ func TestWriteCreatesAndCaptures(t *testing.T) {
 	}
 	if len(captured) != 1 || captured[0] != filepath.Join(dir, "sub/new.go") {
 		t.Fatalf("captured = %v", captured)
+	}
+}
+
+// Env.WriteFile is what tools whose content isn't text (a screenshot) write
+// through: the same boundary, checkpoint and freshness rules as write.
+func TestEnvWriteFile(t *testing.T) {
+	dir := t.TempDir()
+	env := NewEnv(dir)
+	var captured []string
+	env.BeforeWrite = func(p string) error { captured = append(captured, p); return nil }
+	if err := env.WriteFile("shots/a.jpg", []byte{0xff, 0xd8}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "shots", "a.jpg")); err != nil || len(got) != 2 {
+		t.Fatalf("file = %v, %v", got, err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("captured = %v", captured)
+	}
+	// Writing again is fine: WriteFile marks what it wrote as read.
+	if err := env.WriteFile("shots/a.jpg", []byte{0xff, 0xd8, 0x01}); err != nil {
+		t.Fatalf("rewriting a file this env wrote: %v", err)
+	}
+	// A file this env never read is refused, recognizably, so a caller can
+	// suggest another path instead of asking the model to read a JPEG.
+	fresh := NewEnv(dir)
+	err := fresh.WriteFile("shots/a.jpg", []byte{0xff})
+	if err == nil || !errors.Is(err, ErrStale) {
+		t.Fatalf("overwriting an unread file = %v, want ErrStale", err)
+	}
+	if strings.Contains(err.Error(), ErrStale.Error()) {
+		t.Errorf("the sentinel's text should stay out of the message: %v", err)
+	}
+	// The project boundary and protected paths still apply.
+	for _, path := range []string{"../outside.jpg", ".git/hooks/pre-commit", ""} {
+		if err := fresh.WriteFile(path, []byte{0xff}); err == nil {
+			t.Errorf("WriteFile(%q) was allowed", path)
+		}
 	}
 }
 

@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/chromedp"
 
 	"larik/internal/tools"
 	"larik/internal/web"
@@ -103,10 +106,138 @@ func TestChromeAppPath(t *testing.T) {
 	}
 }
 
-func TestCheckAvailableRejectsMissingChrome(t *testing.T) {
-	err := CheckAvailable(Options{ChromePath: filepath.Join(t.TempDir(), "missing-chrome")})
-	if err == nil || !strings.Contains(err.Error(), "starting Chrome") {
-		t.Fatalf("missing Chrome should fail preflight with a startup error, got %v", err)
+// Chrome started by the LaunchAgent or by Launch Services is not our child
+// process, so closing the session has to make it quit: canceling a remote
+// allocator only drops the websocket, which would leave the browser running
+// with its temporary profile deleted underneath it.
+func TestRemoteChromeQuitsOnClose(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Chrome is only attached to remotely on macOS")
+	}
+	path := chrome(t)
+	s := New(Options{Headless: true, ChromePath: path})
+	s.startupTimeout = testStartupTimeout
+	// Launch Services is used directly: a headless session prefers the
+	// in-process launcher, whose child process the allocator kills anyway.
+	profile, err := s.ensureProfile("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.launchViaOpen(profile, testStartupTimeout)
+	if err != nil {
+		s.Close()
+		t.Skipf("Launch Services could not start Chrome here (started=%v): %v", started, err)
+	}
+	if !s.remote || s.remotePID == 0 {
+		s.Close()
+		t.Fatalf("a Chrome we did not start must be recorded: remote=%v pid=%d", s.remote, s.remotePID)
+	}
+	// The endpoint has to be read before closing: the profile holding it is
+	// removed with the browser.
+	port := devToolsPort(t, s.tempProfile)
+	s.Close()
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, 250*time.Millisecond)
+		if err != nil {
+			return // the browser quit
+		}
+		c.Close()
+		if time.Now().After(deadline) {
+			t.Fatalf("Chrome is still serving DevTools on %s after the session was closed", addr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func devToolsPort(t *testing.T, profile string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
+	port, err := strconv.Atoi(strings.TrimSpace(first))
+	if err != nil || port <= 0 {
+		t.Fatalf("DevToolsActivePort in %s: %q", profile, data)
+	}
+	return port
+}
+
+// A broker that refuses a launch must not take the browser away: larik says so
+// and goes on to its own launchers, which have no extra privileges. The fake
+// bundle makes every launcher fail, so the startup error proves they all ran.
+func TestBrokerRefusalFallsBack(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launch broker is macOS-only")
+	}
+	fake := filepath.Join(t.TempDir(), "Google Chrome.app", "Contents", "MacOS", "Google Chrome")
+	if err := os.MkdirAll(filepath.Dir(fake), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	old := brokerLaunch
+	brokerLaunch = func(context.Context, string, string, bool) (string, string, error) {
+		calls++
+		return "", "", errors.New("test refusal")
+	}
+	t.Cleanup(func() { brokerLaunch = old })
+	s := New(Options{Headless: true, ChromePath: fake})
+	s.startupTimeout = 2 * time.Second
+	defer s.Close()
+	err := s.start()
+	if err == nil {
+		t.Fatal("the fake bundle should not have started")
+	}
+	if !strings.Contains(err.Error(), "starting Chrome") {
+		t.Errorf("a refusal must end in the normal startup error, not the broker's: %v", err)
+	}
+	if calls == 0 {
+		t.Fatal("the broker was never tried")
+	}
+	if notes := strings.Join(s.takeNotes(), " "); !strings.Contains(notes, "refused") {
+		t.Errorf("the model should be told why the broker was skipped: %q", notes)
+	}
+}
+
+// A capture is only a write when it saves a file, and it stays safe to run
+// alongside other parallel calls either way.
+func TestScreenshotReadOnlyFor(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  bool
+	}{
+		{"", true},
+		{"{}", true},
+		{`{"full_page":true}`, true},
+		{`{"save_path":""}`, true},
+		{"{not json", true}, // a call that can't be read writes nothing
+		{`{"save_path":"shot.jpg"}`, false},
+	} {
+		if got := (ScreenshotTool{}).ReadOnlyFor(json.RawMessage(tc.input)); got != tc.want {
+			t.Errorf("ReadOnlyFor(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+	if (ScreenshotTool{}).ReadOnlyFor(nil) != true {
+		t.Error("ReadOnlyFor(nil) must be read-only")
+	}
+	if !tools.Parallel(ScreenshotTool{}) {
+		t.Error("screenshots must stay runnable alongside other parallel calls")
+	}
+}
+
+func TestFindChromeRejectsMissingChrome(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-chrome")
+	if err := FindChrome(Options{ChromePath: missing}); err == nil {
+		t.Fatal("a chrome_path that does not exist should be reported")
+	}
+	// Starting it names the setting too, so the model can act on the error.
+	s := New(Options{ChromePath: missing, Headless: true})
+	s.startupTimeout = 2 * time.Second
+	defer s.Close()
+	if err := s.start(); err == nil || !strings.Contains(err.Error(), "browser.chrome_path") {
+		t.Fatalf("missing Chrome should fail to start with a startup error, got %v", err)
 	}
 }
 
@@ -124,7 +255,10 @@ func TestSlowChromeStartIsATimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	err := checkAvailable(Options{ChromePath: fake}, 300*time.Millisecond)
+	s := New(Options{ChromePath: fake, Headless: true})
+	s.startupTimeout = 300 * time.Millisecond
+	defer s.Close()
+	err := s.start()
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || !strings.Contains(err.Error(), "no response within 300ms") {
 		t.Fatalf("err = %v", err)
 	}
@@ -162,13 +296,37 @@ func chrome(t *testing.T) string {
 	// The suite runs packages in parallel, which can slow Chrome's start
 	// past the product's timeouts, so tests give it longer. A timeout then
 	// reads as one; "context canceled" still means Chrome was killed.
-	if err := checkAvailable(Options{Headless: true, ChromePath: path}, testStartupTimeout); err != nil {
+	if err := probeChrome(path, testStartupTimeout); err != nil {
 		if strings.Contains(err.Error(), "context canceled") {
 			t.Fatalf("Chrome started but its context was canceled during the availability probe: %v", err)
 		}
 		t.Skipf("Chrome/Chromium is not usable in this environment: %v", err)
 	}
 	return path
+}
+
+// probeChrome starts Chrome the way a session does and loads a page, so an
+// environment where Chrome can't run skips the tests instead of failing them.
+func probeChrome(path string, timeout time.Duration) error {
+	s := New(Options{Headless: true, ChromePath: path})
+	s.startupTimeout = timeout
+	defer s.Close()
+	if err := s.start(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.root, timeout)
+	defer cancel()
+	var title string
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate("data:text/html,<title>larik</title>"),
+		chromedp.Title(&title),
+	); err != nil {
+		return fmt.Errorf("browser probe page failed: %w", err)
+	}
+	if title != "larik" {
+		return fmt.Errorf("browser probe returned unexpected title %q", title)
+	}
+	return nil
 }
 
 func newSession(t *testing.T) (*Session, *httptest.Server) {
@@ -383,6 +541,12 @@ func TestScreenshot(t *testing.T) {
 	if !bytes.HasPrefix(data, []byte{0xff, 0xd8}) || !strings.Contains(saved.Content, path) {
 		t.Fatalf("saved screenshot result=%q, file header=%x", saved.Content, data[:min(len(data), 2)])
 	}
+	// Saving over a file nobody read is refused, but the capture the model
+	// paid for comes back anyway, with a path it can act on.
+	again := ScreenshotTool{s}.Run(ctx, tools.NewEnv(cwd), json.RawMessage(`{"save_path":"artifacts/google.jpg"}`))
+	if again.IsError || len(again.Images) != 1 || !strings.Contains(again.Content, "NOT saved") || !strings.Contains(again.Content, "choose another save_path") {
+		t.Fatalf("re-saving over an unread file: %q (%d images)", again.Content, len(again.Images))
+	}
 
 	// One element: the red box, below the fold, with padding around it.
 	box := refOf(t, res.Content, `button "Red box"`)
@@ -526,7 +690,13 @@ func TestDownloadAndUpload(t *testing.T) {
 		notes = s.takeNotes()
 	}
 	want := filepath.Join(s.downloadDir, "report.txt")
-	if len(notes) != 1 || !strings.Contains(notes[0], "Downloaded report.txt to "+want) {
+	// Other notes are environment-dependent (which launcher started Chrome,
+	// a profile already in use), so look for the download among them.
+	downloaded := false
+	for _, note := range notes {
+		downloaded = downloaded || strings.Contains(note, "Downloaded report.txt to "+want)
+	}
+	if !downloaded {
 		t.Fatalf("download notes: %q", notes)
 	}
 	if data, err := os.ReadFile(want); err != nil || string(data) != "quarterly numbers" {
