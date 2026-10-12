@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+This release brings infrastructure and metadata updates for the v0.15.0 release preparation:
+
+### Added
+
+- Version bump to 0.15.0 in `cmd/larik/main.go`
+- Updated download URLs in `website/site.json` from v0.14.0 to v0.15.0
+
+### Changed
+
+- Updated `website/content/changelog.md` with `## Unreleased` section structure
+- Updated `docs/contributing-guide.md` to reflect v0.15.0 as prepared but not yet published
+
+### Fixed
+
+- No bug fixes in this infrastructure-only release
+
+### Performance
+
+- No performance changes in this release
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Performance
+
 ## v0.14.0
 
 <p class="release-meta"><time datetime="2026-10-10">October 10, 2026</time></p>
