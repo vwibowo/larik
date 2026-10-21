@@ -1,6 +1,9 @@
 package llm
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // ModelInfo describes a model's limits and list price (USD per million tokens).
 // Zero prices mean "unknown"; cost is then not reported.
@@ -15,18 +18,58 @@ type ModelInfo struct {
 	CacheWrite    float64 `json:"cache_write_price,omitempty"`
 }
 
-// Catalog holds known models. Users can add or override entries in config.
-var Catalog = map[string]ModelInfo{}
+// catalog holds known models. Users can add or override entries in config.
+// Background subagents, the server and prompt suggestions read it while
+// setup and the models editor write it, so every access goes through catMu.
+var (
+	catMu          sync.RWMutex
+	catalog        = map[string]ModelInfo{}
+	builtInCatalog = map[string]ModelInfo{}
+)
 
-var builtInCatalog = map[string]ModelInfo{}
+// CatalogEntry returns the entry stored under exactly id.
+func CatalogEntry(id string) (ModelInfo, bool) {
+	catMu.RLock()
+	defer catMu.RUnlock()
+	m, ok := catalog[id]
+	return m, ok
+}
+
+// SetCatalogEntry adds or replaces the entry for id.
+func SetCatalogEntry(id string, info ModelInfo) {
+	catMu.Lock()
+	catalog[id] = info
+	catMu.Unlock()
+}
+
+// AddCatalogEntry stores info unless id already has an entry, and reports
+// whether it did.
+func AddCatalogEntry(id string, info ModelInfo) bool {
+	catMu.Lock()
+	defer catMu.Unlock()
+	if _, ok := catalog[id]; ok {
+		return false
+	}
+	catalog[id] = info
+	return true
+}
+
+// DeleteCatalogEntry removes id, built in or not.
+func DeleteCatalogEntry(id string) {
+	catMu.Lock()
+	delete(catalog, id)
+	catMu.Unlock()
+}
 
 // RestoreCatalogEntry drops a runtime override, restoring built-in metadata if present.
 // The next setup may layer trusted config and Catwalk metadata over it again.
 func RestoreCatalogEntry(id string) {
+	catMu.Lock()
+	defer catMu.Unlock()
 	if info, ok := builtInCatalog[id]; ok {
-		Catalog[id] = info
+		catalog[id] = info
 	} else {
-		delete(Catalog, id)
+		delete(catalog, id)
 	}
 }
 
@@ -51,7 +94,7 @@ func init() {
 		{ID: "gpt-5.6-terra", ContextWindow: 272_000, MaxOutput: 128_000},
 		{ID: "gpt-5.6-luna", ContextWindow: 272_000, MaxOutput: 128_000},
 	} {
-		Catalog[m.ID] = m
+		catalog[m.ID] = m
 		builtInCatalog[m.ID] = m
 	}
 }
@@ -71,12 +114,14 @@ func Lookup(model string) ModelInfo {
 // anything at all. Callers that must not guess (reporting a context window,
 // say) use this instead of Lookup's defaults.
 func Known(model string) (ModelInfo, bool) {
-	if m, ok := Catalog[model]; ok {
+	catMu.RLock()
+	defer catMu.RUnlock()
+	if m, ok := catalog[model]; ok {
 		return m, true
 	}
 	// Tolerate provider-prefixed ids such as "anthropic/claude-sonnet-5" via OpenRouter.
 	if i := strings.LastIndex(model, "/"); i >= 0 {
-		if m, ok := Catalog[model[i+1:]]; ok {
+		if m, ok := catalog[model[i+1:]]; ok {
 			m.ID = model
 			return m, true
 		}
@@ -84,7 +129,7 @@ func Known(model string) (ModelInfo, bool) {
 	// Tolerate a dated release of a catalogued model, e.g.
 	// "claude-sonnet-5-20260514": the limits and prices are the model's.
 	if base, ok := trimReleaseDate(model); ok {
-		if m, ok := Catalog[base]; ok {
+		if m, ok := catalog[base]; ok {
 			m.ID = model
 			return m, true
 		}

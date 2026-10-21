@@ -221,3 +221,20 @@ func Append(msgs []Message, m Message) []Message {
 	}
 	return append(msgs, m)
 }
+
+// FunctionTools renders tool specs in the OpenAI chat-completions "function"
+// shape that Ollama and OpenAI-compatible servers share.
+func FunctionTools(specs []ToolSpec) []map[string]any {
+	var tools []map[string]any
+	for _, t := range specs {
+		tools = append(tools, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Schema,
+			},
+		})
+	}
+	return tools
+}

@@ -22,6 +22,7 @@ import (
 	"larik/internal/permission"
 	"larik/internal/session"
 	"larik/internal/skills"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 	"larik/internal/trace"
 )
@@ -173,6 +174,7 @@ type Agent struct {
 	// the same within a context (see estimate.go), kept with the inputs it
 	// was computed from so it is recomputed only when they change.
 	prefixEst    int
+	msgEst       messageEstimate
 	prefixEstFor struct {
 		system string
 		tools  *tools.Registry
@@ -512,10 +514,22 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 	ch := make(chan Event, 64)
 	go func() {
 		defer close(ch)
-		send := func(e Event) { ch <- e }
+		// A consumer that stops draining after cancelling must not strand
+		// this goroutine: once ctx is done, give it a moment, then drop.
+		send := func(e Event) {
+			select {
+			case ch <- e:
+				return
+			case <-ctx.Done():
+			}
+			select {
+			case ch <- e:
+			case <-time.After(2 * time.Second):
+			}
+		}
 		reason := a.runWith(ctx, prompt, false, send)
 		a.reportSaveError(send) // a write at the very end of the turn
-		ch <- Event{Kind: EvDone, StopReason: reason}
+		send(Event{Kind: EvDone, StopReason: reason})
 	}()
 	return ch
 }
@@ -713,7 +727,7 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 					return string(stop)
 				}
 				stopContinuations++
-				emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + firstLine(res.Reason)})
+				emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + textutil.FirstLine(res.Reason)})
 				a.appendMessage(llm.UserText(hookFeedback(source, res.Reason)), nil)
 				continue
 			}
@@ -764,7 +778,7 @@ func (a *Agent) runRuntime(ctx context.Context, emit func(Event)) string {
 			return "end_turn"
 		}
 		stopContinuations++
-		emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + firstLine(res.Reason)})
+		emit(Event{Kind: EvNotice, Text: source + " hook asked the agent to continue: " + textutil.FirstLine(res.Reason)})
 		a.appendMessage(llm.UserText(hookFeedback(source, res.Reason)), nil)
 	}
 }
@@ -1089,7 +1103,7 @@ func (a *Agent) needsCompaction(upcoming ...llm.Message) bool {
 	// a resumed transcript with no measurement at all. An estimate of what
 	// is about to be sent gets a vote too. It errs low (see estimate.go),
 	// so when it alone clears the threshold the real size has as well.
-	projected := max(a.lastContext, prefix+estimateMessages(a.messages)+estimateMessages(upcoming))
+	projected := max(a.lastContext, prefix+a.messageEstimateLocked()+estimateMessages(upcoming))
 	return projected > 0 && float64(projected) > limit
 }
 
@@ -1280,13 +1294,6 @@ func extractSummary(s string) string {
 		body = body[k+len(openTag):]
 	}
 	return strings.TrimSpace(body)
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // SetTools replaces the tool registry (tests and embedders; normally tools

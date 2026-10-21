@@ -21,10 +21,28 @@ func (m *model) reloadAppModel(chosen string) tea.Cmd {
 	if !m.idle() || m.agent.RunningBackground() > 0 || m.perm != nil {
 		return m.println(m.st.warn.Render("wait for the turn and background tasks before reloading"))
 	}
+	// Setup spawns git, reads config and scans skills: run it off the
+	// UI goroutine, and keep new turns queued until it reports back.
 	old := m.opts.App
-	next, err := app.Setup(old.Cwd, old.Version)
-	if err != nil {
-		return m.println(m.st.err.Render("reload: " + err.Error()))
+	m.reloading, m.busyLabel = true, "Reloading app services…"
+	return tea.Batch(m.spin.Tick, func() tea.Msg {
+		next, err := app.Setup(old.Cwd, old.Version)
+		return reloadSetupMsg{next: next, err: err, chosen: chosen}
+	})
+}
+
+// reloadSetupMsg carries a finished background app.Setup.
+type reloadSetupMsg struct {
+	next   *app.App
+	err    error
+	chosen string
+}
+
+func (m *model) finishReload(msg reloadSetupMsg) tea.Cmd {
+	m.reloading, m.busyLabel = false, ""
+	old, next, chosen := m.opts.App, msg.next, msg.chosen
+	if msg.err != nil {
+		return tea.Batch(m.println(m.st.err.Render("reload: "+msg.err.Error())), m.nextQueued())
 	}
 	next.Debug = old.Debug
 	id := m.sess.ID
@@ -73,5 +91,9 @@ func (m *model) reloadAppModel(chosen string) tea.Cmd {
 	m.resetConversation()
 	m.applyUIConfig()
 	m.applyTheme(m.wantDark())
-	return tea.Batch(m.waitBackground(), tea.Sequence(m.printHistory("app reloaded · fresh model context")))
+	done := tea.Sequence(m.printHistory("app reloaded · fresh model context"))
+	if next.BrowserNote != "" {
+		done = tea.Sequence(done, m.println(m.st.warn.Render(next.BrowserNote)))
+	}
+	return tea.Batch(m.waitBackground(), done, m.nextQueued())
 }

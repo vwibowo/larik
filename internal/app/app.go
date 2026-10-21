@@ -17,7 +17,6 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/audio"
-	"larik/internal/browsercdp"
 	"larik/internal/checkpoint"
 	"larik/internal/config"
 	"larik/internal/hooks"
@@ -32,6 +31,7 @@ import (
 	"larik/internal/skills"
 	"larik/internal/subagent"
 	"larik/internal/telemetry"
+	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/trace"
 	"larik/internal/web"
@@ -51,14 +51,13 @@ func LoadCatwalkCache(dataDir string) {
 	}
 	providers.SetCatwalkProviders(entries)
 	for id, info := range llm.CatalogEntries(entries) {
-		if _, exists := llm.Catalog[id]; !exists {
-			llm.Catalog[id] = info
-		}
+		llm.AddCatalogEntry(id, info)
 	}
 }
 
 // RefreshCatwalkCache fetches metadata in the background for the next launch.
-// It never updates the process-wide catalog, which is read without a lock.
+// It never updates the process-wide catalog mid-session, so model metadata
+// stays stable for the running session.
 func RefreshCatwalkCache(dataDir string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -163,7 +162,7 @@ type App struct {
 	// Memory is the notes kept across sessions; nil when switched off.
 	Memory *memory.Store
 	// Browser drives Chrome for the browser_* tools; nil unless enabled.
-	Browser *browsercdp.Session
+	Browser *termbrowser.Session
 	// Audio is the optional local STT/TTS service used by interactive front ends.
 	Audio audio.Service
 
@@ -239,8 +238,15 @@ func Setup(cwd, version string) (*App, error) {
 		a.Audio = audio.New(cfg.Audio)
 	}
 	if cfg.Browser.Enabled {
-		browserOpts := browsercdp.Options{
-			Headless: cfg.Browser.Headless, ChromePath: cfg.Browser.ChromePath,
+		var location *termbrowser.Location
+		if l := cfg.Browser.Location; l != nil {
+			location = &termbrowser.Location{Latitude: l.Latitude, Longitude: l.Longitude, Accuracy: l.Accuracy}
+		}
+		browserOpts := termbrowser.Options{
+			Location:   location,
+			ChromePath: cfg.Browser.ChromePath, PaneSize: cfg.Browser.PaneSize, Sound: cfg.Browser.Sound,
+			SocketDir:   filepath.Join(cfg.DataDir, "browser"),
+			LogFile:     filepath.Join(cfg.DataDir, "logs", "browser.log"),
 			ProfileDir:  filepath.Join(cfg.DataDir, "browser-profile"),
 			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
 		}
@@ -248,11 +254,11 @@ func Setup(cwd, version string) (*App, error) {
 		// Looking for Chrome costs nothing and starts nothing, so it is only
 		// an early warning: the tools stay available either way, since
 		// chromedp finds installations this check doesn't know about.
-		if err := browsercdp.FindChrome(browserOpts); err != nil {
+		if err := termbrowser.FindChrome(browserOpts); err != nil {
 			a.BrowserNote = "browser tools may not work: " + err.Error()
 		}
-		a.Browser = browsercdp.New(browserOpts)
-		baseTools = append(baseTools, browsercdp.Tools(a.Browser)...)
+		a.Browser = termbrowser.New(browserOpts)
+		baseTools = append(baseTools, termbrowser.Tools(a.Browser)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))

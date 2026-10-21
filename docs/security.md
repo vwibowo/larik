@@ -164,28 +164,7 @@ These options weaken the container itself. `seccomp=unconfined` lets every proce
 - The search backend receives every query, so it is honored only from personal files. A shared file can only disable web tools.
 - Plan mode asks for web tools instead of denying them.
 - `browser_navigate` applies the same address check before opening a URL, and only opens http(s). Every request a tab makes afterwards is intercepted (CDP `Fetch`) and checked too, host by host with the result cached, so a redirect, a subresource or a clicked link can't reach a metadata address either. Chrome resolves names itself, so a name that resolves differently for Chrome than for larik's check could still slip through; tabs a page opens are guarded from the moment larik adopts them. The browser is off unless a personal file enables it, and its profile keeps sign-ins, so treat allowing `browser_*` tools like handing over that Chrome profile. Plan mode allows only opening pages (after asking) and reading them.
-
-### The macOS browser launch broker (opt-in)
-
-Larik normally starts Chrome itself. When larik is started inside a restrictive *outer* sandbox — not its own, but an enclosing confinement that won't let it launch an app — that fails, so an optional LaunchAgent can do it instead. It is installed only by hand, from an unsandboxed terminal:
-
-```bash
-larik browser-broker install     # larik browser-broker uninstall removes it
-```
-
-[internal/browserbroker/broker.go](../internal/browserbroker/broker.go) then runs as a per-user LaunchAgent, **outside every sandbox**, which makes it the most privileged thing Larik installs. What it will do is deliberately narrow:
-
-- It listens on a Unix socket under `~/Library/Application Support/Larik/BrowserLauncher/`, with the socket `0600` inside a `0700` directory, so only your account can ask it for anything.
-- It accepts two operations: start a browser, and remove one of the temporary profiles it created. An unknown operation or an unknown JSON field is refused, a request is capped at 16 KB, and at most four requests are served at once.
-- It starts only a bundle in `/Applications` whose name says Chrome or Chromium, whose executable is one of Chrome's, and whose **code signature is intact and Google's** (Team ID `EQHXZ8M8AV`, checked with `codesign --verify --strict -R`). `~/Applications` is deliberately not allowed: it is writable without authentication, so a bundle anyone could write would be a way to run code outside the sandbox. An unsigned or self-built Chromium is refused, and larik then starts it with its own launcher, which has no privileges of its own.
-- The bundle path is resolved before use, so a symlink swapped after the check can't change what starts.
-- The command line is fixed. The caller chooses only the profile directory and headless or not. A profile must be inside Larik's data directory or be one of the broker's own temporary profiles, with both the written and the resolved paths checked so a symlink can't move it elsewhere. `remove` pins the parent directory, so nothing but a `browser-profile-*` directory the broker itself made can be deleted through it.
-- A refusal is never fatal: larik falls back to its own launchers and tells the model why. It is also skipped first for a headless session, which only Larik's own launcher can honor (see [the browser internals](extensibility.md#browser)).
-- The browser it starts is an application that larik does not own, so the session records its pid and stops it when the session ends; otherwise it would outlive larik.
-- Larik holds a heartbeat lease while using the broker. The broker expires leases after 30 seconds without a heartbeat and unloads its LaunchAgent after 20 seconds with no live clients or active requests; this also cleans up after crashed Larik processes.
-- It logs to `~/Library/Logs/Larik/browser-broker.log`, and `install` fails if the agent doesn't start listening, so a broken install is visible instead of silently unavailable.
-
-The LaunchAgent records the absolute path of the `larik` that installed it, and `XDG_DATA_HOME` if it was set; run `larik browser-broker install` again after moving larik or changing that variable. The surrounding sandbox has to let larik reach the socket and `127.0.0.1` for DevTools.
+- The in-terminal viewer finds the session through a Unix socket in Larik's data directory (`0600`, in a `0700` directory, with the peer's uid checked on macOS and Linux). It only learns the DevTools endpoint and which tab to show; Chrome's DevTools port listens on `127.0.0.1` only, as it always has. Pages the user opens in the viewer go through the same request guard. Password prompts (HTTP authentication) are answered only from the viewer: the session pauses the request, the viewer sends the typed credentials over that socket, and they go to Chrome's `Fetch.continueWithAuth` without being stored, logged, put in `State`, or told to the model. Permission prompts (notifications, location) are likewise only answerable in the viewer, never by a tool call; without a viewer they stay denied.
 
 ## Server mode
 

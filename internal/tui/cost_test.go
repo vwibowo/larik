@@ -82,10 +82,10 @@ func TestCostCommandReportsCompaction(t *testing.T) {
 
 func TestCostCommandShowsSavings(t *testing.T) {
 	m := testModel(t) // main model "m", an unpriced test model
-	llm.Catalog["m"] = llm.ModelInfo{ID: "m", InputPrice: 5, OutputPrice: 25}
-	t.Cleanup(func() { delete(llm.Catalog, "m") })
-	llm.Catalog["cheap"] = llm.ModelInfo{ID: "cheap", InputPrice: 0.1, OutputPrice: 0.5}
-	t.Cleanup(func() { delete(llm.Catalog, "cheap") })
+	llm.SetCatalogEntry("m", llm.ModelInfo{ID: "m", InputPrice: 5, OutputPrice: 25})
+	t.Cleanup(func() { llm.DeleteCatalogEntry("m") })
+	llm.SetCatalogEntry("cheap", llm.ModelInfo{ID: "cheap", InputPrice: 0.1, OutputPrice: 0.5})
+	t.Cleanup(func() { llm.DeleteCatalogEntry("cheap") })
 
 	m.agent.AddUsage("m", llm.Usage{Input: 1000, Output: 100})
 	m.agent.RecordDelegation()

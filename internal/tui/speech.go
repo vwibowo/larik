@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -113,14 +111,4 @@ func speechSummary(e audio.EndpointConfig, fallback string) string {
 		return e.Model
 	}
 	return fallback
-}
-
-func audioError(prefix string, err error) tea.Cmd {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return func() tea.Msg { return outputMsg(fmt.Sprintf("%s: %v", prefix, err)) }
 }

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -26,8 +28,11 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 			return info("browser tools: on · /browser off to disable")
 		}
 	}
+	if arg == "show" {
+		return m.showBrowser(info, fail)
+	}
 	if arg != "on" && arg != "off" {
-		return fail("usage: /browser [on|off]")
+		return fail("usage: /browser [on|off|show]")
 	}
 	if !m.idle() || m.agent.RunningBackground() > 0 || m.perm != nil {
 		return fail("wait for the turn and background tasks before changing browser tools")
@@ -43,21 +48,30 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 		if err := m.opts.Config.SetBrowserEnabled(enabled); err != nil {
 			return fail("couldn't save browser setting: " + err.Error())
 		}
-		old := m.opts.App
-		cmd := m.reloadApp()
-		if m.opts.App == old {
-			return cmd // reload failed; its own error explains what happened
-		}
-		if enabled && m.opts.App != nil && m.opts.App.BrowserNote != "" {
-			return tea.Batch(cmd, m.println(m.st.warn.Render(m.opts.App.BrowserNote)))
-		}
-		if enabled && !m.opts.Config.Browser.Enabled {
-			return tea.Batch(cmd, m.println(m.st.warn.Render("browser tools are disabled by project settings")))
-		}
-		return cmd
+		// The reload finishes in the background; finishReload reports a
+		// browser warning from the rebuilt app.
+		return m.reloadApp()
 	}
 	if m.hasContext() {
 		return m.askReload("Browser tools need a fresh context. Switch them "+strings.ToUpper(arg)+" and reload app services? (Transcript stays saved)", apply)
 	}
 	return apply()
+}
+
+// showBrowser opens the in-terminal browser pane. Starting Chrome and
+// splitting the pane take a moment, so it runs in the background.
+func (m *model) showBrowser(info, fail func(string) tea.Cmd) tea.Cmd {
+	if m.opts.App == nil || m.opts.App.Browser == nil {
+		return fail("browser tools are off · /browser on to enable them")
+	}
+	b := m.opts.App.Browser
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		msg, err := b.Show(ctx)
+		if err != nil {
+			return outputMsg(m.st.err.Render("browser: " + err.Error()))
+		}
+		return outputMsg(m.st.dim.Render(msg))
+	}
 }

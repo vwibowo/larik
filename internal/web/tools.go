@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"larik/internal/llm"
@@ -132,15 +131,6 @@ func (t SearchTool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage
 	}
 	b.WriteString("</search_results>")
 	return tools.Result{Content: b.String()}
-}
-
-// Host returns the host of a URL for permission rules ("" if invalid).
-func Host(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	return strings.ToLower(u.Hostname())
 }
 
 func max0(n int) int {

@@ -14,8 +14,8 @@ import (
 // pricedModel adds a catalog entry for the test and removes it after.
 func pricedModel(t *testing.T, id string, in, out float64) {
 	t.Helper()
-	llm.Catalog[id] = llm.ModelInfo{ID: id, ContextWindow: 100_000, MaxOutput: 8_000, InputPrice: in, OutputPrice: out}
-	t.Cleanup(func() { delete(llm.Catalog, id) })
+	llm.SetCatalogEntry(id, llm.ModelInfo{ID: id, ContextWindow: 100_000, MaxOutput: 8_000, InputPrice: in, OutputPrice: out})
+	t.Cleanup(func() { llm.DeleteCatalogEntry(id) })
 }
 
 func TestBudgetWarnsThenStops(t *testing.T) {

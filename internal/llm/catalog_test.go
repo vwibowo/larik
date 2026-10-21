@@ -3,8 +3,8 @@ package llm
 import "testing"
 
 func TestKnownSeparatesCatalogFactsFromDefaults(t *testing.T) {
-	Catalog["test-model-9"] = ModelInfo{ID: "test-model-9", ContextWindow: 400_000, MaxOutput: 32_000, InputPrice: 1}
-	t.Cleanup(func() { delete(Catalog, "test-model-9") })
+	SetCatalogEntry("test-model-9", ModelInfo{ID: "test-model-9", ContextWindow: 400_000, MaxOutput: 32_000, InputPrice: 1})
+	t.Cleanup(func() { DeleteCatalogEntry("test-model-9") })
 
 	for _, spec := range []string{
 		"test-model-9",            // the entry itself

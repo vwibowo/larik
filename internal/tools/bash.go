@@ -147,6 +147,11 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	}
 	out := lockedWriter{w: outputWriter, fallback: &buffer}
 	cmd.Stdout, cmd.Stderr = &out, &out
+	if report := progressOf(ctx); report != nil && !script {
+		tail := &tailWriter{report: report}
+		cmd.Stdout = io.MultiWriter(&out, tail)
+		cmd.Stderr = cmd.Stdout
+	}
 	// A process left running in the background ("server &", a daemon)
 	// keeps the output pipe open; don't wait for it past the command.
 	cmd.WaitDelay = PipeWaitDelay

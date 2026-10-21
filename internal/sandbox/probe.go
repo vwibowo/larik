@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"larik/internal/textutil"
 )
 
 // probeTimeout bounds a startup probe, which should take milliseconds.
@@ -39,17 +41,12 @@ func runProbe(cmd *exec.Cmd) error {
 	timer := time.AfterFunc(probeTimeout, func() { cmd.Process.Kill() })
 	defer timer.Stop()
 	if err := cmd.Wait(); err != nil {
-		if msg := firstLine(strings.TrimSpace(out.String())); msg != "" {
+		if msg := textutil.FirstLine(strings.TrimSpace(out.String())); msg != "" {
 			return errors.New(msg)
 		}
 		return err
 	}
 	return nil
-}
-
-func firstLine(s string) string {
-	s, _, _ = strings.Cut(s, "\n")
-	return s
 }
 
 // probeHint suggests a fix for the usual reasons a sandbox can't start;

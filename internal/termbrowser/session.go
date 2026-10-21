@@ -1,8 +1,10 @@
-// Package browsercdp drives a Chrome window over the DevTools Protocol for
-// the browser_* tools. Chrome starts on first use and stays open for the
-// rest of the process; closing its window just makes the next call start
-// a new one.
-package browsercdp
+// Package termbrowser drives a headless Chrome over the DevTools Protocol
+// for the browser_* tools, and shows its pages inside the terminal: a
+// viewer (larik browser view) in a split pane attaches to the same Chrome,
+// draws the tab the agent is working in with the kitty graphics protocol
+// and forwards the user's mouse and keys to it. Chrome starts on first use
+// and stays up for the rest of the process.
+package termbrowser
 
 import (
 	"context"
@@ -29,29 +31,43 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
-	"larik/internal/browserbroker"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 	"larik/internal/web"
 )
 
 // Options configure the browser.
 type Options struct {
-	Headless   bool
 	ChromePath string // empty: find Chrome or Chromium
 	ProfileDir string // persistent profile, so sign-ins survive restarts
 	// DownloadDir receives files the pages download; empty means a
 	// temporary directory.
 	DownloadDir string
+	// SocketDir holds the control socket the viewer connects to.
+	SocketDir string
+	// PaneSize is the share of the terminal's width, in percent, the
+	// viewer's pane takes (default 50).
+	PaneSize int
+	// LogFile receives chromedp's own messages; empty drops them. They
+	// must never reach stderr, which is the TUI's screen.
+	LogFile string
+	// Sound lets pages play audio on this computer; otherwise Chrome is
+	// muted. Chrome can't be unmuted once started, so it applies from the
+	// next start.
+	Sound bool
+	// Location is the position a page gets when the user allows it to ask
+	// (browser.location); headless Chrome can't read the computer's own.
+	Location *Location
 }
 
 const (
-	actionTimeout         = 30 * time.Second
+	actionTimeout = 30 * time.Second
+	// closeTimeout bounds waiting for Chrome to quit cleanly before it is
+	// killed.
+	closeTimeout          = 5 * time.Second
 	browserStartupTimeout = 12 * time.Second
-	// remoteCloseTimeout bounds asking a Chrome we don't own to quit, and
-	// waiting for it to let go of a temporary profile.
-	remoteCloseTimeout = 3 * time.Second
-	maxConsole         = 200
-	maxRequests        = 300
+	maxConsole            = 200
+	maxRequests           = 300
 )
 
 // Session is one Chrome process and its tabs. Each agent has its own tabs
@@ -67,25 +83,20 @@ type Session struct {
 	tabs        []*tab
 	active      map[string]*tab // owner -> its active tab
 
-	// remote is set when Chrome was started by the LaunchAgent or by Launch
-	// Services instead of as our child process, so shutdown has to stop it
-	// itself rather than relying on the allocator to kill it. remotePID is
-	// that process, read from the profile lock while it holds it.
-	remote    bool
-	remotePID int
+	// wsURL is the browser's DevTools endpoint, for the viewer.
+	wsURL string
 
 	// startupTimeout bounds Chrome launch and the initial DevTools guard.
 	startupTimeout time.Duration
 
 	// tempProfile is a throwaway profile used when ProfileDir is taken by
 	// another Chrome; it's removed on shutdown.
-	tempProfile       string
-	tempProfileBroker bool
-	brokerLease       string
-	brokerLeaseCancel context.CancelFunc
-	brokerLeaseDone   chan struct{}
-	downloadDir       string
-	downloads         map[string]string // download GUID -> suggested file name
+	tempProfile string
+	downloadDir string
+	downloads   map[string]string // download GUID -> suggested file name
+
+	// view is what the viewer shows and the control socket reports.
+	view viewState
 
 	// notes are told to the model with the next tool result: a fallback
 	// profile, finished downloads.
@@ -168,15 +179,13 @@ func New(opts Options) *Session {
 // browser tool call, so this is only used for an early warning: a path this
 // misses still works, since chromedp finds Chrome on its own.
 func FindChrome(opts Options) error {
-	if goruntime.GOOS == "darwin" {
-		if chromeAppPath(opts.ChromePath) != "" {
-			return nil
-		}
-	}
 	if opts.ChromePath != "" {
 		if _, err := exec.LookPath(opts.ChromePath); err != nil {
 			return fmt.Errorf("browser.chrome_path %q: %w", opts.ChromePath, err)
 		}
+		return nil
+	}
+	if chromeBinary() != "" {
 		return nil
 	}
 	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
@@ -187,61 +196,59 @@ func FindChrome(opts Options) error {
 	return errors.New("no Google Chrome or Chromium found; install one or set browser.chrome_path")
 }
 
+// chromeBinary is a standard macOS Chrome or Chromium executable, or "".
+// Elsewhere chromedp finds Chrome on PATH by itself.
+func chromeBinary() string {
+	if goruntime.GOOS != "darwin" {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	for _, app := range []string{
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		filepath.Join(home, "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
+		"/Applications/Chromium.app/Contents/MacOS/Chromium",
+		filepath.Join(home, "Applications", "Chromium.app", "Contents", "MacOS", "Chromium"),
+		"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+		"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+	} {
+		if fi, err := os.Stat(app); err == nil && fi.Mode().IsRegular() {
+			return app
+		}
+	}
+	return ""
+}
+
 // Close quits Chrome, if it was started.
 func (s *Session) Close() {
 	if s == nil {
 		return
 	}
+	s.stopServing()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.shutdown()
 }
 
 func (s *Session) shutdown() {
-	remote, pid := s.remote, s.remotePID
 	if s.cancelRoot != nil {
-		// Chrome started by the LaunchAgent or by Launch Services is not our
-		// child process: canceling a remote allocator only drops the
-		// websocket. Close the browser over DevTools first, so it writes its
-		// profile out and stops cleanly.
-		if remote && s.root != nil && s.root.Err() == nil {
-			ctx, cancel := context.WithTimeout(s.root, remoteCloseTimeout)
+		// Ask Chrome to quit and wait for it, rather than killing it:
+		// cookies and localStorage are written out on the way down, and a
+		// killed Chrome loses whatever it hadn't saved yet.
+		if s.root.Err() == nil {
+			ctx, cancel := context.WithTimeout(s.root, closeTimeout)
 			_ = chromedp.Cancel(ctx)
 			cancel()
 		}
 		s.cancelRoot()
 		s.cancelAlloc()
 	}
-	s.root, s.cancelRoot, s.cancelAlloc = nil, nil, nil
-	s.remote, s.remotePID = false, 0
+	s.root, s.cancelRoot, s.cancelAlloc, s.wsURL = nil, nil, nil, ""
 	s.tabs, s.active = nil, nil
-	// Closing the browser is not enough for one that Launch Services owns, so
-	// make sure the process is gone before its profile is removed.
-	if remote {
-		stopProcess(pid, remoteCloseTimeout)
-	}
-	if s.brokerLeaseCancel != nil {
-		s.brokerLeaseCancel()
-		s.brokerLeaseCancel = nil
-	}
-	if s.brokerLeaseDone != nil {
-		<-s.brokerLeaseDone
-		s.brokerLeaseDone = nil
-	}
-	if s.brokerLease != "" {
-		_ = brokerLeaseRelease(context.Background(), s.brokerLease)
-		s.brokerLease = ""
-	}
 	if s.tempProfile != "" {
-		if s.tempProfileBroker {
-			if err := browserbroker.RemoveProfile(context.Background(), s.tempProfile); errors.Is(err, browserbroker.ErrUnavailable) {
-				_ = os.RemoveAll(s.tempProfile)
-			}
-		} else {
-			_ = os.RemoveAll(s.tempProfile)
-		}
-		s.tempProfile, s.tempProfileBroker = "", false
+		_ = os.RemoveAll(s.tempProfile)
+		s.tempProfile = ""
 	}
+	s.changed()
 }
 
 // start launches Chrome unless it's running. The contexts derive from
@@ -297,106 +304,18 @@ func (s *Session) ensureProfile(profile string) (string, error) {
 	return dir, nil
 }
 
-func (s *Session) keepBrokerLease(token string) {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	s.brokerLease, s.brokerLeaseCancel, s.brokerLeaseDone = token, cancel, done
-	go func() {
-		defer close(done)
-		t := time.NewTicker(10 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				_ = brokerLeaseRenew(context.Background(), token)
-			}
-		}
-	}()
-}
-
 // launch starts Chrome with profile, or a temporary profile when empty.
+// Chrome always runs headless: the user sees its pages in the terminal.
 func (s *Session) launch(profile string) error {
 	startupTimeout := s.startupTimeout
 	if startupTimeout <= 0 {
 		startupTimeout = browserStartupTimeout
 	}
-	// A hidden window is only possible when larik starts Chrome itself: macOS
-	// Launch Services starts the bundle as an application, which opens a
-	// visible window and ignores --headless. Try the in-process launcher
-	// first for it; an environment that forbids starting Chrome falls through
-	// to the launchers below, as it would have anyway.
-	if goruntime.GOOS == "darwin" && s.opts.Headless {
-		if dir, err := s.ensureProfile(profile); err == nil {
-			if err := s.launchExec(dir, startupTimeout); err == nil {
-				return nil
-			}
-		}
-	}
-	if goruntime.GOOS == "darwin" {
-		if appPath := chromeAppPath(s.opts.ChromePath); appPath != "" {
-			lease, leaseErr := brokerLeaseAcquire(context.Background())
-			var wsURL, brokerProfile string
-			err := leaseErr
-			if leaseErr == nil {
-				wsURL, brokerProfile, err = brokerLaunch(context.Background(), appPath, profile, s.opts.Headless)
-			}
-			if err == nil {
-				s.keepBrokerLease(lease)
-			}
-			if err != nil && leaseErr == nil {
-				_ = brokerLeaseRelease(context.Background(), lease)
-			}
-			switch {
-			case err == nil:
-				used := profile
-				if profile == "" {
-					s.tempProfile, s.tempProfileBroker = brokerProfile, true
-					used = brokerProfile
-				}
-				if err := s.attachRemote(wsURL, used, startupTimeout); err != nil {
-					quitRemote(wsURL, used)
-					if s.tempProfileBroker {
-						_ = browserbroker.RemoveProfile(context.Background(), s.tempProfile)
-						s.tempProfile, s.tempProfileBroker = "", false
-					}
-					return fmt.Errorf("connecting to Chrome started by the LaunchAgent: %w", err)
-				}
-				s.noteVisibleWindow()
-				return nil
-			case !errors.Is(err, browserbroker.ErrUnavailable):
-				// The broker refused this launch (an unverified bundle, a
-				// profile outside its allowed roots). Its whole purpose is to
-				// be optional, so fall through to our own launcher instead of
-				// leaving the session without a browser.
-				s.note("The trusted macOS Chrome launcher refused this launch (%v), so larik started Chrome itself.", err)
-			}
-		}
-	}
-	profile, perr := s.ensureProfile(profile)
-	if perr != nil {
-		return perr
-	}
-	var err error
-	if goruntime.GOOS == "darwin" {
-		started, launchErr := s.launchViaOpen(profile, startupTimeout)
-		if launchErr == nil {
-			s.noteVisibleWindow()
-			return nil
-		}
-		if started {
-			err = fmt.Errorf("macOS launched Chrome but DevTools connection failed: %w", launchErr)
-		} else {
-			err = s.launchExec(profile, startupTimeout)
-			if err != nil {
-				err = fmt.Errorf("%w; trusted macOS launcher fallback failed: %v", err, launchErr)
-			}
-		}
-	} else {
-		err = s.launchExec(profile, startupTimeout)
-	}
+	profile, err := s.ensureProfile(profile)
 	if err != nil {
+		return err
+	}
+	if err := s.launchExec(profile, startupTimeout); err != nil {
 		if s.tempProfile != "" {
 			_ = os.RemoveAll(s.tempProfile)
 			s.tempProfile = ""
@@ -421,16 +340,27 @@ func (s *Session) launchExec(profile string, startupTimeout time.Duration) error
 		chromedp.Flag("disable-backgrounding-occluded-windows", true),
 		chromedp.Flag("disable-renderer-backgrounding", true),
 		chromedp.WindowSize(1280, 900),
+		chromedp.Flag("headless", "new"),
+		chromedp.Flag("hide-scrollbars", true),
+		// Scroll as the wheel events come: an animated scroll restarted by
+		// every trackpad tick trails behind the user's fingers.
+		chromedp.Flag("disable-smooth-scrolling", true),
 	}
-	if s.opts.Headless {
-		opts = append(opts, chromedp.Headless)
+	if !s.opts.Sound {
+		opts = append(opts, chromedp.Flag("mute-audio", true))
 	}
-	if s.opts.ChromePath != "" {
-		opts = append(opts, chromedp.ExecPath(s.opts.ChromePath))
+	// Render at 2x natively: the screencast then sends full-resolution
+	// frames for a Retina-class terminal, which a scale factor set over
+	// DevTools doesn't (it sends CSS-pixel frames). Screenshots clip by
+	// devicePixelRatio, so the model's images stay one pixel per CSS pixel.
+	opts = append(opts, chromedp.Flag("force-device-scale-factor", "2"))
+	if path := firstNonEmpty(s.opts.ChromePath, chromeBinary()); path != "" {
+		opts = append(opts, chromedp.ExecPath(path))
 	}
 	opts = append(opts, chromedp.UserDataDir(profile))
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
-	root, cancelRoot := chromedp.NewContext(allocCtx)
+	logf := s.logger()
+	root, cancelRoot := chromedp.NewContext(allocCtx, chromedp.WithLogf(logf), chromedp.WithErrorf(logf))
 	t := &tab{ctx: root}
 	s.watch(t)
 	// The first Run allocates Chrome using the context passed to it. Running it
@@ -447,199 +377,62 @@ func (s *Session) launchExec(profile string, startupTimeout time.Duration) error
 		cancelAlloc()
 		return err
 	}
-	s.adopt(root, cancelRoot, cancelAlloc, t, false)
-	return nil
-}
-
-func (s *Session) adopt(root context.Context, cancelRoot, cancelAlloc context.CancelFunc, t *tab, remote bool) {
-	s.root, s.cancelRoot, s.cancelAlloc, s.remote = root, cancelRoot, cancelAlloc, remote
+	s.root, s.cancelRoot, s.cancelAlloc = root, cancelRoot, cancelAlloc
 	t.id = chromedp.FromContext(root).Target.TargetID
 	s.tabs, s.active = []*tab{t}, map[string]*tab{"": t}
+	s.wsURL = devToolsURL(profile)
 	s.setupDownloads()
-}
-
-// launchViaOpen starts Chrome through macOS Launch Services as the fallback
-// when the per-user trusted LaunchAgent is not installed.
-func (s *Session) launchViaOpen(profile string, startupTimeout time.Duration) (bool, error) {
-	appPath := chromeAppPath(s.opts.ChromePath)
-	if appPath == "" {
-		return false, errors.New("could not locate a Chrome .app bundle for Launch Services")
-	}
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		return false, err
-	}
-	activePort := filepath.Join(profile, "DevToolsActivePort")
-	_ = os.Remove(activePort) // ignore a stale port file from the failed direct launch
-	args := []string{
-		"--no-first-run", "--no-default-browser-check", "--disable-background-networking",
-		"--disable-sync", "--disable-features=Translate", "--metrics-recording-only",
-		"--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
-		"--disable-renderer-backgrounding", "--window-size=1280,900",
-		"--user-data-dir=" + profile, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
-	}
-	if s.opts.Headless {
-		args = append(args, "--headless")
-	}
-	openArgs := []string{"-n"}
-	if s.opts.Headless {
-		openArgs = append(openArgs, "-g") // a window nobody sees must not take focus
-	}
-	openArgs = append(openArgs, "-a", appPath, "--args")
-	cmd := exec.Command("/usr/bin/open", append(openArgs, args...)...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return false, fmt.Errorf("open Chrome app: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-
-	deadline := time.NewTimer(startupTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if data, err := os.ReadFile(activePort); err == nil {
-			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-			if len(lines) >= 2 {
-				port, err := strconv.Atoi(strings.TrimSpace(lines[0]))
-				path := strings.TrimSpace(lines[1])
-				if err == nil && port > 0 && port < 65536 && strings.HasPrefix(path, "/devtools/browser/") {
-					wsURL := fmt.Sprintf("ws://127.0.0.1:%d%s", port, path)
-					if err := s.attachRemote(wsURL, profile, startupTimeout); err != nil {
-						quitRemote(wsURL, profile)
-						return true, err
-					}
-					return true, nil
-				}
-			}
-		}
-		select {
-		case <-deadline.C:
-			return true, fmt.Errorf("Chrome did not publish a DevTools endpoint within %s", startupTimeout)
-		case <-ticker.C:
-		}
-	}
-}
-
-// attachRemote connects to a Chrome that was started for us. profile is the
-// user data directory it was given, which names the process in its lock.
-func (s *Session) attachRemote(wsURL, profile string, startupTimeout time.Duration) error {
-	allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
-	root, cancelRoot := chromedp.NewContext(allocCtx)
-	t := &tab{ctx: root}
-	s.watch(t)
-	stopStartupTimer := time.AfterFunc(startupTimeout, cancelRoot)
-	err := chromedp.Run(root, s.guard())
-	if !stopStartupTimer.Stop() && err != nil {
-		err = fmt.Errorf("no response within %s: %w", startupTimeout, context.DeadlineExceeded)
-	}
-	if err != nil {
-		cancelRoot()
-		cancelAlloc()
-		return err
-	}
-	s.adopt(root, cancelRoot, cancelAlloc, t, true)
-	// Chrome holds the lock while it runs and removes it when it exits, so
-	// the pid has to be read now, not during shutdown.
-	s.remotePID = profileLockPID(profile)
-	s.closeStartupTabs(root, t.id)
+	s.changed()
 	return nil
 }
 
-// startupPages are the pages Chrome opens for a new window of its own. Only
-// these are closed after attaching, so a profile that restores real pages
-// keeps them.
-var startupPages = map[string]bool{
-	"": true, "about:blank": true, "chrome://newtab/": true,
-	"chrome://new-tab-page/": true, "chrome://new-tab-page-third-party/": true,
-}
-
-// closeStartupTabs closes the pages a Chrome we attached to opened by itself.
-// Launch Services tells a newly started application to open an untitled
-// window, so the browser has a new-tab page besides the one chromedp adopted;
-// left alone it shifts every tab index, shows up in browser_tabs, and gives
-// each agent a tab it never opened.
-func (s *Session) closeStartupTabs(root context.Context, keep target.ID) {
-	c := chromedp.FromContext(root)
-	if c == nil || c.Browser == nil {
-		return
+// logger writes chromedp's messages to the log file. chromedp reports, for
+// instance, every DOM event newer than it knows ("unhandled node event"),
+// which is noise to the user and must not land on the terminal.
+func (s *Session) logger() func(string, ...any) {
+	path := s.opts.LogFile
+	if path == "" {
+		return func(string, ...any) {}
 	}
-	ctx, cancel := context.WithTimeout(root, actionTimeout)
-	defer cancel()
-	exec := cdp.WithExecutor(ctx, c.Browser)
-	infos, err := target.GetTargets().Do(exec)
-	if err != nil {
-		return
-	}
-	for _, info := range infos {
-		if info.Type != "page" || info.TargetID == keep {
-			continue
-		}
-		if startupPages[info.URL] {
-			_ = target.CloseTarget(info.TargetID).Do(exec)
-		}
-	}
-}
-
-// noteVisibleWindow says that a browser asked to be headless isn't, because
-// macOS Launch Services had to start it and starts it as an application.
-func (s *Session) noteVisibleWindow() {
-	if s.opts.Headless {
-		s.note("Chrome had to be started through macOS Launch Services, which starts it as an application and ignores headless mode, so its window is visible.")
-	}
-}
-
-// brokerLaunch is browserbroker.Launch, replaced in tests.
-var (
-	brokerLaunch       = browserbroker.Launch
-	brokerLeaseAcquire = browserbroker.NewLease
-	brokerLeaseRenew   = browserbroker.RenewLease
-	brokerLeaseRelease = browserbroker.ReleaseLease
-)
-
-// quitRemote stops a Chrome that was started for us but that we could not
-// attach to: without it the browser stays running with nobody holding a
-// handle on it, and its temporary profile is deleted underneath it.
-func quitRemote(wsURL, profile string) {
-	pid := profileLockPID(profile)
-	func() {
-		allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
-		defer cancelAlloc()
-		ctx, cancel := context.WithTimeout(allocCtx, remoteCloseTimeout)
-		defer cancel()
-		root, cancelRoot := chromedp.NewContext(ctx)
-		defer cancelRoot()
-		if err := chromedp.Run(root); err != nil {
-			return
-		}
-		_ = chromedp.Cancel(root)
-	}()
-	stopProcess(pid, remoteCloseTimeout)
-}
-
-// chromeAppPath resolves the configured binary to its containing app bundle,
-// or finds a standard Chrome/Chromium bundle when no path is configured.
-func chromeAppPath(configured string) string {
-	if configured != "" {
-		if resolved, err := exec.LookPath(configured); err == nil {
-			configured = resolved
-		}
-		for dir := filepath.Clean(configured); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-			if strings.HasSuffix(strings.ToLower(dir), ".app") {
-				return dir
+	var mu sync.Mutex
+	var f *os.File
+	return func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if f == nil {
+			if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+				return
+			}
+			flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+			if fi, err := os.Stat(path); err == nil && fi.Size() > 1<<20 {
+				flags |= os.O_TRUNC // keep it from growing without bound
+			}
+			var err error
+			if f, err = os.OpenFile(path, flags, 0o600); err != nil {
+				return
 			}
 		}
+		fmt.Fprintf(f, time.Now().Format("2006-01-02 15:04:05 ")+format+"\n", args...)
+	}
+}
+
+// devToolsURL reads the browser endpoint Chrome publishes in its profile
+// once it listens, or "" when it hasn't.
+func devToolsURL(profile string) string {
+	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
+	if err != nil {
 		return ""
 	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		"/Applications/Google Chrome.app", filepath.Join(home, "Applications", "Google Chrome.app"),
-		"/Applications/Chromium.app", filepath.Join(home, "Applications", "Chromium.app"),
-		"/Applications/Google Chrome Beta.app", "/Applications/Google Chrome Canary.app",
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		return ""
 	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(filepath.Join(candidate, "Contents", "MacOS")); err == nil {
-			return candidate
-		}
+	port, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	path := strings.TrimSpace(lines[1])
+	if err != nil || port <= 0 || port > 65535 || !strings.HasPrefix(path, "/devtools/browser/") {
+		return ""
 	}
-	return ""
+	return fmt.Sprintf("ws://127.0.0.1:%d%s", port, path)
 }
 
 // profileLockPID is the Chrome holding dir, from the SingletonLock symlink to
@@ -677,7 +470,8 @@ func profileInUse(dir string) bool {
 // dialog nobody can answer; browser_upload fills them instead.
 func (s *Session) guard() chromedp.Action {
 	return chromedp.Tasks{
-		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*", RequestStage: fetch.RequestStageRequest}}),
+		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*", RequestStage: fetch.RequestStageRequest}}).
+			WithHandleAuthRequests(true), // password prompts go to the viewer (auth.go)
 		page.SetInterceptFileChooserDialog(true),
 		network.Enable(), // for the request log
 	}
@@ -799,7 +593,7 @@ func (s *Session) watch(t *tab) {
 			if ex := ev.ExceptionDetails.Exception; ex != nil && ex.Description != "" {
 				msg = ex.Description
 			}
-			t.log("[exception] " + firstLine(msg))
+			t.log("[exception] " + textutil.FirstLine(msg))
 		case *page.EventFrameRequestedNavigation, *page.EventFrameStartedLoading:
 			t.navs.Add(1)
 		case *network.EventRequestWillBeSent:
@@ -817,6 +611,8 @@ func (s *Session) watch(t *tab) {
 			})
 		case *fetch.EventRequestPaused:
 			go s.checkRequest(t, ev)
+		case *fetch.EventAuthRequired:
+			go s.handleAuth(t, ev)
 		case *page.EventDomContentEventFired:
 			t.parsed.Add(1)
 		case *page.EventFileChooserOpened:
@@ -882,6 +678,7 @@ func (s *Session) Tab(ctx context.Context) (*tab, error) {
 			return nil, err
 		}
 	}
+	s.focusOn(s.active[owner]) // the viewer follows the agent at work
 	return s.active[owner], nil
 }
 
@@ -897,6 +694,7 @@ func (s *Session) newTab(owner string) (*tab, error) {
 	t.id = chromedp.FromContext(ctx).Target.TargetID
 	s.tabs = append(s.tabs, t)
 	s.active[owner] = t
+	s.changed()
 	return t, nil
 }
 
@@ -948,12 +746,6 @@ func (s *Session) syncTabs() {
 		if _, known := owners[info.TargetID]; known || info.Type != "page" || strings.HasPrefix(info.URL, "devtools://") {
 			continue
 		}
-		// Launch Services can create a new-tab page just after the startup
-		// cleanup queried the target list. Never adopt it as an agent tab.
-		if startupPages[info.URL] {
-			_ = target.CloseTarget(info.TargetID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(s.root).Browser))
-			continue
-		}
 		tabCtx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
 		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: owners[info.OpenerID]}
 		s.watch(t)
@@ -975,6 +767,7 @@ func (s *Session) syncTabs() {
 			s.active[t.owner] = t
 		}
 	}
+	s.changed()
 }
 
 // TabInfo describes a tab for browser_tabs.
@@ -1083,6 +876,7 @@ func (s *Session) closeTab(ctx context.Context, t *tab) error {
 			s.active[t.owner] = own[len(own)-1]
 		}
 	}
+	s.changed()
 	return nil
 }
 
@@ -1177,11 +971,4 @@ func (s *Session) run(ctx context.Context, actions ...chromedp.Action) error {
 		return fmt.Errorf("timed out after %s", actionTimeout)
 	}
 	return err
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }

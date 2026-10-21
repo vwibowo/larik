@@ -20,9 +20,11 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/clipboard"
+	"larik/internal/filelock"
 	"larik/internal/llm"
 	"larik/internal/mcp"
 	"larik/internal/session"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -353,11 +355,31 @@ func (m *model) historyPath() string {
 	return filepath.Join(c.DataDir, "history", name+".jsonl")
 }
 
+// withHistoryLock runs fn while holding a lock beside the history file, so
+// another Larik's append cannot land between this one's read and rewrite.
+// The lock lives in its own file because a rewrite replaces history's inode.
+func withHistoryLock(p string, fn func()) {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return
+	}
+	if l, err := os.OpenFile(p+".lock", os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+		defer l.Close()
+		if filelock.Lock(l, false) == nil {
+			defer filelock.Unlock(l)
+		}
+	}
+	fn()
+}
+
 func (m *model) loadHistory() {
 	p := m.historyPath()
 	if p == "" {
 		return
 	}
+	withHistoryLock(p, func() { m.readHistory(p) })
+}
+
+func (m *model) readHistory(p string) {
 	f, err := os.Open(p)
 	if err != nil {
 		return
@@ -379,7 +401,13 @@ func (m *model) loadHistory() {
 			line, _ := json.Marshal(historyEntry{Text: t})
 			b.Write(append(line, '\n'))
 		}
-		_ = os.WriteFile(p, []byte(b.String()), 0o600)
+		// Write beside it and rename, so a crash never leaves a torn file.
+		tmp := p + ".tmp"
+		if os.WriteFile(tmp, []byte(b.String()), 0o600) == nil {
+			if os.Rename(tmp, p) != nil {
+				os.Remove(tmp)
+			}
+		}
 	}
 }
 
@@ -397,14 +425,13 @@ func (m *model) recordHistory(text string) {
 	if p == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return
-	}
 	line, _ := json.Marshal(historyEntry{Text: text, Time: time.Now()})
-	if f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-		f.Write(append(line, '\n'))
-		f.Close()
-	}
+	withHistoryLock(p, func() {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+			f.Write(append(line, '\n'))
+			f.Close()
+		}
+	})
 }
 
 // recallHistory steps through history: dir -1 is older, +1 newer. Past
@@ -436,7 +463,7 @@ func (m *model) recallHistory(dir int) bool {
 func (m *model) openHistoryPicker() {
 	p := &picker{filterable: true}
 	for i := len(m.history) - 1; i >= 0; i-- {
-		p.items = append(p.items, pickItem{label: oneLine(m.history[i], 200), value: m.history[i]})
+		p.items = append(p.items, pickItem{label: textutil.OneLine(m.history[i], 200), value: m.history[i]})
 	}
 	p.home()
 	m.histPick = p
@@ -482,7 +509,7 @@ func (m *model) runShell(command string) tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.shellCancel = cancel
-	m.busyLabel = "Running !" + oneLine(command, 40) + "…"
+	m.busyLabel = "Running !" + textutil.OneLine(command, 40) + "…"
 	a := m.agent
 	run := func() tea.Msg { return shellDoneMsg{command, a.Shell(ctx, command)} }
 	return tea.Sequence(
@@ -673,7 +700,7 @@ func (m *model) copyReply() tea.Cmd {
 // copyText puts text on the clipboard the way copyReply does; what names
 // it in the confirmation, e.g. "the last reply".
 func (m *model) copyText(text, what string) tea.Cmd {
-	what += " (" + plural(strings.Count(text, "\n")+1, "line") + ")"
+	what += " (" + textutil.Plural(strings.Count(text, "\n")+1, "line") + ")"
 	native := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

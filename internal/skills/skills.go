@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 
+	"larik/internal/textutil"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -223,7 +225,7 @@ func parseCommandData(path string, data []byte, scope string) (Skill, error) {
 	desc := strings.Join(strings.Fields(meta.Description), " ")
 	explicit := desc != ""
 	if !explicit {
-		desc = firstLine(string(body))
+		desc = textutil.OneLine(textutil.FirstText(string(body)), 100)
 	}
 	if r := []rune(desc); len(r) > maxDescription {
 		desc = string(r[:maxDescription])
@@ -241,19 +243,6 @@ func parseCommandData(path string, data []byte, scope string) (Skill, error) {
 		Command:        true,
 		ArgumentHint:   strings.TrimSpace(meta.ArgumentHint),
 	}, nil
-}
-
-// firstLine is a body's first non-empty line, without heading marks.
-func firstLine(body string) string {
-	for _, l := range strings.Split(body, "\n") {
-		if l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#")); l != "" {
-			if r := []rune(l); len(r) > 100 {
-				l = string(r[:99]) + "…"
-			}
-			return l
-		}
-	}
-	return ""
 }
 
 // Reload rescans the roots the set was discovered from.

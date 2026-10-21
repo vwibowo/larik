@@ -24,7 +24,7 @@ func (a *Agent) observe(e Event) {
 		return
 	}
 	switch e.Kind {
-	case EvTextDelta, EvThinkingDelta, EvToolCallDelta:
+	case EvTextDelta, EvThinkingDelta, EvToolCallDelta, EvToolProgress:
 		return
 	}
 	a.opts.Observer.Observe(a.origin, e)

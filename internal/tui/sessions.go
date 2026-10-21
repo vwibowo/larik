@@ -16,6 +16,7 @@ import (
 	"larik/internal/agent"
 	"larik/internal/app"
 	"larik/internal/session"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 	"larik/internal/worktree"
 )
@@ -66,7 +67,7 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 			var b strings.Builder
 			first := max(0, len(prompts)-20)
 			for i := first; i < len(prompts); i++ {
-				fmt.Fprintf(&b, "%3d  %s\n", i+1, oneLine(session.PromptText(st.All[prompts[i]]), 90))
+				fmt.Fprintf(&b, "%3d  %s\n", i+1, textutil.OneLine(session.PromptText(st.All[prompts[i]]), 90))
 			}
 			b.WriteString("/rewind <n> branches off just before prompt n and puts it back in the input to edit.\n" +
 				"The current session stays as it is. If files changed since that prompt you are asked whether to restore them too;\n" +
@@ -257,7 +258,7 @@ func (m *model) listSessions(info, fail func(string) tea.Cmd) tea.Cmd {
 		if in.ForkOf != "" {
 			title = "⑂ " + title + " (branch of " + in.ForkOf + ")"
 		}
-		item := pickItem{label: in.ID, detail: in.Modified.Format("01-02 15:04") + "  " + oneLine(title, 90), value: in.ID}
+		item := pickItem{label: in.ID, detail: in.Modified.Format("01-02 15:04") + "  " + textutil.OneLine(title, 90), value: in.ID}
 		if in.ID == m.agent.SessionID() {
 			item.note, item.noteOK = "✓ current", true
 		}
@@ -296,14 +297,6 @@ func (m *model) sessionPickerView() string {
 	header := spread(m.st.accent.Render("Sessions"), m.st.dim.Render("newest first"), w)
 	hint := m.st.dim.Render("↑/↓ move · type to filter · enter resume · esc close")
 	return m.st.modal.Width(max(m.width-2, 10)).Render(header + "\n" + p.filterLine(m.st, "filter by ID or title…") + "\n" + p.view(m.st, w) + "\n" + hint)
-}
-
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len([]rune(s)) > n {
-		s = string([]rune(s)[:n-1]) + "…"
-	}
-	return s
 }
 
 // worktreesCommand lists or removes worktrees kept by isolated subagents.
@@ -403,5 +396,5 @@ func (m *model) exportSession(path string, info, fail func(string) tea.Cmd) tea.
 		os.Remove(path)
 		return fail(err.Error())
 	}
-	return info("✓ exported " + plural(len(st.All), "message") + " to " + m.shortPaths(path))
+	return info("✓ exported " + textutil.Plural(len(st.All), "message") + " to " + m.shortPaths(path))
 }

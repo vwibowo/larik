@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/session"
+	"larik/internal/textutil"
 )
 
 // promptRef names one of your prompts on screen: its number as /rewind
@@ -138,7 +139,7 @@ func (m *model) promptMenuView() string {
 	pm := m.promptMenu
 	w := max(m.width-6, 20)
 	title := m.st.accent.Render(fmt.Sprintf("Prompt %d", pm.ref.n))
-	head := spread(title, m.st.dim.Render(oneLine(pm.ref.text, max(w-lipgloss.Width(title)-4, 10))), w)
+	head := spread(title, m.st.dim.Render(textutil.OneLine(pm.ref.text, max(w-lipgloss.Width(title)-4, 10))), w)
 	hint := "1–3 or ↑/↓ + enter choose · click an item · esc close"
 	return m.st.modal.Width(max(m.width-2, 10)).Render(head + "\n" + pm.picker.view(m.st, w) + "\n" + m.st.dim.Render(hint))
 }

@@ -162,7 +162,7 @@ func split(cfg *config.Config, spec string) (provider, model string) {
 			return head, spec[i+1:]
 		}
 	}
-	if m, ok := llm.Catalog[spec]; ok && m.Provider != "" {
+	if m, ok := llm.CatalogEntry(spec); ok && m.Provider != "" {
 		return m.Provider, spec
 	}
 	switch {

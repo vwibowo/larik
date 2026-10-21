@@ -12,7 +12,7 @@ func TestSetBrowserEnabledPreservesOtherSettings(t *testing.T) {
 	if cfg.Browser.Enabled {
 		t.Fatal("browser must be off by default")
 	}
-	if err := os.WriteFile(cfg.UserConfigPath(), []byte(`{"browser":{"headless":true,"chrome_path":"/chrome"},"theme":"dark"}`), 0o600); err != nil {
+	if err := os.WriteFile(cfg.UserConfigPath(), []byte(`{"browser":{"pane_size":40,"chrome_path":"/chrome"},"theme":"dark"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, enabled := range []bool{true, false} {
@@ -30,7 +30,7 @@ func TestSetBrowserEnabledPreservesOtherSettings(t *testing.T) {
 		if err := json.Unmarshal(data, &got); err != nil {
 			t.Fatal(err)
 		}
-		if got.Browser.Enabled != enabled || !got.Browser.Headless || got.Browser.ChromePath != "/chrome" || got.Theme != "dark" {
+		if got.Browser.Enabled != enabled || got.Browser.PaneSize != 40 || got.Browser.ChromePath != "/chrome" || got.Theme != "dark" {
 			t.Fatalf("enabled=%v: %+v", enabled, got)
 		}
 	}

@@ -359,13 +359,13 @@ func TestCompactionWithoutUsageDoesNotClaimSavings(t *testing.T) {
 }
 
 func TestCompactionHonorsMainModelOutputLimit(t *testing.T) {
-	old, existed := llm.Catalog["m"]
-	llm.Catalog["m"] = llm.ModelInfo{ID: "m", ContextWindow: 100_000, MaxOutput: 7}
+	old, existed := llm.CatalogEntry("m")
+	llm.SetCatalogEntry("m", llm.ModelInfo{ID: "m", ContextWindow: 100_000, MaxOutput: 7})
 	t.Cleanup(func() {
 		if existed {
-			llm.Catalog["m"] = old
+			llm.SetCatalogEntry("m", old)
 		} else {
-			delete(llm.Catalog, "m")
+			llm.DeleteCatalogEntry("m")
 		}
 	})
 

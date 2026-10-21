@@ -15,12 +15,12 @@ import (
 	"golang.org/x/term"
 
 	"larik/internal/app"
-	"larik/internal/browserbroker"
 	"larik/internal/config"
 	"larik/internal/headless"
 	"larik/internal/providers"
 	"larik/internal/sandbox"
 	"larik/internal/session"
+	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/tui"
 )
@@ -44,25 +44,16 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "browser" {
+		return runBrowser(os.Args[2:])
+	}
 	if len(os.Args) > 1 && os.Args[1] == "browser-broker" {
-		if len(os.Args) != 3 {
-			return errors.New("usage: larik browser-broker install|uninstall|run")
+		// Larik 0.15's macOS LaunchAgent runs this; it is no longer needed.
+		removed, err := termbrowser.RemoveLegacyBroker()
+		if err == nil && removed {
+			fmt.Println("removed the old browser LaunchAgent; Chrome now runs headless inside larik")
 		}
-		switch os.Args[2] {
-		case "install":
-			msg, err := browserbroker.Install()
-			if err != nil {
-				return err
-			}
-			fmt.Println(msg)
-			return nil
-		case "uninstall":
-			return browserbroker.Uninstall()
-		case "run":
-			return browserbroker.Serve()
-		default:
-			return errors.New("usage: larik browser-broker install|uninstall|run")
-		}
+		return err
 	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		return runServe(os.Args[2:])
@@ -91,7 +82,7 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n"+
 			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n"+
 			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n"+
-			"       larik browser-broker install|uninstall   (macOS: the optional trusted Chrome launcher)\n\n")
+			"       larik browser view --socket <path>   (the in-terminal browser pane browser_show opens)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

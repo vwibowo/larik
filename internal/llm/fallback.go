@@ -99,7 +99,7 @@ func (f *fallback) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 					failure = err
 					break
 				}
-				started = true
+				started = started || ev.Type != EventNotice // a retry's notice is not output
 				if !yield(ev, nil) {
 					return
 				}

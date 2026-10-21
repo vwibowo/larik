@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"math/rand/v2"
 	"net/http"
@@ -11,7 +12,8 @@ import (
 	"time"
 )
 
-// WithRetry retries a stream that fails before yielding anything. Once a
+// WithRetry retries a stream that fails before yielding anything but
+// notices, announcing each wait with an EventNotice. Once a
 // delta has reached the caller, a mid-stream failure is surfaced as-is
 // because the partial output can't be un-shown.
 func WithRetry(p Provider, attempts int) Provider { return &retrying{p, attempts} }
@@ -31,7 +33,7 @@ func (r *retrying) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 					failure = err
 					break
 				}
-				started = true
+				started = started || ev.Type != EventNotice
 				if !yield(ev, nil) {
 					return
 				}
@@ -51,6 +53,11 @@ func (r *retrying) Stream(ctx context.Context, req Request) iter.Seq2[StreamEven
 				return
 			} else if wait > backoff {
 				backoff = wait
+			}
+			// Say why nothing is happening: a wait can run to a minute.
+			note := fmt.Sprintf("%s; retrying in %s (attempt %d of %d)", briefError(failure), backoff.Round(time.Second), attempt+2, r.attempts)
+			if !yield(StreamEvent{Type: EventNotice, Text: note}, nil) {
+				return
 			}
 			select {
 			case <-ctx.Done():

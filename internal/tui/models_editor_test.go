@@ -91,7 +91,7 @@ func TestModelsEditorDraftValidationAndPersonalRead(t *testing.T) {
 	if len(e2.entries) != 1 || e2.entries["provider/new"].ContextWindow != 4096 {
 		t.Fatalf("saved: %+v", e2.entries)
 	}
-	if spec, ok := settingByKey("models"); !ok || spec.cmd != "/models-config" {
+	if spec, ok := settingByKey("models"); !ok || spec.cmd != "/config models" {
 		t.Fatalf("config action missing: ok=%v spec=%+v", ok, spec)
 	}
 }

@@ -94,12 +94,6 @@ func New(cfg Config) (*Exporter, error) {
 	return e, nil
 }
 
-// ValidateEndpoint reports whether endpoint can be exported to.
-func ValidateEndpoint(endpoint string) error {
-	_, err := tracesURL(endpoint)
-	return err
-}
-
 func tracesURL(endpoint string) (string, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	u, err := url.Parse(endpoint)

@@ -24,6 +24,7 @@ import (
 	"larik/internal/providers"
 	"larik/internal/session"
 	"larik/internal/subagent"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -55,7 +56,7 @@ func (m *model) View() tea.View {
 	sidebarWidth := m.sessionSidebarWidth()
 	showSidebar := sidebarWidth > 0
 	conversationWidth := m.currentConversationWidth()
-	if m.convWidth != conversationWidth {
+	if m.convWidth != conversationWidth && !m.resizePending {
 		m.rewrapConversationWidth(conversationWidth)
 	}
 	m.view.SetWidth(conversationWidth)
@@ -353,7 +354,7 @@ func (m *model) sessionSections(width, taskLimit int) [][]string {
 		for _, s := range statuses {
 			switch s.State {
 			case mcp.StateConnected:
-				mcpRows = append(mcpRows, row(m.st.ok.Render("● ")+s.Name, m.st.dim.Render(plural(len(s.Tools), "tool"))))
+				mcpRows = append(mcpRows, row(m.st.ok.Render("● ")+s.Name, m.st.dim.Render(textutil.Plural(len(s.Tools), "tool"))))
 			case mcp.StateConnecting:
 				mcpRows = append(mcpRows, row(m.st.dim.Render("◐ ")+s.Name, m.st.dim.Render("connecting")))
 			case mcp.StateNeedsApproval:
@@ -725,6 +726,11 @@ func (m *model) liveView(widths ...int) string {
 			line = "  ↳ " + line + m.st.dim.Render("  ("+t.agent+")")
 		}
 		b = append(b, line)
+		if t.tail != "" && t.agent == "" {
+			for _, l := range strings.Split(t.tail, "\n") {
+				b = append(b, m.st.dim.Render("  │ "+ansi.Truncate(ansi.Strip(l), max(width-6, 10), "…")))
+			}
+		}
 	}
 
 	var label string
@@ -911,7 +917,7 @@ func (m *model) taskRows(width int) []string {
 		if !task.started.IsZero() {
 			age = elapsed(time.Since(task.started))
 		}
-		line := fmt.Sprintf("  ↳ %s · %s · %s · %s · %s", name, m.taskAgentModel(task.label), age, plural(calls, "tool"), activity)
+		line := fmt.Sprintf("  ↳ %s · %s · %s · %s · %s", name, m.taskAgentModel(task.label), age, textutil.Plural(calls, "tool"), activity)
 		style := m.st.dim
 		if waiting {
 			style = m.st.warn
@@ -934,14 +940,6 @@ func (m *model) lines(n int) int {
 }
 
 const verboseLines = 40
-
-// plural formats a count with its noun: "1 line", "3 lines".
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
 
 // elapsed formats a duration as "14s" or "2m 05s".
 func elapsed(d time.Duration) string {
@@ -1094,7 +1092,7 @@ func (m *model) permDetail(e *agent.Event) string {
 		return cmd
 	case "write":
 		content := strings.TrimSuffix(str(in["content"]), "\n")
-		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+plural(strings.Count(content, "\n")+1, "line")) + "\n" +
+		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+textutil.Plural(strings.Count(content, "\n")+1, "line")) + "\n" +
 			m.highlightDiff(str(in["path"]), prefixLines(content, "+ "), 12)
 	case "web_fetch":
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
@@ -1118,7 +1116,7 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["title"])) + "\n" + m.st.dim.Render(fmt.Sprintf("from the language server, at %s:%d; it may change other files too", m.shortPaths(str(in["path"])), int(line)))
 	case permission.ExitPlanTool:
 		plan := agent.PlanOf(e.Input)
-		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", plural(strings.Count(plan, "\n")+1, "line")))
+		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", textutil.Plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
 		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
 	case tools.MultiEditToolName:
@@ -1128,7 +1126,7 @@ func (m *model) permDetail(e *agent.Event) string {
 			ed, _ := e.(map[string]any)
 			parts = append(parts, prefixLines(str(ed["old_string"]), "- ")+"\n"+prefixLines(str(ed["new_string"]), "+ "))
 		}
-		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+plural(len(edits), "edit")) + "\n" +
+		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+textutil.Plural(len(edits), "edit")) + "\n" +
 			m.highlightDiff(str(in["path"]), strings.Join(parts, "\n  ⋯\n"), 24)
 	}
 	if len(in) == 0 {
@@ -1262,7 +1260,7 @@ func compactionCostLine(s agent.UsageInfo) string {
 	if s.Compactions == 0 {
 		return ""
 	}
-	line := "compacted " + plural(s.Compactions, "time")
+	line := "compacted " + textutil.Plural(s.Compactions, "time")
 	switch {
 	case s.CompactionMeasurements == 0:
 		return line + " · the provider reported no usage for them, so the reduction is unknown"
@@ -1272,7 +1270,7 @@ func compactionCostLine(s agent.UsageInfo) string {
 		line += fmt.Sprintf(" · ~%d tokens of context freed (estimated)", s.CompactionSavedTokens)
 	}
 	if s.CompactionMeasurements < s.Compactions {
-		line += fmt.Sprintf(", %s measured", plural(s.CompactionMeasurements, "time"))
+		line += fmt.Sprintf(", %s measured", textutil.Plural(s.CompactionMeasurements, "time"))
 	}
 	return line
 }
@@ -1507,9 +1505,9 @@ func (m *model) compactToolSummary() string {
 	}
 	parts := make([]string, 0, len(order))
 	for _, name := range order {
-		parts = append(parts, plural(counts[name], name+" call"))
+		parts = append(parts, textutil.Plural(counts[name], name+" call"))
 	}
-	return m.st.dim.Render("✓ Finished · " + plural(len(m.compactTools), "tool") + " used: " + strings.Join(parts, ", "))
+	return m.st.dim.Render("✓ Finished · " + textutil.Plural(len(m.compactTools), "tool") + " used: " + strings.Join(parts, ", "))
 }
 
 func (m *model) renderToolCard(e agent.Event) string {
@@ -1535,7 +1533,7 @@ func (m *model) renderToolCard(e agent.Event) string {
 	case e.ToolName == "read":
 		out := strings.TrimSpace(e.Output)
 		n := strings.Count(out, "\n") + 1
-		body = m.st.dim.Render("read " + plural(n, "line"))
+		body = m.st.dim.Render("read " + textutil.Plural(n, "line"))
 		if m.verbose {
 			preview := strings.Split(out, "\n")
 			for i := range preview {
@@ -1567,7 +1565,7 @@ func (m *model) renderToolCard(e agent.Event) string {
 		n := strings.Count(out, "\n") + 1
 		switch e.ToolName {
 		case "skill":
-			body = m.st.dim.Render("loaded skill (" + plural(n, "line") + ")")
+			body = m.st.dim.Render("loaded skill (" + textutil.Plural(n, "line") + ")")
 		case "web_fetch":
 			body = m.st.dim.Render(e.Display)
 			if strings.Contains(out, "redirected (HTTP") {
@@ -1643,7 +1641,7 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 	case tools.MultiEditToolName:
 		arg = str(in["path"])
 		if edits, ok := in["edits"].([]any); ok {
-			arg += ", " + plural(len(edits), "edit")
+			arg += ", " + textutil.Plural(len(edits), "edit")
 		}
 	case "grep":
 		arg = str(in["pattern"])
@@ -1687,7 +1685,7 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["id"])
 	case permission.ExitPlanTool:
 		name = "plan"
-		arg = firstLine(agent.PlanOf(input))
+		arg = strings.TrimLeft(textutil.FirstLine(agent.PlanOf(input)), "# ")
 	case tools.TodoToolName:
 		name = "todos"
 		if todos, err := tools.ParseTodos(input); err == nil {
@@ -1724,7 +1722,7 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		arg = str(in["direction"])
 	case "browser_upload":
 		paths, _ := in["paths"].([]any)
-		arg = str(in["ref"]) + " " + plural(len(paths), "file")
+		arg = str(in["ref"]) + " " + textutil.Plural(len(paths), "file")
 	case "browser_wait_for":
 		switch {
 		case str(in["text"]) != "":
@@ -1765,13 +1763,8 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 	if shorten != nil {
 		arg = shorten(arg)
 	}
-	arg = oneLine(arg, 80)
+	arg = textutil.OneLine(arg, 80)
 	return fmt.Sprintf("%s(%s)", name, arg)
-}
-
-// renderPlan shows a plan put to the user for approval.
-func (m *model) renderPlan(input json.RawMessage) string {
-	return m.renderPlanWidth(input, m.currentConversationWidth())
 }
 
 func (m *model) renderPlanWidth(input json.RawMessage, width int) string {
@@ -1781,11 +1774,6 @@ func (m *model) renderPlanWidth(input json.RawMessage, width int) string {
 	}
 	head := m.st.accent.Render("◆ Plan")
 	return "\n" + head + "\n" + m.renderMarkdownWidth(plan, width)
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return strings.TrimLeft(line, "# ")
 }
 
 // printBanner prints two short lines, plus warnings only when they apply.

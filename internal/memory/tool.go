@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"larik/internal/llm"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -66,7 +67,7 @@ func (t Tool) Run(_ context.Context, _ *tools.Env, input json.RawMessage) tools.
 		}
 		return tools.Result{
 			Content: fmt.Sprintf("%s the %s note %q.", verb, scope, strings.TrimSpace(in.Name)),
-			Display: fmt.Sprintf("%s %s · %s", strings.ToLower(verb), strings.TrimSpace(in.Name), oneLine(in.Description)),
+			Display: fmt.Sprintf("%s %s · %s", strings.ToLower(verb), strings.TrimSpace(in.Name), textutil.OneLine(in.Description, maxDescription)),
 		}
 	case "read":
 		n, ok := t.S.Get(in.Name, in.Scope)

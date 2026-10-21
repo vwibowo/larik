@@ -1,4 +1,4 @@
-package browsercdp
+package termbrowser
 
 import (
 	"context"

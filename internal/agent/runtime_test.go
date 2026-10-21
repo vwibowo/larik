@@ -200,7 +200,7 @@ func TestRuntimeResolvedModelSuppliesTheContextWindow(t *testing.T) {
 		drain(a.Run(context.Background(), "go"), PermissionReply{})
 		return a
 	}
-	want := llm.Catalog["claude-sonnet-5"].ContextWindow
+	want := llm.Lookup("claude-sonnet-5").ContextWindow
 	for _, resolved := range []string{"claude-sonnet-5", "claude-sonnet-5-20260514"} {
 		if got := run(resolved).Stats().ContextWindow; got != want {
 			t.Errorf("window for resolved %q = %d, want %d", resolved, got, want)

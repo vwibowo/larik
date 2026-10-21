@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"os"
-	"strings"
 	"time"
+
+	"larik/internal/osc"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -19,28 +19,8 @@ func (m *model) alert(msg string) tea.Cmd {
 	if (m.focusKnown && m.focused) || m.notify == "off" || m.notify == "" {
 		return nil
 	}
-	if m.notify == "desktop" && supportsOSC9() {
-		return tea.Raw("\x1b]9;larik " + sanitizeOSC(msg) + "\x07")
+	if m.notify == "desktop" && osc.SupportsNotify() {
+		return tea.Raw(osc.Notify("larik " + msg))
 	}
 	return tea.Raw("\a")
-}
-
-// supportsOSC9 reports whether the terminal shows OSC 9 as a desktop
-// notification; others would ignore it, so they get the bell instead.
-func supportsOSC9() bool {
-	switch os.Getenv("TERM_PROGRAM") {
-	case "iTerm.app", "ghostty", "WezTerm":
-		return true
-	}
-	return strings.Contains(os.Getenv("TERM"), "kitty") || os.Getenv("KITTY_WINDOW_ID") != ""
-}
-
-// sanitizeOSC drops control characters that would end the sequence early.
-func sanitizeOSC(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)
 }

@@ -177,9 +177,6 @@ func (g *SalvageGate) Flush() string {
 // Text is everything written, markup included, for SalvageToolCalls to read.
 func (g *SalvageGate) Text() string { return g.buf.String() }
 
-// Len is how much text has been written.
-func (g *SalvageGate) Len() int { return g.buf.Len() }
-
 // indexAnyOpenTag is the offset of the earliest opening tag, or -1.
 func indexAnyOpenTag(s string) int {
 	best := -1

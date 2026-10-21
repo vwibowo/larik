@@ -1,4 +1,4 @@
-package browsercdp
+package termbrowser
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"larik/internal/llm"
 	"larik/internal/tools"
@@ -23,6 +24,7 @@ func Tools(s *Session) []tools.Tool {
 	for _, t := range []tools.Tool{
 		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ScreenshotTool{s}, ClickTool{s}, TypeTool{s},
 		SelectTool{s}, PressKeyTool{s}, UploadTool{s}, WaitForTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s}, NetworkTool{s},
+		ShowTool{s},
 	} {
 		out = append(out, noted{t, s})
 	}
@@ -128,7 +130,7 @@ type NavigateTool struct{ S *Session }
 func (NavigateTool) ReadOnly() bool { return false }
 func (NavigateTool) Spec() llm.ToolSpec {
 	return spec("browser_navigate",
-		"Open a URL in the browser's active tab (a real Chrome window the user can see) and return a snapshot of the page: its text, and its links, buttons and fields, each with a ref for browser_click, browser_type and browser_select. "+
+		"Open a URL in the browser's active tab (a real, headless Chrome; browser_show lets the user watch it in the terminal) and return a snapshot of the page: its text, and its links, buttons and fields, each with a ref for browser_click, browser_type and browser_select. "+
 			"Use it for pages that need JavaScript, signing in, or interaction; web_fetch is cheaper for just reading. "+untrusted,
 		`{"type":"object","properties":{"url":{"type":"string","description":"Absolute http(s) URL"}},"required":["url"]}`)
 }
@@ -684,4 +686,57 @@ func (t ConsoleTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) t
 		return tools.Result{Content: "No console messages."}
 	}
 	return tools.Result{Content: "<web_content>\n" + strings.Join(lines, "\n") + "\n</web_content>", Display: fmt.Sprintf("%d messages", len(lines))}
+}
+
+// ShowTool is browser_show: it opens the viewer in a pane beside Larik's,
+// so the user can watch the agent's tab and use it themselves.
+type ShowTool struct{ S *Session }
+
+func (ShowTool) ReadOnly() bool { return true }
+func (ShowTool) Spec() llm.ToolSpec {
+	return spec("browser_show",
+		"Show the browser to the user: open a pane beside this terminal that displays the tab you are working in, live, and lets the user click and type in it. "+
+			"Use it when the user wants to watch, or must do something themselves (sign in, solve a check, confirm a payment): navigate there first, then call this and wait for them.",
+		`{"type":"object","properties":{}}`)
+}
+func (t ShowTool) Run(ctx context.Context, _ *tools.Env, _ json.RawMessage) tools.Result {
+	msg, err := t.S.Show(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	return tools.Result{Content: msg}
+}
+
+// Show opens the viewer in a split pane, unless one is already connected,
+// and says what happened.
+func (s *Session) Show(ctx context.Context) (string, error) {
+	if _, err := s.Tab(ctx); err != nil { // Chrome must be up for the viewer
+		return "", err
+	}
+	if s.viewers() > 0 {
+		return "The browser is already showing in a pane beside this terminal.", nil
+	}
+	path, err := s.Serve(s.opts.SocketDir)
+	if err != nil {
+		return "", fmt.Errorf("starting the viewer's socket: %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	argv := []string{exe, "browser", "view", "--socket", path}
+	size := s.opts.PaneSize
+	if size <= 0 || size >= 100 {
+		size = 50
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	name, err := openPane(runCtx, os.Getenv, argv, size, runCommand)
+	if errors.Is(err, errNoSplit) {
+		return "This terminal can't be split from Larik (tmux, cmux, kitty and WezTerm can). Ask the user to open a pane or tab in a terminal that shows kitty graphics and run:\n" + shellJoin(argv), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return "Opened the browser in a new " + name + " pane beside this one. It follows the tab you work in; the user can click, scroll and type there.", nil
 }

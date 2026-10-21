@@ -12,7 +12,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
 	"larik/internal/procgroup"
+	"larik/internal/textutil"
 )
 
 // The status_line setting: a command whose output is shown on the left side
@@ -203,10 +205,6 @@ func (m *model) statusDone(msg statusDoneMsg) tea.Cmd {
 	return m.println(m.st.warn.Render(label + ": " + msg.err.Error()))
 }
 
-func runStatus(command, dir, input string) ([]string, error) {
-	return runStatusLimit(command, dir, input, statusMaxLines)
-}
-
 func runStatusLimit(command, dir, input string, maxLines int) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
 	defer cancel()
@@ -236,16 +234,11 @@ func runStatusLimit(command, dir, input string, maxLines int) ([]string, error) 
 	}
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("%w: %s", err, firstLine(msg))
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimLeft(textutil.FirstLine(msg), "# "))
 		}
 		return nil, err
 	}
 	return statusLinesLimit(stdout.String(), maxLines), nil
-}
-
-// statusLines keeps the output's first lines, without trailing blanks.
-func statusLines(out string) []string {
-	return statusLinesLimit(out, statusMaxLines)
 }
 
 func statusLinesLimit(out string, limit int) []string {

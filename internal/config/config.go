@@ -103,7 +103,8 @@ type Config struct {
 	TokenSaver *bool `json:"token_saver,omitempty"`
 	// Appearance controls how much tool activity the TUI displays.
 	Appearance string `json:"appearance,omitempty"`
-	// Verbose is the legacy switch for full tool output and thinking.
+	// Verbose is the deprecated switch for full tool output and thinking.
+	// Load turns it into Appearance when no appearance is set.
 	Verbose *bool `json:"verbose,omitempty"`
 	// Notifications alerts an unfocused terminal when larik needs you:
 	// "off" (the default), "bell" or "desktop".
@@ -361,9 +362,12 @@ func Load(cwd string) (*Config, error) {
 			return nil, err
 		}
 	}
+	if cfg.Appearance == "" && cfg.Verbose != nil {
+		cfg.Appearance = map[bool]string{true: "verbose", false: "default"}[*cfg.Verbose]
+	}
 	for id, m := range cfg.Models {
 		m.ID = id
-		llm.Catalog[id] = m
+		llm.SetCatalogEntry(id, m)
 	}
 	if _, err := tools.ParseExecution(string(cfg.Execution)); err != nil {
 		return nil, fmt.Errorf("execution: %w", err)
@@ -468,16 +472,28 @@ func (c *Config) merge(path string, trusted bool) error {
 		// Shared settings may disable audio, but may not enable or configure it.
 		c.Audio = audio.Config{}
 	}
-	if b := browserSection(data); b != nil {
+	if b := browserSection(rawSections["browser"]); b != nil {
 		if trusted {
 			if b.Enabled != nil {
 				c.Browser.Enabled = *b.Enabled
 			}
-			if b.Headless != nil {
-				c.Browser.Headless = *b.Headless
-			}
 			if b.ChromePath != nil {
 				c.Browser.ChromePath = *b.ChromePath
+			}
+			if b.PaneSize != nil {
+				if *b.PaneSize < 20 || *b.PaneSize > 80 {
+					return fmt.Errorf("%s: browser.pane_size must be between 20 and 80 (percent)", path)
+				}
+				c.Browser.PaneSize = *b.PaneSize
+			}
+			if b.Sound != nil {
+				c.Browser.Sound = *b.Sound
+			}
+			if l := b.Location; l != nil {
+				if l.Latitude < -90 || l.Latitude > 90 || l.Longitude < -180 || l.Longitude > 180 || l.Accuracy < 0 {
+					return fmt.Errorf("%s: browser.location needs a latitude (-90 to 90) and a longitude (-180 to 180)", path)
+				}
+				c.Browser.Location = l
 			}
 		} else if b.Enabled != nil && !*b.Enabled {
 			c.Browser.Enabled = false // a shared file may only switch it off
@@ -1054,9 +1070,6 @@ func (c *Config) AutoCompactOn() bool { return on(c.AutoCompact, true) }
 // TokenSaverOn reports whether command output filtering is enabled (default off).
 func (c *Config) TokenSaverOn() bool { return on(c.TokenSaver, false) }
 
-// VerboseOn reports whether verbose output is enabled (default off).
-func (c *Config) VerboseOn() bool { return on(c.Verbose, false) }
-
 // TipsOn reports whether spinner tips are shown (default on).
 func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
 
@@ -1280,7 +1293,7 @@ func (c *Config) SetProjectSkillsHide(patterns []string) error {
 }
 
 // SetBrowserEnabled updates only the personal browser switch, preserving
-// headless and chrome_path. Browser tools remain off by default.
+// the rest of the section. Browser tools remain off by default.
 func (c *Config) SetBrowserEnabled(enabled bool) error {
 	return c.SetUserSettingPath("browser.enabled", enabled)
 }
@@ -1699,28 +1712,52 @@ type AutoModeConfig struct {
 }
 
 // BrowserConfig is the "browser" settings section: the browser_* tools,
-// which drive a Chrome window. Off unless a personal file enables it.
+// which drive a headless Chrome the user can watch in a terminal pane.
+// Off unless a personal file enables it. Chrome always runs headless, so a
+// "headless" key from older versions is accepted and ignored.
 type BrowserConfig struct {
-	Enabled  bool `json:"enabled,omitempty"`
-	Headless bool `json:"headless,omitempty"`
+	Enabled bool `json:"enabled,omitempty"`
 	// ChromePath overrides the Chrome or Chromium binary to launch.
 	ChromePath string `json:"chrome_path,omitempty"`
+	// PaneSize is the percent of the terminal's width browser_show's pane
+	// takes; 0 means 50.
+	PaneSize int `json:"pane_size,omitempty"`
+	// Sound lets pages play audio through this computer's speakers. Off,
+	// Chrome runs muted, so an agent browsing unwatched stays silent.
+	Sound bool `json:"sound,omitempty"`
+	// Location is what a page learns when the user allows it to ask where
+	// they are: headless Chrome can't read this computer's location.
+	Location *BrowserLocation `json:"location,omitempty"`
+}
+
+// BrowserLocation is a position in degrees, and its accuracy in meters.
+type BrowserLocation struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Accuracy  float64 `json:"accuracy,omitempty"`
 }
 
 // browserPatch is one file's "browser" section with presence kept, so a
 // later file can switch a setting back off.
 type browserPatch struct {
 	Enabled    *bool   `json:"enabled"`
-	Headless   *bool   `json:"headless"`
 	ChromePath *string `json:"chrome_path"`
+	PaneSize   *int    `json:"pane_size"`
+	Sound      *bool   `json:"sound"`
+	// Location is replaced whole: a later file sets both coordinates.
+	Location *BrowserLocation `json:"location"`
 }
 
-func browserSection(data []byte) *browserPatch {
-	var o struct {
-		Browser *browserPatch `json:"browser"`
+// browserSection decodes a file's raw "browser" section, if it has one.
+func browserSection(raw json.RawMessage) *browserPatch {
+	if len(raw) == 0 {
+		return nil
 	}
-	_ = json.Unmarshal(data, &o) // the whole file already parsed once
-	return o.Browser
+	var b browserPatch
+	if json.Unmarshal(raw, &b) != nil {
+		return nil
+	}
+	return &b
 }
 
 // WebConfig is the "web" settings section.

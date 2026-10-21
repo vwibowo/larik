@@ -487,7 +487,7 @@ var OllamaSuggestions = []Suggestion{
 
 // withCatalog fills in what the built-in catalog knows about a model.
 func withCatalog(m Model) Model {
-	if info, ok := llm.Catalog[m.ID]; ok && m.Context == 0 {
+	if info, ok := llm.CatalogEntry(m.ID); ok && m.Context == 0 {
 		m.Context = info.ContextWindow
 	}
 	return m

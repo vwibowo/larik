@@ -1,4 +1,4 @@
-package browsercdp
+package termbrowser
 
 import (
 	"bytes"
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,130 +94,6 @@ Promise.allSettled([fetch('/data.json').then(r => r.json()), fetch('/missing'), 
 <button onclick="setTimeout(() => { document.getElementById('h').textContent = 'Quick result' }, 150); setTimeout(() => { document.body.append('Results ready') }, 1200)">Search</button>`,
 }
 
-func TestChromeAppPath(t *testing.T) {
-	app := filepath.Join(t.TempDir(), "Custom Chrome.app")
-	binary := filepath.Join(app, "Contents", "MacOS", "Chrome")
-	if got := chromeAppPath(binary); got != app {
-		t.Fatalf("chromeAppPath(%q) = %q, want %q", binary, got, app)
-	}
-	if got := chromeAppPath(filepath.Join(t.TempDir(), "chrome")); got != "" {
-		t.Fatalf("unbundled executable app path = %q, want empty", got)
-	}
-}
-
-// Chrome started by the LaunchAgent or by Launch Services is not our child
-// process, so closing the session has to make it quit: canceling a remote
-// allocator only drops the websocket, which would leave the browser running
-// with its temporary profile deleted underneath it.
-func TestRemoteChromeQuitsOnClose(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Chrome is only attached to remotely on macOS")
-	}
-	path := chrome(t)
-	s := New(Options{Headless: true, ChromePath: path})
-	s.startupTimeout = testStartupTimeout
-	// Launch Services is used directly: a headless session prefers the
-	// in-process launcher, whose child process the allocator kills anyway.
-	profile, err := s.ensureProfile("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	started, err := s.launchViaOpen(profile, testStartupTimeout)
-	if err != nil {
-		s.Close()
-		t.Skipf("Launch Services could not start Chrome here (started=%v): %v", started, err)
-	}
-	if !s.remote || s.remotePID == 0 {
-		s.Close()
-		t.Fatalf("a Chrome we did not start must be recorded: remote=%v pid=%d", s.remote, s.remotePID)
-	}
-	// The endpoint has to be read before closing: the profile holding it is
-	// removed with the browser.
-	port := devToolsPort(t, s.tempProfile)
-	s.Close()
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		c, err := net.DialTimeout("tcp", addr, 250*time.Millisecond)
-		if err != nil {
-			return // the browser quit
-		}
-		c.Close()
-		if time.Now().After(deadline) {
-			t.Fatalf("Chrome is still serving DevTools on %s after the session was closed", addr)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func devToolsPort(t *testing.T, profile string) int {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, _, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
-	port, err := strconv.Atoi(strings.TrimSpace(first))
-	if err != nil || port <= 0 {
-		t.Fatalf("DevToolsActivePort in %s: %q", profile, data)
-	}
-	return port
-}
-
-// A broker that refuses a launch must not take the browser away: larik says so
-// and goes on to its own launchers, which have no extra privileges. The fake
-// bundle makes every launcher fail, so the startup error proves they all ran.
-func TestBrokerRefusalFallsBack(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("the launch broker is macOS-only")
-	}
-	fake := filepath.Join(t.TempDir(), "Google Chrome.app", "Contents", "MacOS", "Google Chrome")
-	if err := os.MkdirAll(filepath.Dir(fake), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	old, oldAcquire := brokerLaunch, brokerLeaseAcquire
-	brokerLeaseAcquire = func(context.Context) (string, error) { return strings.Repeat("a", 48), nil }
-	brokerLaunch = func(context.Context, string, string, bool) (string, string, error) {
-		calls++
-		return "", "", errors.New("test refusal")
-	}
-	t.Cleanup(func() { brokerLaunch, brokerLeaseAcquire = old, oldAcquire })
-	s := New(Options{Headless: true, ChromePath: fake})
-	s.startupTimeout = 2 * time.Second
-	defer s.Close()
-	err := s.start()
-	if err == nil {
-		t.Fatal("the fake bundle should not have started")
-	}
-	if !strings.Contains(err.Error(), "starting Chrome") {
-		t.Errorf("a refusal must end in the normal startup error, not the broker's: %v", err)
-	}
-	if calls == 0 {
-		t.Fatal("the broker was never tried")
-	}
-	if notes := strings.Join(s.takeNotes(), " "); !strings.Contains(notes, "refused") {
-		t.Errorf("the model should be told why the broker was skipped: %q", notes)
-	}
-}
-
-func TestBrokerLeaseReleasedOnClose(t *testing.T) {
-	oldRelease := brokerLeaseRelease
-	var released string
-	brokerLeaseRelease = func(_ context.Context, token string) error { released = token; return nil }
-	t.Cleanup(func() { brokerLeaseRelease = oldRelease })
-	s := New(Options{})
-	token := strings.Repeat("b", 48)
-	s.keepBrokerLease(token)
-	s.Close()
-	if released != token {
-		t.Fatalf("released lease %q, want %q", released, token)
-	}
-	if s.brokerLeaseDone != nil || s.brokerLeaseCancel != nil || s.brokerLease != "" {
-		t.Fatal("lease state remained after close")
-	}
-}
-
 // A capture is only a write when it saves a file, and it stays safe to run
 // alongside other parallel calls either way.
 func TestScreenshotReadOnlyFor(t *testing.T) {
@@ -251,7 +126,7 @@ func TestFindChromeRejectsMissingChrome(t *testing.T) {
 		t.Fatal("a chrome_path that does not exist should be reported")
 	}
 	// Starting it names the setting too, so the model can act on the error.
-	s := New(Options{ChromePath: missing, Headless: true})
+	s := New(Options{ChromePath: missing})
 	s.startupTimeout = 2 * time.Second
 	defer s.Close()
 	if err := s.start(); err == nil || !strings.Contains(err.Error(), "browser.chrome_path") {
@@ -273,7 +148,7 @@ func TestSlowChromeStartIsATimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	s := New(Options{ChromePath: fake, Headless: true})
+	s := New(Options{ChromePath: fake})
 	s.startupTimeout = 300 * time.Millisecond
 	defer s.Close()
 	err := s.start()
@@ -326,7 +201,7 @@ func chrome(t *testing.T) string {
 // probeChrome starts Chrome the way a session does and loads a page, so an
 // environment where Chrome can't run skips the tests instead of failing them.
 func probeChrome(path string, timeout time.Duration) error {
-	s := New(Options{Headless: true, ChromePath: path})
+	s := New(Options{ChromePath: path})
 	s.startupTimeout = timeout
 	defer s.Close()
 	if err := s.start(); err != nil {
@@ -396,7 +271,7 @@ func newSession(t *testing.T) (*Session, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(downloads) })
-	s := New(Options{Headless: true, ChromePath: path, ProfileDir: profile, DownloadDir: downloads})
+	s := New(Options{ChromePath: path, ProfileDir: profile, DownloadDir: downloads})
 	s.startupTimeout = testStartupTimeout
 	t.Cleanup(s.Close)
 	return s, srv
@@ -802,7 +677,7 @@ func TestProfileInUse(t *testing.T) {
 	path := chrome(t)
 	_ = os.Remove(lock)
 	_ = os.Symlink(host+"-"+strconv.Itoa(os.Getpid()), lock)
-	s := New(Options{Headless: true, ChromePath: path, ProfileDir: dir})
+	s := New(Options{ChromePath: path, ProfileDir: dir})
 	s.startupTimeout = testStartupTimeout
 	defer s.Close()
 	if _, err := s.Tab(context.Background()); err != nil {

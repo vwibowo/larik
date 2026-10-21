@@ -143,7 +143,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			option.WithJSONSet("messages", p.messages(req)),
 			option.WithJSONSet("stream_options", map[string]any{"include_usage": true}),
 		}
-		if tools := toolsJSON(req.Tools); len(tools) > 0 {
+		if tools := llm.FunctionTools(req.Tools); len(tools) > 0 {
 			opts = append(opts, option.WithJSONSet("tools", tools))
 		}
 		if s := req.Sampling; !s.Empty() {
@@ -298,21 +298,6 @@ func reasoningDelta(extra map[string]respjson.Field) string {
 		}
 	}
 	return ""
-}
-
-func toolsJSON(specs []llm.ToolSpec) []map[string]any {
-	var tools []map[string]any
-	for _, t := range specs {
-		tools = append(tools, map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  t.Schema,
-			},
-		})
-	}
-	return tools
 }
 
 func (p *Provider) messages(req llm.Request) []map[string]any {

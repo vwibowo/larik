@@ -18,13 +18,13 @@ import (
 func catalogModel(t *testing.T, id string, info llm.ModelInfo) {
 	t.Helper()
 	info.ID = id
-	old, existed := llm.Catalog[id]
-	llm.Catalog[id] = info
+	old, existed := llm.CatalogEntry(id)
+	llm.SetCatalogEntry(id, info)
 	t.Cleanup(func() {
 		if existed {
-			llm.Catalog[id] = old
+			llm.SetCatalogEntry(id, old)
 		} else {
-			delete(llm.Catalog, id)
+			llm.DeleteCatalogEntry(id)
 		}
 	})
 }

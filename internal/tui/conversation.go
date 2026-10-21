@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -133,6 +135,13 @@ func (m *model) rewrapConversation() {
 	m.rewrapConversationWidth(m.currentConversationWidth())
 }
 
+// resizeSettle is how long a window must keep its size before the
+// conversation is re-wrapped to it.
+const resizeSettle = 100 * time.Millisecond
+
+// resizeSettledMsg ends the resize that set resizeGen to gen.
+type resizeSettledMsg struct{ gen int }
+
 func (m *model) rewrapConversationWidth(width int) {
 	m.convWidth = width
 	m.outputBytes = 0
@@ -196,10 +205,8 @@ func (m *model) cacheConversationOutput(o *conversationOutput, width int, text s
 		}
 		m.removeRenderedConversationOutput(o, oldest)
 	}
-	for m.renderedConversationBytes+len(text) > maxConversationRenderCacheBytes {
-		if !m.evictOldestRenderedConversationOutput() {
-			return
-		}
+	if !m.evictRenderedConversationOutputs(m.renderedConversationBytes + len(text) - maxConversationRenderCacheBytes) {
+		return
 	}
 	m.renderedConversationClock++
 	o.rendered = append(o.rendered, renderedConversationOutput{width: width, text: text, used: m.renderedConversationClock})
@@ -218,23 +225,37 @@ func (m *model) forgetRenderedConversationOutput(o *conversationOutput) {
 	o.rendered = nil
 }
 
-func (m *model) evictOldestRenderedConversationOutput() bool {
-	var oldestOutput *conversationOutput
-	oldestIndex := -1
-	var oldestUsed uint64
+// evictRenderedConversationOutputs frees at least need bytes of cached
+// renders, least recently used first, in one pass over the conversation.
+// It reports whether that much could be freed.
+func (m *model) evictRenderedConversationOutputs(need int) bool {
+	if need <= 0 {
+		return true
+	}
+	type entry struct {
+		output *conversationOutput
+		used   uint64
+	}
+	var entries []entry
 	for i := range m.outputs {
-		for j := range m.outputs[i].rendered {
-			entry := &m.outputs[i].rendered[j]
-			if oldestIndex < 0 || entry.used < oldestUsed {
-				oldestOutput, oldestIndex, oldestUsed = &m.outputs[i], j, entry.used
+		for _, r := range m.outputs[i].rendered {
+			entries = append(entries, entry{&m.outputs[i], r.used})
+		}
+	}
+	sort.Slice(entries, func(a, b int) bool { return entries[a].used < entries[b].used })
+	for _, e := range entries {
+		if need <= 0 {
+			break
+		}
+		for k, r := range e.output.rendered {
+			if r.used == e.used {
+				need -= len(r.text)
+				m.removeRenderedConversationOutput(e.output, k)
+				break
 			}
 		}
 	}
-	if oldestIndex < 0 {
-		return false
-	}
-	m.removeRenderedConversationOutput(oldestOutput, oldestIndex)
-	return true
+	return need <= 0
 }
 
 func (m *model) clearRenderedConversationOutputs() {

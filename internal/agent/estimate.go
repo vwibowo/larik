@@ -78,3 +78,50 @@ func (a *Agent) prefixEstimateLocked() int {
 	a.prefixEstFor.system, a.prefixEstFor.tools = a.opts.System, reg
 	return a.prefixEst
 }
+
+// messageEstimateLocked is estimateMessages(a.messages), kept as a running
+// sum so a long turn does not re-measure the whole transcript every step.
+// The sum covers every message but the last, which can still grow in
+// place. A transcript that was replaced (compaction, a resume) or cut back
+// and appended to again (a rewind) no longer holds the messages the sum
+// counted at the same addresses, which resets it. Callers hold a.mu.
+func (a *Agent) messageEstimateLocked() int {
+	n := len(a.messages)
+	if n == 0 {
+		return 0
+	}
+	c := &a.msgEst
+	if c.first != &a.messages[0] || c.n > n-1 || (c.n > 0 && !c.last.same(a.messages[c.n-1])) {
+		*c = messageEstimate{first: &a.messages[0]}
+	}
+	c.sum += estimateMessages(a.messages[c.n : n-1])
+	c.n = n - 1
+	if c.n > 0 {
+		c.last = blocksOf(a.messages[c.n-1])
+	}
+	return c.sum + estimateMessages(a.messages[n-1:])
+}
+
+// blockRef identifies a message's block slice, which a different message
+// at the same index would not share.
+type blockRef struct {
+	first *llm.Block
+	n     int
+}
+
+func blocksOf(m llm.Message) blockRef {
+	if len(m.Blocks) == 0 {
+		return blockRef{}
+	}
+	return blockRef{&m.Blocks[0], len(m.Blocks)}
+}
+
+func (r blockRef) same(m llm.Message) bool { return r == blocksOf(m) }
+
+// messageEstimate is the running sum behind messageEstimateLocked.
+type messageEstimate struct {
+	first *llm.Message // a.messages[0] when the sum was taken
+	n     int          // messages counted in sum
+	last  blockRef     // the last counted message's blocks
+	sum   int
+}

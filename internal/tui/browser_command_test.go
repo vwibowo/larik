@@ -49,7 +49,7 @@ func TestBrowserToggleReloadsServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newModel(Options{App: a, Config: a.Cfg, Agent: s.Agent, Session: s})
-	m.command("/browser on")
+	finishReload(t, m, m.command("/browser on"))
 	if !m.opts.Config.Browser.Enabled || m.opts.App == a || m.opts.App.Browser == nil || m.agent.HasContext() {
 		t.Fatal("enabling must persist and reload into a fresh context; browser availability is checked on first use")
 	}
@@ -61,7 +61,7 @@ func TestBrowserToggleReloadsServices(t *testing.T) {
 	if !strings.Contains(savedConfig(t, m), `"enabled": true`) {
 		t.Fatal("browser switch was not saved")
 	}
-	m.command("/browser off")
+	finishReload(t, m, m.command("/browser off"))
 	if m.opts.Config.Browser.Enabled || !strings.Contains(savedConfig(t, m), `"enabled": false`) {
 		t.Fatal("disabling must persist and rebuild services")
 	}
@@ -86,5 +86,32 @@ func TestBrowserToggleCancelDoesNotSave(t *testing.T) {
 	m.command("/browser nope")
 	if m.reload != nil {
 		t.Fatal("invalid arguments must not request a reload")
+	}
+}
+
+// finishReload runs a reload command's background setup and hands its
+// result to the model, as the Bubble Tea runtime would.
+func finishReload(t *testing.T, m *model, cmd tea.Cmd) {
+	t.Helper()
+	var walk func(tea.Cmd) bool
+	walk = func(c tea.Cmd) bool {
+		if c == nil {
+			return false
+		}
+		switch msg := c().(type) {
+		case reloadSetupMsg:
+			m.Update(msg)
+			return true
+		case tea.BatchMsg:
+			for _, c := range msg {
+				if walk(c) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !walk(cmd) {
+		t.Fatal("the command did not start a reload")
 	}
 }

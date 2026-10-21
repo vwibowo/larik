@@ -56,7 +56,7 @@ func TestPaletteFiltersAndRanksExactFirst(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/mo")
 	// Prefix matches lead; /memory only contains "mo", so it follows them.
-	if got := paletteLabels(m); len(got) != 4 || got[0] != "/model" || got[1] != "/mode" || got[2] != "/models-config" || got[3] != "/memory" {
+	if got := paletteLabels(m); len(got) != 3 || got[0] != "/model" || got[1] != "/mode" || got[2] != "/memory" {
 		t.Fatalf("/mo: %v", got)
 	}
 	typeText(m, "de")
@@ -72,10 +72,10 @@ func TestPaletteFiltersAndRanksExactFirst(t *testing.T) {
 func TestPaletteEnterRunsOrCompletes(t *testing.T) {
 	m := testModel(t)
 	m.opts.SessionDir = filepath.Join(m.opts.Config.Cwd, "sessions")
-	typeText(m, "/res")
+	typeText(m, "/sess")
 	m.Update(press(tea.KeyEnter))
 	if m.sessionPick == nil || m.input.Value() != "" {
-		t.Fatalf("/resume should open the session picker, got input %q", m.input.Value())
+		t.Fatalf("/sessions should open the session picker, got input %q", m.input.Value())
 	}
 	m.Update(press(tea.KeyEscape))
 
@@ -114,7 +114,7 @@ func TestConfigPaletteOpensNativeWebEditor(t *testing.T) {
 	m := testModel(t)
 	typeText(m, "/config web_search")
 	rows := m.palette.visible()
-	if len(rows) != 1 || rows[0].label != "/config web_search" || rows[0].note != "/web-search-config" {
+	if len(rows) != 1 || rows[0].label != "/config web_search" || rows[0].note != "/config web-search" {
 		t.Fatalf("native editor suggestion = %+v", rows)
 	}
 	m.Update(press(tea.KeyEnter))

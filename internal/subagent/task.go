@@ -445,7 +445,7 @@ func (t *Tool) offeredRoles() []Role {
 	return out
 }
 
-// browserPrefix starts the browser tools' names (browsercdp.Prefix); a
+// browserPrefix starts the browser tools' names (termbrowser.Prefix); a
 // definition can allow them all with "browser".
 const browserPrefix = "browser_"
 

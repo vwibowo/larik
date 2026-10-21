@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,14 +106,4 @@ func readProjectInfo(root string) projectInfo {
 		}
 	}
 	return p
-}
-
-func (p projectInfo) changeSummary() string {
-	if !p.available {
-		return "not a git repository"
-	}
-	if p.clean {
-		return "working tree clean"
-	}
-	return fmt.Sprintf("%d files · +%d / −%d", p.files, p.added, p.deleted)
 }

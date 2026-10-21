@@ -102,25 +102,12 @@ func contextSections(cwd, root string, files []string) string {
 	return b.String()
 }
 
-// InstructionFiles lists instruction files that apply to cwd, general
-// first: the user's global file, then the project's own, root to cwd. In
-// each directory AGENTS.md wins over CLAUDE.md.
-func InstructionFiles(cwd, configDir string) []string {
-	return instructionFilesUnder(cwd, GitRoot(cwd), configDir)
-}
-
 func instructionFilesUnder(cwd, root, configDir string) []string {
 	var out []string
 	if p := filepath.Join(configDir, "AGENTS.md"); exists(p) {
 		out = append(out, p)
 	}
 	return append(out, projectInstructionFiles(cwd, root)...)
-}
-
-// ProjectInstructionFiles is InstructionFiles without the user's global
-// file: just the project's own, from the repository root down to cwd.
-func ProjectInstructionFiles(cwd string) []string {
-	return projectInstructionFiles(cwd, GitRoot(cwd))
 }
 
 // projectInstructionFiles walks from cwd up to stop, the repository root

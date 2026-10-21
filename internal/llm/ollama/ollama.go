@@ -170,7 +170,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			"stream":   true,
 			"options":  options,
 		}
-		if tools := toolsJSON(req.Tools); len(tools) > 0 {
+		if tools := llm.FunctionTools(req.Tools); len(tools) > 0 {
 			body["tools"] = tools
 		}
 		if think := thinkLevel(req.Effort); think != "" {
@@ -316,21 +316,6 @@ func thinkLevel(e llm.Effort) string {
 		return string(e)
 	}
 	return string(llm.EffortHigh) // xhigh, max: Ollama's top level
-}
-
-func toolsJSON(specs []llm.ToolSpec) []map[string]any {
-	var tools []map[string]any
-	for _, t := range specs {
-		tools = append(tools, map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  t.Schema,
-			},
-		})
-	}
-	return tools
 }
 
 // messages converts the conversation. Tool results name their tool, which

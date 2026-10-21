@@ -23,7 +23,7 @@ func TestClaudeModelsUseTheResolvedModelForMetadata(t *testing.T) {
 		t.Fatalf("models = %+v", got)
 	}
 	sonnet, haiku, unknown := got[0], got[1], got[2]
-	if sonnet.Context != llm.Catalog["claude-sonnet-5"].ContextWindow || !sonnet.Thinking || !sonnet.CapsKnown {
+	if sonnet.Context != llm.Lookup("claude-sonnet-5").ContextWindow || !sonnet.Thinking || !sonnet.CapsKnown {
 		t.Errorf("sonnet = %+v", sonnet)
 	}
 	// The CLI's own name for a model reaches the picker, which needs it to
@@ -39,7 +39,7 @@ func TestClaudeModelsUseTheResolvedModelForMetadata(t *testing.T) {
 	}
 	// The window differs sharply between families, which is the whole point
 	// of asking: Haiku is 200k where Sonnet is 1M.
-	if haiku.Context != llm.Catalog["claude-haiku-4-5"].ContextWindow || haiku.Context == sonnet.Context {
+	if haiku.Context != llm.Lookup("claude-haiku-4-5").ContextWindow || haiku.Context == sonnet.Context {
 		t.Errorf("haiku context = %d", haiku.Context)
 	}
 	// Reported as taking no effort levels, so none are offered.

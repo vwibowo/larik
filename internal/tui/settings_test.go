@@ -380,3 +380,25 @@ func TestExecutionSettingsCannotChangeDuringTurn(t *testing.T) {
 		t.Fatalf("running turn saved execution: %s", savedConfig(t, m))
 	}
 }
+
+func TestConfigAreaAliases(t *testing.T) {
+	for alias, key := range map[string]string{"mcp": "mcp_servers", "stt": "audio_stt", "web-search": "web_search", "sidebar": "sidebar", "statusline": "status_line"} {
+		if spec, ok := settingByKey(alias); !ok || spec.key != key || spec.open == nil {
+			t.Errorf("/config %s should open the %s editor: %v %+v", alias, key, ok, spec.key)
+		}
+	}
+}
+
+func TestBrowserLocationSetting(t *testing.T) {
+	m := testModel(t)
+	m.configCommandApply("browser_location", "-6.2, 106.8")
+	if l := m.opts.Config.Browser.Location; l == nil || l.Latitude != -6.2 || l.Longitude != 106.8 {
+		t.Fatalf("location: %+v", l)
+	}
+	if data := savedConfig(t, m); !strings.Contains(data, `"latitude": -6.2`) || !strings.Contains(data, `"longitude": 106.8`) {
+		t.Fatalf("saved: %s", data)
+	}
+	if _, err := parseLocation("north"); err == nil {
+		t.Error("a location that isn't two numbers should be refused")
+	}
+}

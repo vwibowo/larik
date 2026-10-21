@@ -79,6 +79,10 @@ type Env struct {
 	// repo is the git top-level directory containing Cwd, once found; a
 	// command can create a repository, so not finding one isn't kept.
 	repo string
+	// dirtyCache holds the already-changed files read before the last
+	// shell command, by absolute path, so the next command re-reads only
+	// those whose size, mode or modification time has moved since.
+	dirtyCache map[string]fileState
 	// shown records the reads whose output is in the model's context, so
 	// reading the same unchanged lines again can answer in a line. The
 	// agent forgets them when that context goes (ForgetShown), and turns

@@ -282,6 +282,9 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
 	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
+	runCtx = tools.WithProgress(runCtx, func(tail string) {
+		emit(Event{Kind: EvToolProgress, ToolID: use.ID, ToolName: use.Name, Output: tail})
+	})
 	if use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName {
 		runCtx = tools.WithCaller(runCtx, &toolCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
 	}

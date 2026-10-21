@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"larik/internal/textutil"
 )
 
 // The built-in /review and /security-review commands get the changes to
@@ -205,11 +207,11 @@ func pullRequest(ctx context.Context, dir, number string) (scope, body string, n
 	info, _, err := run(ctx, dir, 20_000, "gh", "pr", "view", number, "--json", "number,title,body,author,baseRefName,headRefName,url",
 		"--template", "{{.title}}\n{{.url}}\nby {{.author.login}}, {{.headRefName}} into {{.baseRefName}}\n\n{{.body}}")
 	if err != nil {
-		return scope, "", []string{"gh couldn't read the pull request (" + firstLineOf(err.Error()) + "). Tell the user; they may need to run gh auth login, or the number may be wrong."}
+		return scope, "", []string{"gh couldn't read the pull request (" + textutil.FirstLine(err.Error()) + "). Tell the user; they may need to run gh auth login, or the number may be wrong."}
 	}
 	patch, cut, err := run(ctx, dir, maxReviewDiff, "gh", "pr", "diff", number)
 	if err != nil {
-		return scope, info, []string{"gh couldn't get the pull request's diff (" + firstLineOf(err.Error()) + ")."}
+		return scope, info, []string{"gh couldn't get the pull request's diff (" + textutil.FirstLine(err.Error()) + ")."}
 	}
 	if cut {
 		notes = append(notes, "The diff was cut short. Check out the pull request's branch or use gh to read the rest before judging the parts not shown.")
@@ -297,13 +299,6 @@ func run(ctx context.Context, dir string, limit int, name string, args ...string
 func nameOr(s, fallback string) string {
 	if s == "" || s == "HEAD" {
 		return fallback
-	}
-	return s
-}
-
-func firstLineOf(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
 	}
 	return s
 }

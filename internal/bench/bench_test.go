@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
-	"larik/internal/agent"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"larik/internal/agent"
 
 	"larik/internal/llm"
 	"larik/internal/tools"
@@ -246,8 +247,8 @@ func TestCompactionRetentionKeepFailedCannotReadItsTranscript(t *testing.T) {
 }
 
 func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {
-	llm.Catalog["fake-model"] = llm.ModelInfo{ID: "fake-model", ContextWindow: 128_000, MaxOutput: 8_000, InputPrice: 3, OutputPrice: 15}
-	t.Cleanup(func() { delete(llm.Catalog, "fake-model") })
+	llm.SetCatalogEntry("fake-model", llm.ModelInfo{ID: "fake-model", ContextWindow: 128_000, MaxOutput: 8_000, InputPrice: 3, OutputPrice: 15})
+	t.Cleanup(func() { llm.DeleteCatalogEntry("fake-model") })
 
 	task := Tasks()[0] // fix-off-by-one
 	p := &scriptedProvider{steps: []llm.Message{

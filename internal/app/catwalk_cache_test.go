@@ -51,7 +51,7 @@ func TestRefreshCatwalkCacheLoadsOnNextStartup(t *testing.T) {
 		t.Fatalf("read cache: entries=%d err=%v", len(entries), err)
 	}
 	LoadCatwalkCache(filepath.Dir(cachePath))
-	got, ok := llm.Catalog[modelID]
+	got, ok := llm.CatalogEntry(modelID)
 	if !ok || got.ContextWindow != 64_000 || got.Provider != "cache-test-provider" {
 		t.Fatalf("cached catalog entry = %+v, exists=%v", got, ok)
 	}

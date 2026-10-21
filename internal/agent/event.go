@@ -16,6 +16,7 @@ const (
 	EvAssistant     EventKind = "assistant_message"   // final assembled assistant message
 	EvToolStart     EventKind = "tool_start"
 	EvToolEnd       EventKind = "tool_end"
+	EvToolProgress  EventKind = "tool_progress" // Output: the latest tail of a running tool's output
 	EvPermission    EventKind = "permission_request"
 	EvUsage         EventKind = "usage"
 	EvCompacted     EventKind = "compacted"

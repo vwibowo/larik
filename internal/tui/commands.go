@@ -15,6 +15,7 @@ import (
 	"larik/internal/mcp"
 	"larik/internal/permission"
 	"larik/internal/providers"
+	"larik/internal/textutil"
 )
 
 var modeCycle = []permission.Mode{permission.ModeDefault, permission.ModeAcceptEdits, permission.ModeAuto, permission.ModePlan}
@@ -316,7 +317,7 @@ func (m *model) command(line string) tea.Cmd {
 				share = 100 * float64(delegatedTokens) / float64(totalTokens)
 			}
 			mainCost := max(s.CostUSD-s.DelegatedCostUSD, 0)
-			out += fmt.Sprintf("\n  delegated %s · subagents %.0f%% of input/output tokens · main $%.4f / subagents $%.4f", plural(s.DelegatedTasks, "task"), share, mainCost, s.DelegatedCostUSD)
+			out += fmt.Sprintf("\n  delegated %s · subagents %.0f%% of input/output tokens · main $%.4f / subagents $%.4f", textutil.Plural(s.DelegatedTasks, "task"), share, mainCost, s.DelegatedCostUSD)
 		} else if r := m.opts.Config.Routing(); r.Delegation != config.DelegationManual && r.Delegation != "" {
 			out += "\n  routing configured · 0 delegated tasks"
 		}
@@ -444,9 +445,9 @@ func (m *model) mcpCommand(args []string, info, fail func(string) tea.Cmd) tea.C
 		mark := map[mcp.State]string{mcp.StateConnected: "●", mcp.StateFailed: "✗", mcp.StateConnecting: "…", mcp.StateNeedsApproval: "?", mcp.StateDisabled: "○"}[st.State]
 		fmt.Fprintf(&b, "%s %s  [%s] %s", mark, st.Name, st.Transport, st.State)
 		if st.State == mcp.StateConnected {
-			fmt.Fprintf(&b, " · %s", plural(len(st.Tools), "tool"))
+			fmt.Fprintf(&b, " · %s", textutil.Plural(len(st.Tools), "tool"))
 			if len(st.Prompts) > 0 {
-				fmt.Fprintf(&b, " · %s", plural(len(st.Prompts), "prompt"))
+				fmt.Fprintf(&b, " · %s", textutil.Plural(len(st.Prompts), "prompt"))
 			}
 			if st.Resources {
 				b.WriteString(" · resources (@" + st.Name + ":…)")
@@ -499,7 +500,7 @@ func (m *model) hooksCommand(args []string, info, fail func(string) tea.Cmd) tea
 				for _, h := range mt.Hooks {
 					what := h.Command
 					if h.Type == "prompt" {
-						what = "prompt: " + oneLine(h.Prompt, 70)
+						what = "prompt: " + textutil.OneLine(h.Prompt, 70)
 						if h.Model != "" {
 							what += " (" + h.Model + ")"
 						}
@@ -543,7 +544,7 @@ func (m *model) skillsCommand(info func(string) tea.Cmd) tea.Cmd {
 		if !sk.UserInvocable {
 			flags = append(flags, "model only")
 		}
-		desc := oneLine(sk.Description, 90)
+		desc := textutil.OneLine(sk.Description, 90)
 		fmt.Fprintf(&b, "/%-24s %s  [%s]\n", strings.TrimSpace(sk.Name+" "+sk.ArgumentHint), desc, strings.Join(flags, ", "))
 	}
 	for _, sk := range set.Shadowed {
@@ -572,7 +573,7 @@ func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
 		if d.Model != "" && d.Model != "inherit" {
 			model = d.Model
 		}
-		desc := oneLine(d.Description, 90)
+		desc := textutil.OneLine(d.Description, 90)
 		fmt.Fprintf(&b, "%-18s %s\n  %s · %s · %s\n", d.Name, desc, tools, model, d.Source)
 	}
 	for _, w := range set.Warnings {
@@ -780,7 +781,7 @@ func (m *model) mcpLoginDone(name string) tea.Cmd {
 		}
 		switch st.State {
 		case mcp.StateConnected:
-			return m.println(m.st.ok.Render("✓ connected to "+name) + m.st.dim.Render(" · "+plural(len(st.Tools), "tool")+"; they join the next fresh context (/clear or a new session)"))
+			return m.println(m.st.ok.Render("✓ connected to "+name) + m.st.dim.Render(" · "+textutil.Plural(len(st.Tools), "tool")+"; they join the next fresh context (/clear or a new session)"))
 		default:
 			return m.println(m.st.err.Render(name + ": " + st.Err))
 		}

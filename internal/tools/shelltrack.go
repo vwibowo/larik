@@ -36,6 +36,8 @@ const (
 	// already-changed files are worth tracking at all.
 	trackFileMax  = 2 << 20
 	trackTotalMax = 64 << 20
+	// trackCacheMax bounds the copies kept between commands.
+	trackCacheMax = 16 << 20
 	trackCountMax = 2000
 	trackTimeout  = 15 * time.Second
 )
@@ -83,14 +85,31 @@ func (e *Env) trackShell(ctx context.Context) *shellTrack {
 		t.cwd = resolved
 	}
 	t.head, _ = gitText(ctx, repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	e.mu.Lock()
+	cache := e.dirtyCache
+	e.mu.Unlock()
+	next := make(map[string]fileState, len(paths))
 	total := 0
 	for p := range paths {
-		st := readState(filepath.Join(repo, p), trackFileMax)
+		abs := filepath.Join(repo, p)
+		st, ok := cache[abs]
+		if !ok || st.skip || !st.unchanged(abs) {
+			st = readState(abs, trackFileMax)
+		}
 		if total += len(st.data); total > trackTotalMax {
 			st = fileState{skip: true}
 		}
 		t.dirty[p] = st
+		if !st.skip {
+			next[abs] = st
+		}
 	}
+	if total > trackCacheMax {
+		next = nil // not worth holding between commands
+	}
+	e.mu.Lock()
+	e.dirtyCache = next
+	e.mu.Unlock()
 	return t
 }
 

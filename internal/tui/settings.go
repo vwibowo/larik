@@ -508,11 +508,55 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
-		key: "browser_headless", path: "browser.headless", title: "Browser without a window", section: "tools", kind: kindToggle,
+		key: "browser_sound", path: "browser.sound", title: "Browser sound", section: "tools", kind: kindToggle,
 		applies: applyReload,
-		get:     func(m *model) string { return onOff(m.opts.Config.Browser.Headless) },
+		later:   "pages play audio on this computer's speakers; Chrome starts muted when off",
+		get:     func(m *model) string { return onOff(m.opts.Config.Browser.Sound) },
 		store:   func(v string) any { return v == "on" },
-		set:     func(m *model, v string) { m.opts.Config.Browser.Headless = v == "on" },
+		set:     func(m *model, v string) { m.opts.Config.Browser.Sound = v == "on" },
+	},
+	{
+		key: "browser_location", path: "browser.location", title: "Location pages may ask for", section: "tools", kind: kindText,
+		placeholder: "latitude,longitude (for example -6.2,106.8); empty shares none",
+		applies:     applyReload,
+		later:       "a page gets it only when you allow it in the browser pane",
+		valid: func(v string) error {
+			_, err := parseLocation(v)
+			return err
+		},
+		get: func(m *model) string {
+			if l := m.opts.Config.Browser.Location; l != nil {
+				return strconv.FormatFloat(l.Latitude, 'f', -1, 64) + "," + strconv.FormatFloat(l.Longitude, 'f', -1, 64)
+			}
+			return ""
+		},
+		store: func(v string) any {
+			l, _ := parseLocation(v)
+			if l == nil {
+				return nil
+			}
+			return l
+		},
+		set: func(m *model, v string) { m.opts.Config.Browser.Location, _ = parseLocation(v) },
+	},
+	{
+		key: "browser_pane_size", path: "browser.pane_size", title: "Browser pane width", section: "tools", kind: kindNumber,
+		unit: "percent", min: 20, max: 80, applies: applyReload,
+		placeholder: "how much of the terminal's width browser_show's pane takes; empty for 50",
+		get: func(m *model) string {
+			if n := m.opts.Config.Browser.PaneSize; n > 0 {
+				return strconv.Itoa(n)
+			}
+			return ""
+		},
+		store: func(v string) any {
+			if v == "" {
+				return nil
+			}
+			n, _ := strconv.Atoi(v)
+			return n
+		},
+		set: func(m *model, v string) { m.opts.Config.Browser.PaneSize, _ = strconv.Atoi(v) },
 	},
 	{
 		key: "browser_chrome_path", path: "browser.chrome_path", title: "Chrome to launch", section: "tools", kind: kindText,
@@ -598,7 +642,7 @@ var settingSpecs = []settingSpec{
 			}
 			return m.opts.Config.Sidebar.Command
 		},
-		cmd: "/sidebar-config", open: (*model).openSidebarEditor,
+		cmd: "/config sidebar", open: (*model).openSidebarEditor,
 	},
 	{
 		key: "keybindings", title: "Keybindings", section: "interface", kind: kindAction,
@@ -612,16 +656,16 @@ var settingSpecs = []settingSpec{
 		cmd: "/permissions", open: (*model).openPermissions,
 		covers: []string{"permissions"},
 	},
-	{key: "mcp_servers", title: "MCP servers", section: "tools", kind: kindAction, cmd: "/mcp-config", open: (*model).openMCPEditor, get: func(m *model) string {
+	{key: "mcp_servers", title: "MCP servers", section: "tools", kind: kindAction, cmd: "/config mcp", open: (*model).openMCPEditor, get: func(m *model) string {
 		return editableSummary(countAt(config.MCPAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.MCPServers), "servers")
 	}},
-	{key: "hooks", title: "Lifecycle hooks", section: "tools", kind: kindAction, cmd: "/hooks-config", open: (*model).openHooksEditor, get: func(m *model) string {
+	{key: "hooks", title: "Lifecycle hooks", section: "tools", kind: kindAction, cmd: "/config hooks", open: (*model).openHooksEditor, get: func(m *model) string {
 		return editableSummary(countAt(config.PersonalHooksAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.TrustedHooks), "events")
 	}},
 
-	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/web-search-config", open: (*model).openWebSearchEditor},
-	{key: "audio_stt", title: "Speech-to-text", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.STT, "") }, cmd: "/stt-config", open: (*model).openSTTEditor},
-	{key: "audio_tts", title: "Text-to-speech", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.TTS, audio.DefaultSpeechName()) }, cmd: "/tts-config", open: (*model).openTTSEditor},
+	{key: "web_search", title: "Web search backend", section: "tools", kind: kindAction, path: "web.search", get: func(m *model) string { return m.opts.Config.Web.Search.Provider }, cmd: "/config web-search", open: (*model).openWebSearchEditor},
+	{key: "audio_stt", title: "Speech-to-text", section: "audio", kind: kindAction, path: "audio.stt", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.STT, "") }, cmd: "/config stt", open: (*model).openSTTEditor},
+	{key: "audio_tts", title: "Text-to-speech", section: "audio", kind: kindAction, path: "audio.tts", get: func(m *model) string { return speechSummary(m.opts.Config.Audio.TTS, audio.DefaultSpeechName()) }, cmd: "/config tts", open: (*model).openTTSEditor},
 	{
 		key: "sandbox", title: "Bash sandbox", section: "security", kind: kindAction,
 		get: func(m *model) string {
@@ -630,13 +674,13 @@ var settingSpecs = []settingSpec{
 			}
 			return m.opts.Sandbox.Summary()
 		},
-		cmd: "/sandbox-config", open: (*model).openSandboxEditor,
+		cmd: "/config sandbox", open: (*model).openSandboxEditor,
 		covers: []string{"sandbox"},
 	},
-	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/lsp-config", open: (*model).openLSPEditor, get: func(m *model) string {
+	{key: "lsp", title: "Language servers", section: "tools", kind: kindAction, cmd: "/config lsp", open: (*model).openLSPEditor, get: func(m *model) string {
 		return editableSummary(countAt(config.LSPAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.LSP), "servers")
 	}},
-	{key: "models", title: "Model catalog overrides", section: "defaults", kind: kindAction, cmd: "/models-config", open: (*model).openModelsEditor, get: func(m *model) string {
+	{key: "models", title: "Model catalog overrides", section: "defaults", kind: kindAction, cmd: "/config models", open: (*model).openModelsEditor, get: func(m *model) string {
 		return editableSummary(countAt(config.UserModelsAt(m.opts.Config.UserConfigPath())), len(m.opts.Config.Models), "overrides")
 	}},
 	{
@@ -798,8 +842,17 @@ var settingSpecs = []settingSpec{
 	},
 }
 
+// settingAliases are the short /config names for editors whose setting
+// key is longer: /config mcp, /config stt.
+var settingAliases = map[string]string{
+	"mcp": "mcp_servers", "stt": "audio_stt", "tts": "audio_tts", "statusline": "status_line",
+}
+
 func settingByKey(key string) (settingSpec, bool) {
 	key = strings.ReplaceAll(strings.ToLower(key), "-", "_")
+	if full, ok := settingAliases[key]; ok {
+		key = full
+	}
 	for _, s := range settingSpecs {
 		if s.key == key {
 			return s, true
@@ -1543,4 +1596,19 @@ func (m *model) execPickerView() string {
 	head := spread(m.st.accent.Render("Execution for "+m.agent.ProviderName()+"/"+m.agent.Model()), m.st.dim.Render("saved for this model"), w)
 	hint := fmt.Sprintf("1–%d or ↑/↓ + enter select · esc close", len(execChoices))
 	return m.st.modal.Width(max(m.width-2, 10)).Render(head + "\n" + m.execPick.view(m.st, w) + "\n" + m.st.dim.Render(hint))
+}
+
+// parseLocation reads "latitude,longitude"; empty is no location.
+func parseLocation(v string) (*config.BrowserLocation, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	lat, lon, ok := strings.Cut(v, ",")
+	la, err1 := strconv.ParseFloat(strings.TrimSpace(lat), 64)
+	lo, err2 := strconv.ParseFloat(strings.TrimSpace(lon), 64)
+	if !ok || err1 != nil || err2 != nil || la < -90 || la > 90 || lo < -180 || lo > 180 {
+		return nil, fmt.Errorf("use latitude,longitude in degrees, such as -6.2,106.8")
+	}
+	return &config.BrowserLocation{Latitude: la, Longitude: lo}, nil
 }

@@ -14,6 +14,7 @@ import (
 
 	"larik/internal/llm"
 	"larik/internal/permission"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -186,7 +187,7 @@ func (a *Agent) resolveMentions(ctx context.Context, text string, emit func(Even
 			}
 			blocks = append(blocks, llm.Block{Type: llm.BlockText, Attachment: name,
 				Text: fmt.Sprintf("<file path=%q%s>\n%s</file>", name, attr, res.Content)})
-			notice("attached @%s (%s)", name, plural(strings.Count(res.Content, "\n"), "line"))
+			notice("attached @%s (%s)", name, textutil.Plural(strings.Count(res.Content, "\n"), "line"))
 		}
 	}
 	return blocks
@@ -257,13 +258,6 @@ func expandHome(p string) string {
 		}
 	}
 	return p
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
-	}
-	return fmt.Sprintf("%d %ss", n, word)
 }
 
 // MCPContent is what the agent needs from MCP servers besides their

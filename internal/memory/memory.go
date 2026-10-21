@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"larik/internal/textutil"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -144,7 +146,7 @@ func (s *Store) read(scope, name string) (Note, error) {
 		if end := bytes.Index(rest, []byte("\n---")); end >= 0 {
 			var fm frontmatter
 			if yaml.Unmarshal(rest[:end], &fm) == nil {
-				n.Description = oneLine(fm.Description)
+				n.Description = textutil.OneLine(fm.Description, maxDescription)
 				if validType(fm.Type) {
 					n.Type = fm.Type
 				}
@@ -159,7 +161,7 @@ func (s *Store) read(scope, name string) (Note, error) {
 	}
 	n.Body = strings.TrimSpace(string(body))
 	if n.Description == "" { // a note written by hand without frontmatter
-		n.Description = oneLine(firstLine(n.Body))
+		n.Description = textutil.OneLine(textutil.FirstText(n.Body), maxDescription)
 	}
 	return n, nil
 }
@@ -194,7 +196,7 @@ func (s *Store) Save(n Note) (created bool, err error) {
 		return false, errors.New("memory is off")
 	}
 	n.Name = strings.TrimSpace(n.Name)
-	n.Description = oneLine(n.Description)
+	n.Description = textutil.OneLine(n.Description, maxDescription)
 	n.Body = strings.TrimSpace(n.Body)
 	switch {
 	case !ValidName(n.Name):
@@ -280,23 +282,6 @@ func validType(t string) bool {
 		}
 	}
 	return false
-}
-
-func oneLine(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > maxDescription {
-		s = string(r[:maxDescription-1]) + "…"
-	}
-	return s
-}
-
-func firstLine(s string) string {
-	for _, l := range strings.Split(s, "\n") {
-		if l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#")); l != "" {
-			return l
-		}
-	}
-	return ""
 }
 
 // Slug makes a note name from free text: its first few words.

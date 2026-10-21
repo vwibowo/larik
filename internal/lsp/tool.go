@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"larik/internal/llm"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -307,7 +308,7 @@ func (t ApplyTool) Run(ctx context.Context, env *tools.Env, input json.RawMessag
 func (t ApplyTool) fileList(files map[string]int) string {
 	var parts []string
 	for _, p := range sortedFiles(files) {
-		parts = append(parts, fmt.Sprintf("%s (%s)", t.M.rel(p), plural(files[p], "edit")))
+		parts = append(parts, fmt.Sprintf("%s (%s)", t.M.rel(p), textutil.Plural(files[p], "edit")))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -319,11 +320,4 @@ func sortedFiles(files map[string]int) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }

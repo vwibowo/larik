@@ -11,6 +11,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/permission"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -119,8 +120,8 @@ func (p *printer) handle(e agent.Event) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.format == FormatJSON {
-		if e.Kind == agent.EvTextDelta || e.Kind == agent.EvThinkingDelta {
-			return // the assistant_message event carries the full text
+		if e.Kind == agent.EvTextDelta || e.Kind == agent.EvThinkingDelta || e.Kind == agent.EvToolProgress {
+			return // the assistant_message and tool_end events carry the full text
 		}
 		_ = p.enc.Encode(e)
 		return
@@ -151,7 +152,7 @@ func (p *printer) handle(e agent.Event) {
 		fmt.Fprintf(p.stderr, "%s→ %s %s\n", nest(e), e.ToolName, compact(e.Input))
 	case agent.EvToolEnd:
 		if e.IsError {
-			fmt.Fprintf(p.stderr, "%s✗ %s: %s\n", nest(e), e.ToolName, firstLine(e.Output))
+			fmt.Fprintf(p.stderr, "%s✗ %s: %s\n", nest(e), e.ToolName, textutil.FirstLine(strings.TrimSpace(e.Output)))
 		}
 	case agent.EvPermission:
 		fmt.Fprintf(p.stderr, "%s✗ %s needs approval (denied in non-interactive mode; add an allow rule or use --mode)\n", nest(e), e.ToolName)
@@ -193,14 +194,6 @@ func compact(raw json.RawMessage) string {
 	s := strings.Join(strings.Fields(string(raw)), " ")
 	if len(s) > 120 {
 		s = s[:117] + "..."
-	}
-	return s
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
 	}
 	return s
 }

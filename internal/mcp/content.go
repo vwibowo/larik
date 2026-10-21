@@ -12,6 +12,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"larik/internal/llm"
+	"larik/internal/textutil"
 	"larik/internal/tools"
 )
 
@@ -271,7 +272,7 @@ func (t ListResourcesTool) Run(ctx context.Context, _ *tools.Env, input json.Raw
 			b.WriteString(" type=" + r.MIMEType)
 		}
 		if r.Description != "" {
-			b.WriteString(" — " + oneLine(r.Description))
+			b.WriteString(" — " + textutil.OneLine(r.Description, 120))
 		}
 		b.WriteString("\n")
 	}
@@ -317,14 +318,6 @@ func (t ReadResourceTool) Run(ctx context.Context, _ *tools.Env, input json.RawM
 		parts = append(parts, b.Text)
 	}
 	return tools.Result{Content: tools.Truncate(strings.Join(parts, "\n"), tools.MaxOutputBytes)}
-}
-
-func oneLine(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > 120 {
-		s = string(r[:119]) + "…"
-	}
-	return s
 }
 
 // IsServer reports whether name is a connected server.

@@ -119,6 +119,9 @@ type startupModel struct {
 	live   *model
 	err    error
 	size   *tea.WindowSizeMsg
+	// typed is what the user typed before setup finished; it becomes the
+	// composer's first draft instead of being lost.
+	typed []rune
 }
 
 func (m *startupModel) Init() tea.Cmd {
@@ -151,20 +154,38 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.size != nil {
 			m.live.Update(*m.size)
 		}
+		if len(m.typed) > 0 {
+			m.live.input.SetValue(string(m.typed))
+		}
 		return m.live, m.live.Init()
 	case tea.WindowSizeMsg:
 		m.size = &msg
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" || msg.String() == "esc" {
+		switch msg.String() {
+		case "ctrl+c", "esc":
 			m.cancel()
 			return m, tea.Quit
+		case "backspace":
+			if len(m.typed) > 0 {
+				m.typed = m.typed[:len(m.typed)-1]
+			}
+		default:
+			if msg.Text != "" {
+				m.typed = append(m.typed, []rune(msg.Text)...)
+			}
 		}
+	case tea.PasteMsg:
+		m.typed = append(m.typed, []rune(msg.Content)...)
 	}
 	return m, nil
 }
 
 func (m *startupModel) View() tea.View {
-	v := tea.NewView("Starting Larik…")
+	text := "Starting Larik…"
+	if len(m.typed) > 0 {
+		text += "\n\n> " + string(m.typed) + "\n\n(kept for the prompt once Larik is ready)"
+	}
+	v := tea.NewView(text)
 	v.AltScreen = true
 	v.WindowTitle = "larik"
 	return v
@@ -175,6 +196,7 @@ type toolRun struct {
 	input    []byte
 	agent    string // subagent label, if any
 	started  time.Time
+	tail     string // latest output of a running command, if it reports any
 }
 
 type model struct {
@@ -259,7 +281,12 @@ type model struct {
 	lastThinking string // thinking of the last finished message, for ctrl+o
 	lastReply    string // text of the last reply, for /copy
 	busyLabel    string // non-agent background work, e.g. compaction
-	quitArmed    bool
+	reloading    bool   // /reload's app.Setup is running in the background
+	// resizePending defers re-wrapping the conversation while the window
+	// is still being resized; resizeGen names the latest resize.
+	resizePending bool
+	resizeGen     int
+	quitArmed     bool
 
 	mpick       *modelPicker              // the /model dropdown, when open
 	modelLists  map[string]providerModels // last model lists, by provider
@@ -413,11 +440,7 @@ func (m *model) applyUIConfig() {
 	if c := m.opts.Config; c != nil {
 		m.appearance = c.Appearance
 		if m.appearance == "" {
-			if c.VerboseOn() {
-				m.appearance = "verbose"
-			} else {
-				m.appearance = "default"
-			}
+			m.appearance = "default"
 		}
 		m.verbose = m.appearance == "verbose"
 		m.tips, m.notify, m.mouse = c.TipsOn(), c.Notifications, c.MouseOn()
@@ -585,6 +608,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case reloadSetupMsg:
+		return m, m.finishReload(msg)
 	case shellDoneMsg:
 		return m, tea.Batch(m.shellDone(msg), m.refreshProject())
 
@@ -637,8 +662,23 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
+		resized := m.width != 0 && msg.Width != m.width
 		m.height = msg.Height
 		m.setWidth(msg.Width)
+		if !resized || len(m.outputs) == 0 {
+			return m, nil
+		}
+		// Re-wrapping the whole conversation is the costly part of a
+		// resize: wait until the drag stops before doing it.
+		m.resizeGen++
+		m.resizePending = true
+		gen := m.resizeGen
+		return m, tea.Tick(resizeSettle, func(time.Time) tea.Msg { return resizeSettledMsg{gen} })
+
+	case resizeSettledMsg:
+		if msg.gen == m.resizeGen {
+			m.resizePending = false
+		}
 		return m, nil
 
 	case voiceTickMsg:
@@ -665,6 +705,17 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentEventMsg:
 		return m, tea.Batch(m.handleEvent(agent.Event(msg)), m.waitEvent())
+
+	case agentEventsMsg:
+		cmds := make([]tea.Cmd, 0, len(msg.events)+1)
+		for _, e := range msg.events {
+			cmds = append(cmds, m.handleEvent(e))
+		}
+		if msg.ended {
+			_, end := m.Update(runEndedMsg{})
+			return m, tea.Batch(append(cmds, end)...)
+		}
+		return m, tea.Batch(append(cmds, m.waitEvent())...)
 
 	case runEndedMsg:
 		var alert tea.Cmd
@@ -1113,7 +1164,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // idle reports whether the agent is free: no turn, "!" command or
 // compaction is running.
 func (m *model) idle() bool {
-	return !m.running && m.shellCancel == nil && m.compactCancel == nil
+	return !m.running && m.shellCancel == nil && m.compactCancel == nil && !m.reloading
 }
 
 // nextQueued submits the oldest queued prompt when the agent is idle.
@@ -1160,8 +1211,44 @@ func (m *model) waitEvent() tea.Cmd {
 		if !ok {
 			return runEndedMsg{}
 		}
-		return agentEventMsg(e)
+		if !isDelta(e) {
+			return agentEventMsg(e)
+		}
+		// A fast stream sends a delta per token; take what is already
+		// waiting so the screen redraws once for all of them.
+		batch := agentEventsMsg{events: []agent.Event{e}}
+		for len(batch.events) < maxEventBatch {
+			select {
+			case e, ok := <-ch:
+				if !ok {
+					batch.ended = true
+					return batch
+				}
+				batch.events = append(batch.events, e)
+				if !isDelta(e) {
+					return batch
+				}
+				continue
+			default:
+			}
+			break
+		}
+		return batch
 	}
+}
+
+// maxEventBatch bounds how many queued events one redraw covers.
+const maxEventBatch = 256
+
+// agentEventsMsg is a run of streamed events taken together; ended says
+// the run's channel closed after them.
+type agentEventsMsg struct {
+	events []agent.Event
+	ended  bool
+}
+
+func isDelta(e agent.Event) bool {
+	return e.Kind == agent.EvTextDelta || e.Kind == agent.EvThinkingDelta
 }
 
 func (m *model) resetStream() {
@@ -1265,6 +1352,13 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			m.turnStats.toolsSince = time.Now()
 		}
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
+	case agent.EvToolProgress:
+		for i := range m.tools {
+			if m.tools[i].id == e.ToolID && m.tools[i].agent == e.Agent {
+				m.tools[i].tail = e.Output
+				break
+			}
+		}
 	case agent.EvToolEnd:
 		for i, t := range m.tools {
 			if t.id == e.ToolID && t.agent == e.Agent {

@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"larik/internal/memory"
+	"larik/internal/textutil"
 )
 
 // memoryCommand is /memory: list the notes kept across sessions, or show,
@@ -97,7 +98,7 @@ func (m *model) memoryList(store *memory.Store) string {
 				continue
 			}
 			n++
-			fmt.Fprintf(&b, "  %-*s  %-9s %s\n", width, note.Name, note.Type, oneLine(note.Description, 90))
+			fmt.Fprintf(&b, "  %-*s  %-9s %s\n", width, note.Name, note.Type, textutil.OneLine(note.Description, 90))
 		}
 		if n == 0 {
 			b.WriteString("  (none)\n")
