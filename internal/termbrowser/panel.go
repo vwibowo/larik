@@ -3,6 +3,7 @@ package termbrowser
 import (
 	"errors"
 	"os"
+	"reflect"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -105,6 +106,9 @@ func (p *Panel) Close() {
 	p.ctl.Close()
 }
 
+// teaPkg is Bubble Tea's import path, whose messages wrap passes on.
+var teaPkg = reflect.TypeOf(tea.RawMsg{}).PkgPath()
+
 // wrap marks the messages a panel command produces as the panel's, so
 // the host can hand them back. Escapes for the terminal pass through.
 func wrap(cmd tea.Cmd) tea.Cmd {
@@ -124,6 +128,11 @@ func wrap(cmd tea.Cmd) tea.Cmd {
 		case tea.RawMsg, PanelClosedMsg, PanelMsg:
 			return m
 		default:
+			// Bubble Tea's own messages (setting the clipboard, say) are
+			// for the program, not the panel.
+			if reflect.TypeOf(m).PkgPath() == teaPkg {
+				return m
+			}
 			return PanelMsg{m}
 		}
 	}

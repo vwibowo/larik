@@ -201,6 +201,11 @@ func TestNormalizeAddress(t *testing.T) {
 	for in, want := range map[string]string{
 		"example.com": "https://example.com", "localhost:3000/x": "http://localhost:3000/x",
 		"http://a.b": "http://a.b", "about:blank": "about:blank", "  ": "",
+		"192.168.1.5:3000": "http://192.168.1.5:3000", "[::1]:8080/": "http://[::1]:8080/",
+		"127.0.0.1": "http://127.0.0.1", "app.localhost": "http://app.localhost", "shop.test/cart": "http://shop.test/cart",
+		"8.8.8.8": "https://8.8.8.8", "example.com:8443": "https://example.com:8443",
+		"localhostfoo.com": "https://localhostfoo.com", "golang generics": "https://duckduckgo.com/?q=golang+generics",
+		"kittens": "https://duckduckgo.com/?q=kittens",
 	} {
 		if got := normalizeAddress(in); got != want {
 			t.Errorf("normalizeAddress(%q) = %q, want %q", in, got, want)
@@ -785,5 +790,77 @@ func TestPanelHeaderShowsFocus(t *testing.T) {
 	h = v.header()
 	if !strings.Contains(h[1], "f3 chat") || strings.HasPrefix(h[1], "\x1b[2m") {
 		t.Errorf("focused: bright, with the way back: %q", h[1])
+	}
+}
+
+// Wide characters take two cells: the field scrolls and places clicks by
+// cells, not runes.
+func TestAddressFieldWideCharacters(t *testing.T) {
+	a := addressBar{}
+	a.begin("例え.jp/ページ")
+	a.selected = false
+	if start := a.scroll(6); start != len(a.text)-2 {
+		t.Errorf("a field 6 cells wide shows the last two wide runes and the caret: start %d", start)
+	}
+	a.cursor = 0
+	if i := a.at(3, 20); i != 1 {
+		t.Errorf("cell 3 is in the second rune: %d", i)
+	}
+	v := newViewer(kitty{})
+	defer v.close()
+	v.editing, v.address = true, a
+	if got := ansi.StringWidth(v.addressField(10)); got != 10 {
+		t.Errorf("the field is 10 cells: %d", got)
+	}
+}
+
+func TestZoomSteps(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.scale = 2
+	v.zoomBy("ctrl+-")
+	if v.zoom != 90 || v.ratio() != 1.8 {
+		t.Fatalf("zoom out one step: %d%%, ratio %v", v.zoom, v.ratio())
+	}
+	for range 20 {
+		v.zoomBy("ctrl+-")
+	}
+	if v.zoom != 50 {
+		t.Fatalf("zoom stops at the smallest step: %d", v.zoom)
+	}
+	if v.zoomBy("ctrl+-") != nil {
+		t.Error("no further step, nothing to do")
+	}
+	v.zoomBy("ctrl+=")
+	if v.zoom != 67 {
+		t.Fatalf("zoom in one step: %d", v.zoom)
+	}
+	v.zoomBy("ctrl+0")
+	if v.ratio() != 2 || strings.Contains(v.badges(), "%") {
+		t.Fatalf("ctrl+0 resets: %d, badges %q", v.zoom, v.badges())
+	}
+	v.zoom = 50
+	if !strings.Contains(v.badges(), "50%") {
+		t.Errorf("the zoom level shows: %q", v.badges())
+	}
+	// At 50% on a 2x screen, a 10-pixel cell is 10 CSS pixels.
+	v.cellW, v.cellH = 10, 20
+	if x, y, ok := v.pagePoint(tea.Mouse{X: 3, Y: headerRows + 1}); !ok || x != 35 || y != 30 {
+		t.Errorf("clicks follow the zoom: %v,%v", x, y)
+	}
+}
+
+func TestCopyOut(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.copyOut(copiedMsg{"", "the selection"})
+	if v.note != "nothing to copy" {
+		t.Errorf("an empty copy says so: %q", v.note)
+	}
+	// The clipboard escape is Bubble Tea's message: a panel passes it on to
+	// the program instead of keeping it.
+	msg := wrap(tea.SetClipboard("hi"))()
+	if _, ok := msg.(PanelMsg); ok || msg == nil {
+		t.Errorf("SetClipboard must reach the program: %#v", msg)
 	}
 }

@@ -2,16 +2,24 @@
 
 ## Unreleased
 
+### Added
+
+- **Zoom in the browser:** `ctrl+-`, `ctrl+=` and `ctrl+0`. Zooming out gives a narrow panel a site's desktop layout; the level shows in the toolbar.
+- **Copy from the browser:** `alt+c` (or `ctrl+shift+c` where the terminal passes it on) copies the page's selection, or its address when nothing is selected.
+
 ### Changed
+
+- **The address field searches** what isn't an address (`golang generics`, `kittens`) on DuckDuckGo, and opens addresses on this machine and the local network (`192.168.1.5:3000`, `[::1]:8080`, `app.localhost`, `shop.test`) over `http`.
 
 - **The browser panel shows where the keyboard is.** Its title row is bright with the key back to the chat while the browser has the keyboard, and dim with the way in when it doesn't; the composer's border dims while you type in the page.
 - **The browser stays on the tab you're using.** While you click or type in a page, an agent working in another tab no longer switches the view until you've stopped for 10 seconds.
-- **The panel no longer slows Larik down.** Frames, hovering and page events redraw only the panel, not the whole conversation, and a panel squeezed out by a narrow window stops streaming the page.
+- **The panel no longer slows Larik down.** Frames, hovering and page events redraw only the panel, not the whole conversation, and a panel squeezed out by a narrow window stops streaming the page. Frames reuse their memory instead of allocating 15 MB each on Retina screens.
 
 ### Fixed
 
 - **Double- and triple-clicks in the browser** now select a word or line and reach `dblclick` handlers.
 - **A drag in the page that ends outside it** (selecting text, moving a slider) releases the mouse button in the page instead of leaving it held down.
+- **The address field with wide characters** (Japanese, Chinese, Korean) keeps the caret and clicks in the right place.
 - **Errors in the browser's header** clear after a few seconds instead of hiding the page title until the next resize.
 
 ## v0.16.0

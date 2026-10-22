@@ -2,6 +2,7 @@ package termbrowser
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -58,6 +59,9 @@ func (v *viewer) badges() string {
 	}
 	if v.state.Sound {
 		b += " ♪"
+	}
+	if v.zoom != 0 && v.zoom != 100 {
+		b += fmt.Sprintf(" %d%%", v.zoom)
 	}
 	if b != "" {
 		b += " "
@@ -119,28 +123,54 @@ func (v *viewer) addressField(w int) string {
 		return padRight(ansi.Truncate(url, w, "…"), w)
 	}
 	text, cursor := v.address.text, v.address.cursor
-	// Scroll so the caret stays in view.
-	start := max(0, cursor-w+1)
-	end := min(len(text), start+w)
-	visible := text[start:end]
-	if v.address.selected {
-		return sgrCaret + string(visible) + sgrField + strings.Repeat(" ", max(w-len(visible), 0))
-	}
+	start := v.address.scroll(w)
 	var b strings.Builder
-	for i, r := range visible {
-		if start+i == cursor {
-			b.WriteString(sgrCaret + string(r) + sgrField)
-		} else {
-			b.WriteRune(r)
+	n := 0 // cells written
+	for i := start; i < len(text); i++ {
+		rw := runeWidth(text[i])
+		if n+rw > w {
+			break
 		}
+		switch {
+		case v.address.selected:
+			b.WriteString(sgrCaret + string(text[i]) + sgrField)
+		case i == cursor:
+			b.WriteString(sgrCaret + string(text[i]) + sgrField)
+		default:
+			b.WriteRune(text[i])
+		}
+		n += rw
 	}
-	n := len(visible)
-	if cursor == end && n < w {
+	if cursor == len(text) && !v.address.selected && n < w {
 		b.WriteString(sgrCaret + " " + sgrField)
 		n++
 	}
 	b.WriteString(strings.Repeat(" ", max(w-n, 0)))
 	return b.String()
+}
+
+// runeWidth is how many cells r takes: two for wide characters.
+func runeWidth(r rune) int { return max(ansi.StringWidth(string(r)), 1) }
+
+// scroll is the index of the first rune shown in a field w cells wide: as
+// much as fits before the caret, with the caret's own cell.
+func (a *addressBar) scroll(w int) int {
+	start, used := a.cursor, 1
+	for start > 0 && used+runeWidth(a.text[start-1]) <= w {
+		start--
+		used += runeWidth(a.text[start])
+	}
+	return start
+}
+
+// at is the index of the rune at cell col of a field w cells wide.
+func (a *addressBar) at(col, w int) int {
+	i, n := a.scroll(w), 0
+	for i < len(a.text) && n+runeWidth(a.text[i]) <= col {
+		n += runeWidth(a.text[i])
+		i++
+	}
+	return i
 }
 
 // addressBar is the text being typed into the address field.
@@ -287,9 +317,8 @@ func (v *viewer) clickToolbar(x int) tea.Cmd {
 		if v.editing {
 			// A second click places the caret where it lands.
 			fieldW := v.addressEnd() - addressStart - 1
-			start := max(0, v.address.cursor-fieldW+1)
 			v.address.selected = false
-			v.address.cursor = min(max(start+x-addressStart, 0), len(v.address.text))
+			v.address.cursor = v.address.at(max(x-addressStart, 0), fieldW)
 			return nil
 		}
 		v.editing = true

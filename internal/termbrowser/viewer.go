@@ -10,6 +10,8 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,6 +20,8 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/chromedp/cdproto/target"
+
+	"larik/internal/clipboard"
 )
 
 // The viewer is `larik browser view`, run in a pane beside Larik's. It
@@ -97,7 +101,8 @@ type viewer struct {
 	// embedded is set when the viewer is a panel in another program, which
 	// it must not quit and whose other images it must not delete.
 	embedded  bool
-	scale     int // device pixels per CSS pixel
+	scale     int // device pixels per CSS pixel, before zoom
+	zoom      int // page zoom in percent; 0 is 100
 	resizeGen int
 
 	diff    frameDiff
@@ -181,8 +186,10 @@ type (
 		session target.SessionID
 		data    string // base64 JPEG
 	}
-	noteMsg     string
-	noteEndMsg  struct{ gen int }
+	noteMsg    string
+	noteEndMsg struct{ gen int }
+	// copiedMsg is text from the page for the clipboard.
+	copiedMsg   struct{ text, what string }
 	resizedMsg  struct{ gen int }
 	connLostMsg struct{}
 	// followMsg looks again at which tab to show, once the user's hold on
@@ -288,6 +295,9 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, nil
 	case frameMsg:
+		// draw copies what it sends, so the pixels go back for the next
+		// frame at once.
+		defer releaseFrame(msg.frame)
 		if msg.session != v.session {
 			return v, nil
 		}
@@ -318,6 +328,8 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, nil
 	case followMsg:
 		return v, v.follow()
+	case copiedMsg:
+		return v, v.copyOut(msg)
 	case tea.WindowSizeMsg:
 		return v, v.layout(0, 0, msg.Width, msg.Height)
 	case resizedMsg:
@@ -741,16 +753,17 @@ func (v *viewer) startScreencast() tea.Cmd {
 		}
 	}
 	w, h := v.pagePixels()
-	scale := v.scale
+	ratio := v.ratio()
+	cssW, cssH := int(float64(w)/ratio), int(float64(h)/ratio)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = conn.call(ctx, session, "Page.stopScreencast", nil, nil)
 		err := conn.call(ctx, session, "Emulation.setDeviceMetricsOverride", map[string]any{
-			"width": w / scale, "height": h / scale, "deviceScaleFactor": scale, "mobile": false,
+			"width": cssW, "height": cssH, "deviceScaleFactor": ratio, "mobile": false,
 			// Headless Chrome reports a 400x300 screen otherwise, which
 			// some pages size their layout by.
-			"screenWidth": w / scale, "screenHeight": h / scale,
+			"screenWidth": cssW, "screenHeight": cssH,
 		}, nil)
 		if err == nil {
 			err = conn.call(ctx, session, "Page.startScreencast", map[string]any{
@@ -892,6 +905,10 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "ctrl+r", "f5":
 		return v.reloadOrStop()
+	case "ctrl+-", "ctrl+=", "ctrl++", "ctrl+0":
+		return v.zoomBy(msg.String())
+	case "ctrl+shift+c", "alt+c":
+		return v.copySelection()
 	case "alt+left":
 		return v.goHistory(-1)
 	case "alt+right":
@@ -903,18 +920,40 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// normalizeAddress turns what was typed into a URL: a bare host or
-// localhost:port gets a scheme.
+// normalizeAddress turns what was typed into a URL: a host gets a scheme
+// (http for this machine and the local network, where dev servers are),
+// and anything that isn't a host is searched for.
 func normalizeAddress(s string) string {
 	s = strings.TrimSpace(s)
 	switch {
-	case s == "", strings.Contains(s, "://"), strings.HasPrefix(s, "about:"):
+	case s == "", strings.Contains(s, "://"), strings.HasPrefix(s, "about:"), strings.HasPrefix(s, "data:"):
 		return s
-	case strings.HasPrefix(s, "localhost"), strings.HasPrefix(s, "127."):
-		return "http://" + s
+	case strings.ContainsAny(s, " \t"):
+		return searchURL + url.QueryEscape(s)
 	}
-	return "https://" + s
+	host := s
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	name, port := host, ""
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		name, port = h, p
+	}
+	name = strings.Trim(strings.ToLower(name), "[]")
+	ip := net.ParseIP(name)
+	switch {
+	case name == "localhost", strings.HasSuffix(name, ".localhost"), strings.HasSuffix(name, ".test"),
+		strings.HasSuffix(name, ".local"),
+		ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()):
+		return "http://" + s
+	case ip != nil, strings.Contains(name, "."), port != "":
+		return "https://" + s
+	}
+	return searchURL + url.QueryEscape(s) // one word: a search, as browsers do
 }
+
+// searchURL is where the address field searches.
+const searchURL = "https://duckduckgo.com/?q="
 
 // navigate opens url in the shown tab, through the session's own request
 // guard like every other request the tab makes.
@@ -947,8 +986,8 @@ func (v *viewer) pagePoint(m tea.Mouse) (x, y float64, ok bool) {
 	if m.Y < headerRows || v.cellW == 0 || v.scale == 0 {
 		return 0, 0, false
 	}
-	x = (float64(m.X) + 0.5) * float64(v.cellW) / float64(v.scale)
-	y = (float64(m.Y-headerRows) + 0.5) * float64(v.cellH) / float64(v.scale)
+	x = (float64(m.X) + 0.5) * float64(v.cellW) / v.ratio()
+	y = (float64(m.Y-headerRows) + 0.5) * float64(v.cellH) / v.ratio()
 	return x, y, true
 }
 
@@ -1027,4 +1066,103 @@ func (v *viewer) close() {
 		k.w = v.out
 		v.deleteOwn(k)
 	}
+}
+
+// zoomLevels are the steps ctrl+- and ctrl+= move through, as browsers'.
+var zoomLevels = []int{50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200}
+
+// ratio is device pixels per CSS pixel: the screen's scale, zoomed.
+func (v *viewer) ratio() float64 {
+	z := v.zoom
+	if z == 0 {
+		z = 100
+	}
+	return float64(max(v.scale, 1)) * float64(z) / 100
+}
+
+// zoomBy handles ctrl+- (out), ctrl+= (in) and ctrl+0 (back to 100%).
+// Zooming out fits a wider page in the panel, which a narrow one needs to
+// get a site's desktop layout.
+func (v *viewer) zoomBy(key string) tea.Cmd {
+	z := v.zoom
+	if z == 0 {
+		z = 100
+	}
+	next := 100
+	switch key {
+	case "ctrl+-":
+		next = zoomLevels[0]
+		for _, l := range zoomLevels {
+			if l < z {
+				next = l
+			}
+		}
+	case "ctrl+=", "ctrl++":
+		next = zoomLevels[len(zoomLevels)-1]
+		for i := len(zoomLevels) - 1; i >= 0; i-- {
+			if zoomLevels[i] > z {
+				next = zoomLevels[i]
+			}
+		}
+	}
+	if next == z {
+		return nil
+	}
+	v.zoom = next
+	v.diff = frameDiff{}
+	return v.startScreencast()
+}
+
+// copySelection copies what is selected in the page (in a text field too)
+// or, with nothing selected, the page's address.
+func (v *viewer) copySelection() tea.Cmd {
+	conn, session, url := v.conn, v.session, v.targets[v.tab].URL
+	if conn == nil || session == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var res struct {
+			Result struct {
+				Value string `json:"value"`
+			} `json:"result"`
+		}
+		_ = conn.call(ctx, session, "Runtime.evaluate", map[string]any{
+			"expression":    selectionJS,
+			"returnByValue": true,
+		}, &res)
+		if res.Result.Value != "" {
+			return copiedMsg{res.Result.Value, "the selection"}
+		}
+		return copiedMsg{url, "the address"}
+	}
+}
+
+// selectionJS reads the page's selection, which in a text field is the
+// field's own rather than the document's.
+const selectionJS = `(() => {
+	let d = document;
+	let e = d.activeElement;
+	while (e && e.contentDocument) { try { d = e.contentDocument; e = d.activeElement; } catch (_) { break; } }
+	if (e && typeof e.selectionStart === "number" && e.selectionStart !== e.selectionEnd)
+		return e.value.slice(e.selectionStart, e.selectionEnd);
+	return String(d.getSelection());
+})()`
+
+// copyOut puts text on the clipboard: through the terminal (OSC 52, which
+// reaches a local clipboard over SSH) and with the platform's tool.
+func (v *viewer) copyOut(msg copiedMsg) tea.Cmd {
+	if msg.text == "" {
+		return v.setNote("nothing to copy")
+	}
+	native := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if clipboard.WriteText(ctx, msg.text) != nil {
+			return noteMsg("sent " + msg.what + " to the terminal's clipboard (OSC 52)")
+		}
+		return noteMsg("copied " + msg.what)
+	}
+	return tea.Batch(tea.SetClipboard(msg.text), native)
 }

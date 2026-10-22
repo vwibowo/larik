@@ -31,12 +31,35 @@ func (f rgbFrame) sub(r image.Rectangle) rgbFrame {
 	return out
 }
 
+// pixBuffers recycles frames' pixels: a Retina frame is 15 MB, and a new
+// one each frame at 30 frames a second keeps the garbage collector busy.
+var pixBuffers sync.Pool
+
+// releaseFrame gives f's pixels back for another frame; f must not be used
+// after.
+func releaseFrame(f rgbFrame) {
+	if f.pix != nil {
+		pix := f.pix[:0]
+		pixBuffers.Put(&pix)
+	}
+}
+
+// pixels returns a buffer of n bytes, recycled when one is big enough.
+// Every byte is overwritten by the caller.
+func pixels(n int) []byte {
+	if p, ok := pixBuffers.Get().(*[]byte); ok && cap(*p) >= n {
+		return (*p)[:n]
+	}
+	return make([]byte, n)
+}
+
 // toRGB converts a decoded frame. JPEG frames are YCbCr, converted in
 // bands across the CPUs: at Retina sizes that is millions of pixels a
-// frame, the largest cost after decoding.
+// frame, the largest cost after decoding. The frame's pixels may be
+// handed back with releaseFrame.
 func toRGB(img image.Image) rgbFrame {
 	b := img.Bounds()
-	f := rgbFrame{w: b.Dx(), h: b.Dy(), pix: make([]byte, b.Dx()*b.Dy()*3)}
+	f := rgbFrame{w: b.Dx(), h: b.Dy(), pix: pixels(b.Dx() * b.Dy() * 3)}
 	bands := min(runtime.GOMAXPROCS(0), max(f.h/64, 1))
 	var wg sync.WaitGroup
 	for i := 0; i < bands; i++ {
