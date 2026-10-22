@@ -269,11 +269,12 @@ type model struct {
 	thinking     strings.Builder
 	calling      string // tool the model is currently writing a call for
 	tools        []toolRun
-	taskCalls    map[string]int    // completed calls by active subagent label
-	taskModels   map[string]string // model each active subagent runs on, by label
-	perm         *agent.Event      // permission prompt being shown
-	permQueue    []agent.Event     // further prompts (parallel subagents)
-	permFeedback *textarea.Model   // denial feedback, when the third option is selected
+	scripts      map[string]*scriptRun // running run_code calls, by scriptKey
+	taskCalls    map[string]int        // completed calls by active subagent label
+	taskModels   map[string]string     // model each active subagent runs on, by label
+	perm         *agent.Event          // permission prompt being shown
+	permQueue    []agent.Event         // further prompts (parallel subagents)
+	permFeedback *textarea.Model       // denial feedback, when the third option is selected
 	// bgReplies marks prompts from background tasks, which must survive
 	// the end of the foreground turn.
 	bgReplies      map[chan<- agent.PermissionReply]bool
@@ -1302,7 +1303,7 @@ func (m *model) resetStream() {
 	m.stream.Reset()
 	m.thinking.Reset()
 	m.calling = ""
-	m.tools = nil
+	m.tools, m.scripts = nil, nil
 	m.stopToolClock() // a run that ends with tools running
 	m.thinkStart, m.thinkDur = time.Time{}, 0
 }
@@ -1399,6 +1400,9 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 			m.turnStats.toolsSince = time.Now()
 		}
 		m.tools = append(m.tools, toolRun{id: e.ToolID, name: e.ToolName, input: e.Input, agent: e.Agent, started: time.Now()})
+		if e.ToolName == tools.CodeToolName {
+			m.startScript(e)
+		}
 	case agent.EvToolProgress:
 		for i := range m.tools {
 			if m.tools[i].id == e.ToolID && m.tools[i].agent == e.Agent {
@@ -1416,12 +1420,31 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		if len(m.tools) == 0 {
 			m.stopToolClock()
 		}
+		if s := m.scriptOf(e.Agent, e.ToolID); s != nil {
+			// The script's card shows it (see script.go).
+			s.calls = append(s.calls, e)
+			if m.appearance == "compact" && !e.IsError {
+				m.compactTools = append(m.compactTools, e)
+			}
+			if e.Agent != "" {
+				if m.taskCalls == nil {
+					m.taskCalls = make(map[string]int)
+				}
+				m.taskCalls[e.Agent]++
+			}
+			return nil
+		}
 		if m.updateTodos(e) {
 			return m.println(m.completedTodosCard())
 		}
 		// The card names the model the task ran on, so it is rendered before
 		// that is forgotten.
-		card := m.renderToolCard(e)
+		var card string
+		if e.ToolName == tools.CodeToolName {
+			card = m.renderScriptCard(e, m.endScript(e))
+		} else {
+			card = m.renderToolCard(e)
+		}
 		if m.appearance == "compact" && !e.IsError && e.ToolName != permission.ExitPlanTool {
 			m.compactTools = append(m.compactTools, e)
 		}

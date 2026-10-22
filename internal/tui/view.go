@@ -759,13 +759,19 @@ func (m *model) liveView(widths ...int) string {
 			continue // task activity is grouped by subagent above
 		}
 		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input, m.shortPaths)
+		// A script's calls sit under it, as a subagent's do under its task.
+		indent := ""
+		if m.scriptOf(t.agent, t.id) != nil {
+			indent = "  "
+			line = indent + m.st.dim.Render("↳ ") + line
+		}
 		if t.agent != "" {
 			line = "  ↳ " + line + m.st.dim.Render("  ("+t.agent+")")
 		}
 		b = append(b, line)
 		if t.tail != "" && t.agent == "" {
 			for _, l := range strings.Split(t.tail, "\n") {
-				b = append(b, m.st.dim.Render("  │ "+ansi.Truncate(ansi.Strip(l), max(width-6, 10), "…")))
+				b = append(b, m.st.dim.Render(indent+"  │ "+ansi.Truncate(ansi.Strip(l), max(width-6-len(indent), 10), "…")))
 			}
 		}
 	}
@@ -1532,8 +1538,11 @@ func (m *model) compactToolSummary() string {
 	var order []string
 	for _, e := range m.compactTools {
 		name := e.ToolName
-		if name == "multi_edit" {
+		switch name {
+		case "multi_edit":
 			name = "edit"
+		case tools.CodeToolName:
+			name = "script"
 		}
 		if _, ok := counts[name]; !ok {
 			order = append(order, name)
@@ -1548,6 +1557,9 @@ func (m *model) compactToolSummary() string {
 }
 
 func (m *model) renderToolCard(e agent.Event) string {
+	if e.ToolName == tools.CodeToolName {
+		return m.renderScriptCard(e, nil)
+	}
 	bullet := m.st.ok.Render("●")
 	if e.IsError {
 		bullet = m.st.err.Render("●")
@@ -1561,6 +1573,19 @@ func (m *model) renderToolCard(e agent.Event) string {
 		}
 	}
 	e.Output, e.Display = m.shortPaths(e.Output), m.shortPaths(e.Display)
+	card := head
+	if body := m.toolBody(e); body != "" {
+		card += "\n" + prefixLines(body, "  ⎿ ", "    ")
+	}
+	if e.Agent != "" { // nest subagent activity under its task
+		card = prefixLines(card, "  ↳ ", "    ") + m.st.dim.Render("  ("+e.Agent+")")
+	}
+	return card
+}
+
+// toolBody is what a tool card shows under its title: a diff, a summary
+// of the output, or an error. e's paths are already shortened.
+func (m *model) toolBody(e agent.Event) string {
 	var body string
 	switch {
 	case e.Agent != "" && !e.IsError:
@@ -1628,14 +1653,7 @@ func (m *model) renderToolCard(e agent.Event) string {
 		}
 		body += m.st.warn.Render(diag)
 	}
-	card := head
-	if body != "" {
-		card += "\n" + prefixLines(body, "  ⎿ ", "    ")
-	}
-	if e.Agent != "" { // nest subagent activity under its task
-		card = prefixLines(card, "  ↳ ", "    ") + m.st.dim.Render("  ("+e.Agent+")")
-	}
-	return card
+	return body
 }
 
 func (m *model) diff(s string, maxLines int) string {
@@ -1670,6 +1688,8 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		if sb, ok := in["sandbox"].(bool); ok && !sb {
 			name = "bash (unsandboxed)"
 		}
+	case tools.CodeToolName:
+		name, arg = "script", scriptLabel(str(in["code"]))
 	case "read", "write", "edit":
 		arg = str(in["path"])
 	case "apply_code_action":
@@ -1947,6 +1967,15 @@ type historyChunk struct {
 // after first as session.Prompts would. count is the last number used.
 func historyChunks(source []llm.Message, first int) (chunks []historyChunk, count int) {
 	count = first
+	// A script's card counts its calls, which only its result says.
+	scripts := map[string]llm.Block{}
+	for _, src := range source {
+		for _, block := range src.Blocks {
+			if block.Type == llm.BlockToolResult && block.Name == tools.CodeToolName {
+				scripts[block.ID] = block
+			}
+		}
+	}
 	var cur historyChunk
 	flush := func() {
 		if len(cur.msgs) > 0 {
@@ -1971,7 +2000,15 @@ func historyChunks(source []llm.Message, first int) (chunks []historyChunk, coun
 					size += len(block.Text)
 				case llm.BlockToolUse:
 					input := append(json.RawMessage(nil), block.Input...)
-					msg.Blocks = append(msg.Blocks, llm.Block{Type: block.Type, Name: block.Name, Input: input})
+					use := llm.Block{Type: block.Type, Name: block.Name, Input: input}
+					if res, ok := scripts[block.ID]; ok && block.Name == tools.CodeToolName {
+						// Content holds the script's summary, not its output.
+						if _, calls, ok := scriptResult(res.Content); ok {
+							use.Content = strings.TrimPrefix(scriptMeta(calls, 0), " · ")
+						}
+						use.IsError = res.IsError
+					}
+					msg.Blocks = append(msg.Blocks, use)
 					size += len(block.Name) + len(input)
 				}
 			}
@@ -2008,7 +2045,14 @@ func (m *model) renderHistoryChunk(c historyChunk, width int) string {
 				b = append(b, out)
 			}
 			for _, u := range msg.ToolUses() {
-				b = append(b, m.st.dim.Render("● "+toolTitle(u.Name, u.Input, m.shortPaths)))
+				line := m.st.dim.Render("● " + toolTitle(u.Name, u.Input, m.shortPaths))
+				if u.Content != "" {
+					line += m.st.dim.Render(" · " + u.Content)
+				}
+				if u.IsError {
+					line += m.st.err.Render(" · failed")
+				}
+				b = append(b, line)
 			}
 		}
 	}
