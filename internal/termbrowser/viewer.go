@@ -18,7 +18,6 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/chromedp/cdproto/target"
-	"golang.org/x/sys/unix"
 )
 
 // The viewer is `larik browser view`, run in a pane beside Larik's. It
@@ -547,15 +546,9 @@ func (v *viewer) closeCmd() tea.Cmd {
 	return tea.Quit
 }
 
-// cellPixels is the terminal's cell size in pixels, from the window size
-// the kernel keeps for it; tests replace it.
-var cellPixels = func() (w, h int, ok bool) {
-	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
-	if err != nil || ws.Col == 0 || ws.Row == 0 || ws.Xpixel == 0 || ws.Ypixel == 0 {
-		return 0, 0, false
-	}
-	return int(ws.Xpixel) / int(ws.Col), int(ws.Ypixel) / int(ws.Row), true
-}
+// cellPixels is the terminal's cell size in pixels (cells_*.go); tests
+// replace it.
+var cellPixels = terminalCellPixels
 
 // queueFrame hands a frame to the decoder, dropping one still waiting:
 // only the page as it is now matters.
