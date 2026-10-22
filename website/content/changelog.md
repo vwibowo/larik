@@ -2,33 +2,41 @@
 
 ## Unreleased
 
-This release brings infrastructure and metadata updates for the v0.15.0 release preparation:
-
 ### Added
 
-- Version bump to 0.15.0 in `cmd/larik/main.go`
-- Updated download URLs in `website/site.json` from v0.14.0 to v0.15.0
+- **The browser in your terminal.** `/browser show`, **F3** or the model's `browser_show` opens the agent's browser tab beside the conversation, in Larik's own window. You can watch the agent work, and click, scroll and type in the page yourself, for example to sign in. It's drawn with the kitty graphics protocol, so it works in Ghostty, kitty, WezTerm, cmux and Konsole without a multiplexer. Only changed parts of the page are redrawn, and Retina screens get full-resolution frames. F3 moves the keyboard between the browser and the conversation; `ctrl+q` closes it.
+  - A toolbar with back, forward, reload (stop while loading) and a clickable address field.
+  - `"show": "pane"` puts it in a split of the terminal's own instead (tmux, cmux, kitty, WezTerm), as `larik browser view`.
+- **Prompts only you can answer.** While the browser is shown:
+  - a site's username and password request (HTTP authentication) gets a sign-in form, whose password goes only to Chrome;
+  - a page asking to show notifications or know your location gets Allow / Block.
+  Allowed notifications become desktop notifications. Without the panel or pane these requests are cancelled or denied, as before.
+- **Browser settings:** `sound` (pages may play audio; off by default), `location` (what Allow shares, since headless Chrome can't read yours), `show` (`panel` or `pane`) and `pane_size`.
+- **Live command output.** A running bash command shows its latest output under it.
+- **Retry notices.** When a provider is rate-limited, Larik says how long it is waiting instead of sitting silently.
+- **`docs/quickstart.md`**, a short first tour.
 
 ### Changed
 
-- Updated `website/content/changelog.md` with `## Unreleased` section structure
-- Updated `docs/contributing-guide.md` to reflect v0.15.0 as prepared but not yet published
+- **Chrome always runs headless,** as Larik's own child process. The macOS browser launcher (`larik browser-broker install`) is gone: Larik removes its LaunchAgent the next time launchd starts it, or run `larik browser-broker` once. The `headless` setting is ignored.
+- **Closing the browser closes Chrome cleanly,** so cookies and localStorage are kept. Before, they could be lost.
+- **`/config <area>`** replaces the `/…-config` commands, which still work for now: `/config mcp`, `hooks`, `lsp`, `sandbox`, `models`, `web-search`, `stt`, `tts`, `sidebar`, `statusline`. `/sessions [id]` replaces `/resume`.
+- **Keys typed while Larik starts** are kept in the prompt instead of being lost.
+- **The deprecated `verbose` setting** is now read as `appearance`.
 
 ### Fixed
 
-- No bug fixes in this infrastructure-only release
+- A page that opened a new tab (a `target=_blank` link, `window.open`) made the agent's next browser action hang for 30 seconds, and the new tab never worked.
+- A rare crash when model metadata was updated while a subagent or the server read it.
+- An agent run could hang forever if its consumer stopped reading.
+- Prompt history could be cut short when two Larik windows saved it at the same time.
+- chromedp's log messages no longer print over the screen; they go to `logs/browser.log`.
 
 ### Performance
 
-- No performance changes in this release
-
-### Added
-
-### Changed
-
-### Fixed
-
-### Performance
+- Bash commands no longer re-read every already-changed file before each run when the files haven't changed.
+- `/reload` no longer freezes the screen, resizing re-wraps the conversation once you stop, and streamed text redraws once per batch rather than per token.
+- Long sessions no longer re-measure the whole transcript on every step to decide on compaction.
 
 ## v0.14.0
 
