@@ -72,11 +72,7 @@ func TestCodeExecutionCanPresentPlan(t *testing.T) {
 	if asked := permissionEvents(evs); len(asked) != 1 || asked[0].ToolName != "exit_plan_mode" {
 		t.Fatalf("plan approval events = %+v", asked)
 	}
-	var declared []string
-	for _, spec := range fp.requests[0].Tools {
-		declared = append(declared, spec.Name)
-	}
-	if strings.Join(declared, ",") != "run_code,exit_plan_mode" {
+	if declared := declaredNames(fp.requests[0].Tools); declared != codeDeclared+",exit_plan_mode" {
 		t.Fatalf("code execution tools = %v", declared)
 	}
 	if note := fp.requests[0].Messages[0].Text(); !strings.Contains(note, "wrapping bash in run_code does not bypass this") {

@@ -12,6 +12,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/tools"
 )
 
 func TestInstalledThemeSettingIsAccepted(t *testing.T) {
@@ -299,21 +300,27 @@ func TestExecutionCommand(t *testing.T) {
 
 	// The default applies to models without their own setting, so it
 	// doesn't override this one.
-	if _, _, err := m.saveSetting("execution", "code"); err != nil {
-		t.Fatal(err)
-	}
-	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "code" {
-		t.Fatalf("the default must not override the model's own setting: %q", m.agent.Execution())
-	}
-	m.command("/execution default")
-	if m.agent.Execution() != "code" || strings.Contains(savedConfig(t, m), "ollama/m") {
-		t.Fatalf("removing the model's setting should fall back to the default: %q %s", m.agent.Execution(), savedConfig(t, m))
-	}
 	if _, _, err := m.saveSetting("execution", "tools"); err != nil {
 		t.Fatal(err)
 	}
-	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "execution") {
-		t.Fatalf("tools is the default and is stored as no setting: %s", savedConfig(t, m))
+	if m.agent.Execution() != "hybrid" || m.opts.Config.Execution != "tools" {
+		t.Fatalf("the default must not override the model's own setting: %q", m.agent.Execution())
+	}
+	m.command("/execution default")
+	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "ollama/m") {
+		t.Fatalf("removing the model's setting should fall back to the default: %q %s", m.agent.Execution(), savedConfig(t, m))
+	}
+	if !strings.Contains(plain(m.statusLine()), "⛓ tools") {
+		t.Fatalf("footer should show tools, which isn't the default: %s", plain(m.statusLine()))
+	}
+	if _, _, err := m.saveSetting("execution", "code"); err != nil {
+		t.Fatal(err)
+	}
+	if m.agent.Execution() != "code" || strings.Contains(savedConfig(t, m), "execution") {
+		t.Fatalf("code is the default and is stored as no setting: %s", savedConfig(t, m))
+	}
+	if footer := plain(m.statusLine()); strings.Contains(footer, "{}") || strings.Contains(footer, "⛓") {
+		t.Fatalf("footer should show nothing for the default: %s", footer)
 	}
 }
 
@@ -340,13 +347,13 @@ func TestExecutionPicker(t *testing.T) {
 	}
 	m.Update(press(tea.KeyDown)) // Code → Default
 	m.Update(press(tea.KeyEnter))
-	if m.agent.Execution() != "tools" || strings.Contains(savedConfig(t, m), "ollama/m") {
+	if m.agent.Execution() != tools.DefaultExecution || strings.Contains(savedConfig(t, m), "ollama/m") {
 		t.Fatalf("Default should remove the model's setting: %q %s", m.agent.Execution(), savedConfig(t, m))
 	}
 
 	m.command("/execution")
 	m.Update(press(tea.KeyEscape))
-	if m.execPick != nil || m.agent.Execution() != "tools" {
+	if m.execPick != nil || m.agent.Execution() != tools.DefaultExecution {
 		t.Fatal("esc should close without changing anything")
 	}
 }
@@ -371,9 +378,9 @@ func TestExecutionConfirmsBeforeFreshContext(t *testing.T) {
 func TestExecutionSettingsCannotChangeDuringTurn(t *testing.T) {
 	m := testModel(t)
 	m.running = true
-	m.command("/execution code")
+	m.command("/execution tools")
 	m.command("/config execution=hybrid")
-	if m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") != "tools" {
+	if m.agent.Execution() != "tools" || m.opts.Config.ExecutionFor("ollama", "m") != tools.DefaultExecution {
 		t.Fatalf("running turn changed execution: %q", m.agent.Execution())
 	}
 	if strings.Contains(savedConfig(t, m), "execution") {

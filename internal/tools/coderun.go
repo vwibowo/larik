@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -47,7 +48,8 @@ type codeMsg struct {
 	MaxCalls int            `json:"max_calls,omitempty"`
 	Memory   uint64         `json:"memory,omitempty"`
 	// Deadline is when the child stops by itself, in case its parent
-	// can no longer stop it.
+	// can no longer stop it. start sets it; result and results move it
+	// on by the time a call waited for the user.
 	Deadline time.Time                  `json:"deadline,omitzero"`
 	State    map[string]json.RawMessage `json:"state,omitempty"`
 
@@ -123,15 +125,18 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	if in.Timeout > 0 {
 		timeout = min(time.Duration(in.Timeout)*time.Second, codeTimeoutMax)
 	}
-	runCtx, cancel := context.WithTimeout(context.WithValue(ctx, scriptKey{}, true), timeout)
-	defer cancel()
+	runCtx, cancel := context.WithCancelCause(context.WithValue(ctx, scriptKey{}, true))
+	defer cancel(nil)
+	clock := startClock(cancel, timeout)
+	defer clock.stop()
+	runCtx = WithUserWait(runCtx, clock.pause)
 
 	var state map[string]json.RawMessage
 	stateCaller, hasState := caller.(StateCaller)
 	if hasState {
 		state = stateCaller.CodeState()
 	}
-	r := &codeRun{caller: caller, ctx: runCtx, env: env, callID: CallID(ctx), state: state}
+	r := &codeRun{caller: caller, ctx: runCtx, env: env, callID: CallID(ctx), state: state, clock: clock}
 	done, err := r.run(c, in.Code)
 	if r.stopped || done.Truncated {
 		r.newline()
@@ -139,7 +144,7 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	}
 	msg := done.Error
 	switch {
-	case errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
+	case errors.Is(context.Cause(runCtx), errScriptTimeout) && ctx.Err() == nil:
 		msg = fmt.Sprintf("Error: the script timed out after %s", timeout)
 	case ctx.Err() != nil:
 		msg = "Error: interrupted by user"
@@ -174,6 +179,70 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	return Result{Content: out, IsError: msg != ""}
 }
 
+var errScriptTimeout = errors.New("the script timed out")
+
+// scriptClock is a script's time limit. It stops while a call waits for
+// the user, so a slow answer to a permission prompt doesn't use the
+// script's time up.
+type scriptClock struct {
+	mu       sync.Mutex
+	cancel   context.CancelCauseFunc
+	timer    *time.Timer
+	deadline time.Time
+	left     time.Duration // time remaining, while paused
+	paused   int           // waits in progress
+}
+
+func startClock(cancel context.CancelCauseFunc, d time.Duration) *scriptClock {
+	c := &scriptClock{cancel: cancel}
+	c.startLocked(d)
+	return c
+}
+
+func (c *scriptClock) startLocked(d time.Duration) {
+	c.deadline = time.Now().Add(d)
+	c.timer = time.AfterFunc(d, func() { c.cancel(errScriptTimeout) })
+}
+
+// pause stops the clock until the returned function is called.
+func (c *scriptClock) pause() func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.paused++
+	if c.paused == 1 {
+		c.left = 0 // the time is up already, unless the timer stops here
+		if c.timer.Stop() {
+			c.left = max(time.Until(c.deadline), time.Nanosecond)
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(c.resume) }
+}
+
+func (c *scriptClock) resume() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.paused--; c.paused == 0 && c.left > 0 {
+		c.startLocked(c.left)
+	}
+}
+
+// Deadline is when the time is up, if the clock runs on from now.
+func (c *scriptClock) Deadline() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.paused > 0 {
+		return time.Now().Add(c.left)
+	}
+	return c.deadline
+}
+
+func (c *scriptClock) stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.timer.Stop()
+}
+
 func plural(n int) string {
 	if n == 1 {
 		return ""
@@ -187,6 +256,7 @@ type codeRun struct {
 	caller Caller
 	env    *Env
 	ctx    context.Context
+	clock  *scriptClock
 	calls  int
 
 	// out keeps the start and end of the output for the model. Once the
@@ -351,8 +421,7 @@ func (r *codeRun) run(c codeTool, code string) (codeMsg, error) {
 		return codeMsg{}, fmt.Errorf("starting the script runner: %w", err)
 	}
 	enc, dec := json.NewEncoder(stdin), json.NewDecoder(stdout)
-	deadline, _ := r.ctx.Deadline()
-	done, protoErr := r.converse(enc, dec, codeMsg{Type: "start", Code: code, Specs: c.specs, MaxCalls: codeMaxCalls, Memory: codeMemoryLimit, Deadline: deadline, State: r.state})
+	done, protoErr := r.converse(enc, dec, codeMsg{Type: "start", Code: code, Specs: c.specs, MaxCalls: codeMaxCalls, Memory: codeMemoryLimit, Deadline: r.clock.Deadline(), State: r.state})
 	stdin.Close()
 	waitErr := cmd.Wait()
 	if protoErr == nil {
@@ -388,11 +457,15 @@ func (r *codeRun) converse(enc *json.Encoder, dec *json.Decoder, start codeMsg) 
 		case "print":
 			r.print(m.Text)
 		case "call":
-			if err := enc.Encode(resultMsg(r.call(m.Name, m.Input))); err != nil {
+			res := resultMsg(r.call(m.Name, m.Input))
+			// The deadline moves on by the time the call waited for the user.
+			res.Deadline = r.clock.Deadline()
+			if err := enc.Encode(res); err != nil {
 				return codeMsg{}, err
 			}
 		case "calls":
-			if err := enc.Encode(codeMsg{Type: "results", Results: r.callMany(m.Calls)}); err != nil {
+			results := r.callMany(m.Calls)
+			if err := enc.Encode(codeMsg{Type: "results", Results: results, Deadline: r.clock.Deadline()}); err != nil {
 				return codeMsg{}, err
 			}
 		case "done":
@@ -442,8 +515,11 @@ func serveCode(r io.Reader, w io.Writer) int {
 		// data trips the watchdog.
 		debug.SetMemoryLimit(int64(start.Memory))
 	}
-	go watch(start.Memory, start.Deadline)
+	clock := &runnerClock{}
+	clock.set(start.Deadline)
+	go watch(start.Memory, clock)
 	s := &script{
+		clock:    clock,
 		vm:       goja.New(),
 		specs:    start.Specs,
 		maxCalls: start.MaxCalls,
@@ -481,12 +557,34 @@ func serveCode(r io.Reader, w io.Writer) int {
 	return 0
 }
 
+// runnerClock is the child's copy of the script's deadline. The parent
+// moves the deadline on when a call waits for the user, and says so with
+// the call's result; while the child waits for a result, its parent keeps
+// the time.
+type runnerClock struct {
+	deadline atomic.Int64 // UnixNano; 0 for none
+	waiting  atomic.Bool
+}
+
+func (c *runnerClock) set(t time.Time) {
+	if !t.IsZero() {
+		c.deadline.Store(t.UnixNano())
+	}
+}
+
+// expired reports whether the script has run past its deadline plus a
+// grace period for the parent to stop it first.
+func (c *runnerClock) expired(now time.Time) bool {
+	d := c.deadline.Load()
+	return d != 0 && !c.waiting.Load() && now.After(time.Unix(0, d).Add(5*time.Second))
+}
+
 // watch exits the process once the heap passes limit (0 for none). It
 // runs beside the interpreter, so it also catches a single built-in call
 // that allocates without returning to the script. It also ends a script
-// whose parent has gone, or that is past its deadline (plus a grace
-// period for the parent to stop it first), so none is left running.
-func watch(limit uint64, deadline time.Time) {
+// whose parent has gone, or that is past its deadline, so none is left
+// running.
+func watch(limit uint64, clock *runnerClock) {
 	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 	parent := os.Getppid()
 	for i := 0; ; i++ {
@@ -496,7 +594,7 @@ func watch(limit uint64, deadline time.Time) {
 				os.Exit(codeExitMemory)
 			}
 		}
-		if i%100 == 0 && (os.Getppid() != parent || !deadline.IsZero() && time.Now().After(deadline.Add(5*time.Second))) {
+		if i%100 == 0 && (os.Getppid() != parent || clock.expired(time.Now())) {
 			os.Exit(1)
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -545,6 +643,7 @@ type script struct {
 	sent      int // bytes of output sent
 	truncated bool
 	calls     int
+	clock     *runnerClock
 
 	// bound maps each tool's name to the one it has on the tools object;
 	// byName finds a tool by either.
@@ -742,7 +841,11 @@ func (s *script) prepare(name string, args goja.Value) (Call, string) {
 // receive waits for the parent's answer of type typ.
 func (s *script) receive(typ string) codeMsg {
 	var res codeMsg
-	if err := s.dec.Decode(&res); err != nil || res.Type != typ {
+	s.clock.waiting.Store(true)
+	err := s.dec.Decode(&res)
+	s.clock.set(res.Deadline)
+	s.clock.waiting.Store(false)
+	if err != nil || res.Type != typ {
 		os.Exit(1) // the parent is gone
 	}
 	return res

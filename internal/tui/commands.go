@@ -563,7 +563,7 @@ func (m *model) agentsCommand(info func(string) tea.Cmd) tea.Cmd {
 	}
 	var b strings.Builder
 	if !m.taskToolAvailable() {
-		b.WriteString("delegation unavailable in code execution; switch to tools or hybrid\n\n")
+		b.WriteString("delegation unavailable: this session has no task tool\n\n")
 	}
 	for _, d := range set.List() {
 		tools, model := "all tools", "inherits model"

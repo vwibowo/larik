@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"larik/internal/hooks"
 	"larik/internal/llm"
@@ -14,6 +15,19 @@ import (
 	"larik/internal/session"
 	"larik/internal/tools"
 )
+
+// codeDeclared is what code execution declares over tools.Default():
+// run_code and the conversation-level tools it has (plan mode adds
+// exit_plan_mode).
+const codeDeclared = "run_code,todo_write"
+
+func declaredNames(specs []llm.ToolSpec) string {
+	names := make([]string, len(specs))
+	for i, sp := range specs {
+		names[i] = sp.Name
+	}
+	return strings.Join(names, ",")
+}
 
 func runCodeUse(id, code string) llm.Block {
 	in, _ := json.Marshal(map[string]string{"code": code})
@@ -54,6 +68,41 @@ func TestRunCodeCallsAreAuthorizedOneByOne(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(declared, ","), "read") || declared[len(declared)-1] != tools.CodeToolName {
 		t.Errorf("hybrid declares the tools plus run_code: %v", declared)
+	}
+}
+
+func TestRunCodeTimeStopsWhileTheUserIsAsked(t *testing.T) {
+	in, _ := json.Marshal(map[string]any{"code": `tools.write({path: "a.txt", content: "A"}); "written"`, "timeout_seconds": 1})
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("c1", tools.CodeToolName, string(in))),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	for e := range a.Run(context.Background(), "go") {
+		if e.Kind == EvPermission {
+			time.Sleep(2 * time.Second) // longer than the script's limit
+			e.Reply <- PermissionReply{Allow: true}
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(data) != "A" {
+		t.Fatalf("the write should have run once approved: %q", data)
+	}
+	if res := lastResult(fp, 1); res.IsError || !strings.Contains(res.Content, "=> written") {
+		t.Fatalf("a slow answer should not time the script out: %+v", res)
+	}
+}
+
+func TestScriptArgumentErrorsPointToDescribe(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(runCodeUse("c1", `tools.read({})`)),
+		assistant(toolUse("t1", tools.TodoToolName, `{}`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if res := lastResult(fp, 1); !res.IsError || !strings.Contains(res.Content, `tools.describe("read")`) || strings.Contains(res.Content, "tool_search") {
+		t.Fatalf("a script's bad arguments should point to tools.describe: %+v", res)
+	}
+	if res := lastResult(fp, 2); !strings.Contains(res.Content, "INVALID_ARGUMENTS") || strings.Contains(res.Content, "tool_search") {
+		t.Fatalf("a declared tool's bad arguments shouldn't point to tool_search: %+v", res)
 	}
 }
 
@@ -274,8 +323,8 @@ func TestExecutionSetsTheDeclaredTools(t *testing.T) {
 	}
 	a.Clear()
 	drain(a.Run(context.Background(), "go"), PermissionReply{})
-	if specs := fp.requests[2].Tools; len(specs) != 1 || specs[0].Name != tools.CodeToolName {
-		t.Errorf("code execution declares %+v", specs)
+	if specs := fp.requests[2].Tools; declaredNames(specs) != codeDeclared {
+		t.Errorf("code execution declares %s", declaredNames(specs))
 	}
 	if res := lastResult(fp, 3); !res.IsError || !strings.Contains(res.Content, "read: ") {
 		t.Errorf("the script's read should have run and failed: %+v", res)
@@ -306,8 +355,8 @@ func TestExecutionChangeWaitsForClear(t *testing.T) {
 	}
 	a.Clear()
 	drain(a.Run(context.Background(), "third"), PermissionReply{})
-	if a.Execution() != tools.ExecCode || len(fp.requests[2].Tools) != 1 || fp.requests[2].Tools[0].Name != tools.CodeToolName {
-		t.Fatalf("fresh context tools = %+v", fp.requests[2].Tools)
+	if a.Execution() != tools.ExecCode || declaredNames(fp.requests[2].Tools) != codeDeclared {
+		t.Fatalf("fresh context tools = %s", declaredNames(fp.requests[2].Tools))
 	}
 }
 
@@ -326,8 +375,8 @@ func TestModelSwitchKeepsToolsUntilFreshContext(t *testing.T) {
 	}
 	a.Clear()
 	drain(a.Run(context.Background(), "third"), PermissionReply{})
-	if a.Execution() != tools.ExecCode || len(fp.requests[2].Tools) != 1 || fp.requests[2].Tools[0].Name != tools.CodeToolName {
-		t.Fatalf("fresh context tools = %+v", fp.requests[2].Tools)
+	if a.Execution() != tools.ExecCode || declaredNames(fp.requests[2].Tools) != codeDeclared {
+		t.Fatalf("fresh context tools = %s", declaredNames(fp.requests[2].Tools))
 	}
 }
 

@@ -156,7 +156,7 @@ func TestCallToolRejectsMalformedArgumentsBeforeAsking(t *testing.T) {
 		t.Error("a malformed call must be rejected before the user is asked")
 	}
 	res := lastToolResult(t, a)
-	if len(ran) != 0 || !res.IsError || !strings.Contains(res.Content, "INVALID_ARGUMENTS") || !strings.Contains(res.Content, "title") || res.Name != tools.CallToolName {
+	if len(ran) != 0 || !res.IsError || !strings.Contains(res.Content, "INVALID_ARGUMENTS") || !strings.Contains(res.Content, "title") || !strings.Contains(res.Content, "tool_search with select:") || res.Name != tools.CallToolName {
 		t.Errorf("ran=%v result=%+v", ran, res)
 	}
 }

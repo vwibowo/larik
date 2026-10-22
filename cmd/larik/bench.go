@@ -26,7 +26,7 @@ func runBench(args []string) error {
 		modelsFlag = fs.String("models", "", "comma-separated provider/model specs or config roles to compare (required); main means the configured primary model, e.g. \"main,worker,compact\"")
 		tasksFlag  = fs.String("tasks", "", "comma-separated task names to run (default: all)")
 		timeout    = fs.Duration("timeout", 3*time.Minute, "per task, per model")
-		execFlag   = fs.String("execution", "tools", "comma-separated execution settings to compare: tools, hybrid, code")
+		execFlag   = fs.String("execution", string(tools.DefaultExecution), "comma-separated execution settings to compare: tools, hybrid, code")
 		runs       = fs.Int("runs", 1, "how many times to run each task; with more than one, a table of medians and ranges follows")
 		keepFailed = fs.Bool("keep-failed", false, "keep each failed run's directory, with transcript.md and calls.jsonl (every tool call, scripts' included)")
 	)
@@ -96,7 +96,7 @@ func runBench(args []string) error {
 		for run := 1; run <= *runs; run++ {
 			for _, exec := range execs {
 				row := label
-				if len(execs) > 1 || exec != tools.ExecTools {
+				if len(execs) > 1 || exec != tools.DefaultExecution {
 					row += " [" + string(exec) + "]"
 				}
 				for _, task := range tasks {

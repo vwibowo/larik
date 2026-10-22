@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -474,17 +475,29 @@ func TestAgentsSectionShowsRunningModelsThenRouting(t *testing.T) {
 // A sidebar row that wraps onto a second line silently eats one of the
 // column's rows, and the box pads the halves so the width check above still
 // passes. Every row has to be one line that fits.
-func TestAgentsSectionExplainsUnavailableDelegation(t *testing.T) {
+type taskStub struct{}
+
+func (taskStub) ReadOnly() bool { return false }
+func (taskStub) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: subagent.ToolName, Schema: []byte(`{"type":"object"}`)}
+}
+func (taskStub) Run(context.Context, *tools.Env, json.RawMessage) tools.Result { return tools.Result{} }
+
+func TestAgentsSectionInCodeExecution(t *testing.T) {
 	m := testModel(t)
 	m.opts.Agents = subagent.Discover(nil)
+	m.agent.SetTools(tools.Default().With(taskStub{}))
 	m.agent.SetExecution(tools.ExecCode)
 
+	// The model calls task directly in code execution, so delegation works.
 	got := plain(m.sessionSidebar(44, 24))
-	if !strings.Contains(strings.ToLower(got), "agents unavailable") || !strings.Contains(got, "tools/hybrid") {
-		t.Fatalf("sidebar should explain why configured agents cannot run: %q", got)
+	if strings.Contains(strings.ToLower(got), "agents unavailable") || !strings.Contains(got, "every role on the main model") {
+		t.Fatalf("code execution should not make delegation unavailable: %q", got)
 	}
-	if strings.Contains(got, "every role on the main model") {
-		t.Fatalf("sidebar should not advertise routing when delegation is unavailable: %q", got)
+	// Without the task tool it is unavailable whatever the execution.
+	m.agent.SetTools(tools.Default())
+	if got := plain(m.sessionSidebar(44, 24)); !strings.Contains(strings.ToLower(got), "agents unavailable") {
+		t.Fatalf("sidebar should say agents are unavailable without the task tool: %q", got)
 	}
 }
 

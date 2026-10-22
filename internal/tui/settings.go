@@ -261,11 +261,11 @@ var settingSpecs = []settingSpec{
 			e, _ := tools.ParseExecution(string(m.opts.Config.Execution))
 			return string(e)
 		},
-		store: orEmpty("tools"),
+		store: orEmpty(string(tools.DefaultExecution)),
 		set: func(m *model, v string) {
 			e, _ := tools.ParseExecution(v)
 			m.opts.Config.Execution = e
-			if e == tools.ExecTools {
+			if e == tools.DefaultExecution {
 				m.opts.Config.Execution = ""
 			}
 			m.agent.SetExecution(m.opts.Config.ExecutionFor(m.agent.ProviderName(), m.agent.Model()))

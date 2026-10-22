@@ -18,21 +18,24 @@ import (
 type Execution string
 
 const (
-	// ExecTools offers the tools only; this is the default.
+	// ExecTools offers the tools only.
 	ExecTools Execution = "tools"
 	// ExecHybrid offers the tools and run_code; the model picks per step.
 	ExecHybrid Execution = "hybrid"
-	// ExecCode offers run_code and the plan approval tool, when present.
-	// Ordinary tools are reached from scripts.
+	// ExecCode offers run_code and the conversation-level tools (see
+	// directInCode). Ordinary tools are reached from scripts.
 	ExecCode Execution = "code"
 )
+
+// DefaultExecution is the execution of a model with no setting of its own.
+const DefaultExecution = ExecCode
 
 func ParseExecution(s string) (Execution, error) {
 	switch e := Execution(s); e {
 	case ExecTools, ExecHybrid, ExecCode:
 		return e, nil
 	case "":
-		return ExecTools, nil
+		return DefaultExecution, nil
 	}
 	return "", fmt.Errorf("unknown execution %q (tools, hybrid, code)", s)
 }
@@ -92,6 +95,24 @@ func WithCaller(ctx context.Context, c Caller) context.Context {
 func CallerFrom(ctx context.Context) (Caller, bool) {
 	c, ok := ctx.Value(callerKey{}).(Caller)
 	return c, ok
+}
+
+type userWaitKey struct{}
+
+// WithUserWait sets what WaitingForUser runs: wait is called when a
+// delegated call starts waiting for the user, and returns the function
+// that ends the wait. run_code uses it to stop its time limit meanwhile.
+func WithUserWait(ctx context.Context, wait func() (end func())) context.Context {
+	return context.WithValue(ctx, userWaitKey{}, wait)
+}
+
+// WaitingForUser marks the start of a wait for the user, such as a
+// permission prompt; call the returned function when it ends.
+func WaitingForUser(ctx context.Context) (end func()) {
+	if wait, ok := ctx.Value(userWaitKey{}).(func() func()); ok {
+		return wait()
+	}
+	return func() {}
 }
 
 // Call is one delegated tool call.
@@ -224,18 +245,20 @@ func (r *Registry) ForExecution(e Execution) *Registry {
 		return r.With(codeTool{specs: specs, listed: listed, hybrid: true})
 	}
 	modelTools := []Tool{codeTool{specs: specs, listed: specs}}
-	// Subagent management is conversation-level, so scripts cannot call it,
-	// but the main model still needs it directly for routed delegation.
-	for _, name := range []string{"task", "task_wait", "task_stop"} {
+	// Conversation-level tools are steps of the conversation, not of a
+	// script, so scripts cannot call them; the model still needs them
+	// directly: subagents for delegation, the task list, skills, memory
+	// and plan approval.
+	for _, name := range directInCode {
 		if tool, ok := r.Get(name); ok {
 			modelTools = append(modelTools, tool)
 		}
 	}
-	if plan, ok := r.Get("exit_plan_mode"); ok {
-		modelTools = append(modelTools, plan)
-	}
 	return NewRegistry(modelTools...)
 }
+
+// directInCode are the tools the model calls directly under ExecCode.
+var directInCode = []string{"task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode"}
 
 // bindable lists the specs of the tools scripts may call, sorted by name.
 func (r *Registry) bindable() []llm.ToolSpec {

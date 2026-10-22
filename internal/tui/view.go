@@ -469,7 +469,6 @@ func (m *model) agentSection(width int, head, row func(left, right string) strin
 	sec := []string{head("Agents", summary)}
 	if m.opts.Agents != nil && !m.taskToolAvailable() {
 		sec = append(sec, m.st.dim.Render(fit("Agents unavailable")))
-		sec = append(sec, m.st.dim.Render(fit("Use execution mode: tools/hybrid")))
 		return sec
 	}
 	for _, t := range running {
@@ -505,10 +504,10 @@ func (m *model) agentSection(width int, head, row func(left, right string) strin
 }
 
 // taskToolAvailable reports whether the current model can invoke subagents
-// through the conversational task tool. Code execution intentionally hides
-// task from the model because scripts cannot recursively delegate work.
+// through the conversational task tool. Every execution declares it; under
+// code, scripts can't call it, but the model can.
 func (m *model) taskToolAvailable() bool {
-	if m.agent == nil || m.agent.Execution() == tools.ExecCode {
+	if m.agent == nil {
 		return false
 	}
 	_, ok := m.agent.Tools().Get(subagent.ToolName)
@@ -2122,14 +2121,14 @@ func diagnosticLines(out string) string {
 	return truncateLines(strings.Join(lines, "\n"), 5)
 }
 
-// execTag marks the footer when scripts are on; the tool chain, the
-// default, shows nothing.
+// execTag marks the footer when the execution isn't the default (code),
+// which shows nothing.
 func (m *model) execTag() string {
 	switch m.agent.Execution() {
 	case tools.ExecHybrid:
 		return " " + m.st.accent.Render("{} hybrid")
-	case tools.ExecCode:
-		return " " + m.st.accent.Render("{} code")
+	case tools.ExecTools:
+		return " " + m.st.accent.Render("⛓ tools")
 	}
 	return ""
 }

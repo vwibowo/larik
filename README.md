@@ -418,9 +418,9 @@ The permission mode decides what Larik may do without asking. The execution sett
 
 | Setting  | What the model gets                                                                                                                       |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `tools`  | The tools, one call per step. The default.                                                                                                |
+| `tools`  | The tools, one call per step.                                                                                                             |
 | `hybrid` | The tools plus `run_code`, and it picks per step: scripts for loops, chained lookups and filtering large output, direct calls otherwise.  |
-| `code`   | `run_code` for ordinary tools, direct subagent management, plus `exit_plan_mode` for plan approval.                                      |
+| `code`   | `run_code` for ordinary tools, plus the conversation-level tools directly: subagents, the task list, skills, memory and plan approval. The default. |
 
 `run_code` runs JavaScript in an embedded interpreter, in a separate process started from the Larik binary, with no file, network or process access of its own. When the [sandbox](#sandbox) is on, that process is also confined more strictly than bash commands: no writes, no network (not even localhost), no API keys in its environment, and no reading home or temp directories. A script can only call tools (`tools.read({path})`, `tools.call(name, args)`), and gets their text back. Only what the script prints returns to the model, so reading forty files to count something costs the context one summary instead of forty results.
 
@@ -433,16 +433,16 @@ Some things work differently in a script:
 - **Tools can be found by keyword.** `tools.search(query)` ranks the tools a script can call, which helps when many MCP tools are connected and the list in `run_code`'s description shows only their names.
 - **Small values can survive between scripts.** `store(key, value)` keeps a JSON value for later `run_code` calls and `load(key)` reads it (`undefined` when absent); `store(key, undefined)` deletes it. Changes commit together only when the script succeeds and survive compaction and resume; `/clear` deletes them. They're kept in a state file beside the session, so rewriting values doesn't grow the transcript. A branch starts with the session's current values, wherever it's cut. A key is limited to 256 bytes, one encoded value to 256 KB, and all values together to 1 MB.
 
-Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
+Every call a script makes goes through the same checks as a direct one: permission rules and mode, hooks, auto mode, checkpoints for `/undo`. A script in plan mode can read but not write; in `default` mode you are asked about an edit in the middle of a script. Each script is limited to 200 tool calls, 256 MB of memory, a call depth of 10,000, and a timeout (120 seconds by default, up to 600). Time spent waiting for you to answer a permission prompt doesn't count toward it. A script that runs out of memory is stopped and the model is told why; Larik itself keeps running. Subagents follow the session's setting.
 
-In `code` mode, the model can call `task`, `task_wait` and `task_stop` directly, but scripts cannot invoke them and subagents still cannot start further subagents. Other conversation-level tools such as task-list updates, skills and memory remain unavailable; use `hybrid` or `tools` when you need them. Plan approval remains available directly. Changing execution in an existing conversation saves the choice for the next `/clear` or new session, so the tool list stays stable while that conversation is in context. A new conversation applies the choice immediately.
+In `code` mode, the model calls the conversation-level tools directly: `task`, `task_wait` and `task_stop`, `todo_write`, `skill`, `memory` and `exit_plan_mode`. Scripts cannot call them, and subagents still cannot start further subagents. Changing execution in an existing conversation saves the choice for the next `/clear` or new session, so the tool list stays stable while that conversation is in context. A new conversation applies the choice immediately.
 
 The right setting depends on the model: a strong model writes reliable scripts, a small one may not. So it is set per model, with a default for the rest:
 
 ```json
 {
-  "execution": "tools",
-  "model_execution": { "codex/gpt-6-luna": "code", "claude-opus-5": "hybrid" }
+  "execution": "code",
+  "model_execution": { "ollama/qwen3-coder": "tools", "claude-opus-5": "hybrid" }
 }
 ```
 

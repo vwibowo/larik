@@ -137,7 +137,7 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		res.Content, res.IsError = unwrapErr.Error(), true
 		fault = FaultBadCallTool
 	case inputErr != nil:
-		res.Content, res.IsError = "INVALID_ARGUMENTS: "+inputErr.Error()+"; read the tool's schema (tool_search with select:"+use.Name+") and retry", true
+		res.Content, res.IsError = "INVALID_ARGUMENTS: "+inputErr.Error()+"; "+schemaHint(ctx, called, use.Name)+" and retry", true
 		fault = FaultInvalidArguments
 	case use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName:
 		// Wrappers delegate their actions through the same authorization
@@ -153,6 +153,19 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	}
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: res.Content, IsError: true, Fault: fault})
 	return approved{}, res, false
+}
+
+// schemaHint says where the caller finds the schema of tool name: a
+// script asks tools.describe, a deferred tool's schema is behind
+// tool_search, and a declared tool's is in the request already.
+func schemaHint(ctx context.Context, called, name string) string {
+	switch {
+	case tools.InScript(ctx):
+		return fmt.Sprintf("read the tool's schema with tools.describe(%q)", name)
+	case called == tools.CallToolName:
+		return "read the tool's schema (" + tools.ToolSearchName + " with select:" + name + ")"
+	}
+	return "check the arguments against the tool's schema"
 }
 
 // toolCaller runs delegated calls from run_code and write_files, with the
@@ -402,6 +415,8 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 			autoReason = verdict.Reason
 		}
 	}
+	// A script's time limit stops while the user decides.
+	defer tools.WaitingForUser(ctx)()
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)

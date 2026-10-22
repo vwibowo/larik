@@ -86,7 +86,7 @@ func newHarness(t *testing.T) *harness {
 	// No sandbox: sandboxed bash would be auto-allowed, and these tests
 	// exercise permission prompts.
 	os.MkdirAll(filepath.Join(cfgHome, "larik"), 0o755)
-	os.WriteFile(filepath.Join(cfgHome, "larik", "config.json"), []byte(`{"sandbox":{"enabled":false}}`), 0o644)
+	os.WriteFile(filepath.Join(cfgHome, "larik", "config.json"), []byte(`{"sandbox":{"enabled":false},"execution":"tools"}`), 0o644)
 
 	a, err := app.Setup(cwd, "test")
 	if err != nil {

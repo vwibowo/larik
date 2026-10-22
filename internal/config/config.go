@@ -55,9 +55,10 @@ type Config struct {
 	Mode     permission.Mode `json:"mode,omitempty"`
 	MaxTurns int             `json:"max_turns,omitempty"`
 
-	// Execution is how the model carries out actions: "tools" (the
-	// default) offers one tool call per step, "hybrid" adds run_code
-	// scripts the model may use when they help, "code" offers scripts only.
+	// Execution is how the model carries out actions: "tools" offers one
+	// tool call per step, "hybrid" adds run_code scripts the model may use
+	// when they help, "code" (the default) offers scripts for ordinary
+	// tools.
 	Execution tools.Execution `json:"execution,omitempty"`
 	// ModelExecution sets the execution per model, keyed "provider/model"
 	// or a bare model id; models without an entry use Execution.

@@ -92,7 +92,7 @@ type Result struct {
 
 // Options tune a run.
 type Options struct {
-	Execution tools.Execution // empty means tools
+	Execution tools.Execution // empty means tools.DefaultExecution
 	Timeout   time.Duration
 	// KeepFailed keeps a failed run's directory and transcript instead of
 	// deleting it, to see why it failed.

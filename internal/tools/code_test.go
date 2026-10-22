@@ -15,10 +15,15 @@ import (
 type fakeCaller struct {
 	calls []string
 	wait  time.Duration
+	// asks makes the wait one for the user, as a permission prompt is.
+	asks bool
 }
 
 func (f *fakeCaller) CallTool(ctx context.Context, name string, input json.RawMessage) Result {
 	f.calls = append(f.calls, name+" "+string(input))
+	if f.asks {
+		defer WaitingForUser(ctx)()
+	}
 	if f.wait > 0 {
 		select {
 		case <-time.After(f.wait):
@@ -73,8 +78,8 @@ func TestForExecution(t *testing.T) {
 	}
 	code := r.ForExecution(ExecCode)
 	specs := code.Specs()
-	if len(specs) != 1 || specs[0].Name != CodeToolName {
-		t.Fatalf("code execution specs = %v, want run_code only", specs)
+	if len(specs) != 2 || specs[0].Name != CodeToolName || specs[1].Name != "todo_write" {
+		t.Fatalf("code execution specs = %v, want run_code and todo_write", specs)
 	}
 	if _, ok := code.Get("echo"); ok {
 		t.Fatal("code execution must not resolve undeclared model calls")
@@ -104,24 +109,29 @@ func TestForExecution(t *testing.T) {
 	}
 }
 
-func TestCodeExecutionKeepsSubagentManagementDirect(t *testing.T) {
+func TestCodeExecutionKeepsConversationToolsDirect(t *testing.T) {
 	r := NewRegistry(
 		codeStub{"echo", `{"type":"object"}`},
 		codeStub{"task", `{"type":"object"}`},
 		codeStub{"task_wait", `{"type":"object"}`},
 		codeStub{"task_stop", `{"type":"object"}`},
 		codeStub{"todo_write", `{"type":"object"}`},
+		codeStub{"skill", `{"type":"object"}`},
+		codeStub{"memory", `{"type":"object"}`},
 	).ForExecution(ExecCode)
-	for _, name := range []string{CodeToolName, "task", "task_wait", "task_stop"} {
+	for _, name := range []string{CodeToolName, "task", "task_wait", "task_stop", "todo_write", "skill", "memory"} {
 		if _, ok := r.Get(name); !ok {
 			t.Errorf("code execution omitted %s", name)
 		}
 	}
-	if _, ok := r.Get("todo_write"); ok {
-		t.Error("code execution should still hide other conversation tools")
+	if _, ok := r.Get("echo"); ok {
+		t.Error("code execution should reach ordinary tools only from scripts")
 	}
-	if desc := specOf(t, r, CodeToolName).Description; strings.Contains(desc, "task(") || strings.Contains(desc, "task_wait") {
-		t.Fatalf("run_code must not expose subagent tools to scripts:\n%s", desc)
+	desc := specOf(t, r, CodeToolName).Description
+	for _, name := range []string{"task(", "task_wait", "todo_write", "skill(", "memory("} {
+		if strings.Contains(desc, name) {
+			t.Fatalf("run_code must not expose %s to scripts:\n%s", name, desc)
+		}
 	}
 }
 
@@ -135,7 +145,7 @@ func specOf(t *testing.T, r *Registry, name string) llm.ToolSpec {
 }
 
 func TestParseExecution(t *testing.T) {
-	for in, want := range map[string]Execution{"": ExecTools, "tools": ExecTools, "hybrid": ExecHybrid, "code": ExecCode} {
+	for in, want := range map[string]Execution{"": ExecCode, "tools": ExecTools, "hybrid": ExecHybrid, "code": ExecCode} {
 		if got, err := ParseExecution(in); err != nil || got != want {
 			t.Fatalf("ParseExecution(%q) = %q, %v", in, got, err)
 		}
@@ -201,6 +211,39 @@ func TestRunCodeTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("timeout took too long")
+	}
+}
+
+func TestRunCodeTimeLeavesOutWaitsForTheUser(t *testing.T) {
+	res := runCode(t, &fakeCaller{wait: 2 * time.Second, asks: true}, `tools.echo({text: "x"})`, 1)
+	if res.IsError || !strings.Contains(res.Content, "got") {
+		t.Fatalf("a slow answer to a prompt should not time the script out:\n%s", res.Content)
+	}
+	// The clock runs again once the user has answered.
+	start := time.Now()
+	res = runCode(t, &fakeCaller{wait: 1500 * time.Millisecond, asks: true}, `tools.echo({text: "x"}); while (true) {}`, 1)
+	if !res.IsError || !strings.Contains(res.Content, "timed out") {
+		t.Fatalf("the script should still time out after the wait:\n%s", res.Content)
+	}
+	if d := time.Since(start); d < 2*time.Second || d > 6*time.Second {
+		t.Fatalf("timed out after %s, want about the wait plus the limit", d)
+	}
+	// Other waits count.
+	res = runCode(t, &fakeCaller{wait: 3 * time.Second}, `tools.echo({text: "x"})`, 1)
+	if !res.IsError || !strings.Contains(res.Content, "timed out") {
+		t.Fatalf("a slow tool should time the script out:\n%s", res.Content)
+	}
+}
+
+func TestRunnerOutlivesItsDeadlineWhileTheUserAnswers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits past the runner's grace period")
+	}
+	// Past the deadline plus the runner's 5s grace, the runner would stop
+	// itself if it counted the wait.
+	res := runCode(t, &fakeCaller{wait: 7 * time.Second, asks: true}, `tools.echo({text: "x"}); "ok"`, 1)
+	if res.IsError || !strings.Contains(res.Content, "=> ok") {
+		t.Fatalf("the runner should wait for the user:\n%s", res.Content)
 	}
 }
 

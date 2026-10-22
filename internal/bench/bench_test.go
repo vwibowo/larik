@@ -204,7 +204,7 @@ func TestRunCompactionRetention(t *testing.T) {
 		{Blocks: []llm.Block{llm.TextBlock(string(answer))}},
 	}}
 
-	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second})
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if !res.Pass {
 		t.Fatalf("expected retention run to pass: %+v", res)
 	}
@@ -233,7 +233,7 @@ func TestCompactionRetentionKeepFailedCannotReadItsTranscript(t *testing.T) {
 		{Blocks: []llm.Block{llm.TextBlock("<summary>intentionally omitted the facts</summary>")}},
 		{Blocks: []llm.Block{llm.TextBlock(string(answer))}},
 	}}
-	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, KeepFailed: true})
 	if res.Pass || res.Kept == "" {
 		t.Fatalf("an incomplete summary must fail and be kept: %+v", res)
 	}
@@ -257,7 +257,7 @@ func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {
 		{Blocks: []llm.Block{llm.TextBlock("Fixed the off-by-one bug.")}},
 	}}
 
-	res := Run(context.Background(), task, p, "fake-model", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "fake-model", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if !res.Pass {
 		t.Fatalf("expected a pass, got fail: %s", res.Detail)
 	}
@@ -287,7 +287,7 @@ func TestRunUsesWholeTurnRuntime(t *testing.T) {
 	runtime := &fixingRuntime{}
 	// The provider has no steps and would panic if RunWith streamed through it.
 	p := &scriptedProvider{}
-	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, Runtime: runtime})
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, Runtime: runtime})
 	if !res.Pass || runtime.requests != 1 || len(p.requests) != 0 {
 		t.Fatalf("runtime run = %+v, runtime requests %d, provider requests %d", res, runtime.requests, len(p.requests))
 	}
@@ -297,7 +297,7 @@ func TestRunFailsWhenTheAgentDoesNothing(t *testing.T) {
 	task := Tasks()[0]
 	p := &scriptedProvider{steps: []llm.Message{{Blocks: []llm.Block{llm.TextBlock("I looked and everything seems fine.")}}}}
 
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if res.Pass {
 		t.Fatal("a no-op run should fail Verify")
 	}
@@ -312,7 +312,7 @@ func TestRunReportsSetupFailure(t *testing.T) {
 		Setup:  func(dir string) error { return &os.PathError{Op: "setup", Path: dir, Err: os.ErrPermission} },
 		Verify: func(string) (bool, string) { return false, "" },
 	}
-	res := Run(context.Background(), task, &scriptedProvider{}, "m", time.Second)
+	res := RunWith(context.Background(), task, &scriptedProvider{}, "m", Options{Execution: tools.ExecTools, Timeout: time.Second})
 	if res.Pass || !strings.Contains(res.Detail, "setting up the fixture") {
 		t.Errorf("result = %+v", res)
 	}
@@ -465,7 +465,7 @@ func (p failingProvider) Stream(context.Context, llm.Request) iter.Seq2[llm.Stre
 // "ended: error", which can't tell an outage from a rate limit.
 func TestRunKeepsTheProvidersError(t *testing.T) {
 	p := failingProvider{err: errors.New("429 Too Many Requests: rate limit reached for gpt-6-sol")}
-	res := RunWith(context.Background(), Tasks()[0], p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	res := RunWith(context.Background(), Tasks()[0], p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, KeepFailed: true})
 	if res.Kept != "" {
 		t.Cleanup(func() { os.RemoveAll(res.Kept) })
 	}
@@ -485,7 +485,7 @@ func TestPassingRunsAreNotKept(t *testing.T) {
 		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1;","new_string":"for i := 0;"}`)}},
 		{Blocks: []llm.Block{llm.TextBlock("Fixed.")}},
 	}}
-	res := RunWith(context.Background(), task, p, "m", Options{Timeout: 30 * time.Second, KeepFailed: true})
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, KeepFailed: true})
 	if !res.Pass || res.Kept != "" {
 		t.Fatalf("a passing run should be discarded: %+v", res)
 	}
@@ -505,7 +505,7 @@ func TestRunCountsMalformedCallsAlongsideAPass(t *testing.T) {
 		{Blocks: []llm.Block{llm.TextBlock("Fixed it, eventually.")}},
 	}}
 
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if !res.Pass {
 		t.Fatalf("expected a pass despite the bad calls: %s", res.Detail)
 	}
@@ -531,7 +531,7 @@ func TestACleanRunReportsNoFaults(t *testing.T) {
 		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}},
 		{Blocks: []llm.Block{llm.TextBlock("Fixed.")}},
 	}}
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if res.FaultCalls != 0 || res.FaultBreakdown() != "" || res.FaultRate() != 0 {
 		t.Errorf("clean run reported %d faults (%q, rate %v)", res.FaultCalls, res.FaultBreakdown(), res.FaultRate())
 	}
@@ -544,7 +544,7 @@ func TestRunFlagsAModelThatAnsweredWithoutActing(t *testing.T) {
 	p := &scriptedProvider{steps: []llm.Message{
 		{Blocks: []llm.Block{llm.TextBlock("I looked and everything seems fine.")}}}}
 
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if res.Pass {
 		t.Fatal("the task is not actually fixed")
 	}
@@ -569,7 +569,7 @@ func TestGivingUpPartwayIsNotNeverActed(t *testing.T) {
 		{Blocks: []llm.Block{toolUse("read", `{"path":"calc/calc.go"}`)}},
 		{Blocks: []llm.Block{llm.TextBlock("This looks correct to me already.")}}}}
 
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if res.Pass {
 		t.Fatal("the task is not actually fixed")
 	}
@@ -590,7 +590,7 @@ func TestASuccessfulRunIsNotFlagged(t *testing.T) {
 		{Blocks: []llm.Block{toolUse("edit", `{"path":"calc/calc.go","old_string":"for i := 1; i < len(xs); i++ {","new_string":"for i := 0; i < len(xs); i++ {"}`)}},
 		{Blocks: []llm.Block{llm.TextBlock("Fixed the off-by-one.")}},
 	}}
-	res := Run(context.Background(), task, p, "m", 30*time.Second)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second})
 	if !res.Pass {
 		t.Fatalf("expected a pass: %s", res.Detail)
 	}
@@ -612,7 +612,7 @@ func TestATimeoutIsNotCountedAsStoppingWithoutActing(t *testing.T) {
 	}
 	p := &scriptedProvider{steps: steps}
 
-	res := Run(context.Background(), task, p, "m", 300*time.Millisecond)
+	res := RunWith(context.Background(), task, p, "m", Options{Execution: tools.ExecTools, Timeout: 300 * time.Millisecond})
 	if res.Pass {
 		t.Fatal("expected a failure")
 	}
