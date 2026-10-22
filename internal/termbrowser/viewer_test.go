@@ -928,3 +928,26 @@ func TestAddressBarWords(t *testing.T) {
 		t.Fatalf("ctrl+u deletes to the start: %q", string(a.text))
 	}
 }
+
+// Only the user's own click on a <select> offers its options; an agent's
+// click, which the page script reports the same way, does not.
+func TestChoiceOnlyForTheUsersClick(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.session = "s"
+	ask := bindingMsg{session: "s", context: 1, payload: `{"type":"select","index":0,"options":[{"label":"A"},{"label":"B"}]}`}
+	v.onBinding(ask)
+	if v.choosing != nil {
+		t.Fatal("an agent's click must not open the chooser")
+	}
+	v.pressedAt = time.Now()
+	v.onBinding(ask)
+	if v.choosing == nil || len(v.choosing.options) != 2 {
+		t.Fatal("the user's click opens the chooser")
+	}
+	v.choosing, v.pressedAt = nil, time.Now().Add(-2*userClickWindow)
+	v.onBinding(ask)
+	if v.choosing != nil {
+		t.Error("a press long ago doesn't count")
+	}
+}

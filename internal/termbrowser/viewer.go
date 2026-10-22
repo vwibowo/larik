@@ -139,6 +139,9 @@ type viewer struct {
 	clickAt   time.Time
 	clicks    int
 	pressed   bool
+	// pressedAt is when the user last pressed a button on the page, which
+	// tells their clicks from an agent's (choose.go).
+	pressedAt time.Time
 	// touched is when the user last gave the page input; until holdFor
 	// after it the viewer stays on this tab.
 	touched time.Time
@@ -387,7 +390,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		v.editing, v.choosing = false, nil // clicking the page leaves the address field or a choice
 		v.touched = time.Now()
-		v.pressed = true
+		v.pressed, v.pressedAt = true, v.touched
 		return v, v.mouse("mousePressed", tea.Mouse(msg), v.countClick(tea.Mouse(msg), v.touched))
 	case tea.MouseReleaseMsg:
 		m := v.local(tea.Mouse(msg))

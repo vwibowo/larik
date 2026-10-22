@@ -20,6 +20,16 @@ import (
 //
 // and sets the choice in the page, with the input and change events a
 // user's choice fires.
+//
+// The script can't tell the user's click from an agent's (both are CDP
+// input), so the viewer does: it offers the options only right after the
+// user pressed on the page. An agent's click on a <select> is ignored
+// here; its native popup would not have shown anyway, and agents pick
+// options with browser_select.
+
+// userClickWindow is how soon after the user's press a <select> asking
+// counts as theirs.
+const userClickWindow = time.Second
 
 // selectHook catches a press on a single-choice <select> in any frame.
 const selectHook = `(() => {
@@ -57,6 +67,9 @@ type choice struct {
 
 // openChoice starts choosing from the options a page's script sent.
 func (v *viewer) openChoice(msg bindingMsg) {
+	if time.Since(v.pressedAt) > userClickWindow {
+		return // an agent's click, not the user's
+	}
 	var p struct {
 		Index   int            `json:"index"`
 		Options []selectOption `json:"options"`
