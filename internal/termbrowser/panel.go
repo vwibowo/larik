@@ -78,6 +78,16 @@ func (p *Panel) Update(msg tea.Msg) tea.Cmd {
 	return wrap(cmd)
 }
 
+// SetFocus tells the panel whether it has the keyboard, and the key that
+// moves the keyboard between it and the host (as "f3"), for its header.
+func (p *Panel) SetFocus(focused bool, key string) {
+	p.v.focused, p.v.focusHint = focused, key
+}
+
+// Dragging reports whether a mouse button pressed on the page is still
+// down: the host passes on its motion and release wherever they land.
+func (p *Panel) Dragging() bool { return p.v.pressed }
+
 // Header is the panel's top two rows, as wide as the panel.
 func (p *Panel) Header() [2]string { return p.v.header() }
 

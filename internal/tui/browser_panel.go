@@ -23,9 +23,6 @@ const (
 	// keeps at least browserMinConversation columns beside it.
 	browserMinWidth        = 40
 	browserMinConversation = 30
-	// browserTick is how often an open panel checks whether its place on
-	// screen changed (a resize, the composer growing, a picker opening).
-	browserTick = 100 * time.Millisecond
 )
 
 // browserRect is where the panel sits, in screen cells.
@@ -33,7 +30,9 @@ type browserRect struct{ x, y, cols, rows int }
 
 type (
 	openBrowserMsg struct{}
-	browserTickMsg struct{}
+	// browserMovedMsg says View put the panel somewhere new (a resize, the
+	// composer growing, a picker opening).
+	browserMovedMsg struct{}
 )
 
 // browserPanelWidth is the panel's width at the current window size, or 0
@@ -56,6 +55,7 @@ func (m *model) browserPanelWidth() int {
 // browserColumn is the panel's part of the screen: its two header rows,
 // then blank cells the page's image is drawn over.
 func (m *model) browserColumn(width, height int) string {
+	m.browser.SetFocus(m.browserFocused, m.keys.hint(actToggleBrowser))
 	h := m.browser.Header()
 	lines := []string{h[0], h[1]}
 	blank := strings.Repeat(" ", width)
@@ -93,7 +93,19 @@ func (m *model) openBrowser() tea.Cmd {
 		}
 		return nil
 	}
-	return tea.Batch(p.Init(), start, tea.Tick(browserTick, func(time.Time) tea.Msg { return browserTickMsg{} }))
+	return tea.Batch(p.Init(), start)
+}
+
+// noteBrowserMoved is called by View once it has placed the panel: if that
+// moved it, a message tells the panel in the next Update (View can't
+// return a command, and nothing else may arrive to carry it).
+func (m *model) noteBrowserMoved() {
+	if m.browser == nil || m.browserRect == m.browserLaid || m.browserMoveSent || m.send == nil {
+		return
+	}
+	m.browserMoveSent = true
+	send := m.send
+	go send(browserMovedMsg{}) // Send waits for the loop View runs on
 }
 
 // closeBrowser takes the panel away; Chrome stops with its last viewer.
@@ -143,11 +155,9 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 			return m.openBrowser(), true
 		}
 		return nil, true
-	case browserTickMsg:
-		if m.browser == nil {
-			return nil, true
-		}
-		return tea.Batch(m.syncBrowserLayout(), tea.Tick(browserTick, func(time.Time) tea.Msg { return browserTickMsg{} })), true
+	case browserMovedMsg:
+		m.browserMoveSent = false
+		return m.syncBrowserLayout(), true
 	case tea.WindowSizeMsg:
 		m.panelOK.Store(m.panelAllowedAt(msg.Width))
 	case tea.KeyPressMsg:
@@ -171,12 +181,13 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 			}
 		}
 	case tea.MouseReleaseMsg:
-		if m.browser != nil && m.onBrowser(msg.X, msg.Y) {
+		// A drag that began on the page ends there, wherever it lets go.
+		if m.browser != nil && (m.browser.Dragging() || m.onBrowser(msg.X, msg.Y)) {
 			return m.toBrowser(msg), true
 		}
 	case tea.MouseMotionMsg:
 		if m.browser != nil {
-			if m.onBrowser(msg.X, msg.Y) {
+			if m.browser.Dragging() || m.onBrowser(msg.X, msg.Y) {
 				return m.toBrowser(msg), true
 			}
 			return nil, true // hover reporting is on only for the panel
@@ -187,6 +198,20 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 		}
 	}
 	return nil, false
+}
+
+// browserLook is what of the panel the rest of the screen shows: whether
+// it is open, has the keyboard, and its header rows.
+type browserLook struct {
+	open, focused bool
+	header        [2]string
+}
+
+func (m *model) browserLook() browserLook {
+	if m.browser == nil {
+		return browserLook{}
+	}
+	return browserLook{true, m.browserFocused, m.browser.Header()}
 }
 
 // syncBrowserLayout tells the panel where the last frame put it, if that

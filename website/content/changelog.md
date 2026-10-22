@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The browser panel shows where the keyboard is.** Its title row is bright with the key back to the chat while the browser has the keyboard, and dim with the way in when it doesn't; the composer's border dims while you type in the page.
+- **The browser stays on the tab you're using.** While you click or type in a page, an agent working in another tab no longer switches the view until you've stopped for 10 seconds.
+- **The panel no longer slows Larik down.** Frames, hovering and page events redraw only the panel, not the whole conversation, and a panel squeezed out by a narrow window stops streaming the page.
+
+### Fixed
+
+- **Double- and triple-clicks in the browser** now select a word or line and reach `dblclick` handlers.
+- **A drag in the page that ends outside it** (selecting text, moving a slider) releases the mouse button in the page instead of leaving it held down.
+- **Errors in the browser's header** clear after a few seconds instead of hiding the page title until the next resize.
+
 ## v0.16.0
 
 <p class="release-meta"><time datetime="2026-10-22">October 22, 2026</time></p>

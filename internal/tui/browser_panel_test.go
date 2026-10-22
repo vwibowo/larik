@@ -34,8 +34,8 @@ func panelModel(t *testing.T) *model {
 	t.Cleanup(p.Close)
 	m.browser, m.browserFocused = p, true
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.View()                   // where the panel goes
-	m.Update(browserTickMsg{}) // the panel learns it
+	m.View()                    // where the panel goes
+	m.Update(browserMovedMsg{}) // the panel learns it
 	return m
 }
 
@@ -95,5 +95,39 @@ func TestBrowserPanelFocus(t *testing.T) {
 	m.Update(termbrowser.PanelClosedMsg{})
 	if m.browser != nil || m.browserFocused {
 		t.Error("ctrl+q in the browser closes the panel")
+	}
+}
+
+// A drag from the page that ends over the conversation still releases in
+// the page.
+func TestBrowserPanelDragEndsInPage(t *testing.T) {
+	m := panelModel(t)
+	m.Update(tea.MouseClickMsg{X: 90, Y: 10, Button: tea.MouseLeft})
+	if !m.browser.Dragging() {
+		t.Fatal("a press on the page is held")
+	}
+	m.Update(tea.MouseReleaseMsg{X: 5, Y: 5, Button: tea.MouseLeft})
+	if m.browser.Dragging() {
+		t.Fatal("the release over the conversation reaches the page")
+	}
+}
+
+// What only the panel draws (frames, hover) doesn't rebuild the screen.
+func TestBrowserPanelEventsReuseTheView(t *testing.T) {
+	m := panelModel(t)
+	first := m.View().Content
+	m.Update(termbrowser.PanelMsg{})
+	if !m.reuseView {
+		t.Fatal("a panel message that changes nothing keeps the view")
+	}
+	if m.View().Content != first || m.reuseView {
+		t.Fatal("the kept view is returned once")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyF3})
+	if m.reuseView {
+		t.Fatal("moving the keyboard redraws")
+	}
+	if m.View().Content == first {
+		t.Error("the header and composer show where the keyboard went")
 	}
 }

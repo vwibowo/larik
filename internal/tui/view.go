@@ -43,6 +43,10 @@ func (m *model) currentConversationWidth() int {
 }
 
 func (m *model) View() tea.View {
+	if m.reuseView && m.lastView != nil {
+		m.reuseView = false
+		return *m.lastView
+	}
 	height := m.height
 	if height <= 0 {
 		height = 24 // before the first size event
@@ -176,8 +180,10 @@ func (m *model) View() tea.View {
 	if m.browser != nil && browserWidth == 0 {
 		m.browserRect = browserRect{} // too narrow: the panel steps aside
 	}
+	m.noteBrowserMoved()
 	v.WindowTitle = "larik"
 	v.ReportFocus = m.notify != "off"
+	m.lastView = &v
 	return v
 }
 
@@ -646,6 +652,10 @@ func (m *model) composerView() string {
 	}
 	if m.shellMode() {
 		box = box.BorderForeground(m.st.warn.GetForeground())
+	}
+	if m.browser != nil && m.browserFocused {
+		// The keyboard is in the browser panel: the composer steps back.
+		box = box.BorderForeground(m.st.dim.GetForeground())
 	}
 	return box.Width(max(m.width, 7)).Render(m.input.View())
 }

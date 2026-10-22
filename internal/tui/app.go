@@ -320,7 +320,13 @@ type model struct {
 	browserFocused bool
 	browserRect    browserRect // where View put it
 	browserLaid    browserRect // where it was last told it is
-	panelOK        atomic.Bool // the panel could open now (read off the UI goroutine)
+	// browserMoveSent says a browserMovedMsg is on its way.
+	browserMoveSent bool
+	panelOK         atomic.Bool // the panel could open now (read off the UI goroutine)
+	// lastView is the last frame View built; reuseView says the message
+	// since changed nothing it shows, so the next View returns it again.
+	lastView  *tea.View
+	reuseView bool
 	// send is the running program's Send, for messages from other
 	// goroutines (the browser panel, the agent's browser_show).
 	send           func(tea.Msg)
@@ -562,9 +568,17 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.browserLook()
 	if cmd, ok := m.browserUpdate(msg); ok {
+		// Most of what the panel handles (frames, hover, page events)
+		// changes only its image, which it draws itself. Bubble Tea renders
+		// after every message, so unless the panel's header or focus
+		// changed, the last View stands instead of being built again
+		// dozens of times a second.
+		m.reuseView = m.browserLook() == before
 		return m, cmd
 	}
+	m.reuseView = false
 	md, cmd := m.update(msg)
 	// The last frame may have moved the browser panel (the composer grew,
 	// a picker opened); it learns where it is now.

@@ -38,6 +38,14 @@ const (
 	resizeSettle = 150 * time.Millisecond
 	// frameQuality is the JPEG quality Chrome encodes frames at.
 	frameQuality = 90
+	// clickGap is how soon another click on the same spot counts as a
+	// double (or triple) click.
+	clickGap = 400 * time.Millisecond
+	// holdFor is how long the viewer stays on the tab the user is using
+	// after their last input, instead of following an agent to another.
+	holdFor = 10 * time.Second
+	// noteFor is how long an error or notice stays in the header.
+	noteFor = 5 * time.Second
 )
 
 // RunViewer runs the viewer for the session listening at socket until the
@@ -117,7 +125,22 @@ type viewer struct {
 	toastGen int
 	loading  bool   // the shown tab's page is loading
 	note     string // the last error or notice, shown in the header
+	noteGen  int
 	quit     bool
+
+	// The last click on the page, to count double and triple clicks, and
+	// whether its button is still down: a drag may end outside the page.
+	lastClick tea.Mouse
+	clickAt   time.Time
+	clicks    int
+	pressed   bool
+	// touched is when the user last gave the page input; until holdFor
+	// after it the viewer stays on this tab.
+	touched time.Time
+	// focused and focusHint are the host's: as a panel, whether it has the
+	// keyboard, and the key that moves the keyboard (as "f3").
+	focused   bool
+	focusHint string
 }
 
 type targetInfo struct {
@@ -159,8 +182,12 @@ type (
 		data    string // base64 JPEG
 	}
 	noteMsg     string
+	noteEndMsg  struct{ gen int }
 	resizedMsg  struct{ gen int }
 	connLostMsg struct{}
+	// followMsg looks again at which tab to show, once the user's hold on
+	// this one has run out.
+	followMsg struct{}
 )
 
 func newViewer(k kitty) *viewer {
@@ -283,8 +310,14 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.conn, v.ws, v.session, v.tab = nil, "", "", ""
 		return v, tea.Batch(v.clearImages(), v.follow())
 	case noteMsg:
-		v.note = string(msg)
+		return v, v.setNote(string(msg))
+	case noteEndMsg:
+		if msg.gen == v.noteGen {
+			v.note = ""
+		}
 		return v, nil
+	case followMsg:
+		return v, v.follow()
 	case tea.WindowSizeMsg:
 		return v, v.layout(0, 0, msg.Width, msg.Height)
 	case resizedMsg:
@@ -294,8 +327,10 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.diff = frameDiff{}
 		return v, v.startScreencast()
 	case tea.KeyPressMsg:
+		v.touched = time.Now()
 		return v, v.key(msg)
 	case tea.PasteMsg:
+		v.touched = time.Now()
 		if f := v.signin; f != nil {
 			if f.onPassword {
 				f.password = append(f.password, []rune(msg.Content)...)
@@ -318,18 +353,81 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Y == 1 && msg.Button == tea.MouseLeft {
 			return v, v.clickPrompt(msg.X)
 		}
-		if msg.Y >= headerRows {
-			v.editing = false // clicking the page leaves the address field
+		if msg.Y < headerRows {
+			return v, nil
 		}
-		return v, v.mouse("mousePressed", tea.Mouse(msg), 1)
+		v.editing = false // clicking the page leaves the address field
+		v.touched = time.Now()
+		v.pressed = true
+		return v, v.mouse("mousePressed", tea.Mouse(msg), v.countClick(tea.Mouse(msg), v.touched))
 	case tea.MouseReleaseMsg:
-		return v, v.mouse("mouseReleased", v.local(tea.Mouse(msg)), 1)
+		m := v.local(tea.Mouse(msg))
+		if v.pressed {
+			// The press was on the page, so the release goes there too,
+			// even off its edge: else the button stays down in the page.
+			v.pressed = false
+			m = v.clampToPage(m)
+		}
+		return v, v.mouse("mouseReleased", m, v.clicks)
 	case tea.MouseMotionMsg:
-		return v, v.mouse("mouseMoved", v.local(tea.Mouse(msg)), 0)
+		m := v.local(tea.Mouse(msg))
+		if v.pressed {
+			m = v.clampToPage(m)
+		}
+		return v, v.mouse("mouseMoved", m, 0)
 	case tea.MouseWheelMsg:
+		v.touched = time.Now()
 		return v, v.wheel(v.local(tea.Mouse(msg)))
 	}
 	return v, nil
+}
+
+// countClick says which click in a row a press is: 2 for the second on
+// the same spot within clickGap, and so on up to 3.
+func (v *viewer) countClick(m tea.Mouse, now time.Time) int {
+	last := v.lastClick
+	near := m.Button == last.Button && abs(m.X-last.X) <= 1 && abs(m.Y-last.Y) <= 1
+	if near && now.Sub(v.clickAt) <= clickGap && v.clicks < 3 {
+		v.clicks++
+	} else {
+		v.clicks = 1
+	}
+	v.lastClick, v.clickAt = m, now
+	return v.clicks
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// clampToPage moves a cell outside the page area to its nearest edge.
+func (v *viewer) clampToPage(m tea.Mouse) tea.Mouse {
+	m.X = min(max(m.X, 0), max(v.cols-1, 0))
+	m.Y = min(max(m.Y, headerRows), max(v.rows-1, headerRows))
+	return m
+}
+
+// holding is how much longer the viewer stays on the tab the user is
+// using, or 0 when it may follow an agent elsewhere.
+func (v *viewer) holding() time.Duration {
+	if v.tab == "" {
+		return 0
+	}
+	return max(holdFor-time.Since(v.touched), 0)
+}
+
+// setNote shows s in the header for a few seconds.
+func (v *viewer) setNote(s string) tea.Cmd {
+	v.note = s
+	v.noteGen++
+	if s == "" {
+		return nil
+	}
+	gen := v.noteGen
+	return tea.Tick(noteFor, func(time.Time) tea.Msg { return noteEndMsg{gen} })
 }
 
 func (v *viewer) View() tea.View {
@@ -372,6 +470,19 @@ func (v *viewer) header() [2]string {
 	case v.tab == "":
 		hints = "ctrl+q close browser"
 	}
+	// As a panel, the second row says which side has the keyboard: bright
+	// with the way back while the browser has it, dim with the way in.
+	style := "\x1b[2m"
+	if v.embedded && v.focusHint != "" && !v.editing {
+		if v.focused {
+			style = ""
+			if hints != "" {
+				hints = v.focusHint + " chat · " + hints
+			}
+		} else if hints != "" {
+			hints = v.focusHint + " or click to use the browser"
+		}
+	}
 	width := max(v.cols, 10)
 	if line, _ := v.promptLine(width); line != "" {
 		second, hints = line, ""
@@ -385,7 +496,7 @@ func (v *viewer) header() [2]string {
 	}
 	return [2]string{
 		padRight(ansi.Truncate(v.toolbarLine(), width, ""), width) + sgrReset,
-		"\x1b[2m" + padRight(ansi.Truncate(second, width, "…"), width) + "\x1b[0m",
+		style + padRight(ansi.Truncate(second, width, "…"), width) + "\x1b[0m",
 	}
 }
 
@@ -411,6 +522,11 @@ func (v *viewer) follow() tea.Cmd {
 			return connectedMsg{conn, st.WS, err}
 		}
 	case st.Focus != "" && st.Focus != v.tab:
+		if wait := v.holding(); wait > 0 {
+			// The user is using this tab: another agent moving elsewhere
+			// mustn't pull it from under them. Look again when they stop.
+			return tea.Tick(wait, func(time.Time) tea.Msg { return followMsg{} })
+		}
 		conn, old, focus := v.conn, v.session, st.Focus
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -611,8 +727,18 @@ func (v *viewer) pagePixels() (w, h int) {
 // startScreencast sizes the page to the pane and asks for frames of it.
 func (v *viewer) startScreencast() tea.Cmd {
 	conn, session := v.conn, v.session
-	if conn == nil || session == "" || v.cols == 0 {
+	if conn == nil || session == "" {
 		return nil
+	}
+	if v.cols == 0 || v.rows <= headerRows {
+		// Nowhere to show it (a panel stepped aside): frames would only
+		// be decoded and dropped.
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = conn.call(ctx, session, "Page.stopScreencast", nil, nil)
+			return nil
+		}
 	}
 	w, h := v.pagePixels()
 	scale := v.scale

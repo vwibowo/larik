@@ -670,3 +670,120 @@ func TestWrapMarksPanelMessages(t *testing.T) {
 		t.Error("no command stays no command")
 	}
 }
+
+// A quick second or third click on the same spot is a double or triple
+// click; anywhere else, or later, starts over.
+func TestCountClick(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	now := time.Now()
+	at := func(x, y int, after time.Duration) int {
+		now = now.Add(after)
+		return v.countClick(tea.Mouse{X: x, Y: y, Button: tea.MouseLeft}, now)
+	}
+	if n := at(5, 5, 0); n != 1 {
+		t.Fatalf("first click %d", n)
+	}
+	if n := at(5, 5, 100*time.Millisecond); n != 2 {
+		t.Fatalf("double click %d", n)
+	}
+	if n := at(6, 5, 100*time.Millisecond); n != 3 {
+		t.Fatalf("triple click, a cell over %d", n)
+	}
+	if n := at(6, 5, 100*time.Millisecond); n != 1 {
+		t.Fatalf("a fourth click starts over: %d", n)
+	}
+	if n := at(6, 5, time.Second); n != 1 {
+		t.Fatalf("a slow click is a first one: %d", n)
+	}
+	if n := at(20, 5, 50*time.Millisecond); n != 1 {
+		t.Fatalf("a click elsewhere is a first one: %d", n)
+	}
+}
+
+// A drag that starts on the page and lets go outside it still releases
+// the button in the page, at its edge.
+func TestReleaseOffThePageEndsTheDrag(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.inputs.close()
+	v.inputs = &inputQueue{kick: make(chan struct{}, 1), done: make(chan struct{})} // nothing sends
+	v.session = "s"
+	v.layout(40, 3, 30, 12)
+	v.cellW, v.cellH, v.scale = 10, 20, 1
+	v.Update(tea.MouseClickMsg{X: 50, Y: 8, Button: tea.MouseLeft})
+	if !v.pressed {
+		t.Fatal("a press on the page is held")
+	}
+	v.Update(tea.MouseReleaseMsg{X: 5, Y: 1, Button: tea.MouseLeft})
+	if v.pressed {
+		t.Fatal("the release ends the press")
+	}
+	items := v.inputs.items
+	if len(items) != 2 {
+		t.Fatalf("press and release go to the page: %d items", len(items))
+	}
+	p := items[1].params.(map[string]any)
+	if p["type"] != "mouseReleased" || p["x"].(float64) != 5 || p["y"].(float64) != 10 {
+		t.Errorf("release clamped to the page's top-left: %v", p)
+	}
+	if v.Update(tea.MouseReleaseMsg{X: 5, Y: 1}); len(v.inputs.items) != 2 {
+		t.Error("a release with nothing pressed, off the page, goes nowhere")
+	}
+}
+
+func TestNotesExpire(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	_, cmd := v.Update(noteMsg("can't reach it"))
+	if cmd == nil || v.note == "" {
+		t.Fatal("a note shows, with a timer to end it")
+	}
+	gen := v.noteGen
+	v.Update(noteMsg("another"))
+	v.Update(noteEndMsg{gen})
+	if v.note != "another" {
+		t.Fatalf("an old timer leaves a newer note: %q", v.note)
+	}
+	v.Update(noteEndMsg{v.noteGen})
+	if v.note != "" {
+		t.Fatalf("the note ends: %q", v.note)
+	}
+}
+
+// While the user works in a tab, an agent using another doesn't pull the
+// view away.
+func TestUserHoldsTheTab(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	if v.holding() != 0 {
+		t.Fatal("no tab, nothing to hold")
+	}
+	v.tab = "a"
+	if v.holding() != 0 {
+		t.Fatal("untouched, the view follows the agent")
+	}
+	v.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if d := v.holding(); d <= 0 || d > holdFor {
+		t.Fatalf("typing holds the tab: %v", d)
+	}
+	v.touched = time.Now().Add(-holdFor - time.Second)
+	if v.holding() != 0 {
+		t.Fatal("the hold runs out")
+	}
+}
+
+func TestPanelHeaderShowsFocus(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.embedded, v.cols, v.focusHint = true, 100, "f3"
+	h := v.header()
+	if !strings.Contains(h[1], "f3 or click to use the browser") || !strings.HasPrefix(h[1], "\x1b[2m") {
+		t.Errorf("unfocused: dim, with the way in: %q", h[1])
+	}
+	v.focused = true
+	h = v.header()
+	if !strings.Contains(h[1], "f3 chat") || strings.HasPrefix(h[1], "\x1b[2m") {
+		t.Errorf("focused: bright, with the way back: %q", h[1])
+	}
+}
