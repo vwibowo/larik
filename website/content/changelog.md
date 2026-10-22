@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.17.0
+
+<p class="release-meta"><time datetime="2026-10-22">October 22, 2026</time></p>
 
 ### Added
 
@@ -16,9 +18,7 @@
 ### Changed
 
 - **Hiding the browser keeps Chrome running.** `ctrl+q`, `/browser hide` and closing the pane leave the agent's pages and tabs as they were; `/browser quit` closes Chrome.
-
 - **The address field searches** what isn't an address (`golang generics`, `kittens`) on DuckDuckGo, and opens addresses on this machine and the local network (`192.168.1.5:3000`, `[::1]:8080`, `app.localhost`, `shop.test`) over `http`.
-
 - **The browser panel shows where the keyboard is.** Its title row is bright with the key back to the chat while the browser has the keyboard, and dim with the way in when it doesn't; the composer's border dims while you type in the page.
 - **The browser stays on the tab you're using.** While you click or type in a page, an agent working in another tab no longer switches the view until you've stopped for 10 seconds.
 - **The panel no longer slows Larik down.** Frames, hovering and page events redraw only the panel, not the whole conversation, and a panel squeezed out by a narrow window stops streaming the page. Frames reuse their memory instead of allocating 15 MB each on Retina screens.
