@@ -81,10 +81,17 @@ type viewer struct {
 	tab     string // the tab session is attached to
 	targets map[string]targetInfo
 
+	// x0, y0 is the screen cell of the viewer's top-left corner: 0,0 in
+	// its own pane, elsewhere as a panel in Larik's window. cols and rows
+	// are its size; everything below works in cells relative to x0, y0.
+	x0, y0       int
 	cols, rows   int
 	cellW, cellH int
-	scale        int // device pixels per CSS pixel
-	resizeGen    int
+	// embedded is set when the viewer is a panel in another program, which
+	// it must not quit and whose other images it must not delete.
+	embedded  bool
+	scale     int // device pixels per CSS pixel
+	resizeGen int
 
 	diff    frameDiff
 	base    int   // id of the full frame on screen, 0 for none
@@ -215,8 +222,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, nil
 	case sessionGoneMsg:
-		v.quit = true
-		return v, tea.Quit
+		return v, v.closeCmd()
 	case connectedMsg:
 		if msg.err != nil {
 			v.note = "can't reach the browser: " + msg.err.Error()
@@ -281,11 +287,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.note = string(msg)
 		return v, nil
 	case tea.WindowSizeMsg:
-		v.cols, v.rows = msg.Width, msg.Height
-		v.measureCells()
-		v.resizeGen++
-		gen := v.resizeGen
-		return v, tea.Batch(v.clearImages(), tea.Tick(resizeSettle, func(time.Time) tea.Msg { return resizedMsg{gen} }))
+		return v, v.layout(0, 0, msg.Width, msg.Height)
 	case resizedMsg:
 		if msg.gen != v.resizeGen || v.session == "" {
 			return v, nil
@@ -310,6 +312,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.typeIn("Input.insertText", map[string]any{"text": msg.Content})
 		return v, nil
 	case tea.MouseClickMsg:
+		msg = tea.MouseClickMsg(v.local(tea.Mouse(msg)))
 		if msg.Y == 0 && msg.Button == tea.MouseLeft {
 			return v, v.clickToolbar(msg.X)
 		}
@@ -321,16 +324,33 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, v.mouse("mousePressed", tea.Mouse(msg), 1)
 	case tea.MouseReleaseMsg:
-		return v, v.mouse("mouseReleased", tea.Mouse(msg), 1)
+		return v, v.mouse("mouseReleased", v.local(tea.Mouse(msg)), 1)
 	case tea.MouseMotionMsg:
-		return v, v.mouse("mouseMoved", tea.Mouse(msg), 0)
+		return v, v.mouse("mouseMoved", v.local(tea.Mouse(msg)), 0)
 	case tea.MouseWheelMsg:
-		return v, v.wheel(tea.Mouse(msg))
+		return v, v.wheel(v.local(tea.Mouse(msg)))
 	}
 	return v, nil
 }
 
 func (v *viewer) View() tea.View {
+	h := v.header()
+	view := tea.NewView(h[0] + "\n" + h[1])
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeAllMotion
+	view.WindowTitle = "larik browser · " + v.title()
+	return view
+}
+
+// title is the shown page's title, or what stands in for it.
+func (v *viewer) title() string {
+	info := v.targets[v.tab]
+	return firstNonEmpty(info.Title, info.URL, "waiting for a page…")
+}
+
+// header is the viewer's two top rows, v.cols wide: the toolbar, and the
+// page's title or whatever waits for the user.
+func (v *viewer) header() [2]string {
 	info := v.targets[v.tab]
 	title := firstNonEmpty(info.Title, info.URL, "waiting for a page…")
 	second, hints := " "+title, "alt+←/→ back/forward · ctrl+l address · ctrl+r reload · ctrl+q close browser"
@@ -364,15 +384,10 @@ func (v *viewer) View() tea.View {
 		hints = ansi.Truncate(hints, room, "…")
 		second = padRight(second, width-ansi.StringWidth(hints)-1) + hints
 	}
-	lines := []string{
-		ansi.Truncate(v.toolbarLine(), width, "") + sgrReset,
-		"\x1b[2m" + ansi.Truncate(second, width, "…") + "\x1b[0m",
+	return [2]string{
+		padRight(ansi.Truncate(v.toolbarLine(), width, ""), width) + sgrReset,
+		"\x1b[2m" + padRight(ansi.Truncate(second, width, "…"), width) + "\x1b[0m",
 	}
-	view := tea.NewView(strings.Join(lines, "\n"))
-	view.AltScreen = true
-	view.MouseMode = tea.MouseModeAllMotion
-	view.WindowTitle = "larik browser · " + title
-	return view
 }
 
 func padRight(s string, w int) string {
@@ -501,6 +516,37 @@ func (v *viewer) pump(conn *cdpConn) {
 	v.send(connLostMsg{})
 }
 
+// layout places the viewer at cell x, y of the screen, cols by rows, and
+// once the size has settled resizes the page to it.
+func (v *viewer) layout(x, y, cols, rows int) tea.Cmd {
+	moved := x != v.x0 || y != v.y0
+	resized := cols != v.cols || rows != v.rows
+	if !moved && !resized {
+		return nil
+	}
+	v.x0, v.y0, v.cols, v.rows = x, y, cols, rows
+	v.measureCells()
+	v.resizeGen++
+	gen := v.resizeGen
+	return tea.Batch(v.clearImages(), tea.Tick(resizeSettle, func(time.Time) tea.Msg { return resizedMsg{gen} }))
+}
+
+// local turns a screen cell into the viewer's own coordinates.
+func (v *viewer) local(m tea.Mouse) tea.Mouse {
+	m.X -= v.x0
+	m.Y -= v.y0
+	return m
+}
+
+// closeCmd ends the viewer: its program, or as a panel, just itself.
+func (v *viewer) closeCmd() tea.Cmd {
+	v.quit = true
+	if v.embedded {
+		return func() tea.Msg { return PanelClosedMsg{} }
+	}
+	return tea.Quit
+}
+
 // cellPixels is the terminal's cell size in pixels, from the window size
 // the kernel keeps for it; tests replace it.
 var cellPixels = func() (w, h int, ok bool) {
@@ -624,7 +670,7 @@ func (v *viewer) draw(img rgbFrame) tea.Cmd {
 			id = 2
 		}
 		v.z++
-		p := placement{id: id, z: v.z, row: headerRows}
+		p := placement{id: id, z: v.z, col: v.x0, row: v.y0 + headerRows}
 		if !fits {
 			p.cols, p.rows = v.cols, v.rows-headerRows // too big: let the terminal shrink it
 		}
@@ -643,7 +689,7 @@ func (v *viewer) draw(img rgbFrame) tea.Cmd {
 			v.z++
 			k.Show(img.sub(r), placement{
 				id: id, z: v.z,
-				col: r.Min.X / v.cellW, row: headerRows + r.Min.Y/v.cellH,
+				col: v.x0 + r.Min.X/v.cellW, row: v.y0 + headerRows + r.Min.Y/v.cellH,
 				x: r.Min.X % v.cellW, y: r.Min.Y % v.cellH,
 			})
 		}
@@ -674,9 +720,19 @@ func (v *viewer) clearImages() tea.Cmd {
 	var out bytes.Buffer
 	k := v.kitty
 	k.w = &out
-	k.Delete(0)
+	v.deleteOwn(k)
 	v.base, v.patches, v.z, v.diff = 0, nil, 0, frameDiff{}
 	return tea.Raw(out.String())
+}
+
+// deleteOwn deletes the viewer's own images and nothing else on screen.
+func (v *viewer) deleteOwn(k kitty) {
+	if v.base != 0 {
+		k.Delete(v.base)
+	}
+	for _, id := range v.patches {
+		k.Delete(id)
+	}
 }
 
 // key handles the viewer's own shortcuts and sends every other key to the
@@ -684,8 +740,7 @@ func (v *viewer) clearImages() tea.Cmd {
 func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 	k := msg.Key()
 	if msg.String() == "ctrl+q" {
-		v.quit = true
-		return tea.Quit
+		return v.closeCmd()
 	}
 	if v.signin != nil {
 		return v.signInKey(msg)
@@ -706,18 +761,12 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 			return v.navigate(normalizeAddress(string(v.address.text)))
 		case k.Code == tea.KeyEscape:
 			v.editing = false
-		case msg.String() == "ctrl+q":
-			v.quit = true
-			return tea.Quit
 		default:
 			v.address.key(k)
 		}
 		return nil
 	}
 	switch msg.String() {
-	case "ctrl+q":
-		v.quit = true
-		return tea.Quit
 	case "ctrl+l":
 		v.editing = true
 		v.address.begin(v.targets[v.tab].URL)
@@ -857,6 +906,6 @@ func (v *viewer) close() {
 	if v.out != nil {
 		k := v.kitty
 		k.w = v.out
-		k.Delete(0)
+		v.deleteOwn(k)
 	}
 }

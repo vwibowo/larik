@@ -85,6 +85,8 @@ type Session struct {
 
 	// wsURL is the browser's DevTools endpoint, for the viewer.
 	wsURL string
+	// shower opens a viewer inside the host program (SetShower).
+	shower func() (string, bool)
 
 	// startupTimeout bounds Chrome launch and the initial DevTools guard.
 	startupTimeout time.Duration
@@ -682,6 +684,24 @@ func (s *Session) Tab(ctx context.Context) (*tab, error) {
 	return s.active[owner], nil
 }
 
+// Open starts Chrome, if it isn't running, with a tab for the main agent,
+// without counting as the agent using it.
+func (s *Session) Open(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.start(); err != nil {
+		return err
+	}
+	s.syncTabs()
+	if s.active[""] == nil {
+		if _, err := s.newTab(""); err != nil {
+			return err
+		}
+	}
+	s.changed()
+	return nil
+}
+
 // newTab opens a blank tab for owner and makes it that agent's active one.
 func (s *Session) newTab(owner string) (*tab, error) {
 	ctx, cancel := chromedp.NewContext(s.root)
@@ -749,11 +769,17 @@ func (s *Session) syncTabs() {
 		tabCtx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
 		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: owners[info.OpenerID]}
 		s.watch(t)
-		// A target may disappear between GetTargets and attachTarget. Bound
-		// initialization separately from the lifetime of the adopted tab.
-		attachCtx, cancelAttach := context.WithTimeout(tabCtx, 5*time.Second)
-		err := chromedp.Run(attachCtx, s.guard())
-		cancelAttach()
+		// A target may disappear between GetTargets and attachTarget, so
+		// attaching is bounded. The first Run attaches with the context it is
+		// given and keeps the tab's message loop on it, so it must be the
+		// tab's own: a short-lived child would stop the loop when it ends,
+		// and every later command on the tab would wait forever. The bound
+		// cancels the tab itself instead, and only if attaching overruns.
+		stopAttach := time.AfterFunc(5*time.Second, cancel)
+		err := chromedp.Run(tabCtx, s.guard())
+		if !stopAttach.Stop() && err == nil {
+			err = context.DeadlineExceeded
+		}
 		if err != nil {
 			cancel()
 			continue

@@ -34,7 +34,7 @@ Type a request and press enter. Larik reads, edits and runs commands to do it, a
 
 ## 5. Let it use a browser
 
-`/browser on` gives the model a headless Chrome. `/browser show` opens it in a pane beside Larik, where you can watch it work and click or type yourself (to sign in, for example). The pane needs a terminal that shows kitty graphics (kitty, Ghostty, WezTerm, cmux or Konsole). In tmux, cmux, kitty and WezTerm, Larik opens it for you.
+`/browser on` gives the model a headless Chrome. `/browser show` or **F3** opens it in a panel beside the conversation, where you can watch it work and click or type yourself (to sign in, for example); F3 moves the keyboard between the browser and Larik. It needs a terminal that shows kitty graphics (kitty, Ghostty, WezTerm, cmux or Konsole).
 
 ## When something is off
 

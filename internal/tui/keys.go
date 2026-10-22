@@ -32,6 +32,7 @@ const (
 	actScrollDown     = "scroll_down"
 	actScrollTop      = "scroll_top"
 	actScrollBottom   = "scroll_bottom"
+	actToggleBrowser  = "toggle_browser"
 )
 
 // defaultKeys are the bindings before the setting applies, in the order
@@ -56,6 +57,7 @@ var defaultKeys = []struct {
 	{actScrollDown, []string{"pgdown"}},
 	{actScrollTop, []string{"ctrl+home"}},
 	{actScrollBottom, []string{"ctrl+end"}},
+	{actToggleBrowser, []string{"f3"}},
 }
 
 // keymap maps keys to actions and back.

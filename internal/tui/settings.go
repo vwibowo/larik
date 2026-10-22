@@ -508,6 +508,21 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
+		key: "browser_show", path: "browser.show", title: "Where the browser shows", section: "tools", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "panel", label: "Panel", desc: "beside the conversation, in Larik's window (F3)"},
+			{value: "pane", label: "Pane", desc: "a split of the terminal's own (tmux, cmux, kitty, WezTerm)"},
+		},
+		get: func(m *model) string {
+			if m.opts.Config.Browser.Show == "pane" {
+				return "pane"
+			}
+			return "panel"
+		},
+		store: orEmpty("panel"),
+		set:   func(m *model, v string) { m.opts.Config.Browser.Show = v },
+	},
+	{
 		key: "browser_sound", path: "browser.sound", title: "Browser sound", section: "tools", kind: kindToggle,
 		applies: applyReload,
 		later:   "pages play audio on this computer's speakers; Chrome starts muted when off",

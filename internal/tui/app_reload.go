@@ -79,6 +79,7 @@ func (m *model) finishReload(msg reloadSetupMsg) tea.Cmd {
 	old.Close()
 	m.ownedApps = []*app.App{next}
 	m.opts.App, m.opts.Session = next, s
+	m.registerShower()
 	m.opts.Config, m.opts.MCP, m.opts.Skills = next.Cfg, next.MCP, next.Skills
 	m.opts.Memory, m.opts.Agents, m.opts.LSP = next.Memory, next.AgentDefs, next.LSP
 	m.opts.Sandbox, m.opts.Audio = next.Sandbox, next.Audio

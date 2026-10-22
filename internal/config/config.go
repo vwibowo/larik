@@ -489,6 +489,12 @@ func (c *Config) merge(path string, trusted bool) error {
 			if b.Sound != nil {
 				c.Browser.Sound = *b.Sound
 			}
+			if b.Show != nil {
+				if *b.Show != "" && *b.Show != "panel" && *b.Show != "pane" {
+					return fmt.Errorf("%s: browser.show must be panel or pane", path)
+				}
+				c.Browser.Show = *b.Show
+			}
 			if l := b.Location; l != nil {
 				if l.Latitude < -90 || l.Latitude > 90 || l.Longitude < -180 || l.Longitude > 180 || l.Accuracy < 0 {
 					return fmt.Errorf("%s: browser.location needs a latitude (-90 to 90) and a longitude (-180 to 180)", path)
@@ -1720,8 +1726,12 @@ type BrowserConfig struct {
 	// ChromePath overrides the Chrome or Chromium binary to launch.
 	ChromePath string `json:"chrome_path,omitempty"`
 	// PaneSize is the percent of the terminal's width browser_show's pane
-	// takes; 0 means 50.
+	// or panel takes; 0 means 50.
 	PaneSize int `json:"pane_size,omitempty"`
+	// Show is where browser_show puts the browser: "panel" (beside the
+	// conversation, in Larik's window; the default) or "pane" (a split of
+	// the terminal's own).
+	Show string `json:"show,omitempty"`
 	// Sound lets pages play audio through this computer's speakers. Off,
 	// Chrome runs muted, so an agent browsing unwatched stays silent.
 	Sound bool `json:"sound,omitempty"`
@@ -1743,6 +1753,7 @@ type browserPatch struct {
 	Enabled    *bool   `json:"enabled"`
 	ChromePath *string `json:"chrome_path"`
 	PaneSize   *int    `json:"pane_size"`
+	Show       *string `json:"show"`
 	Sound      *bool   `json:"sound"`
 	// Location is replaced whole: a later file sets both coordinates.
 	Location *BrowserLocation `json:"location"`

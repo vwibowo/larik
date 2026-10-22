@@ -608,3 +608,65 @@ func TestWheelAxisLock(t *testing.T) {
 		t.Fatalf("shift turns the wheel sideways: %v %v %v", dx, dy, ok)
 	}
 }
+
+// As a panel the viewer draws at its place on screen, and deletes only its
+// own images: the host may have others.
+func TestEmbeddedViewerDrawsAtItsOrigin(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.embedded = true
+	v.layout(40, 3, 30, 12)
+	v.cellW, v.cellH, v.scale = 10, 20, 1 // 300x200 px of page
+	run := func(f rgbFrame) string {
+		cmd := v.draw(f)
+		if cmd == nil {
+			return ""
+		}
+		return cmd().(tea.RawMsg).Msg.(string)
+	}
+	full := run(rgbFrame{w: 300, h: 200, pix: make([]byte, 300*200*3)})
+	// Row 3 + 2 header rows, column 40: 1-based "6;41".
+	if !strings.Contains(full, "\x1b[6;41H") {
+		t.Fatalf("full frame not at the origin: %.60q", full)
+	}
+	changed := rgbFrame{w: 300, h: 200, pix: make([]byte, 300*200*3)}
+	o := (150*300 + 250) * 3 // pixel (250,150): cell (25,7) of the page
+	changed.pix[o] = 255
+	patch := run(changed)
+	if !strings.Contains(patch, "\x1b[") || strings.Contains(patch, "\x1b[6;41H") {
+		t.Fatalf("patch: %.60q", patch)
+	}
+	// Tile (192,128)-(256,192) starts at cell 19,6 of the page: screen 59,11.
+	if !strings.Contains(patch, "\x1b[12;60H") {
+		t.Errorf("patch not offset by the origin: %.60q", patch)
+	}
+	clear := v.clearImages()().(tea.RawMsg).Msg.(string)
+	if strings.Contains(clear, "d=A") || !strings.Contains(clear, "d=I,i=1") || !strings.Contains(clear, "d=I,i=3") {
+		t.Errorf("clearing must delete only the panel's images: %q", clear)
+	}
+	if m := v.local(tea.Mouse{X: 45, Y: 10}); m.X != 5 || m.Y != 7 {
+		t.Errorf("a screen cell maps to %d,%d in the panel", m.X, m.Y)
+	}
+	if cmd := v.closeCmd(); cmd == nil {
+		t.Fatal("closing a panel must not quit the host")
+	} else if _, ok := cmd().(PanelClosedMsg); !ok {
+		t.Fatal("closing a panel reports PanelClosedMsg")
+	}
+}
+
+func TestWrapMarksPanelMessages(t *testing.T) {
+	cmd := wrap(tea.Batch(func() tea.Msg { return noteMsg("x") }, tea.Raw("esc")))
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("a batch stays a batch: %#v", cmd())
+	}
+	if m, ok := batch[0]().(PanelMsg); !ok || m.msg != noteMsg("x") {
+		t.Errorf("a panel message is wrapped: %#v", batch[0]())
+	}
+	if _, ok := batch[1]().(tea.RawMsg); !ok {
+		t.Errorf("an escape for the terminal passes through")
+	}
+	if wrap(nil) != nil {
+		t.Error("no command stays no command")
+	}
+}

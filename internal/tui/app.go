@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -30,6 +31,7 @@ import (
 	"larik/internal/sandbox"
 	"larik/internal/skills"
 	"larik/internal/subagent"
+	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/trace/viewer"
 )
@@ -64,7 +66,10 @@ func Run(opts Options) error {
 		opts.Agent, opts.Hooks, opts.History = opts.Session.Agent, opts.Session.Hooks, opts.Session.History
 	}
 	m := newModel(opts)
-	_, err := tea.NewProgram(m).Run()
+	p := tea.NewProgram(m)
+	m.send = p.Send
+	m.registerShower()
+	_, err := p.Run()
 	cleanupModel(m)
 	return err
 }
@@ -74,7 +79,9 @@ func Run(opts Options) error {
 func RunWithStartup(start func(context.Context) (Options, error)) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &startupModel{ctx: ctx, cancel: cancel, start: start}
-	_, runErr := tea.NewProgram(m).Run()
+	p := tea.NewProgram(m)
+	m.send = p.Send
+	_, runErr := p.Run()
 	cancel()
 	if m.live != nil {
 		cleanupModel(m.live)
@@ -86,6 +93,9 @@ func RunWithStartup(start func(context.Context) (Options, error)) error {
 }
 
 func cleanupModel(m *model) {
+	if m.browser != nil {
+		m.browser.Close()
+	}
 	if m.recording != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, _ = m.recording.Stop(ctx)
@@ -122,6 +132,7 @@ type startupModel struct {
 	// typed is what the user typed before setup finished; it becomes the
 	// composer's first draft instead of being lost.
 	typed []rune
+	send  func(tea.Msg) // the program's Send, handed to the live model
 }
 
 func (m *startupModel) Init() tea.Cmd {
@@ -151,6 +162,8 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.opts.Agent, msg.opts.Hooks, msg.opts.History = msg.opts.Session.Agent, msg.opts.Session.Hooks, msg.opts.Session.History
 		}
 		m.live = newModel(msg.opts)
+		m.live.send = m.send
+		m.live.registerShower()
 		if m.size != nil {
 			m.live.Update(*m.size)
 		}
@@ -298,9 +311,19 @@ type model struct {
 	rewindOffer *rewindOffer              // /rewind asking whether to restore files
 	provs       *providerManager          // the /providers screen, when open
 	// wizardReturn reopens /providers when a wizard started there closes.
-	wizardReturn   bool
-	showKeys       bool            // the ? shortcuts overlay
-	showInfo       bool            // the F2 session information panel
+	wizardReturn bool
+	showKeys     bool // the ? shortcuts overlay
+	showInfo     bool // the F2 session information panel
+	// browser is the browser panel beside the conversation, when open
+	// (browser_panel.go); browserFocused gives it the keyboard.
+	browser        *termbrowser.Panel
+	browserFocused bool
+	browserRect    browserRect // where View put it
+	browserLaid    browserRect // where it was last told it is
+	panelOK        atomic.Bool // the panel could open now (read off the UI goroutine)
+	// send is the running program's Send, for messages from other
+	// goroutines (the browser panel, the agent's browser_show).
+	send           func(tea.Msg)
 	usedSkills     map[string]bool // skills explicitly invoked in this TUI session
 	settings       *settingsPanel  // the /config screen, when open
 	reload         *reloadPrompt   // confirmation before changing the active context
@@ -539,7 +562,13 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, ok := m.browserUpdate(msg); ok {
+		return m, cmd
+	}
 	md, cmd := m.update(msg)
+	// The last frame may have moved the browser panel (the composer grew,
+	// a picker opened); it learns where it is now.
+	cmd = tea.Batch(cmd, m.syncBrowserLayout())
 	// Whatever changed may be something the status line shows.
 	if st := m.refreshStatus(); st != nil {
 		cmd = tea.Batch(cmd, st)

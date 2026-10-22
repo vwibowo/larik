@@ -29,13 +29,16 @@ import (
 )
 
 func (m *model) sessionSidebarWidth() int {
-	if !m.showInfo || m.width < 100 || m.showKeys {
+	if !m.showInfo || m.width < 100 || m.showKeys || m.browser != nil {
 		return 0
 	}
 	return min(max(m.width/3, 30), 44)
 }
 
 func (m *model) currentConversationWidth() int {
+	if bw := m.browserPanelWidth(); bw > 0 {
+		return max(m.width-bw-1, 1) // a column between them
+	}
 	return max(m.width-m.sessionSidebarWidth(), 1)
 }
 
@@ -54,6 +57,10 @@ func (m *model) View() tea.View {
 	room := max(height-m.frameBottomRows, 0)
 
 	sidebarWidth := m.sessionSidebarWidth()
+	browserWidth := m.browserPanelWidth()
+	if browserWidth > 0 {
+		sidebarWidth = browserWidth
+	}
 	showSidebar := sidebarWidth > 0
 	conversationWidth := m.currentConversationWidth()
 	if m.convWidth != conversationWidth && !m.resizePending {
@@ -120,7 +127,14 @@ func (m *model) View() tea.View {
 				left = strings.Split(conversation, "\n")
 			}
 			left = append(left, live...)
-			right := strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
+			var right []string
+			if browserWidth > 0 {
+				// The panel's image is drawn over its blank rows.
+				m.browserRect = browserRect{x: conversationWidth + 1, y: 0, cols: browserWidth, rows: room - panelRows}
+				right = strings.Split(m.browserColumn(browserWidth, room-panelRows), "\n")
+			} else {
+				right = strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
+			}
 			for i := 0; i < max(len(left), len(right)); i++ {
 				l, r := "", ""
 				if i < len(left) {
@@ -153,8 +167,14 @@ func (m *model) View() tea.View {
 
 	v := tea.NewView(strings.Join(rows, "\n"))
 	v.AltScreen = true
-	if m.mouse {
+	switch {
+	case m.browser != nil:
+		v.MouseMode = tea.MouseModeAllMotion // hover reaches pages in the panel
+	case m.mouse:
 		v.MouseMode = tea.MouseModeCellMotion
+	}
+	if m.browser != nil && browserWidth == 0 {
+		m.browserRect = browserRect{} // too narrow: the panel steps aside
 	}
 	v.WindowTitle = "larik"
 	v.ReportFocus = m.notify != "off"

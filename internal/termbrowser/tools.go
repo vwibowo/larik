@@ -714,7 +714,15 @@ func (s *Session) Show(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if s.viewers() > 0 {
-		return "The browser is already showing in a pane beside this terminal.", nil
+		return "The browser is already showing beside the conversation.", nil
+	}
+	s.mu.Lock()
+	shower := s.shower
+	s.mu.Unlock()
+	if shower != nil {
+		if msg, ok := shower(); ok {
+			return msg, nil
+		}
 	}
 	path, err := s.Serve(s.opts.SocketDir)
 	if err != nil {
@@ -740,3 +748,15 @@ func (s *Session) Show(ctx context.Context) (string, error) {
 	}
 	return "Opened the browser in a new " + name + " pane beside this one. It follows the tab you work in; the user can click, scroll and type there.", nil
 }
+
+// SetShower lets the program Larik runs in show the browser itself, as a
+// panel in its own window: Show asks it first and splits a pane only when
+// it declines (ok false) or there is none.
+func (s *Session) SetShower(f func() (msg string, ok bool)) {
+	s.mu.Lock()
+	s.shower = f
+	s.mu.Unlock()
+}
+
+// ServeDefault starts the control socket in the configured directory.
+func (s *Session) ServeDefault() (string, error) { return s.Serve(s.opts.SocketDir) }

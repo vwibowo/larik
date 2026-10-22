@@ -412,6 +412,15 @@ func TestBrowserOnlyFromPersonalSettings(t *testing.T) {
 		t.Error("a latitude past 90 should be refused")
 	}
 
+	write(t, LocalSettingsPath(cwd), `{"browser":{"show":"pane"}}`)
+	if cfg, _ = Load(cwd); cfg.Browser.Show != "pane" {
+		t.Errorf("browser.show: %q", cfg.Browser.Show)
+	}
+	write(t, LocalSettingsPath(cwd), `{"browser":{"show":"sideways"}}`)
+	if _, err := Load(cwd); err == nil {
+		t.Error("browser.show must be panel or pane")
+	}
+
 	write(t, LocalSettingsPath(cwd), `{"browser":{"pane_size":95}}`)
 	if _, err := Load(cwd); err == nil {
 		t.Error("a pane wider than 80% should be refused")

@@ -197,3 +197,19 @@ func TestBlockedPermission(t *testing.T) {
 		t.Errorf("the pane should say how to share a location: %q", l.v.note)
 	}
 }
+
+// With a host that can show the browser itself, browser_show uses it and
+// splits nothing.
+func TestShowUsesTheHostsPanel(t *testing.T) {
+	s, _ := newSession(t)
+	asked := 0
+	s.SetShower(func() (string, bool) { asked++; return "opened the panel", true })
+	msg, err := s.Show(context.Background())
+	if err != nil || msg != "opened the panel" || asked != 1 {
+		t.Fatalf("Show: %q %v (asked %d)", msg, err, asked)
+	}
+	s.SetShower(func() (string, bool) { return "", false })
+	if msg, _ := s.Show(context.Background()); !strings.Contains(msg, "larik") && !strings.Contains(msg, "pane") {
+		t.Errorf("a host that declines falls back to a pane: %q", msg)
+	}
+}

@@ -28,11 +28,23 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 			return info("browser tools: on · /browser off to disable")
 		}
 	}
-	if arg == "show" {
-		return m.showBrowser(info, fail)
+	switch arg {
+	case "show":
+		if m.opts.App == nil || m.opts.App.Browser == nil {
+			return fail("browser tools are off · /browser on to enable them")
+		}
+		if m.browser == nil && m.panelAllowed() {
+			return m.openBrowser()
+		}
+		return m.showBrowserPane()
+	case "hide":
+		if m.browser == nil {
+			return info("the browser panel isn't open")
+		}
+		return tea.Batch(m.closeBrowser(), info("closed the browser panel and Chrome"))
 	}
 	if arg != "on" && arg != "off" {
-		return fail("usage: /browser [on|off|show]")
+		return fail("usage: /browser [on|off|show|hide]")
 	}
 	if !m.idle() || m.agent.RunningBackground() > 0 || m.perm != nil {
 		return fail("wait for the turn and background tasks before changing browser tools")
@@ -60,10 +72,10 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 
 // showBrowser opens the in-terminal browser pane. Starting Chrome and
 // splitting the pane take a moment, so it runs in the background.
-func (m *model) showBrowser(info, fail func(string) tea.Cmd) tea.Cmd {
-	if m.opts.App == nil || m.opts.App.Browser == nil {
-		return fail("browser tools are off · /browser on to enable them")
-	}
+// showBrowserPane shows the browser where the panel can't go: in a split
+// pane of the terminal's own, or by telling the user what to run. Starting
+// Chrome and splitting take a moment, so it runs in the background.
+func (m *model) showBrowserPane() tea.Cmd {
 	b := m.opts.App.Browser
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
