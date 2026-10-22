@@ -35,6 +35,7 @@ const (
 	hitForward
 	hitReload
 	hitAddress
+	hitBadges
 )
 
 func (v *viewer) hitToolbar(x int) toolbarHit {
@@ -47,6 +48,8 @@ func (v *viewer) hitToolbar(x int) toolbarHit {
 		return hitReload
 	case x >= addressStart-1 && x < v.addressEnd():
 		return hitAddress
+	case x >= v.addressEnd():
+		return hitBadges
 	}
 	return hitNone
 }
@@ -54,8 +57,22 @@ func (v *viewer) hitToolbar(x int) toolbarHit {
 // badges are the notes at the right end of the toolbar.
 func (v *viewer) badges() string {
 	b := ""
-	if v.state.Driving != "" {
-		b += " ● " + v.state.Driving + " is driving"
+	if n := len(v.state.Tabs); n > 1 || v.pinned != "" {
+		// Which tab this is, whose, and whether the user pinned it.
+		b += fmt.Sprintf(" ▤ %d/%d", v.tabIndex()+1, n)
+		if i := v.tabIndex(); i >= 0 && v.state.Tabs[i].Owner != "" {
+			b += " " + v.state.Tabs[i].Owner
+		}
+		if v.pinned != "" {
+			b += " · pinned"
+		}
+	}
+	if d := v.state.Driving; d != "" {
+		if v.state.Focus == v.tab {
+			b += " ● " + d + " is driving"
+		} else {
+			b += " ● " + d + " in another tab"
+		}
 	}
 	if v.state.Sound {
 		b += " ♪"
@@ -199,6 +216,29 @@ func (a *addressBar) insert(s string) {
 func (a *addressBar) key(k tea.Key) bool {
 	sel := a.selected
 	a.selected = false
+	alt, ctrl := k.Mod.Contains(tea.ModAlt), k.Mod.Contains(tea.ModCtrl)
+	switch {
+	case (alt || ctrl) && k.Code == tea.KeyLeft:
+		a.cursor = a.wordStart(a.cursor)
+		return true
+	case (alt || ctrl) && k.Code == tea.KeyRight:
+		a.cursor = a.wordEnd(a.cursor)
+		return true
+	case sel && (alt && k.Code == tea.KeyBackspace || ctrl && (k.Code == 'w' || k.Code == 'u' || k.Code == 'k')):
+		a.text, a.cursor = nil, 0
+		return true
+	case alt && k.Code == tea.KeyBackspace, ctrl && k.Code == 'w':
+		start := a.wordStart(a.cursor)
+		a.text = append(a.text[:start], a.text[a.cursor:]...)
+		a.cursor = start
+		return true
+	case ctrl && k.Code == 'u':
+		a.text, a.cursor = a.text[a.cursor:], 0
+		return true
+	case ctrl && k.Code == 'k':
+		a.text = a.text[:a.cursor]
+		return true
+	}
 	switch k.Code {
 	case tea.KeyLeft:
 		if sel {
@@ -242,6 +282,31 @@ func (a *addressBar) key(k tea.Key) bool {
 		a.insert(k.Text)
 	}
 	return true
+}
+
+// wordBreak is where word moves and deletes stop in an address.
+func wordBreak(r rune) bool { return strings.ContainsRune(" /.:?&=#-_", r) }
+
+// wordStart is where the word before i begins, past any breaks before it.
+func (a *addressBar) wordStart(i int) int {
+	for i > 0 && wordBreak(a.text[i-1]) {
+		i--
+	}
+	for i > 0 && !wordBreak(a.text[i-1]) {
+		i--
+	}
+	return i
+}
+
+// wordEnd is where the word after i ends.
+func (a *addressBar) wordEnd(i int) int {
+	for i < len(a.text) && wordBreak(a.text[i]) {
+		i++
+	}
+	for i < len(a.text) && !wordBreak(a.text[i]) {
+		i++
+	}
+	return i
 }
 
 // history is the shown tab's back/forward list.
@@ -313,6 +378,8 @@ func (v *viewer) clickToolbar(x int) tea.Cmd {
 	case hitReload:
 		v.editing = false
 		return v.reloadOrStop()
+	case hitBadges:
+		return v.togglePin()
 	case hitAddress:
 		if v.editing {
 			// A second click places the caret where it lands.

@@ -41,10 +41,19 @@ func (m *model) browserCommand(arg string) tea.Cmd {
 		if m.browser == nil {
 			return info("the browser panel isn't open")
 		}
-		return tea.Batch(m.closeBrowser(), info("closed the browser panel and Chrome"))
+		return tea.Batch(m.closeBrowser(), info("hid the browser · Chrome keeps the agent's pages · /browser quit closes it"))
+	case "quit":
+		if m.opts.App == nil || m.opts.App.Browser == nil {
+			return fail("browser tools are off")
+		}
+		closed := m.closeBrowser()
+		if !m.opts.App.Browser.Quit() {
+			return tea.Batch(closed, info("the browser isn't running"))
+		}
+		return tea.Batch(closed, info("quit the browser · the agent's next browser call starts it again; sign-ins are kept"))
 	}
 	if arg != "on" && arg != "off" {
-		return fail("usage: /browser [on|off|show|hide]")
+		return fail("usage: /browser [on|off|show|hide|quit]")
 	}
 	if !m.idle() || m.agent.RunningBackground() > 0 || m.perm != nil {
 		return fail("wait for the turn and background tasks before changing browser tools")

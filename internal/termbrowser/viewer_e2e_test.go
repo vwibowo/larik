@@ -215,3 +215,62 @@ func TestViewerToolbar(t *testing.T) {
 	click(7) // reload: the page is still there afterwards
 	l.until("the reload", func() bool { return !l.v.loading && url() == `"/done"` })
 }
+
+// Headless Chrome draws no popup for a <select>, so clicking one offers its
+// options in the header, and the choice reaches the page with its events.
+func TestViewerChoosesFromASelect(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	if _, err := s.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Eval(ctx, `(() => {
+		document.body.innerHTML = '<select id=c style="position:fixed;left:0;top:0;width:200px;height:40px">' +
+			'<option>Austria</option><option disabled>Belgium</option><option>Canada</option><option>Indonesia</option></select>' +
+			'<a href="/next" style="position:fixed;left:0;top:200px;width:300px;height:40px;display:block">next</a>';
+		document.getElementById('c').addEventListener('change', (e) => { document.title = 'changed ' + e.target.value; });
+	})()`); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp("", "lk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path, err := s.Serve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
+	l.v = newViewer(kitty{})
+	l.v.send = func(m tea.Msg) { l.msgs <- m }
+	defer l.v.close()
+	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
+	l.msgs <- tea.WindowSizeMsg{Width: 100, Height: 40}
+	l.until("the hooks", func() bool { return l.v.hooked != "" && l.v.hooked == l.v.session })
+
+	cell := tea.Mouse{X: 5, Y: headerRows + 1, Button: tea.MouseLeft}
+	l.msgs <- tea.MouseClickMsg(cell)
+	l.msgs <- tea.MouseReleaseMsg(cell)
+	l.until("the options", func() bool { return l.v.choosing != nil })
+	if h := l.v.header(); !strings.Contains(h[1], "Austria") || !strings.Contains(h[1], "1/4") {
+		t.Errorf("the header offers the options: %q", h[1])
+	}
+	l.msgs <- tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}) // skips the disabled Belgium
+	l.msgs <- tea.KeyPressMsg(tea.Key{Code: 'i', Text: "i"})
+	l.until("the search", func() bool { return l.v.choosing != nil && l.v.choosing.index == 3 })
+	l.msgs <- tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})
+	l.until("the change", func() bool {
+		title, _ := s.Eval(ctx, "document.title")
+		return strings.Contains(title, "changed Indonesia")
+	})
+
+	// Resting on the link shows where it goes.
+	l.msgs <- tea.MouseMotionMsg(tea.Mouse{X: 5, Y: headerRows + 10})
+	l.until("the link", func() bool { return strings.HasSuffix(l.v.hover, "/next") })
+	if h := l.v.header(); !strings.Contains(h[1], "/next") {
+		t.Errorf("the header shows the link: %q", h[1])
+	}
+	l.msgs <- tea.MouseMotionMsg(tea.Mouse{X: 5, Y: 0}) // onto the toolbar
+	l.until("the link to go", func() bool { return l.v.hover == "" })
+}

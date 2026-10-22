@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Cookies and storage outlive Chrome: closing the pane or quitting Larik
+// Cookies and storage outlive Chrome: /browser quit or quitting Larik
 // must close Chrome cleanly, or it loses what it hadn't written out yet.
 func TestStorageSurvivesARestart(t *testing.T) {
 	path := chrome(t)

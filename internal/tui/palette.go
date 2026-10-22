@@ -49,7 +49,7 @@ var commands = []command{
 	{"/memory", "[add <text> | show <name> | delete <name>]", "notes remembered across sessions: list, read, add or delete them", "tools", ""},
 	{"/agents", "", "list subagents the model can delegate to", "tools", ""},
 	{"/lsp", "", "language servers and their status", "tools", ""},
-	{"/browser", "[on|off|show|hide]", "browser tools: switch them on/off (fresh context), or show the browser beside the conversation (F3)", "tools", "f3"},
+	{"/browser", "[on|off|show|hide|quit]", "browser tools: switch them on/off (fresh context), show or hide the browser beside the conversation (F3), or quit Chrome", "tools", "f3"},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},

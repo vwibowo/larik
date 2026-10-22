@@ -139,6 +139,14 @@ func (m *model) View() tea.View {
 			} else {
 				right = strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
 			}
+			sep := " "
+			if browserWidth > 0 {
+				// The divider, which can be dragged to resize the panel.
+				sep = m.st.dim.Render("│")
+				if m.browserResizing {
+					sep = m.st.accent.Render("┃")
+				}
+			}
 			for i := 0; i < max(len(left), len(right)); i++ {
 				l, r := "", ""
 				if i < len(left) {
@@ -150,7 +158,7 @@ func (m *model) View() tea.View {
 				if i < len(right) {
 					r = right[i]
 				}
-				rows = append(rows, l+" "+r)
+				rows = append(rows, l+sep+r)
 			}
 		} else {
 			if m.openTodos() && m.width >= 64 {

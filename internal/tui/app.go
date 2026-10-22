@@ -322,6 +322,10 @@ type model struct {
 	browserLaid    browserRect // where it was last told it is
 	// browserMoveSent says a browserMovedMsg is on its way.
 	browserMoveSent bool
+	// browserPct is the panel's share of the width after the user dragged
+	// the divider (0: browser.pane_size); browserResizing is that drag.
+	browserPct      int
+	browserResizing bool
 	panelOK         atomic.Bool // the panel could open now (read off the UI goroutine)
 	// lastView is the last frame View built; reuseView says the message
 	// since changed nothing it shows, so the next View returns it again.

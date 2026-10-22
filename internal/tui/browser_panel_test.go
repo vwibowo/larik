@@ -131,3 +131,30 @@ func TestBrowserPanelEventsReuseTheView(t *testing.T) {
 		t.Error("the header and composer show where the keyboard went")
 	}
 }
+
+// Dragging the divider between the conversation and the panel resizes it.
+func TestBrowserPanelDividerResizes(t *testing.T) {
+	m := panelModel(t)
+	if !m.onDivider(59, 5) || m.onDivider(58, 5) {
+		t.Fatalf("the divider is the column left of the panel at %d", m.browserRect.x)
+	}
+	m.Update(tea.MouseClickMsg{X: 59, Y: 5, Button: tea.MouseLeft})
+	if !m.browserResizing || m.browserFocused != true {
+		t.Fatal("a press on the divider starts a resize, without moving the focus")
+	}
+	m.Update(tea.MouseMotionMsg{X: 71, Y: 6}) // 48 columns to the right: 40%
+	if w := m.browserPanelWidth(); w != 48 {
+		t.Errorf("the panel follows the divider: %d columns (%d%%)", w, m.browserPct)
+	}
+	if !strings.Contains(m.View().Content, "┃") {
+		t.Error("the divider shows it is being dragged")
+	}
+	m.Update(tea.MouseMotionMsg{X: 2, Y: 6})
+	if m.browserPct != 80 {
+		t.Errorf("the panel takes at most 80%%: %d", m.browserPct)
+	}
+	m.Update(tea.MouseReleaseMsg{X: 2, Y: 6})
+	if m.browserResizing {
+		t.Error("the release ends the resize")
+	}
+}

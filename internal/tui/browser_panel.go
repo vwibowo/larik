@@ -15,8 +15,8 @@ import (
 // in Larik's own window, in any terminal that shows kitty graphics. It
 // takes the sidebar's column (the two are never shown at once). F3 opens
 // it and moves the keyboard between it and the composer; clicking either
-// side gives that side the keyboard; ctrl+q in the browser closes it,
-// which closes Chrome too, as closing the separate pane does.
+// side gives that side the keyboard; ctrl+q in the browser hides it.
+// Chrome keeps running until /browser quit or Larik exits.
 
 const (
 	// browserMinWidth is the narrowest the panel gets, and the conversation
@@ -44,6 +44,9 @@ func (m *model) browserPanelWidth() int {
 	pct := 50
 	if c := m.opts.Config; c != nil && c.Browser.PaneSize > 0 {
 		pct = c.Browser.PaneSize
+	}
+	if m.browserPct > 0 {
+		pct = m.browserPct
 	}
 	w := max(m.width*pct/100, browserMinWidth)
 	if m.width-w-1 < browserMinConversation {
@@ -108,7 +111,7 @@ func (m *model) noteBrowserMoved() {
 	go send(browserMovedMsg{}) // Send waits for the loop View runs on
 }
 
-// closeBrowser takes the panel away; Chrome stops with its last viewer.
+// closeBrowser takes the panel away; Chrome keeps running.
 func (m *model) closeBrowser() tea.Cmd {
 	if m.browser == nil {
 		return nil
@@ -174,6 +177,10 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 			return m.toBrowser(msg), true
 		}
 	case tea.MouseClickMsg:
+		if m.browser != nil && msg.Button == tea.MouseLeft && m.onDivider(msg.X, msg.Y) {
+			m.browserResizing = true // dragging the divider resizes the panel
+			return nil, true
+		}
 		if m.browser != nil {
 			m.browserFocused = m.onBrowser(msg.X, msg.Y)
 			if m.browserFocused {
@@ -181,11 +188,19 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 			}
 		}
 	case tea.MouseReleaseMsg:
+		if m.browserResizing {
+			m.browserResizing = false
+			return nil, true
+		}
 		// A drag that began on the page ends there, wherever it lets go.
 		if m.browser != nil && (m.browser.Dragging() || m.onBrowser(msg.X, msg.Y)) {
 			return m.toBrowser(msg), true
 		}
 	case tea.MouseMotionMsg:
+		if m.browserResizing {
+			m.resizeBrowser(msg.X)
+			return nil, true
+		}
 		if m.browser != nil {
 			if m.browser.Dragging() || m.onBrowser(msg.X, msg.Y) {
 				return m.toBrowser(msg), true
@@ -203,15 +218,32 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 // browserLook is what of the panel the rest of the screen shows: whether
 // it is open, has the keyboard, and its header rows.
 type browserLook struct {
-	open, focused bool
-	header        [2]string
+	open, focused, resizing bool
+	pct                     int
+	header                  [2]string
 }
 
 func (m *model) browserLook() browserLook {
 	if m.browser == nil {
 		return browserLook{}
 	}
-	return browserLook{true, m.browserFocused, m.browser.Header()}
+	return browserLook{true, m.browserFocused, m.browserResizing, m.browserPct, m.browser.Header()}
+}
+
+// onDivider reports whether screen cell x, y is the column between the
+// conversation and the panel.
+func (m *model) onDivider(x, y int) bool {
+	r := m.browserRect
+	return r.cols > 0 && x == r.x-1 && y >= r.y && y < r.y+r.rows
+}
+
+// resizeBrowser puts the divider at column x, within browser.pane_size's
+// bounds, for the rest of the session.
+func (m *model) resizeBrowser(x int) {
+	if m.width <= 0 {
+		return
+	}
+	m.browserPct = min(max((m.width-x-1)*100/m.width, 20), 80)
 }
 
 // syncBrowserLayout tells the panel where the last frame put it, if that

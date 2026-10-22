@@ -5,9 +5,17 @@
 ### Added
 
 - **Zoom in the browser:** `ctrl+-`, `ctrl+=` and `ctrl+0`. Zooming out gives a narrow panel a site's desktop layout; the level shows in the toolbar.
+- **Drop-downs in the browser.** Headless Chrome can't draw a `<select>`'s list, so clicking one showed nothing. Its options now appear on the panel's second row: arrows or typing to find one, `enter` to choose.
+- **Link previews:** resting the pointer on a link shows where it goes.
+- **Tabs in the browser.** With several open, the toolbar says which is shown and which agent it belongs to. `ctrl+pgup`/`ctrl+pgdn` step through them and keep the one you pick on screen; click the badge or press `alt+p` to follow the agents again.
+- **`/browser quit`** shuts Chrome down.
+- **Resize the browser panel** by dragging the line between it and the conversation.
+- **Word editing in the address field:** `alt+backspace`/`ctrl+w`, `ctrl+u`, `ctrl+k`, and `alt+←`/`alt+→` to jump.
 - **Copy from the browser:** `alt+c` (or `ctrl+shift+c` where the terminal passes it on) copies the page's selection, or its address when nothing is selected.
 
 ### Changed
+
+- **Hiding the browser keeps Chrome running.** `ctrl+q`, `/browser hide` and closing the pane leave the agent's pages and tabs as they were; `/browser quit` closes Chrome.
 
 - **The address field searches** what isn't an address (`golang generics`, `kittens`) on DuckDuckGo, and opens addresses on this machine and the local network (`192.168.1.5:3000`, `[::1]:8080`, `app.localhost`, `shop.test`) over `http`.
 

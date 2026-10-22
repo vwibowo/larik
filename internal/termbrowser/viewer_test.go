@@ -463,8 +463,9 @@ func TestYCbCrConversionMatchesStdlib(t *testing.T) {
 	}
 }
 
-// Closing the browser pane closes Chrome too; the next call starts it again.
-func TestClosingThePaneStopsChrome(t *testing.T) {
+// Closing the browser pane only hides it: Chrome and the agent's page stay
+// until the user quits the browser, and the next call starts it again.
+func TestClosingThePaneKeepsChrome(t *testing.T) {
 	s, srv := newSession(t)
 	ctx := context.Background()
 	if _, err := s.Navigate(ctx, srv.URL); err != nil {
@@ -489,18 +490,21 @@ func TestClosingThePaneStopsChrome(t *testing.T) {
 		}
 	}
 	conn.Close() // the user closes the pane
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		s.mu.Lock()
-		down := s.root == nil
-		s.mu.Unlock()
-		if down {
-			break
-		}
+	for deadline := time.Now().Add(5 * time.Second); s.viewers() > 0; time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatal("Chrome is still running after the pane closed")
+			t.Fatal("the viewer never left")
 		}
 	}
-	if notes := strings.Join(s.takeNotes(), " "); !strings.Contains(notes, "closed the browser pane") {
+	s.mu.Lock()
+	up := s.root != nil
+	s.mu.Unlock()
+	if !up {
+		t.Fatal("closing the pane must leave Chrome running")
+	}
+	if !s.Quit() {
+		t.Fatal("quitting stops a running Chrome")
+	}
+	if notes := strings.Join(s.takeNotes(), " "); !strings.Contains(notes, "quit the browser") {
 		t.Errorf("the model should be told: %q", notes)
 	}
 	if _, err := s.Navigate(ctx, srv.URL); err != nil {
@@ -540,8 +544,8 @@ func TestToolbarLayout(t *testing.T) {
 	defer v.close()
 	v.cols, v.tab = 80, "T"
 	v.targets["T"] = targetInfo{URL: "https://example.com/a/very/long/path/that/goes/on/and/on/and/on/forever/and/ever"}
-	v.state.Driving = "explore"
-	for x, want := range map[int]toolbarHit{0: hitBack, 2: hitBack, 3: hitForward, 7: hitReload, 12: hitAddress, 79: hitNone} {
+	v.state.Driving, v.state.Focus = "explore", "T"
+	for x, want := range map[int]toolbarHit{0: hitBack, 2: hitBack, 3: hitForward, 7: hitReload, 12: hitAddress, 79: hitBadges} {
 		if got := v.hitToolbar(x); got != want {
 			t.Errorf("column %d: hit %v, want %v", x, got, want)
 		}
@@ -862,5 +866,65 @@ func TestCopyOut(t *testing.T) {
 	msg := wrap(tea.SetClipboard("hi"))()
 	if _, ok := msg.(PanelMsg); ok || msg == nil {
 		t.Errorf("SetClipboard must reach the program: %#v", msg)
+	}
+}
+
+// The user can step through the session's tabs; the one they pick stays
+// shown (pinned) until they unpin it or it closes.
+func TestTabsCycleAndPin(t *testing.T) {
+	v := newViewer(kitty{})
+	defer v.close()
+	v.cols, v.tab = 100, "A"
+	v.state = State{Focus: "A", Tabs: []StateTab{{ID: "A"}, {ID: "B", Owner: "explore"}, {ID: "C"}}}
+	if b := v.badges(); !strings.Contains(b, "▤ 1/3") || strings.Contains(b, "pinned") {
+		t.Errorf("badges: %q", b)
+	}
+	v.cycleTab(-1)
+	if v.pinned != "C" || v.want() != "C" {
+		t.Fatalf("back from the first tab is the last, pinned: %q", v.pinned)
+	}
+	v.tab = "C"
+	v.state.Focus = "B" // an agent works elsewhere
+	if v.want() != "C" {
+		t.Fatal("a pinned tab stays shown")
+	}
+	v.tab = "B"
+	if b := v.badges(); !strings.Contains(b, "2/3 explore") {
+		t.Errorf("badges name the tab's agent: %q", b)
+	}
+	v.togglePin()
+	if v.pinned != "" {
+		t.Fatal("unpinning follows the agents again")
+	}
+	v.togglePin()
+	v.state.Tabs = v.state.Tabs[:1] // B closed
+	if v.want() != "B" || v.pinned != "" {
+		t.Errorf("a closed pinned tab unpins: want %q pinned %q", v.want(), v.pinned)
+	}
+}
+
+func TestAddressBarWords(t *testing.T) {
+	var a addressBar
+	a.begin("https://example.com/path/page")
+	a.selected = false
+	a.key(tea.Key{Code: tea.KeyBackspace, Mod: tea.ModAlt})
+	if got := string(a.text); got != "https://example.com/path/" {
+		t.Fatalf("alt+backspace deletes a word: %q", got)
+	}
+	a.key(tea.Key{Code: 'w', Mod: tea.ModCtrl})
+	if got := string(a.text); got != "https://example.com/" {
+		t.Fatalf("ctrl+w deletes the word and the break after it: %q", got)
+	}
+	a.key(tea.Key{Code: tea.KeyLeft, Mod: tea.ModAlt})
+	if a.cursor != len("https://example.") {
+		t.Fatalf("alt+← jumps a word: %d", a.cursor)
+	}
+	a.key(tea.Key{Code: 'k', Mod: tea.ModCtrl})
+	if got := string(a.text); got != "https://example." {
+		t.Fatalf("ctrl+k deletes to the end: %q", got)
+	}
+	a.key(tea.Key{Code: 'u', Mod: tea.ModCtrl})
+	if len(a.text) != 0 || a.cursor != 0 {
+		t.Fatalf("ctrl+u deletes to the start: %q", string(a.text))
 	}
 }

@@ -126,6 +126,8 @@ func (v *viewer) installHooks() tea.Cmd {
 		}
 		_ = conn.call(ctx, session, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": permissionHook, "runImmediately": true}, nil)
 		_ = conn.call(ctx, session, "Runtime.evaluate", map[string]any{"expression": permissionHook}, nil)
+		_ = conn.call(ctx, session, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": selectHook, "runImmediately": true}, nil)
+		_ = conn.call(ctx, session, "Runtime.evaluate", map[string]any{"expression": selectHook}, nil)
 		return hooksMsg{session}
 	}
 }
@@ -152,6 +154,8 @@ func (v *viewer) onBinding(msg bindingMsg) tea.Cmd {
 			return v.answerPage(permissionPrompt{session: msg.session, context: msg.context, id: p.ID}, false)
 		}
 		v.prompts = append(v.prompts, permissionPrompt{session: msg.session, context: msg.context, id: p.ID, kind: p.Kind, origin: origin})
+	case "select":
+		v.openChoice(msg)
 	case "notification":
 		text := strings.TrimSpace(p.Title + ": " + p.Body)
 		text = strings.TrimSuffix(text, ":")
@@ -292,6 +296,9 @@ func (v *viewer) sendAuth(m ViewerMessage) tea.Cmd {
 // It also returns where its buttons are, for clicks.
 func (v *viewer) promptLine(width int) (line string, buttons []promptButton) {
 	switch {
+	case v.choosing != nil:
+		line, _, _ = v.choiceLine()
+		return line, nil
 	case v.signin != nil && v.state.Auth != nil:
 		a, f := v.state.Auth, v.signin
 		who := hostOf(a.Origin)
@@ -331,6 +338,9 @@ type promptButton struct {
 
 // clickPrompt answers a permission prompt clicked on the second row.
 func (v *viewer) clickPrompt(x int) tea.Cmd {
+	if v.choosing != nil {
+		return v.clickChoice(x)
+	}
 	_, buttons := v.promptLine(v.cols)
 	for _, b := range buttons {
 		if x >= b.start && x < b.end {

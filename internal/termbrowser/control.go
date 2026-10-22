@@ -211,14 +211,12 @@ func (s *Session) stream(conn net.Conn) {
 	}
 	v.subs[wake] = conn
 	v.mu.Unlock()
+	// A viewer going away only hides the browser: Chrome keeps the
+	// agent's pages until the user quits it (Quit) or Larik exits.
 	defer func() {
 		v.mu.Lock()
 		delete(v.subs, wake)
-		last := len(v.subs) == 0 && !v.stopped
 		v.mu.Unlock()
-		if last {
-			s.paneClosed()
-		}
 	}()
 	// Reading takes the viewer's messages, and tells us when it goes away.
 	gone := make(chan struct{})
@@ -254,10 +252,10 @@ func (s *Session) stream(conn net.Conn) {
 	}
 }
 
-// paneClosed shuts Chrome down when the last viewer has gone: closing the
-// browser pane means being done with the browser. The agent's next browser
-// call starts it again, with sign-ins kept in the profile.
-func (s *Session) paneClosed() {
+// Quit shuts Chrome down at the user's request (/browser quit) and tells
+// the model; it reports whether Chrome was running. The agent's next
+// browser call starts it again, with sign-ins kept in the profile.
+func (s *Session) Quit() bool {
 	s.mu.Lock()
 	running := s.root != nil
 	if running {
@@ -265,8 +263,9 @@ func (s *Session) paneClosed() {
 	}
 	s.mu.Unlock()
 	if running {
-		s.note("The user closed the browser pane, which also closed the browser: its tabs are gone. The next browser call starts it again; sign-ins are kept.")
+		s.note("The user quit the browser: its tabs are gone. The next browser call starts it again; sign-ins are kept.")
 	}
+	return running
 }
 
 // stopServing closes the control socket and every viewer's connection.

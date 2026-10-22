@@ -11,7 +11,7 @@ import (
 // A Panel is the viewer as a part of another Bubble Tea program: Larik
 // shows the browser beside its conversation instead of in a pane of its
 // own. It connects to the session exactly as the pane does, so it counts
-// as a viewer (prompts reach it, closing it closes Chrome) and the host
+// as a viewer (prompts reach it) and the host
 // only has to give it a rectangle, its messages and, while it has the
 // focus, the user's keys and mouse.
 
@@ -99,8 +99,8 @@ func (p *Panel) Title() string { return p.v.title() }
 // for the host to print when it takes the panel away.
 func (p *Panel) Clear() tea.Cmd { return p.v.clearImages() }
 
-// Close lets go of Chrome and the session. Closing the last viewer also
-// shuts Chrome down, as closing the pane does.
+// Close lets go of Chrome and the session; Chrome keeps running until the
+// session's Quit.
 func (p *Panel) Close() {
 	p.v.close()
 	p.ctl.Close()

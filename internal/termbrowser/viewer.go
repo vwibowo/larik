@@ -142,6 +142,15 @@ type viewer struct {
 	// touched is when the user last gave the page input; until holdFor
 	// after it the viewer stays on this tab.
 	touched time.Time
+	// pinned is the tab the user chose to show (ctrl+pgup/pgdn, or the tab
+	// badge), which the viewer keeps instead of following the agents; ""
+	// follows them.
+	pinned string
+	// hover is the link under the resting pointer, shown in the header.
+	hover    string
+	hoverGen int
+	// choosing is a <select> the user is picking an option of (choose.go).
+	choosing *choice
 	// focused and focusHint are the host's: as a panel, whether it has the
 	// keyboard, and the key that moves the keyboard (as "f3").
 	focused   bool
@@ -276,6 +285,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.session, v.tab = msg.session, msg.tab
 		v.diff = frameDiff{} // the next frame is a full one
 		v.editing, v.loading, v.hist, v.prompts = false, false, history{}, nil
+		v.hover, v.choosing = "", nil
 		return v, tea.Batch(v.clearImages(), v.startScreencast(), v.fetchHistory(), v.installHooks())
 	case pageMsg:
 		// A tab's main frame has the tab's own id.
@@ -328,6 +338,13 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, nil
 	case followMsg:
 		return v, v.follow()
+	case hoverAskMsg:
+		return v, v.askHover(msg)
+	case hoverMsg:
+		if msg.gen == v.hoverGen && msg.session == v.session {
+			v.hover = msg.href
+		}
+		return v, nil
 	case copiedMsg:
 		return v, v.copyOut(msg)
 	case tea.WindowSizeMsg:
@@ -368,7 +385,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Y < headerRows {
 			return v, nil
 		}
-		v.editing = false // clicking the page leaves the address field
+		v.editing, v.choosing = false, nil // clicking the page leaves the address field or a choice
 		v.touched = time.Now()
 		v.pressed = true
 		return v, v.mouse("mousePressed", tea.Mouse(msg), v.countClick(tea.Mouse(msg), v.touched))
@@ -462,7 +479,7 @@ func (v *viewer) title() string {
 func (v *viewer) header() [2]string {
 	info := v.targets[v.tab]
 	title := firstNonEmpty(info.Title, info.URL, "waiting for a page…")
-	second, hints := " "+title, "alt+←/→ back/forward · ctrl+l address · ctrl+r reload · ctrl+q close browser"
+	second, hints := " "+title, "alt+←/→ back/forward · ctrl+l address · ctrl+r reload · ctrl+q hide"
 	switch {
 	case v.editing:
 		second, hints = " type an address", "enter go · esc cancel"
@@ -479,8 +496,10 @@ func (v *viewer) header() [2]string {
 		second, hints = fmt.Sprintf(" cell %dx%d px%s · %dx scale · pane %dx%d px · frame %dx%d · %s · %d fps", v.cellW, v.cellH, guess, v.scale, w, h, v.frame.X, v.frame.Y, transfer, v.fps()), ""
 	case v.note != "":
 		second, hints = " "+v.note, ""
+	case v.hover != "":
+		second, hints = " ↗ "+v.hover, ""
 	case v.tab == "":
-		hints = "ctrl+q close browser"
+		hints = "ctrl+q hide"
 	}
 	// As a panel, the second row says which side has the keyboard: bright
 	// with the way back while the browser has it, dim with the way in.
@@ -533,13 +552,13 @@ func (v *viewer) follow() tea.Cmd {
 			conn, err := dialCDP(ctx, st.WS)
 			return connectedMsg{conn, st.WS, err}
 		}
-	case st.Focus != "" && st.Focus != v.tab:
-		if wait := v.holding(); wait > 0 {
+	case v.want() != "" && v.want() != v.tab:
+		if wait := v.holding(); v.pinned == "" && wait > 0 {
 			// The user is using this tab: another agent moving elsewhere
 			// mustn't pull it from under them. Look again when they stop.
 			return tea.Tick(wait, func(time.Time) tea.Msg { return followMsg{} })
 		}
-		conn, old, focus := v.conn, v.session, st.Focus
+		conn, old, focus := v.conn, v.session, v.want()
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -877,6 +896,9 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 	if v.signin != nil {
 		return v.signInKey(msg)
 	}
+	if v.choosing != nil {
+		return v.chooseKey(msg)
+	}
 	if len(v.prompts) > 0 {
 		switch msg.String() {
 		case "y", "enter":
@@ -905,6 +927,12 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "ctrl+r", "f5":
 		return v.reloadOrStop()
+	case "ctrl+pgdown", "ctrl+tab":
+		return v.cycleTab(+1)
+	case "ctrl+pgup", "ctrl+shift+tab":
+		return v.cycleTab(-1)
+	case "alt+p":
+		return v.togglePin()
 	case "ctrl+-", "ctrl+=", "ctrl++", "ctrl+0":
 		return v.zoomBy(msg.String())
 	case "ctrl+shift+c", "alt+c":
@@ -1006,6 +1034,9 @@ func mouseButton(b tea.MouseButton) string {
 func (v *viewer) mouse(kind string, m tea.Mouse, clicks int) tea.Cmd {
 	x, y, ok := v.pagePoint(m)
 	if !ok || v.session == "" {
+		if kind == "mouseMoved" && v.hover != "" {
+			return v.pointerAt(0, 0, false) // off the page
+		}
 		return nil
 	}
 	item := inputItem{kind: inputOther, session: v.session, method: "Input.dispatchMouseEvent"}
@@ -1017,6 +1048,10 @@ func (v *viewer) mouse(kind string, m tea.Mouse, clicks int) tea.Cmd {
 		"type": kind, "x": x, "y": y, "button": button, "clickCount": clicks, "modifiers": modifiers(m.Mod),
 	}
 	v.inputs.push(item)
+	if kind == "mouseMoved" {
+		return v.pointerAt(x, y, true)
+	}
+	v.hover = "" // a press or release: the link was followed or left
 	return nil
 }
 
@@ -1165,4 +1200,49 @@ func (v *viewer) copyOut(msg copiedMsg) tea.Cmd {
 		return noteMsg("copied " + msg.what)
 	}
 	return tea.Batch(tea.SetClipboard(msg.text), native)
+}
+
+// want is the tab to show: the one the user pinned, while it is open, or
+// the one an agent last used.
+func (v *viewer) want() string {
+	if v.pinned != "" {
+		for _, t := range v.state.Tabs {
+			if t.ID == v.pinned {
+				return v.pinned
+			}
+		}
+		v.pinned = "" // closed: follow the agents again
+	}
+	return v.state.Focus
+}
+
+// tabIndex is the shown tab's place among the session's tabs, or -1.
+func (v *viewer) tabIndex() int {
+	for i, t := range v.state.Tabs {
+		if t.ID == v.tab {
+			return i
+		}
+	}
+	return -1
+}
+
+// cycleTab shows the next (+1) or previous (-1) tab and pins it.
+func (v *viewer) cycleTab(step int) tea.Cmd {
+	tabs := v.state.Tabs
+	if len(tabs) < 2 {
+		return v.setNote("this is the only tab")
+	}
+	i := (v.tabIndex() + step + len(tabs)) % len(tabs)
+	v.pinned = tabs[i].ID
+	return v.follow()
+}
+
+// togglePin pins the shown tab, or goes back to following the agents.
+func (v *viewer) togglePin() tea.Cmd {
+	if v.pinned != "" {
+		v.pinned = ""
+		return v.follow()
+	}
+	v.pinned = v.tab
+	return nil
 }
