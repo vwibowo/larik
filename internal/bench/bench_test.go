@@ -40,6 +40,13 @@ func TestTasksAreSelfChecking(t *testing.T) {
 		"find-undocumented": func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "UNDOCUMENTED.txt"), []byte(strings.Join(surveyAnswer(), "\n")+"\n"), 0o644)
 		},
+		"log-summary": func(dir string) error {
+			data, err := json.Marshal(logAnswer())
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(dir, "SUMMARY.json"), data, 0o644)
+		},
 		"persistent-script-state": func(dir string) error {
 			data, err := json.Marshal(persistentStateAnswer())
 			if err != nil {
@@ -641,5 +648,47 @@ func TestScriptStateNeedsStoreThenLaterLoad(t *testing.T) {
 		if s.loaded != c.want {
 			t.Errorf("%q: loaded = %v, want %v", c.scripts, s.loaded, c.want)
 		}
+	}
+}
+
+func TestLogSummaryFixture(t *testing.T) {
+	dir := t.TempDir()
+	want, err := writeLogs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var size int64
+	filepath.WalkDir(filepath.Join(dir, "logs"), func(_ string, d os.DirEntry, _ error) error {
+		if info, err := d.Info(); err == nil && !d.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	if size < 300<<10 || size > 900<<10 {
+		t.Fatalf("logs are %d bytes; the task wants about half a megabyte", size)
+	}
+	if len(want) != 8 {
+		t.Fatalf("want 8 routes, got %d: %v", len(want), sortedRoutes(want))
+	}
+	for route, st := range want {
+		if st.Requests == 0 || st.Errors == 0 || st.MaxLatency < 1000 {
+			t.Errorf("%s: %+v; every route should have errors and a spike", route, st)
+		}
+	}
+	// Plausible mistakes must fail: counting health checks, or 404s as errors.
+	wrong := map[string]routeStats{"/healthz": {Requests: 1}}
+	for r, st := range want {
+		wrong[r] = st
+	}
+	if ok, _ := compareSummary(wrong, want); ok {
+		t.Error("an extra /healthz route should fail")
+	}
+	off := map[string]routeStats{}
+	for r, st := range want {
+		st.Errors++
+		off[r] = st
+	}
+	if ok, detail := compareSummary(off, want); ok || !strings.Contains(detail, "and 4 more") {
+		t.Errorf("wrong error counts should fail on every route: %s", detail)
 	}
 }

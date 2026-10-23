@@ -30,7 +30,7 @@ type Task struct {
 
 // Tasks are the built-in benchmark cases, in a fixed list.
 func Tasks() []Task {
-	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), persistentStateTask(), compactionRetentionTask()}
+	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), logSummaryTask(), persistentStateTask(), compactionRetentionTask()}
 }
 
 // goTest runs `go test ./...` in dir and reports whether it passed.
