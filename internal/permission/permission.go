@@ -197,6 +197,11 @@ var NetworkTools = []string{"web_fetch", "web_search", "browser_navigate"}
 
 var networkTools = map[string]bool{}
 
+// PlanModeDenied is the reason plan mode gives for denying a call. The
+// agent adds what to do next, which depends on whether it is a subagent
+// and on the tools it has.
+const PlanModeDenied = "plan mode is active: only read-only tools may run."
+
 func init() {
 	for _, name := range NetworkTools {
 		networkTools[name] = true
@@ -236,7 +241,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		return Allow, ""
 	}
 	if c.mode == ModePlan && !networkTools[call.Tool] {
-		return Deny, "plan mode is active: only read-only tools may run. When your plan is ready, present it with exit_plan_mode for the user's approval."
+		return Deny, PlanModeDenied
 	}
 	if c.allows(call.Tool, subject) {
 		return Allow, ""

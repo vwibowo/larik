@@ -379,6 +379,9 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	}
 	switch {
 	case decision == permission.Deny:
+		if reason == permission.PlanModeDenied {
+			reason += a.planDenyHint()
+		}
 		record("deny (rule)", reason, time.Now())
 		return false, "Permission denied: " + reason, input
 	case pre.Permission == "allow":

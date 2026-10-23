@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -159,5 +161,53 @@ func TestPlanEndedNote(t *testing.T) {
 	last = fp.requests[2].Messages
 	if strings.Contains(last[len(last)-1].Text(), "Plan mode") {
 		t.Fatal("the ended note is said once")
+	}
+}
+
+// A subagent shares the parent's plan mode, so it gets a note of its own,
+// and a denial points it at its final message, not at exit_plan_mode,
+// which it doesn't have.
+func TestSubagentInPlanMode(t *testing.T) {
+	parent, _, dir := setup(t, permission.ModePlan)
+	cp := &fakeProvider{script: []llm.Message{
+		assistant(toolUse("e1", "edit", `{"path":"a.txt","old_string":"a","new_string":"b"}`)),
+		assistant(llm.TextBlock("a.txt should say b")),
+	}}
+	child := parent.Spawn(SpawnOptions{Type: "worker", Provider: cp, Model: "m", Tools: tools.Default().With(netTool{"web_fetch"})})
+	drain(child.Run(context.Background(), "change a.txt"), PermissionReply{})
+
+	note := cp.requests[0].Messages[0].Text()
+	if !strings.Contains(note, "Plan mode is on") || !strings.Contains(note, "report in your final message") ||
+		!strings.Contains(note, "web_fetch still work") {
+		t.Errorf("the subagent should be told plan mode is on and how to report: %q", note)
+	}
+	if strings.Contains(note, "exit_plan_mode") {
+		t.Errorf("the subagent has no exit_plan_mode: %q", note)
+	}
+	res := resultOf(cp, "e1")
+	if !res.IsError || !strings.HasPrefix(res.Content, "Permission denied: "+permission.PlanModeDenied) ||
+		!strings.Contains(res.Content, "web_fetch still work") || !strings.Contains(res.Content, "final message") ||
+		strings.Contains(res.Content, "exit_plan_mode") {
+		t.Errorf("denial = %q", res.Content)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.txt")); !os.IsNotExist(err) {
+		t.Fatal("plan mode must block the subagent's edit")
+	}
+}
+
+// The main agent's denial names exit_plan_mode, and only the network
+// tools it has.
+func TestPlanModeDenialForMainAgent(t *testing.T) {
+	a, fp := planAgent(t,
+		assistant(toolUse("w1", "write", `{"path":"a.txt","content":"A"}`)),
+		assistant(llm.TextBlock("planned")))
+	drain(a.Run(context.Background(), "write it"), PermissionReply{})
+
+	res := resultOf(fp, "w1")
+	if !res.IsError || !strings.Contains(res.Content, permission.PlanModeDenied) || !strings.Contains(res.Content, "exit_plan_mode") {
+		t.Errorf("denial = %q", res.Content)
+	}
+	if strings.Contains(res.Content, "web_") || strings.Contains(res.Content, "browser_") {
+		t.Errorf("the denial should not name network tools the model lacks: %q", res.Content)
 	}
 }

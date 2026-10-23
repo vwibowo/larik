@@ -67,7 +67,31 @@ const (
 	// planWebClause joins planModeNote with the network tools the model has.
 	planWebClause = " %s still work; each call asks the user first."
 	planEndedNote = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
+	// planSubagentNote is planModeNote for a subagent, which has no
+	// exit_plan_mode: it reports back instead of presenting a plan.
+	planSubagentNote = "Plan mode is on: explore with read-only tools, and don't change anything. " +
+		"Bash is blocked even for commands that look read-only%s. Do not retry a denied command.%s " +
+		"Instead of making changes, report in your final message what you found and what should change."
+	// Hints that follow permission.PlanModeDenied.
+	planDenyMain     = " When your plan is ready, present it with exit_plan_mode for the user's approval."
+	planDenySubagent = " Report what should change in your final message instead."
 )
+
+// planDenyHint is what follows a plan-mode denial: the network tools that
+// still work, then the next step for this agent.
+func (a *Agent) planDenyHint() string {
+	a.mu.Lock()
+	reg, sub := a.opts.Tools, a.opts.Subagent != ""
+	a.mu.Unlock()
+	hint := ""
+	if reg != nil {
+		hint = planWebNote(reg)
+	}
+	if sub {
+		return hint + planDenySubagent
+	}
+	return hint + planDenyMain
+}
 
 // planWebNote returns planWebClause naming the network tools in reg, or ""
 // when it has none.
@@ -89,8 +113,12 @@ func planWebNote(reg *tools.Registry) string {
 
 // planNotesLocked adds the plan-mode note for the next prompt. a.mu must be held.
 func (a *Agent) planNotesLocked() {
-	if a.opts.Perms == nil || a.opts.Subagent != "" {
+	if a.opts.Perms == nil {
 		return
+	}
+	note := planModeNote
+	if a.opts.Subagent != "" {
+		note = planSubagentNote
 	}
 	switch {
 	case a.opts.Perms.Mode() == permission.ModePlan:
@@ -105,7 +133,7 @@ func (a *Agent) planNotesLocked() {
 		if a.opts.Tools != nil {
 			web = planWebNote(a.opts.Tools)
 		}
-		a.notes = append(a.notes, fmt.Sprintf(planModeNote, clause, web))
+		a.notes = append(a.notes, fmt.Sprintf(note, clause, web))
 		a.planNoted = true
 	case a.planNoted:
 		a.notes = append(a.notes, planEndedNote)
