@@ -427,6 +427,8 @@ The permission mode decides what Larik may do without asking. The execution sett
 Some things work differently in a script:
 
 - **`bash` returns more.** It returns `{output, exit_code, truncated}` with up to 1 MB of output, and a non-zero exit code doesn't throw.
+- **`read`, `grep` and `glob` return objects.** `read` gives `{path, content, start_line, end_line, more, next_offset?}`, with the lines as they are (no line numbers) and up to 1 MB of them; `grep` gives `{matches: [{path, line, text}], truncated}` and `glob` `{paths, truncated}`, each with up to 5,000 results.
+- **The core tools are described in full.** In `code` mode, `run_code`'s description gives `read`, `write`, `edit`, `multi_edit`, `bash`, `grep`, `glob` and `raw_output` their whole descriptions and argument notes, and the system prompt advises how to work in scripts; other tools get one line each.
 - **Calls can run at once.** `tools.parallel([{name, args}, …])` runs several calls together, read-only ones side by side, and returns each result or error in order.
 - **MCP tool names are valid JavaScript.** Characters that can't appear in an identifier become `_`, so `mcp__my-server__search` is `tools.mcp__my_server__search`.
 - **Long output is kept.** When a script prints more than fits in a tool result, the model sees the start and end, and `raw_output` reads the rest.

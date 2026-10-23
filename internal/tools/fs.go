@@ -59,8 +59,14 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if in.Limit <= 0 {
 		in.Limit = defaultReadLines
 	}
-	// A script's reads go to the script, not the model's context.
+	// A script's reads go to the script, not the model's context, and it
+	// gets the lines as they are (see readData), with more room.
 	_, delegated := CallerFrom(ctx)
+	script := InScript(ctx)
+	budget := readOutputBytes
+	if script {
+		budget = scriptReadBytes
+	}
 	key := shownKey{path, in.Offset, in.Limit}
 	mark, dedup := readMark{}, !delegated && !env.NoReadDedup.Load()
 	if fi, _ := f.Stat(); fi != nil {
@@ -78,10 +84,10 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		}
 	}
 
-	var b strings.Builder
+	var b, raw strings.Builder
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	line, shown := 0, 0
+	line, shown, next := 0, 0, 0
 	for sc.Scan() {
 		line++
 		if line < in.Offset {
@@ -89,6 +95,7 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		}
 		if shown >= in.Limit {
 			fmt.Fprintf(&b, "... (more lines; continue with offset=%d)\n", line)
+			next = line
 			break
 		}
 		text := sc.Text()
@@ -102,11 +109,16 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		// the first line not shown (cutting the middle out afterwards
 		// would hide lines the hint claims were read).
 		entry := fmt.Sprintf("%6d\t%s\n", line, text)
-		if shown > 0 && b.Len()+len(entry) > readOutputBytes-100 { // room for the hint
+		if shown > 0 && b.Len()+len(entry) > budget-100 { // room for the hint
 			fmt.Fprintf(&b, "... (output limit reached; continue with offset=%d)\n", line)
+			next = line
 			break
 		}
 		b.WriteString(entry)
+		if script {
+			raw.WriteString(text)
+			raw.WriteByte('\n')
+		}
 		shown++
 	}
 	if err := sc.Err(); err != nil {
@@ -117,7 +129,11 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		env.Touch(path)
 	}
 	if line == 0 {
-		return Result{Content: "(empty file)"}
+		res := Result{Content: "(empty file)"}
+		if script {
+			res.Data = readData(in.Path, "", 0, 0, 0)
+		}
+		return res
 	}
 	if shown == 0 {
 		return errorf("offset %d is past the end of the file (%d lines)", in.Offset, line)
@@ -130,7 +146,22 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		env.shown[key] = mark
 		env.mu.Unlock()
 	}
-	return Result{Content: Truncate(b.String(), readOutputBytes)}
+	res := Result{Content: Truncate(b.String(), budget)}
+	if script {
+		res.Data = readData(in.Path, raw.String(), in.Offset, in.Offset+shown-1, next)
+	}
+	return res
+}
+
+// readData is what a script's read returns: the lines as they are, which
+// ones they are, and where to continue when there are more (next, 0 when
+// there aren't).
+func readData(path, content string, start, end, next int) map[string]any {
+	d := map[string]any{"path": path, "content": content, "start_line": start, "end_line": end, "more": next > 0}
+	if next > 0 {
+		d["next_offset"] = next
+	}
+	return d
 }
 
 // Write creates or overwrites a file.

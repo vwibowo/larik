@@ -498,13 +498,13 @@ func TestLanguageAppliesOnFreshContext(t *testing.T) {
 		t.Fatalf("language should be in the system prompt: %q", a.opts.System)
 	}
 	a.SetLanguage("")
-	if a.opts.System != "base" {
+	if a.opts.System != WithExecution("base", "") {
 		t.Fatalf("an empty context should apply the language immediately: %q", a.opts.System)
 	}
 
 	a.messages = []llm.Message{llm.UserText("hello")}
 	a.SetLanguage("French")
-	if a.opts.System != "base" {
+	if a.opts.System != WithExecution("base", "") {
 		t.Fatal("a nonempty context should stay stable until it is cleared")
 	}
 	a.Clear()
@@ -517,11 +517,11 @@ func TestClearRebuildsSystemPrompt(t *testing.T) {
 	version := "v1"
 	a := New(Options{System: "base v1", BuildSystem: func() string { return "base " + version }, Language: "Indonesian"})
 	version = "v2"
-	if a.opts.System != WithLanguage("base v1", "Indonesian") {
+	if a.opts.System != WithLanguage(WithExecution("base v1", ""), "Indonesian") {
 		t.Fatalf("the prompt should stay fixed within a context: %q", a.opts.System)
 	}
 	a.Clear()
-	if a.opts.System != WithLanguage("base v2", "Indonesian") {
+	if a.opts.System != WithLanguage(WithExecution("base v2", ""), "Indonesian") {
 		t.Fatalf("clearing should rebuild the prompt and keep the language: %q", a.opts.System)
 	}
 }

@@ -106,6 +106,26 @@ func TestScriptArgumentErrorsPointToDescribe(t *testing.T) {
 	}
 }
 
+func TestSystemPromptFollowsExecution(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(llm.TextBlock("first")), assistant(llm.TextBlock("second")), assistant(llm.TextBlock("third")))
+	a.SetExecution(tools.ExecCode) // empty context: applies now
+	drain(a.Run(context.Background(), "first"), PermissionReply{})
+	if sys := fp.requests[0].System; !strings.Contains(sys, codeSection) || strings.Contains(sys, toolsSection) {
+		t.Fatalf("code execution's prompt should advise scripts:\n%s", sys)
+	}
+	a.SetExecution(tools.ExecTools)
+	drain(a.Run(context.Background(), "second"), PermissionReply{})
+	if fp.requests[1].System != fp.requests[0].System {
+		t.Fatal("the prompt changed mid-context")
+	}
+	a.Clear()
+	drain(a.Run(context.Background(), "third"), PermissionReply{})
+	if sys := fp.requests[2].System; !strings.Contains(sys, toolsSection) || strings.Contains(sys, codeSection) {
+		t.Fatalf("after Clear the prompt should follow tools execution:\n%s", sys)
+	}
+}
+
 func TestRunCodeParallelBatch(t *testing.T) {
 	a, fp, dir := setup(t, permission.ModeDefault,
 		assistant(runCodeUse("c1", `
@@ -116,7 +136,7 @@ const rs = tools.parallel([
   {name: "bash", args: {command: "echo out; exit 3"}},
 ]);
 console.log(rs.map(r => r.ok ? "ok" : "error").join(","));
-console.log(rs[0].value.includes("A"), rs[3].value.exit_code, rs[3].value.output.trim())`)),
+console.log(rs[0].value.content.includes("A"), rs[3].value.exit_code, rs[3].value.output.trim())`)),
 		assistant(llm.TextBlock("done")))
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("A\n"), 0o644); err != nil {
 		t.Fatal(err)

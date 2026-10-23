@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -58,7 +59,7 @@ func (Grep) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	root := env.Abs(in.Path)
-	lines := newSearchLines(env.Cwd)
+	lines := newSearchLines(env.Cwd).forScript(InScript(ctx))
 	if rg := ripgrepPath(); rg != "" {
 		err = ripgrep(ctx, rg, root, in, lines)
 	} else {
@@ -67,10 +68,33 @@ func (Grep) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if err != nil {
 		return errorf("%v", err)
 	}
+	res := Result{Content: lines.String("more matches not shown; narrow the pattern, path or glob")}
 	if lines.n == 0 && !lines.full {
-		return Result{Content: "No matches found."}
+		res.Content = "No matches found."
 	}
-	return Result{Content: lines.String("more matches not shown; narrow the pattern, path or glob")}
+	if lines.script {
+		res.Data = grepData(lines)
+	}
+	return res
+}
+
+// grepLine splits a path:line:text match. The path is the shortest prefix
+// followed by a line number, so a Windows drive's colon stays in it.
+var grepLine = regexp.MustCompile(`^(.*?):(\d+):(.*)$`)
+
+// grepData is what a script's grep returns: {matches: [{path, line,
+// text}], truncated}.
+func grepData(lines *searchLines) map[string]any {
+	matches := make([]map[string]any, 0, len(lines.items))
+	for _, l := range lines.items {
+		m := grepLine.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		n, _ := strconv.Atoi(m[2])
+		matches = append(matches, map[string]any{"path": m[1], "line": n, "text": m[3]})
+	}
+	return map[string]any{"matches": matches, "truncated": lines.full}
 }
 
 var ripgrepPath = sync.OnceValue(func() string {
@@ -244,16 +268,31 @@ func grepFileWithBuffers(path string, re *regexp.Regexp, supplied *grepBuffers) 
 
 // searchLines collects result lines for the model: paths relative to the
 // working directory, at most maxSearchResults lines and MaxOutputBytes
-// bytes, cut on line boundaries so no result is half shown.
+// bytes, cut on line boundaries so no result is half shown. A script
+// gets more of them, and each line on its own (items).
 type searchLines struct {
-	prefix string
-	b      strings.Builder
-	n      int
-	full   bool
+	prefix         string
+	b              strings.Builder
+	n              int
+	full           bool
+	maxN, maxBytes int
+	script         bool
+	items          []string
 }
 
 func newSearchLines(cwd string) *searchLines {
-	return &searchLines{prefix: strings.TrimSuffix(cwd, string(filepath.Separator)) + string(filepath.Separator)}
+	return &searchLines{
+		prefix: strings.TrimSuffix(cwd, string(filepath.Separator)) + string(filepath.Separator),
+		maxN:   maxSearchResults, maxBytes: MaxOutputBytes,
+	}
+}
+
+// forScript gives a script's search its room, when script is set.
+func (s *searchLines) forScript(script bool) *searchLines {
+	if script {
+		s.script, s.maxN, s.maxBytes = true, scriptSearchResults, scriptSearchBytes
+	}
+	return s
 }
 
 // add records a line and reports whether there is room for more.
@@ -262,13 +301,16 @@ func (s *searchLines) add(line string) bool {
 		return false
 	}
 	line = strings.TrimPrefix(line, s.prefix)
-	if s.n >= maxSearchResults || s.b.Len()+len(line)+1 > MaxOutputBytes {
+	if s.n >= s.maxN || s.b.Len()+len(line)+1 > s.maxBytes {
 		s.full = true
 		return false
 	}
 	s.b.WriteString(line)
 	s.b.WriteByte('\n')
 	s.n++
+	if s.script {
+		s.items = append(s.items, line)
+	}
 	return true
 }
 
@@ -347,17 +389,26 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if err != nil {
 		return errorf("%v", err)
 	}
-	if len(hits) == 0 {
-		return Result{Content: "No files found."}
-	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].mod > hits[j].mod })
-	lines := newSearchLines(env.Cwd)
-	for _, h := range hits {
-		if !lines.add(h.path) {
-			break
+	lines := newSearchLines(env.Cwd).forScript(InScript(ctx))
+	res := Result{Content: "No files found."}
+	if len(hits) > 0 {
+		sort.Slice(hits, func(i, j int) bool { return hits[i].mod > hits[j].mod })
+		for _, h := range hits {
+			if !lines.add(h.path) {
+				break
+			}
 		}
+		res.Content = lines.String(fmt.Sprintf("%d more", len(hits)-lines.n))
 	}
-	return Result{Content: lines.String(fmt.Sprintf("%d more", len(hits)-lines.n))}
+	if lines.script {
+		// A script's glob returns {paths, truncated}.
+		paths := lines.items
+		if paths == nil {
+			paths = []string{}
+		}
+		res.Data = map[string]any{"paths": paths, "truncated": lines.full}
+	}
+	return res
 }
 
 // rgFiles calls fn for each file rg lists under root.

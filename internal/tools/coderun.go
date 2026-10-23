@@ -763,7 +763,11 @@ func (s *script) install() {
 		}
 		var sch any
 		_ = json.Unmarshal(sp.Schema, &sch)
-		return s.vm.ToValue(map[string]any{"name": s.bound[sp.Name], "description": sp.Description, "schema": sch})
+		d := map[string]any{"name": s.bound[sp.Name], "description": sp.Description, "schema": sch}
+		if r := scriptReturns[sp.Name]; r != "" {
+			d["returns"] = r
+		}
+		return s.vm.ToValue(d)
 	})
 	_ = t.Set("list", func() []string {
 		names := make([]string, len(s.specs))

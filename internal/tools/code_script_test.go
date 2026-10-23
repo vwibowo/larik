@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,5 +362,118 @@ func TestJSName(t *testing.T) {
 		if got := jsName(in); got != want {
 			t.Errorf("jsName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestReadInScriptReturnsData(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0o644)
+	env := NewEnv(dir)
+	ctx := context.WithValue(context.Background(), scriptKey{}, true)
+
+	res := (Read{}).Run(ctx, env, json.RawMessage(`{"path":"a.txt","offset":2,"limit":2}`))
+	d, _ := res.Data.(map[string]any)
+	if res.IsError || d["content"] != "two\nthree\n" || d["start_line"] != 2 || d["end_line"] != 3 || d["more"] != true || d["next_offset"] != 4 || d["path"] != "a.txt" {
+		t.Fatalf("data: %+v", d)
+	}
+	if !strings.Contains(res.Content, "     2\ttwo") {
+		t.Fatalf("the text keeps its line numbers for the transcript: %q", res.Content)
+	}
+	d, _ = (Read{}).Run(ctx, env, json.RawMessage(`{"path":"a.txt"}`)).Data.(map[string]any)
+	if d["content"] != "one\ntwo\nthree\nfour\n" || d["end_line"] != 4 || d["more"] != false || d["next_offset"] != nil {
+		t.Fatalf("whole file: %+v", d)
+	}
+	d, _ = (Read{}).Run(ctx, env, json.RawMessage(`{"path":"empty.txt"}`)).Data.(map[string]any)
+	if d["content"] != "" || d["more"] != false {
+		t.Fatalf("empty file: %+v", d)
+	}
+	if res := (Read{}).Run(context.Background(), env, json.RawMessage(`{"path":"a.txt"}`)); res.Data != nil {
+		t.Fatalf("data outside a script: %+v", res.Data)
+	}
+}
+
+func TestReadInScriptHasMoreRoom(t *testing.T) {
+	dir := t.TempDir()
+	line := strings.Repeat("x", 100) + "\n"
+	os.WriteFile(filepath.Join(dir, "big.txt"), []byte(strings.Repeat(line, 1500)), 0o644) // ~150 KB
+	env := NewEnv(dir)
+	ctx := context.WithValue(context.Background(), scriptKey{}, true)
+	d, _ := (Read{}).Run(ctx, env, json.RawMessage(`{"path":"big.txt"}`)).Data.(map[string]any)
+	if d["end_line"] != 1500 || d["more"] != false {
+		t.Fatalf("a script should get past the model's %d-byte budget: end_line %v, more %v", readOutputBytes, d["end_line"], d["more"])
+	}
+	if res := (Read{}).Run(context.Background(), NewEnv(dir), json.RawMessage(`{"path":"big.txt"}`)); !strings.Contains(res.Content, "output limit reached") {
+		t.Fatal("the model's read keeps its budget")
+	}
+}
+
+func TestSearchInScriptReturnsData(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// TODO: one\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "sub", "b.go"), []byte("package b\n\n// TODO: two: with colons\n"), 0o644)
+	env := NewEnv(dir)
+	ctx := context.WithValue(context.Background(), scriptKey{}, true)
+
+	d, _ := (Grep{}).Run(ctx, env, json.RawMessage(`{"pattern":"TODO"}`)).Data.(map[string]any)
+	matches, _ := d["matches"].([]map[string]any)
+	got := map[string]bool{}
+	for _, m := range matches {
+		got[fmt.Sprintf("%v:%v:%v", m["path"], m["line"], m["text"])] = true
+	}
+	if len(matches) != 2 || !got["a.go:2:// TODO: one"] || !got[filepath.Join("sub", "b.go")+":3:// TODO: two: with colons"] || d["truncated"] != false {
+		t.Fatalf("grep data: %+v", d)
+	}
+	d, _ = (Grep{}).Run(ctx, env, json.RawMessage(`{"pattern":"nowhere"}`)).Data.(map[string]any)
+	if m, _ := d["matches"].([]map[string]any); len(m) != 0 || d["truncated"] != false {
+		t.Fatalf("no matches: %+v", d)
+	}
+
+	d, _ = (Glob{}).Run(ctx, env, json.RawMessage(`{"pattern":"**/*.go"}`)).Data.(map[string]any)
+	if paths, _ := d["paths"].([]string); len(paths) != 2 || d["truncated"] != false {
+		t.Fatalf("glob data: %+v", d)
+	}
+	d, _ = (Glob{}).Run(ctx, env, json.RawMessage(`{"pattern":"*.rs"}`)).Data.(map[string]any)
+	if paths, _ := d["paths"].([]string); paths == nil || len(paths) != 0 {
+		t.Fatalf("no files should still give an empty list: %+v", d)
+	}
+	for _, res := range []Result{(Grep{}).Run(context.Background(), env, json.RawMessage(`{"pattern":"TODO"}`)), (Glob{}).Run(context.Background(), env, json.RawMessage(`{"pattern":"*.go"}`))} {
+		if res.Data != nil {
+			t.Fatalf("data outside a script: %+v", res.Data)
+		}
+	}
+}
+
+func TestCodeDescriptionDescribesCoreTools(t *testing.T) {
+	desc := specOf(t, Default().ForExecution(ExecCode), CodeToolName).Description
+	for _, want := range []string{
+		"- multi_edit({edits: [{new_string, old_string, replace_all?}], path})",
+		"- read({path, limit?, offset?}) → {path, content, start_line, end_line, more, next_offset?}",
+		"old_string must match the file exactly",
+		"timeout: Timeout in seconds",
+		"Read exact output from a previous bash or run_code call",
+		"content is the lines as they are, without line numbers",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("code description lacks %q:\n%s", want, desc)
+		}
+	}
+	if strings.Contains(desc, WriteFilesToolName) {
+		t.Errorf("scripts can't call write_files, so write's entry shouldn't point to it:\n%s", desc)
+	}
+	// Hybrid has the schemas already, but still learns what scripts get.
+	hybrid := specOf(t, Default().ForExecution(ExecHybrid), CodeToolName).Description
+	if !strings.Contains(hybrid, "tools.grep → {matches") || strings.Contains(hybrid, "- read(") {
+		t.Errorf("hybrid description:\n%s", hybrid)
+	}
+}
+
+func TestDescribeSaysWhatAToolReturns(t *testing.T) {
+	tool, _ := NewRegistry(Read{}, Edit{}).ForExecution(ExecCode).Get(CodeToolName)
+	in, _ := json.Marshal(map[string]any{"code": `[tools.describe("read").returns, tools.describe("edit").returns]`})
+	res := tool.Run(WithCaller(context.Background(), &fakeCaller{}), nil, in)
+	if res.IsError || !strings.Contains(res.Content, "{path, content") || !strings.Contains(res.Content, "null") {
+		t.Fatalf("describe: %s", res.Content)
 	}
 }

@@ -8,14 +8,14 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"larik/internal/tools"
 )
 
 const basePrompt = `You are Larik, a coding agent working in the user's terminal. You help with software engineering tasks by reading code, running commands, and editing files with the tools provided.
 
 How to work:
 - Investigate before changing existing code: read the relevant files, then make focused edits that match the surrounding style. For a new project in an empty directory, start creating the requested files without searching for code that is not there.
-- Make independent tool calls together in one turn, such as several reads or searches: read-only calls run in parallel, and every turn is another model round trip.
-- Create several independent files in one turn: with write_files if available, or with several write calls in one run_code script.
 - Run tests, builds, or linters when they exist to verify your changes, and report failures honestly.
 - Keep going until the task is done; don't stop to ask for permission for routine steps. Ask only when a decision genuinely belongs to the user.
 - Be concise in replies: skip preamble, and don't restate tool output the user already saw. Reference code as path:line.
@@ -50,6 +50,35 @@ func BuildSystemPrompt(cwd, configDir string) string {
 // caller already discovered, avoiding another Git subprocess.
 func BuildSystemPromptWithRoot(cwd, root, configDir string) string {
 	return basePrompt + "\n\n" + ContextSectionsWithRoot(cwd, root, configDir)
+}
+
+// Execution sections say how to act with the tools the model gets under
+// each execution; WithExecution adds the one in effect. They change only
+// with the tool list, at a fresh context, so the prompt stays cached.
+const (
+	toolsSection = `Using tools:
+- Make independent tool calls together in one turn, such as several reads or searches: read-only calls run in parallel, and every turn is another model round trip.
+- Create several independent files in one turn with write_files if available.`
+	hybridSection = toolsSection + `
+- Use run_code for work with many steps or a lot of data (loops over files, chained lookups, filtering large output); call a tool directly for a single action.`
+	codeSection = `Using tools (you act through run_code scripts):
+- Do a whole step in one script, such as finding files, reading them and editing, or editing and running the tests: every turn is another model round trip. Make one run_code call per turn; calls run one at a time.
+- Use tools.parallel for independent reads and searches.
+- Print only what the next step needs: counts, matching lines, short excerpts. Print a whole file only when you need all of it.
+- Read a file before editing it, and copy old_string from the content read returns.
+- Wrap calls that may fail in try/catch when the rest of the script should still run, and print what failed.`
+)
+
+// WithExecution adds the section for how the model acts under exec.
+func WithExecution(system string, exec tools.Execution) string {
+	section := toolsSection
+	switch exec {
+	case tools.ExecHybrid:
+		section = hybridSection
+	case tools.ExecCode:
+		section = codeSection
+	}
+	return system + "\n\n" + section
 }
 
 // WithLanguage adds an instruction to reply in lang, when set.

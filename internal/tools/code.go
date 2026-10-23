@@ -54,11 +54,15 @@ const (
 	// codeMaxValue bounds the rendering of the script's final value.
 	codeMaxValue = 1 << 20
 	// scriptBashOutput bounds the output a script gets from bash, which
-	// is more than the model sees so that scripts can filter it.
-	scriptBashOutput  = 1 << 20
-	codeStateKeyMax   = 256
-	codeStateValueMax = 256 << 10
-	codeStateTotalMax = 1 << 20
+	// is more than the model sees so that scripts can filter it; read,
+	// grep and glob give scripts more room for the same reason.
+	scriptBashOutput    = 1 << 20
+	scriptReadBytes     = 1 << 20
+	scriptSearchResults = 5000
+	scriptSearchBytes   = 1 << 20
+	codeStateKeyMax     = 256
+	codeStateValueMax   = 256 << 10
+	codeStateTotalMax   = 1 << 20
 	// codeMaxStack bounds the script's call depth, so runaway recursion
 	// stops with an error instead of growing until the memory limit.
 	codeMaxStack = 10_000
@@ -294,8 +298,9 @@ func (c codeTool) Spec() llm.ToolSpec {
 		d.WriteString("Run a JavaScript script that calls tools, and get back only what it prints. " +
 			"This is how you use tools: each one below is a function in the script. Do several steps in one script when you can.\n\n")
 	}
-	fmt.Fprintf(&d, "tools.<name>(args) runs a tool with the arguments of its schema and returns its text output, or throws an Error with the tool's message; tools.call(name, args) is the same. "+
-		"tools.bash returns {output, exit_code, truncated, raw_output_id?} instead, with up to 1 MB of output, and doesn't throw for a non-zero exit code. "+
+	fmt.Fprintf(&d, "tools.<name>(args) runs a tool with the arguments of its schema and returns its result, or throws an Error with the tool's message; tools.call(name, args) is the same. "+
+		"Most tools return their text output; these return objects instead, with more room than a direct call: "+scriptReturnsText()+". "+
+		"tools.bash doesn't throw for a non-zero exit code. "+
 		"tools.parallel([{name, args}, ...]) runs several calls at once (read-only ones side by side) and returns [{ok: true, value} or {ok: false, error}] in order. "+
 		"In names, characters a JavaScript identifier can't have become _ (mcp__my-server__x is tools.mcp__my_server__x). "+
 		"store(key, value) and load(key) keep small JSON values across successful scripts in this session; store(key, undefined) deletes. Changes commit only when the script succeeds. "+
@@ -323,29 +328,112 @@ func (c codeTool) Spec() llm.ToolSpec {
 	}
 }
 
-// index lists the tools with their argument names, falling back to names
-// only past indexBudget.
+// scriptReturns are the values tools give scripts in place of their text
+// (Result.Data), by tool.
+var scriptReturns = map[string]string{
+	"read": "{path, content, start_line, end_line, more, next_offset?} (content is the lines as they are, without line numbers)",
+	"grep": "{matches: [{path, line, text}], truncated}",
+	"glob": "{paths, truncated}",
+	"bash": "{output, exit_code, truncated, raw_output_id?}",
+}
+
+func scriptReturnsText() string {
+	var parts []string
+	for _, name := range []string{"read", "grep", "glob", "bash"} {
+		parts = append(parts, "tools."+name+" → "+scriptReturns[name])
+	}
+	return strings.Join(parts, "; ")
+}
+
+// coreTools are described in full in code execution's index, with their
+// arguments; the rest get a line each. Scripts lean on these the most,
+// and their rules (edit's unique old_string, read's limits) matter.
+var coreTools = map[string]bool{"read": true, "write": true, "edit": true, "multi_edit": true, "bash": true, "grep": true, "glob": true, "raw_output": true}
+
+// index lists the tools: the core ones in full, the others with their
+// argument names, falling back to names only past indexBudget.
 func (c codeTool) index() string {
 	bound := scriptNames(c.specs)
-	var lines, names []string
+	var core, lines, names []string
 	for _, sp := range c.listed {
 		name := bound[sp.Name]
+		if coreTools[sp.Name] {
+			core = append(core, c.fullEntry(name, sp))
+			continue
+		}
 		lines = append(lines, "- "+signature(name, sp)+": "+indexLine(sp))
 		names = append(names, name)
 	}
-	if out := strings.Join(lines, "\n"); len(out) <= indexBudget {
-		return out
+	rest := strings.Join(lines, "\n")
+	if len(rest) > indexBudget {
+		rest = strings.Join(names, ", ") + "\n(Use tools.search(query) to find one, tools.describe(name) for its arguments.)"
 	}
-	return strings.Join(names, ", ") + "\n(Use tools.search(query) to find one, tools.describe(name) for its arguments.)"
+	return strings.TrimSpace(strings.Join(core, "\n") + "\n" + rest)
 }
 
-// signature renders a spec as name({required, optional?}).
+// fullEntry is a core tool's index entry: its signature and what it
+// returns, its description, and what each argument means.
+func (c codeTool) fullEntry(name string, sp llm.ToolSpec) string {
+	head := "- " + signature(name, sp)
+	if r := scriptReturns[sp.Name]; r != "" {
+		head += " → " + strings.SplitN(r, " (", 2)[0]
+	}
+	out := head + "\n  " + scriptDescription(sp.Description)
+	if args := argNotes(sp); args != "" {
+		out += "\n  " + args
+	}
+	return out
+}
+
+// scriptDescription drops the sentences of a description that point to
+// the wrappers scripts replace, such as write's to write_files.
+func scriptDescription(desc string) string {
+	sentences := strings.SplitAfter(strings.Join(strings.Fields(desc), " "), ". ")
+	var kept []string
+	for _, s := range sentences {
+		if !strings.Contains(s, WriteFilesToolName) && !strings.Contains(s, CallToolName) && !strings.Contains(s, ToolSearchName) {
+			kept = append(kept, s)
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, ""))
+}
+
+// argNotes are the descriptions of a tool's arguments, as "name: what".
+func argNotes(sp llm.ToolSpec) string {
+	var s struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	_ = json.Unmarshal(sp.Schema, &s)
+	names := make([]string, 0, len(s.Properties))
+	for p, v := range s.Properties {
+		if v.Description != "" {
+			names = append(names, p)
+		}
+	}
+	sort.Strings(names)
+	notes := make([]string, len(names))
+	for i, p := range names {
+		notes[i] = p + ": " + strings.Join(strings.Fields(s.Properties[p].Description), " ")
+	}
+	return strings.Join(notes, "; ")
+}
+
+// signature renders a spec as name({required, optional?}), with the shape
+// of an argument that is a list of objects.
 func signature(name string, sp llm.ToolSpec) string {
+	return name + "(" + objectShape(sp.Schema) + ")"
+}
+
+// objectShape renders an object schema as {required, optional?}; a
+// property that is an array of objects shows its items' shape.
+func objectShape(schema json.RawMessage) string {
 	var s struct {
 		Properties map[string]json.RawMessage `json:"properties"`
 		Required   []string                   `json:"required"`
 	}
-	_ = json.Unmarshal(sp.Schema, &s)
+	_ = json.Unmarshal(schema, &s)
 	req := map[string]bool{}
 	for _, r := range s.Required {
 		req[r] = true
@@ -360,10 +448,21 @@ func signature(name string, sp llm.ToolSpec) string {
 		}
 		return props[i] < props[j]
 	})
+	out := make([]string, len(props))
 	for i, p := range props {
+		out[i] = p
 		if !req[p] {
-			props[i] = p + "?"
+			out[i] += "?"
+		}
+		var prop struct {
+			Items json.RawMessage `json:"items"`
+		}
+		var items struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if json.Unmarshal(s.Properties[p], &prop) == nil && json.Unmarshal(prop.Items, &items) == nil && len(items.Properties) > 0 {
+			out[i] += ": [" + objectShape(prop.Items) + "]"
 		}
 	}
-	return name + "({" + strings.Join(props, ", ") + "})"
+	return "{" + strings.Join(out, ", ") + "}"
 }

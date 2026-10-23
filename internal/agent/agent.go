@@ -240,7 +240,7 @@ func New(opts Options) *Agent {
 	if opts.Session != nil {
 		a.env.RawOutputDir = session.RawDir(opts.Session.Path)
 	}
-	a.opts.System = WithLanguage(opts.System, opts.Language)
+	a.composeSystemLocked()
 	if opts.Checkpoints != nil {
 		a.env.BeforeWrite = opts.Checkpoints.Capture
 		a.env.RecordOriginal = opts.Checkpoints.Record
@@ -319,6 +319,7 @@ func (a *Agent) SetModel(p llm.Provider, model string, runtime ...llm.AgentRunti
 		if len(a.messages) == 0 {
 			a.opts.Execution = exec
 			a.nextExecution = nil
+			a.composeSystemLocked()
 		} else if exec == a.opts.Execution {
 			a.nextExecution = nil
 		} else {
@@ -354,7 +355,7 @@ func (a *Agent) SetLanguage(lang string) {
 	if len(a.messages) == 0 {
 		a.opts.Language = lang
 		a.nextLang = nil
-		a.opts.System = WithLanguage(a.baseSystem, lang)
+		a.composeSystemLocked()
 	} else {
 		a.nextLang = &lang
 	}
@@ -402,8 +403,14 @@ func (a *Agent) Clear() {
 	if a.nextExecution != nil {
 		a.opts.Execution, a.nextExecution = *a.nextExecution, nil
 	}
-	a.opts.System = WithLanguage(a.baseSystem, a.opts.Language)
+	a.composeSystemLocked()
 	a.mu.Unlock()
+}
+
+// composeSystemLocked builds the system prompt from the base prompt, the
+// execution's section and the reply language. a.mu must be held.
+func (a *Agent) composeSystemLocked() {
+	a.opts.System = WithLanguage(WithExecution(a.baseSystem, a.opts.Execution), a.opts.Language)
 }
 
 // Tools returns the current tool registry.
@@ -449,6 +456,7 @@ func (a *Agent) SetExecution(e tools.Execution) {
 	if len(a.messages) == 0 {
 		a.opts.Execution = e
 		a.nextExecution = nil
+		a.composeSystemLocked()
 	} else if e == a.opts.Execution {
 		a.nextExecution = nil
 	} else {
