@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -366,5 +367,25 @@ func TestRunnerStopsItselfPastItsDeadline(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		cmd.Process.Kill()
 		t.Fatal("the runner kept going past its deadline")
+	}
+}
+
+func TestRunCodeReportsWhatItPrints(t *testing.T) {
+	tool, _ := codeRegistry().ForExecution(ExecCode).Get(CodeToolName)
+	var mu sync.Mutex
+	var tails []string
+	ctx := WithProgress(WithCaller(context.Background(), &fakeCaller{wait: 300 * time.Millisecond}), func(tail string) {
+		mu.Lock()
+		tails = append(tails, tail)
+		mu.Unlock()
+	})
+	in, _ := json.Marshal(map[string]any{"code": `console.log("step 1"); tools.echo({text: "x"}); console.log("step 2")`})
+	if res := tool.Run(ctx, nil, in); res.IsError {
+		t.Fatalf("script failed: %s", res.Content)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tails) == 0 || tails[0] != "step 1" || !strings.Contains(tails[len(tails)-1], "step 2") {
+		t.Fatalf("the script's output should show while it runs: %q", tails)
 	}
 }

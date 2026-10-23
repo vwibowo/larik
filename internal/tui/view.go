@@ -1000,6 +1000,14 @@ func (m *model) permissionView() string {
 	e := m.perm
 	w := max(m.width-6, 20)
 	meta := []string{permToolName(e)}
+	if s := m.scriptOf(e.Agent, e.ToolID); s != nil {
+		// Name the plan the call belongs to, not just the call.
+		from := "from a script"
+		if s.label != "" {
+			from = "from script: " + textutil.OneLine(s.label, 40)
+		}
+		meta = append(meta, from)
+	}
 	if e.Agent != "" {
 		meta = append(meta, "from subagent "+e.Agent)
 	}

@@ -137,6 +137,9 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 		state = stateCaller.CodeState()
 	}
 	r := &codeRun{caller: caller, ctx: runCtx, env: env, callID: CallID(ctx), state: state, clock: clock}
+	if report := progressOf(ctx); report != nil {
+		r.progress = &tailWriter{report: report} // what it prints shows while it runs
+	}
 	done, err := r.run(c, in.Code)
 	if r.stopped || done.Truncated {
 		r.newline()
@@ -253,11 +256,12 @@ func plural(n int) string {
 // codeRun is the parent's side of one script: it starts the child, runs
 // the tool calls it asks for, and collects what it prints.
 type codeRun struct {
-	caller Caller
-	env    *Env
-	ctx    context.Context
-	clock  *scriptClock
-	calls  int
+	caller   Caller
+	env      *Env
+	ctx      context.Context
+	clock    *scriptClock
+	calls    int
+	progress *tailWriter // nil when nothing shows progress
 
 	// out keeps the start and end of the output for the model. Once the
 	// output is longer than the model may see, all of it also goes to
@@ -280,6 +284,9 @@ func (r *codeRun) print(s string) {
 		s, r.stopped = safeCut(s, max(room, 0)), true
 	}
 	r.write(s)
+	if r.progress != nil {
+		r.progress.Write([]byte(s))
+	}
 }
 
 // write adds s to the output. Unlike print it has no limit, so the lines

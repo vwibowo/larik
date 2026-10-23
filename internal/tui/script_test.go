@@ -141,3 +141,20 @@ func TestHistoryShowsScripts(t *testing.T) {
 		t.Fatalf("history should show the script's title and calls:\n%s", got)
 	}
 }
+
+func TestPermissionPromptNamesTheScript(t *testing.T) {
+	m := testModel(t)
+	m.width = 120
+	m.handleEvent(agent.Event{Kind: agent.EvToolStart, ToolID: "c1", ToolName: tools.CodeToolName, Input: scriptInput("// tidy the imports\ntools.edit({})")})
+	ev := agent.Event{Kind: agent.EvPermission, ToolID: "c1.1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go","old_string":"x","new_string":"y"}`)}
+	m.perm = &ev
+	if got := plain(m.permissionView()); !strings.Contains(got, "from script: tidy the imports") {
+		t.Fatalf("a script's call should say which script asks:\n%s", got)
+	}
+	// A direct call says nothing about scripts.
+	direct := agent.Event{Kind: agent.EvPermission, ToolID: "e1", ToolName: "edit", Input: ev.Input}
+	m.perm = &direct
+	if got := plain(m.permissionView()); strings.Contains(got, "script") {
+		t.Fatalf("a direct call isn't from a script:\n%s", got)
+	}
+}

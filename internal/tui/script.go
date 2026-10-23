@@ -22,6 +22,7 @@ import (
 // scriptRun collects a running script's finished calls for its card.
 type scriptRun struct {
 	started time.Time
+	label   string // what the script says it does (scriptLabel)
 	calls   []agent.Event
 }
 
@@ -32,7 +33,9 @@ func (m *model) startScript(e agent.Event) {
 	if m.scripts == nil {
 		m.scripts = make(map[string]*scriptRun)
 	}
-	m.scripts[scriptKey(e.Agent, e.ToolID)] = &scriptRun{started: time.Now()}
+	var in struct{ Code string }
+	_ = json.Unmarshal(e.Input, &in)
+	m.scripts[scriptKey(e.Agent, e.ToolID)] = &scriptRun{started: time.Now(), label: scriptLabel(in.Code)}
 }
 
 // scriptOf returns the running script that made call id, if one did.
