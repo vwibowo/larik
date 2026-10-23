@@ -88,7 +88,28 @@ func (l *live) publish(e agent.Event, bg bool) Event {
 		l.pmu.Unlock()
 		return p.ev
 	}
+	if e.Kind == agent.EvToolEnd {
+		l.expireCall(e)
+	}
 	return l.bus.publish(ev)
+}
+
+// expireCall drops the request of a tool call that ended unanswered, as
+// when the Claude Code CLI stops waiting for the call.
+func (l *live) expireCall(end agent.Event) {
+	l.pmu.Lock()
+	var gone []string
+	for id, p := range l.pending {
+		if p.ev.ToolID == end.ToolID && p.ev.Agent == end.Agent {
+			gone = append(gone, id)
+			delete(l.pending, id)
+		}
+	}
+	l.pmu.Unlock()
+	sort.Strings(gone)
+	for _, id := range gone {
+		l.bus.publish(Event{Session: l.id, RequestID: id, Event: agent.Event{Kind: EvPermResolved, Text: "expired", ToolID: end.ToolID}})
+	}
 }
 
 func (l *live) status(busy bool) {

@@ -652,6 +652,27 @@ func TestEndedTaskExpiresItsPermissionRequests(t *testing.T) {
 	}
 }
 
+// A tool call that ends while its request is pending (the Claude Code CLI
+// stopped waiting for it) takes the request with it, and clients are told.
+func TestEndedCallExpiresItsPermissionRequest(t *testing.T) {
+	l := &live{bus: newBus(), pending: map[string]*pendingPerm{
+		"perm-1": {ev: Event{Event: agent.Event{ToolID: "c1"}}, reply: make(chan agent.PermissionReply, 1)},
+		"perm-2": {ev: Event{Event: agent.Event{ToolID: "c1", Agent: "worker: build"}}, reply: make(chan agent.PermissionReply, 1)},
+	}}
+	l.publish(agent.Event{Kind: agent.EvToolEnd, ToolID: "c1", IsError: true}, false)
+	if _, ok := l.pending["perm-1"]; ok {
+		t.Fatal("the ended call's request should expire")
+	}
+	if _, ok := l.pending["perm-2"]; !ok {
+		t.Fatal("a subagent's call with the same id must stay")
+	}
+	replay, _, _ := l.bus.subscribe(0)
+	if len(replay) != 2 || replay[0].RequestID != "perm-1" || replay[0].Kind != EvPermResolved || replay[0].Text != "expired" ||
+		replay[1].Kind != agent.EvToolEnd {
+		t.Fatalf("events = %+v", replay)
+	}
+}
+
 // TestBusGapWhenClientIsAhead: a client that saw seq 50 from a previous
 // run of the bus reconnects to a fresh one; it must be told, and get
 // everything retained, rather than taking seq 1..3 for old events.
