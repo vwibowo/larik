@@ -216,3 +216,18 @@ func TestMentionPopupOffersResources(t *testing.T) {
 		t.Fatalf("composer = %q", got)
 	}
 }
+
+// A call that ends while its prompt is open (the Claude Code CLI stopped
+// waiting for it) takes the prompt with it, and the next one shows.
+func TestEndedCallClosesItsPrompt(t *testing.T) {
+	m := testModel(t)
+	m.perm = &agent.Event{Kind: agent.EvPermission, ToolID: "c1", ToolName: "exit_plan_mode", Reply: make(chan agent.PermissionReply, 1)}
+	m.permQueue = []agent.Event{
+		{Kind: agent.EvPermission, ToolID: "c2", ToolName: "exit_plan_mode", Reply: make(chan agent.PermissionReply, 1)},
+		{Kind: agent.EvPermission, ToolID: "c1", Agent: "worker: build", ToolName: "bash", Reply: make(chan agent.PermissionReply, 1)},
+	}
+	m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: "c1", ToolName: "exit_plan_mode", IsError: true})
+	if m.perm == nil || m.perm.ToolID != "c2" || len(m.permQueue) != 1 || m.permQueue[0].Agent != "worker: build" {
+		t.Fatalf("only the ended call's prompt should close: %+v queue %+v", m.perm, m.permQueue)
+	}
+}

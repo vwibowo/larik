@@ -228,3 +228,85 @@ func TestRuntimeResolvedModelSuppliesTheContextWindow(t *testing.T) {
 		t.Errorf("window after switching model = %d, want the default %d", got, llm.DefaultContextWindow)
 	}
 }
+
+// writeTool needs permission outside yolo mode.
+type writeTool struct{ calls *atomic.Int32 }
+
+func (writeTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: "runtime_write", Description: "writes", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (writeTool) ReadOnly() bool { return false }
+func (w writeTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result {
+	w.calls.Add(1)
+	return tools.Result{Content: "wrote"}
+}
+
+// droppingRuntime asks for one call, and stops waiting for it when
+// dropped closes, as the Claude Code CLI does when a call times out.
+type droppingRuntime struct{ dropped chan struct{} }
+
+func (r droppingRuntime) Run(ctx context.Context, req llm.AgentRuntimeRequest) (<-chan llm.AgentRuntimeEvent, error) {
+	out := make(chan llm.AgentRuntimeEvent, 4)
+	call := llm.Block{Type: llm.BlockToolUse, ID: "slow-call", Name: "runtime_write", Input: json.RawMessage(`{}`)}
+	go func() {
+		defer close(out)
+		assistant := llm.Message{Role: llm.RoleAssistant, Model: req.Model, Blocks: []llm.Block{call}}
+		out <- llm.AgentRuntimeEvent{Assistant: &assistant}
+		out <- llm.AgentRuntimeEvent{Tool: &llm.AgentRuntimeToolRequest{Call: call, Result: make(chan llm.Block, 1), Dropped: r.dropped}}
+		<-r.dropped
+		final := llm.Message{Role: llm.RoleAssistant, Model: req.Model, Blocks: []llm.Block{llm.TextBlock("moved on")}}
+		out <- llm.AgentRuntimeEvent{Assistant: &final}
+		out <- llm.AgentRuntimeEvent{Done: true}
+	}()
+	return out, nil
+}
+
+// A call the runtime stopped waiting for ends: its permission prompt is
+// withdrawn (the call ends without an answer), the tool never runs, and
+// the transcript says why.
+func TestRuntimeDroppedCallEndsItsPrompt(t *testing.T) {
+	var calls atomic.Int32
+	dir := t.TempDir()
+	rt := droppingRuntime{dropped: make(chan struct{})}
+	a := New(Options{Provider: &fakeProvider{}, Runtime: rt, Model: "sonnet", Cwd: dir, Tools: tools.NewRegistry(writeTool{&calls}),
+		Perms: permission.NewChecker(permission.ModeDefault, permission.Rules{}, dir)})
+
+	var asked, ended bool
+	timeout := time.After(5 * time.Second)
+	events := a.Run(context.Background(), "write it")
+	for done := false; !done; {
+		select {
+		case e, ok := <-events:
+			if !ok {
+				done = true
+				break
+			}
+			switch {
+			case e.Kind == EvPermission:
+				asked = true
+				close(rt.dropped) // never answered: the CLI gives up first
+			case e.Kind == EvToolEnd && e.ToolID == "slow-call":
+				ended = true
+			}
+		case <-timeout:
+			t.Fatal("the dropped call kept its prompt open")
+		}
+	}
+	if !asked || !ended {
+		t.Fatalf("asked = %v, ended = %v", asked, ended)
+	}
+	if calls.Load() != 0 {
+		t.Fatal("a dropped call must not run")
+	}
+	var result string
+	for _, m := range a.messages {
+		for _, b := range m.Blocks {
+			if b.Type == llm.BlockToolResult && b.ID == "slow-call" {
+				result = b.Content
+			}
+		}
+	}
+	if !strings.Contains(result, "stopped waiting") {
+		t.Fatalf("recorded result = %q", result)
+	}
+}

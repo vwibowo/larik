@@ -828,8 +828,21 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 		prev, mine := turn, make(chan struct{})
 		turn = mine
 		go func() {
+			// A call the runtime stopped waiting for ends here too: its
+			// result would reach no one, and its prompt would stay open.
+			callCtx, cancelCall := context.WithCancel(runtimeCtx)
+			defer cancelCall()
+			if tool.Dropped != nil {
+				go func() {
+					select {
+					case <-tool.Dropped:
+						cancelCall()
+					case <-callCtx.Done():
+					}
+				}()
+			}
 			<-prev
-			job, res, ok := a.prepare(runtimeCtx, tool.Call, registry, nil, emit)
+			job, res, ok := a.prepare(callCtx, tool.Call, registry, nil, emit)
 			close(mine)
 			if ok {
 				lock, unlock := writing.Lock, writing.Unlock
@@ -837,9 +850,14 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 					lock, unlock = writing.RLock, writing.RUnlock
 				}
 				lock()
-				res = a.execute(runtimeCtx, job, emit)
+				res = a.execute(callCtx, job, emit)
 				unlock()
 				res.Name = job.name
+			}
+			// An interruption also drops the call; say so only when the
+			// runtime gave up on it on its own.
+			if closed(tool.Dropped) && ctx.Err() == nil {
+				res.Content, res.IsError = "the Claude Code CLI stopped waiting for this call", true
 			}
 			done <- finished{tool, res}
 		}()
@@ -1326,4 +1344,17 @@ func conversationKey(s *session.Session) string {
 	b[6] = b[6]&0x0f | 0x40 // version 4 layout
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// closed reports whether ch is closed; a nil ch never is.
+func closed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }

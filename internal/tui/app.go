@@ -1423,6 +1423,7 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 			}
 		}
 	case agent.EvToolEnd:
+		m.dropCallPerms(e)
 		for i, t := range m.tools {
 			if t.id == e.ToolID && t.agent == e.Agent {
 				m.tools = append(m.tools[:i], m.tools[i+1:]...)
@@ -1750,9 +1751,22 @@ func (m *model) dropForegroundPerms() {
 // dropTaskPerms closes the prompts of a background task that has ended;
 // nothing is waiting for their answers any more.
 func (m *model) dropTaskPerms(label string) {
-	ended := func(e *agent.Event) bool {
-		return e != nil && m.bgReplies[e.Reply] && taskMatches(label, e.Agent)
-	}
+	m.dropPerms(func(e *agent.Event) bool {
+		return m.bgReplies[e.Reply] && taskMatches(label, e.Agent)
+	})
+}
+
+// dropCallPerms closes the prompt of a tool call that has ended without
+// an answer, as when the Claude Code CLI stops waiting for the call.
+func (m *model) dropCallPerms(end agent.Event) {
+	m.dropPerms(func(e *agent.Event) bool {
+		return e.ToolID == end.ToolID && e.Agent == end.Agent
+	})
+}
+
+// dropPerms closes the open and queued prompts that match.
+func (m *model) dropPerms(match func(*agent.Event) bool) {
+	ended := func(e *agent.Event) bool { return e != nil && match(e) }
 	var queue []agent.Event
 	for i := range m.permQueue {
 		if ended(&m.permQueue[i]) {

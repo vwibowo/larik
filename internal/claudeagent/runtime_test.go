@@ -311,9 +311,15 @@ func TestRuntimeCancellationStopsChild(t *testing.T) {
 // bridgeCall posts one JSON-RPC request to the bridge and returns the body.
 func bridgeCall(t *testing.T, bridge *bridgeServer, body string) string {
 	t.Helper()
+	return bridgeCallContext(context.Background(), t, bridge, body)
+}
+
+func bridgeCallContext(ctx context.Context, t *testing.T, bridge *bridgeServer, body string) string {
+	t.Helper()
 	config, err := os.ReadFile(bridge.configPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return ""
 	}
 	var parsed struct {
 		MCPServers map[string]struct {
@@ -322,10 +328,11 @@ func bridgeCall(t *testing.T, bridge *bridgeServer, body string) string {
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(config, &parsed); err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return ""
 	}
 	server := parsed.MCPServers["larik"]
-	req, _ := http.NewRequest("POST", server.URL, strings.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range server.Headers {
@@ -333,7 +340,9 @@ func bridgeCall(t *testing.T, bridge *bridgeServer, body string) string {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Error(err)
+		if ctx.Err() == nil {
+			t.Error(err)
+		}
 		return ""
 	}
 	defer resp.Body.Close()
@@ -398,4 +407,55 @@ func TestBridgeServesCallsConcurrently(t *testing.T) {
 		p.Result <- llm.Block{Type: llm.BlockToolResult, Content: "ok"}
 	}
 	wg.Wait()
+}
+
+// TestBridgeOutlastsSlowCalls: the CLI's default tool-call timeout (60s)
+// is shorter than a permission prompt can stay open, so the bridge sets
+// its own; and when the CLI stops waiting anyway, the agent hears of it.
+func TestBridgeOutlastsSlowCalls(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan llm.AgentRuntimeEvent, 1)
+	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "write", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close(context.Background())
+
+	data, err := os.ReadFile(bridge.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Timeout int64 `json:"timeout"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.MCPServers["larik"].Timeout; got != bridgeToolTimeout.Milliseconds() || got < int64(time.Hour/time.Millisecond) {
+		t.Fatalf("bridge tool-call timeout = %dms", got)
+	}
+
+	callCtx, drop := context.WithCancel(context.Background())
+	go bridgeCallContext(callCtx, t, bridge, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write","arguments":{}}}`)
+	var call *llm.AgentRuntimeToolRequest
+	select {
+	case ev := <-out:
+		call = ev.Tool
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call did not reach the agent")
+	}
+	select {
+	case <-call.Dropped:
+		t.Fatal("Dropped closed while the CLI was still waiting")
+	default:
+	}
+	drop() // the CLI gives up on the call
+	select {
+	case <-call.Dropped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dropped did not close when the CLI stopped waiting")
+	}
 }

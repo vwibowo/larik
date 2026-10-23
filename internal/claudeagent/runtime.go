@@ -38,6 +38,17 @@ const (
 	maxMCPBody    = 2 << 20
 )
 
+// bridgeToolTimeout is the bridge's per-server tool-call timeout in the
+// CLI's MCP config. The CLI's default (60s) is shorter than a permission
+// prompt or a long bash command can take, and the CLI then drops the call
+// and the model moves on. Larik ends calls itself, so this only needs to
+// outlast them.
+const bridgeToolTimeout = 24 * time.Hour
+
+// requestDoneKey carries the Done channel of the HTTP request a tool call
+// came in on, which closes when the CLI stops waiting for the call.
+type requestDoneKey struct{}
+
 // SuggestedModels are rolling aliases documented by Claude Code's --model
 // help. They follow the newest model in each family; the CLI remains the
 // authority for whether an alias is available to a given account. They are
@@ -726,13 +737,28 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, o
 					id = string(fmt.Sprintf("claude-tool-%d", callSequence.Add(1)))
 				}
 				result := make(chan llm.Block, 1)
-				runtimeRequest := llm.AgentRuntimeToolRequest{Call: llm.Block{ID: id, Name: definition.Name, Input: arguments, Type: llm.BlockToolUse}, Result: result}
+				// The SDK runs handlers on its session's context, which
+				// outlives the HTTP request: the CLI dropping the call
+				// shows only on the request's context.
+				gone, _ := callCtx.Value(requestDoneKey{}).(<-chan struct{})
+				dropped, answered := make(chan struct{}), make(chan struct{})
+				defer close(answered)
+				go func() {
+					select {
+					case <-callCtx.Done():
+					case <-gone:
+					case <-answered:
+						return
+					}
+					close(dropped)
+				}()
+				runtimeRequest := llm.AgentRuntimeToolRequest{Call: llm.Block{ID: id, Name: definition.Name, Input: arguments, Type: llm.BlockToolUse}, Result: result, Dropped: dropped}
 				if !send(ctx, out, llm.AgentRuntimeEvent{Tool: &runtimeRequest}) {
 					return nil, ctx.Err()
 				}
 				select {
-				case <-callCtx.Done():
-					return nil, callCtx.Err()
+				case <-dropped:
+					return nil, errors.New("the client stopped waiting for the call")
 				case <-ctx.Done():
 					return nil, ctx.Err()
 				case resolved := <-result:
@@ -749,7 +775,8 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, o
 			response.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		handler.ServeHTTP(response, request)
+		done := request.Context().Done()
+		handler.ServeHTTP(response, request.WithContext(context.WithValue(request.Context(), requestDoneKey{}, done)))
 	})
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -759,6 +786,7 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, o
 	bridge.server = &http.Server{Handler: authenticated, ReadHeaderTimeout: 5 * time.Second}
 	config := map[string]any{"mcpServers": map[string]any{"larik": map[string]any{
 		"type": "http", "url": "http://" + listener.Addr().String(), "headers": map[string]string{"Authorization": expected},
+		"timeout": bridgeToolTimeout.Milliseconds(),
 	}}}
 	encoded, err := json.Marshal(config)
 	if err != nil {

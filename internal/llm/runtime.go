@@ -24,6 +24,9 @@ type AgentRuntimeRequest struct {
 type AgentRuntimeToolRequest struct {
 	Call   Block
 	Result chan<- Block
+	// Dropped, when set, closes if the runtime stops waiting for the
+	// result, so the call (and any permission prompt it has open) ends.
+	Dropped <-chan struct{}
 }
 
 type AgentRuntimeEvent struct {
