@@ -60,12 +60,32 @@ func PlanOf(input json.RawMessage) string {
 const (
 	planModeNote = "Plan mode is on: explore and plan with read-only tools, and don't change anything. " +
 		"Bash is blocked even for commands that look read-only%s. " +
-		"Use read, grep, and glob instead, and do not retry a denied command. When the plan is ready, present it with " +
+		"Use read, grep, and glob instead, and do not retry a denied command.%s When the plan is ready, present it with " +
 		"exit_plan_mode for the user's approval; if the request is a question rather than a change, just answer it."
 	// planCodeClause joins planModeNote when the model has run_code.
 	planCodeClause = "; wrapping bash in run_code does not bypass this"
-	planEndedNote  = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
+	// planWebClause joins planModeNote with the network tools the model has.
+	planWebClause = " %s still work; each call asks the user first."
+	planEndedNote = "Plan mode is off now: you may edit files and run commands again, subject to the usual permissions."
 )
+
+// planWebNote returns planWebClause naming the network tools in reg, or ""
+// when it has none.
+func planWebNote(reg *tools.Registry) string {
+	var have []string
+	for _, name := range permission.NetworkTools {
+		if _, ok := reg.Get(name); ok {
+			have = append(have, name)
+		}
+	}
+	switch len(have) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf(planWebClause, have[0])
+	}
+	return fmt.Sprintf(planWebClause, strings.Join(have[:len(have)-1], ", ")+" and "+have[len(have)-1])
+}
 
 // planNotesLocked adds the plan-mode note for the next prompt. a.mu must be held.
 func (a *Agent) planNotesLocked() {
@@ -74,13 +94,18 @@ func (a *Agent) planNotesLocked() {
 	}
 	switch {
 	case a.opts.Perms.Mode() == permission.ModePlan:
-		clause := ""
+		clause, web := "", ""
 		if reg := a.activeLocked(); reg != nil {
 			if _, ok := reg.Get(tools.CodeToolName); ok {
 				clause = planCodeClause
 			}
 		}
-		a.notes = append(a.notes, fmt.Sprintf(planModeNote, clause))
+		// Under code execution the network tools are reached from scripts,
+		// so look for them among all the tools, not just the declared ones.
+		if a.opts.Tools != nil {
+			web = planWebNote(a.opts.Tools)
+		}
+		a.notes = append(a.notes, fmt.Sprintf(planModeNote, clause, web))
 		a.planNoted = true
 	case a.planNoted:
 		a.notes = append(a.notes, planEndedNote)

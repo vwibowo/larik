@@ -191,9 +191,17 @@ var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": 
 // call, and the empty path is denied rather than waved through.
 var optionalWritePath = map[string]bool{"browser_screenshot": true}
 
-// networkTools reach the internet but change nothing locally: plan mode
+// NetworkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
-var networkTools = map[string]bool{"web_fetch": true, "web_search": true, "browser_navigate": true}
+var NetworkTools = []string{"web_fetch", "web_search", "browser_navigate"}
+
+var networkTools = map[string]bool{}
+
+func init() {
+	for _, name := range NetworkTools {
+		networkTools[name] = true
+	}
+}
 
 // domainTools take URLs; their rules name a domain, e.g.
 // web_fetch(domain:go.dev).

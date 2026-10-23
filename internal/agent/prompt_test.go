@@ -41,7 +41,7 @@ func TestPromptSizeBudget(t *testing.T) {
 		limit int
 	}{
 		{"basePrompt (with SafetySection)", basePrompt, 1800},
-		{"planModeNote with run_code", planModeNote + planCodeClause, 450},
+		{"planModeNote with run_code and web tools", planModeNote + planCodeClause + planWebClause + "web_fetch, web_search and browser_navigate", 500},
 		{"toolsSection", toolsSection, 350},
 		{"hybridSection", hybridSection, 550},
 		{"codeSection", codeSection, 850},

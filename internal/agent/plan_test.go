@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func TestExitPlanModeApproved(t *testing.T) {
 		!strings.Contains(note, "do not retry") {
 		t.Errorf("the model should be told to use read-only tools, not bash: %q", note)
 	}
-	if strings.Contains(note, "run_code") || strings.Contains(note, "graphify") {
+	if strings.Contains(note, "run_code") || strings.Contains(note, "graphify") || strings.Contains(note, "web_") {
 		t.Errorf("the note should name only tools the model has, and nothing project-specific: %q", note)
 	}
 	if got := a.Perms().Mode(); got != permission.ModeAcceptEdits {
@@ -57,6 +58,42 @@ func TestExitPlanModeApproved(t *testing.T) {
 	}
 	if r := resultOf(fp, "p1"); r.IsError || !strings.Contains(r.Content, "approved") || !strings.Contains(r.Content, "accept-edits") {
 		t.Fatalf("result = %+v", r)
+	}
+}
+
+// netTool stands for a network tool: not read-only, so plan mode asks for it.
+type netTool struct{ name string }
+
+func (netTool) ReadOnly() bool { return false }
+func (n netTool) Spec() llm.ToolSpec {
+	return llm.ToolSpec{Name: n.name, Description: "Reach the web", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (netTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result {
+	return tools.Result{Content: "fetched"}
+}
+
+// The note says which network tools still work, so the model doesn't
+// assume plan mode cuts it off from the web, and the call asks rather
+// than being denied.
+func TestPlanModeNoteNamesNetworkTools(t *testing.T) {
+	a, fp := planAgent(t,
+		assistant(toolUse("w1", "web_search", `{}`)),
+		assistant(llm.TextBlock("found it")))
+	a.SetTools(tools.Default().With(ExitPlanTool{}, netTool{"web_fetch"}, netTool{"web_search"}))
+	evs := drain(a.Run(context.Background(), "research it"), PermissionReply{Allow: true})
+
+	note := fp.requests[0].Messages[0].Text()
+	if !strings.Contains(note, " web_fetch and web_search still work; each call asks the user first.") {
+		t.Errorf("the note should name the network tools the model has: %q", note)
+	}
+	if strings.Contains(note, "browser_navigate") {
+		t.Errorf("the note should not name a network tool the model lacks: %q", note)
+	}
+	if asked := permissionEvents(evs); len(asked) != 1 || asked[0].ToolName != "web_search" {
+		t.Fatalf("plan mode should ask for web_search: %+v", asked)
+	}
+	if r := resultOf(fp, "w1"); r.IsError || r.Content != "fetched" {
+		t.Fatalf("approved web_search should run in plan mode: %+v", r)
 	}
 }
 
