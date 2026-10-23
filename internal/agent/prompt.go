@@ -64,6 +64,7 @@ const (
 	codeSection = `Using tools (you act through run_code scripts):
 - Do a whole step in one script, such as finding files, reading them and editing, or editing and running the tests: every turn is another model round trip. Make one run_code call per turn; calls run one at a time.
 - Use tools.parallel for independent reads and searches.
+- For bulk data (many files, large logs), process it with one bash command (awk, python, jq) inside the script instead of reading every file.
 - Print only what the next step needs: counts, matching lines, short excerpts. Print a whole file only when you need all of it.
 - Read a file before editing it, and copy old_string from the content read returns.
 - Wrap calls that may fail in try/catch when the rest of the script should still run, and print what failed.`

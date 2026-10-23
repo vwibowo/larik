@@ -44,7 +44,7 @@ func TestPromptSizeBudget(t *testing.T) {
 		{"planModeNote with run_code", planModeNote + planCodeClause, 450},
 		{"toolsSection", toolsSection, 350},
 		{"hybridSection", hybridSection, 550},
-		{"codeSection", codeSection, 750},
+		{"codeSection", codeSection, 850},
 	} {
 		if len(c.text) > c.limit {
 			t.Errorf("%s is %d bytes, over its %d-byte budget: trim it, or raise the limit on purpose", c.name, len(c.text), c.limit)
