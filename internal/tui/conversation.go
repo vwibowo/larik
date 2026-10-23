@@ -167,6 +167,7 @@ func (m *model) rewrapConversationWidth(width int) {
 
 func (m *model) resetConversation() {
 	m.outputs, m.outputBytes, m.convLines = nil, 0, nil
+	m.grouped = nil // calls from the conversation that was cleared
 	m.renderedConversationBytes = 0
 	m.renderedConversationClock = 0
 	m.promptMenu = nil  // its prompt is no longer on screen

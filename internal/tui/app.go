@@ -270,6 +270,7 @@ type model struct {
 	calling      string // tool the model is currently writing a call for
 	tools        []toolRun
 	scripts      map[string]*scriptRun // running run_code calls, by scriptKey
+	grouped      []agent.Event         // read-only calls not yet printed (group.go)
 	taskCalls    map[string]int        // completed calls by active subagent label
 	taskModels   map[string]string     // model each active subagent runs on, by label
 	perm         *agent.Event          // permission prompt being shown
@@ -771,14 +772,15 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			alert = m.alert("finished")
 		}
 		m.compactTools = nil
+		flush := m.flushGroup() // a run the turn ended on
 		m.running, m.cancel, m.events = false, nil, nil
 		m.dropForegroundPerms()
 		m.resetStream()
 		m.stats = m.agent.Stats()
 		if next := m.nextQueued(); next != nil { // pending background results ride along with it
-			return m, next
+			return m, tea.Sequence(flush, next)
 		}
-		return m, tea.Batch(alert, m.deliverBackground(), m.refreshProject(), m.requestSuggestion())
+		return m, tea.Sequence(flush, tea.Batch(alert, m.deliverBackground(), m.refreshProject(), m.requestSuggestion()))
 
 	case suggestionMsg:
 		m.suggestionArrived(msg)
@@ -1338,7 +1340,17 @@ func (m *model) toggleThinking() tea.Cmd {
 	return m.println(m.st.dim.Render("thinking shown" + paren(m.keyHint(actToggleThinking, "to collapse"))))
 }
 
+// handleEvent applies an agent event. Output it prints comes after the
+// run of grouped calls before it (see group.go).
 func (m *model) handleEvent(e agent.Event) tea.Cmd {
+	if len(m.grouped) == 0 || !m.endsGroup(e) {
+		return m.applyEvent(e)
+	}
+	flush := m.flushGroup()
+	return tea.Sequence(flush, m.applyEvent(e))
+}
+
+func (m *model) applyEvent(e agent.Event) tea.Cmd {
 	// Remember which model a subagent runs on, so the live rows and the
 	// sidebar can show which tier is doing the work.
 	if e.Agent != "" && e.Model != "" {
@@ -1436,6 +1448,10 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 		}
 		if m.updateTodos(e) {
 			return m.println(m.completedTodosCard())
+		}
+		if m.groupable(e) {
+			m.grouped = append(m.grouped, e)
+			return nil
 		}
 		// The card names the model the task ran on, so it is rendered before
 		// that is forgotten.

@@ -754,6 +754,9 @@ func (m *model) liveView(widths ...int) string {
 	}
 	tasks := m.taskRows(width)
 	b = append(b, tasks...)
+	if g := m.groupLine(); g != "" {
+		b = append(b, g)
+	}
 	for _, t := range m.tools {
 		if len(tasks) > 0 && (t.name == "task" || t.agent != "") {
 			continue // task activity is grouped by subagent above
