@@ -119,6 +119,30 @@ func TestSuggestRule(t *testing.T) {
 	if got := SuggestRule("edit", nil); got != "edit" {
 		t.Errorf("edit: got %q", got)
 	}
+	if got := SuggestRule("multi_edit", nil); got != "edit" {
+		t.Errorf("multi_edit: got %q, want edit", got)
+	}
+}
+
+func TestMultiEditRulesHonorEditAlias(t *testing.T) {
+	input := `{"path":"src/a.go","edits":[]}`
+	for _, tc := range []struct {
+		name  string
+		rules Rules
+		want  Decision
+	}{
+		{"edit allow", Rules{Allow: []string{"edit(src/**)"}}, Allow},
+		{"edit deny", Rules{Deny: []string{"edit(src/**)"}}, Deny},
+		{"explicit multi_edit allow", Rules{Allow: []string{"multi_edit(src/**)"}}, Allow},
+		{"explicit multi_edit deny", Rules{Deny: []string{"multi_edit(src/**)"}}, Deny},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := NewChecker(ModeDefault, tc.rules, "/work").Decide(call("multi_edit", false, input))
+			if got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestWildcard(t *testing.T) {
@@ -148,14 +172,19 @@ func TestSandboxedBash(t *testing.T) {
 	}{
 		{`{"command":"npm test"}`, Allow}, // confined: no prompt
 		{`{"command":"npm test","sandbox":true}`, Allow},
-		{`{"command":"npm install","sandbox":false}`, Ask},  // escaping asks
-		{`{"command":"git status","sandbox":false}`, Allow}, // safe list still applies
-		{`{"command":"rm -rf /"}`, Deny},                    // deny rules still win
+		{`{"command":"npm install","sandbox":false}`, Ask}, // escaping asks
+		{`{"command":"git status","sandbox":false}`, Ask},  // even safe defaults ask when escaping
+		{`{"command":"rm -rf /"}`, Deny},                   // deny rules still win
 	}
 	for _, tc := range cases {
 		if got, _ := c.Decide(call("bash", false, tc.input)); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.input, got, tc.want)
 		}
+	}
+	allowed := NewChecker(ModeDefault, Rules{Allow: []string{"bash(git status*)"}}, "/w")
+	allowed.SetSandboxed(true)
+	if got, _ := allowed.Decide(call("bash", false, `{"command":"git status","sandbox":false}`)); got != Allow {
+		t.Errorf("personal allow rule should permit sandbox escape: got %v", got)
 	}
 	c.SetMode(ModePlan)
 	if got, _ := c.Decide(call("bash", false, `{"command":"npm test"}`)); got != Deny {

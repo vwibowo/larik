@@ -31,9 +31,11 @@ type AgentRuntimeToolRequest struct {
 
 type AgentRuntimeEvent struct {
 	Text, Thinking string
-	Assistant      *Message
-	Tool           *AgentRuntimeToolRequest
-	Usage          *Usage
+	// Notice is a transient runtime status warning, not assistant content.
+	Notice    string
+	Assistant *Message
+	Tool      *AgentRuntimeToolRequest
+	Usage     *Usage
 	// ResolvedModel is the concrete model id the runtime reports for this
 	// turn, when it resolves a rolling alias such as "sonnet" to one. It is
 	// metadata for looking up limits only: the request's model stays the

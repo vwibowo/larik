@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"larik/internal/llm"
+	"larik/internal/pathpolicy"
 	"larik/internal/textutil"
 	"larik/internal/tools"
 )
@@ -285,7 +286,12 @@ func (t ApplyTool) Run(ctx context.Context, env *tools.Env, input json.RawMessag
 		return errorf("INVALID_JSON: expected path, line and title")
 	}
 	path := env.Abs(in.Path)
-	applied, err := t.M.ApplyAction(ctx, path, in.Line, in.Column, in.Title, env.RewriteFile)
+	applied, err := t.M.ApplyAction(ctx, path, in.Line, in.Column, in.Title, env.RewriteFile, func(target string) error {
+		if _, err := pathpolicy.WritePath(env.Cwd, target); err != nil {
+			return err
+		}
+		return tools.CheckWrite(ctx, target)
+	})
 	if err != nil {
 		msg := "apply_code_action: " + err.Error()
 		if len(applied.Files) > 0 {

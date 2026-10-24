@@ -128,6 +128,12 @@ func codeActions(uri string, line int) []any {
 	if c < 0 {
 		return []any{}
 	}
+	if strings.Contains(docs[uri], "MULTIFILE") {
+		return []any{map[string]any{"title": "Fix two files", "edit": map[string]any{"changes": map[string]any{
+			uri:                          []any{map[string]any{"range": rng(line, c, 3), "newText": "GOOD"}},
+			"file://" + root + "/z.fake": []any{map[string]any{"range": rng(0, 0, 3), "newText": "GOOD"}},
+		}}}}
+	}
 	return []any{
 		map[string]any{"title": "Replace BAD with GOOD", "kind": "quickfix", "isPreferred": true,
 			"edit": map[string]any{"changes": map[string]any{uri: []any{map[string]any{"range": rng(line, c, 3), "newText": "GOOD"}}}}},

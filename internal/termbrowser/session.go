@@ -88,6 +88,11 @@ type Session struct {
 	// shower opens a viewer inside the host program (SetShower).
 	shower func() (string, bool)
 
+	// Pane-launch seams keep tests independent of the real terminal. They
+	// are set before the session is used; nil selects production behavior.
+	paneRun func(context.Context, []string) error
+	paneEnv func(string) string
+
 	// startupTimeout bounds Chrome launch and the initial DevTools guard.
 	startupTimeout time.Duration
 

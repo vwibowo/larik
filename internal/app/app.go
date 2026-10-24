@@ -159,6 +159,10 @@ type App struct {
 	MCP       *mcp.Manager
 	LSP       *lsp.Manager
 	Sandbox   *sandbox.Sandbox // nil when unavailable or disabled
+	// SecretPaths and SecretEnv are Larik credential locations retained for
+	// sandbox and per-session tool environment policy.
+	SecretPaths []string
+	SecretEnv   []string
 	// Memory is the notes kept across sessions; nil when switched off.
 	Memory *memory.Store
 	// Browser drives Chrome for the browser_* tools; nil unless enabled.
@@ -205,6 +209,12 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	LoadCatwalkCache(cfg.DataDir)
 	a := &App{Cfg: cfg, Cwd: cwd, RepoRoot: gitRoot, ProjectRoot: projectRoot, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve, Debug: cfg.DebugOn()}
+	a.SecretEnv, a.SecretPaths = secretEnv(cfg), secretPaths(cfg)
+	// The CLI reads executable MCP configuration here outside the sandbox.
+	// Create it before sandbox setup so Linux can bind it read-only.
+	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "runtime"), 0o700); err != nil {
+		return nil, fmt.Errorf("create private runtime directory: %w", err)
+	}
 
 	home, _ := os.UserHomeDir()
 	if keep := cfg.CheckpointRetention(); keep > 0 {
@@ -218,7 +228,7 @@ func Setup(cwd, version string) (*App, error) {
 	a.Skills.Hide(cfg.Skills.Hide)
 	baseTools := tools.Builtin()
 	sbCfg := cfg.Sandbox
-	sbCfg.SecretEnv, sbCfg.SecretPaths = secretEnv(cfg), secretPaths(cfg)
+	sbCfg.SecretEnv, sbCfg.SecretPaths = a.SecretEnv, a.SecretPaths
 	a.Sandbox, a.SandboxNote = sandbox.New(sbCfg, projectRoot, home)
 	if !cfg.Web.FetchDisabled {
 		baseTools = append(baseTools, web.FetchTool{F: web.NewFetcher()})
@@ -514,6 +524,9 @@ func (a *App) Open(o Options) (*Session, error) {
 		sbTool = a.Sandbox
 	}
 	cwd := a.Cwd
+	envConfig := a.Cfg.Sandbox
+	envConfig.SecretEnv = append([]string(nil), a.SecretEnv...)
+	envConfig.EnvPassthrough = append([]string(nil), envConfig.EnvPassthrough...)
 	ag := agent.New(agent.Options{
 		Provider:    resolved.Provider,
 		Runtime:     resolved.Runtime,
@@ -537,13 +550,17 @@ func (a *App) Open(o Options) (*Session, error) {
 		MCP:         a.MCP,
 		LSP:         a.LSP,
 		Sandbox:     sbTool,
+		SecretPaths: a.SecretPaths,
+		SecretEnv:   a.SecretEnv,
+		SanitizeEnv: func(env []string) []string { return sandbox.ScrubEnv(env, envConfig) },
 
-		ExecutionFor:  func(provider, model string) tools.Execution { return a.Cfg.ExecutionFor(provider, model) },
-		SamplingFor:   func(provider, model string) *llm.Sampling { return a.Cfg.SamplingFor(provider, model) },
-		NoAutoCompact: !a.Cfg.AutoCompactOn(),
-		TokenSaver:    a.Cfg.TokenSaverOn(),
-		Language:      a.Cfg.Language,
-		CompactWith:   a.compactModel,
+		ExecutionFor:         func(provider, model string) tools.Execution { return a.Cfg.ExecutionFor(provider, model) },
+		SubagentExecutionFor: func(provider, model string) tools.Execution { return a.Cfg.SubagentExecutionFor(provider, model) },
+		SamplingFor:          func(provider, model string) *llm.Sampling { return a.Cfg.SamplingFor(provider, model) },
+		NoAutoCompact:        !a.Cfg.AutoCompactOn(),
+		TokenSaver:           a.Cfg.TokenSaverOn(),
+		Language:             a.Cfg.Language,
+		CompactWith:          a.compactModel,
 		Budget: func() (float64, float64) {
 			b := a.Cfg.Routing().Budget
 			return b.SessionUSD, b.WarnFraction()
@@ -637,6 +654,7 @@ func secretPaths(cfg *config.Config) []string {
 	return []string{
 		filepath.Join(cfg.ConfigDir, "chatgpt-auth.json"),
 		filepath.Join(cfg.ConfigDir, "mcp-auth"),
+		filepath.Join(cfg.DataDir, "runtime"),
 	}
 }
 

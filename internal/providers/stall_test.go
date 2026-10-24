@@ -4,8 +4,36 @@ import (
 	"testing"
 	"time"
 
+	"larik/internal/claudeagent"
 	"larik/internal/config"
 )
+
+func TestClaudeCLIStallTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		global, provider int
+		want             time.Duration
+	}{
+		{"default", 0, 0, 5 * time.Minute},
+		{"global", 90, 0, 90 * time.Second},
+		{"provider", 90, 20, 20 * time.Second},
+		{"disabled global", -1, 0, 0},
+		{"disabled provider", 90, -1, 0},
+		{"override disabled global", -1, 20, 20 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{StallTimeout: tc.global, Providers: map[string]config.ProviderConfig{ClaudeCLI: {StallTimeout: tc.provider}}}
+			resolved, err := resolveSpec(cfg, ClaudeCLI+"/sonnet")
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime, ok := resolved.Runtime.(*claudeagent.Runtime)
+			if !ok || runtime.StallTimeout != tc.want {
+				t.Fatalf("runtime=%+v, want timeout %s", resolved.Runtime, tc.want)
+			}
+		})
+	}
+}
 
 func TestStallTimeout(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{

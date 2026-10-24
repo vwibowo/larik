@@ -634,18 +634,18 @@ func TestFork(t *testing.T) {
 	}
 }
 
-func TestEndedTaskExpiresItsPermissionRequests(t *testing.T) {
+func TestEndedTaskExpiresOnlyItsPermissionRequests(t *testing.T) {
 	reply := make(chan agent.PermissionReply, 1)
 	l := &live{bus: newBus(), pending: map[string]*pendingPerm{
-		"perm-1": {ev: Event{Event: agent.Event{Agent: "worker: build"}}, reply: reply, bg: true},
-		"perm-2": {ev: Event{Event: agent.Event{Agent: "explore: docs"}}, reply: make(chan agent.PermissionReply, 1), bg: true},
+		"perm-1": {ev: Event{Event: agent.Event{TaskID: "bg-1", Agent: "worker: build"}}, reply: reply, bg: true},
+		"perm-2": {ev: Event{Event: agent.Event{TaskID: "bg-2", Agent: "worker: build"}}, reply: make(chan agent.PermissionReply, 1), bg: true},
 	}}
-	l.expireTask("worker: build")
+	l.expireTask("bg-1", "worker: build")
 	if _, ok := l.pending["perm-1"]; ok {
 		t.Fatal("the ended task's request should expire")
 	}
 	if _, ok := l.pending["perm-2"]; !ok {
-		t.Fatal("another task's request must stay")
+		t.Fatal("a same-label task's request must stay")
 	}
 	if r := <-reply; r.Allow {
 		t.Fatal("an expired request is answered with a denial")
@@ -656,20 +656,41 @@ func TestEndedTaskExpiresItsPermissionRequests(t *testing.T) {
 // stopped waiting for it) takes the request with it, and clients are told.
 func TestEndedCallExpiresItsPermissionRequest(t *testing.T) {
 	l := &live{bus: newBus(), pending: map[string]*pendingPerm{
-		"perm-1": {ev: Event{Event: agent.Event{ToolID: "c1"}}, reply: make(chan agent.PermissionReply, 1)},
-		"perm-2": {ev: Event{Event: agent.Event{ToolID: "c1", Agent: "worker: build"}}, reply: make(chan agent.PermissionReply, 1)},
+		"perm-1": {ev: Event{Event: agent.Event{ToolID: "c1", Agent: "worker: build", TaskID: "bg-1"}}, reply: make(chan agent.PermissionReply, 1)},
+		"perm-2": {ev: Event{Event: agent.Event{ToolID: "c1", Agent: "worker: build", TaskID: "bg-2"}}, reply: make(chan agent.PermissionReply, 1)},
 	}}
-	l.publish(agent.Event{Kind: agent.EvToolEnd, ToolID: "c1", IsError: true}, false)
+	l.publish(agent.Event{Kind: agent.EvToolEnd, ToolID: "c1", Agent: "worker: build", TaskID: "bg-1", IsError: true}, false)
 	if _, ok := l.pending["perm-1"]; ok {
 		t.Fatal("the ended call's request should expire")
 	}
 	if _, ok := l.pending["perm-2"]; !ok {
-		t.Fatal("a subagent's call with the same id must stay")
+		t.Fatal("a same-label task's call with the same id must stay")
 	}
 	replay, _, _ := l.bus.subscribe(0)
 	if len(replay) != 2 || replay[0].RequestID != "perm-1" || replay[0].Kind != EvPermResolved || replay[0].Text != "expired" ||
 		replay[1].Kind != agent.EvToolEnd {
 		t.Fatalf("events = %+v", replay)
+	}
+}
+
+func TestMalformedEventCursorIsRejected(t *testing.T) {
+	h := newHarness(t)
+	st := h.create(map[string]any{})
+	for _, cursor := range []string{"not-a-sequence", "-1", "999999999999999999999999"} {
+		if code := h.do("GET", "/v1/sessions/"+st.ID+"/events?after="+cursor, nil, nil); code != http.StatusBadRequest {
+			t.Fatalf("malformed query cursor %q status = %d, want 400", cursor, code)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodGet, h.url+"/v1/sessions/"+st.ID+"/events", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Last-Event-ID", "not-a-sequence")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed Last-Event-ID status = %d, want 400", resp.StatusCode)
 	}
 }
 

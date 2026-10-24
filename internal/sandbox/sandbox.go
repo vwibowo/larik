@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"larik/internal/pathpolicy"
@@ -49,6 +50,13 @@ type Sandbox struct {
 	root      string
 	writable  []string
 	protected []string
+	// writableOverride paths are writable exceptions nested beneath a
+	// protected directory. protectedOverride paths are applied after those
+	// exceptions. For a linked worktree this makes all of .git/worktrees
+	// read-only, reopens only this worktree's git directory, then protects
+	// that directory's control files.
+	writableOverride  []string
+	protectedOverride []string
 	// pinned directories stay writable inside but can't be renamed,
 	// removed or replaced: the project's .git, which git trusts to be
 	// where the repository is.
@@ -134,6 +142,7 @@ func New(cfg Config, root, home string) (sb *Sandbox, warning string) {
 	for _, name := range protectedNames {
 		s.protected = append(s.protected, filepath.Join(s.root, name))
 	}
+	s.protected = append(s.protected, s.secretPaths...)
 	gitDir := filepath.Join(s.root, ".git")
 	for _, name := range gitProtected {
 		s.protected = append(s.protected, filepath.Join(gitDir, name))
@@ -251,16 +260,25 @@ func (s *Sandbox) ForWorktree(dir, gitDir string) *Sandbox {
 	}
 	w.writable = uniq(w.writable)
 	w.protected = nil
+	w.writableOverride = nil
+	w.protectedOverride = nil
 	for _, name := range gitProtected {
-		if name != "worktrees" { // commits in the worktree write there
-			w.protected = append(w.protected, filepath.Join(gitDir, name))
+		w.protected = append(w.protected, filepath.Join(gitDir, name))
+	}
+	// Keep the complete worktree administration directory read-only, not
+	// merely the current entries in it. This protects sibling worktrees that
+	// appear after this Sandbox is derived too. Reopen only this worktree's
+	// git directory for its index, HEAD and logs, then close its control files
+	// again so it cannot redirect Git to attacker-controlled configuration.
+	if own := worktreeGitDir(w.root); own != "" {
+		w.writableOverride = []string{own}
+		w.protectedOverride = []string{
+			filepath.Join(own, "commondir"),
+			filepath.Join(own, "config.worktree"),
+			filepath.Join(own, "gitdir"),
 		}
 	}
-	// The worktree's own directory under gitDir/worktrees says where the
-	// common git dir is and may hold config; keep those.
-	if own := worktreeGitDir(w.root); own != "" {
-		w.protected = append(w.protected, filepath.Join(own, "commondir"), filepath.Join(own, "config.worktree"), filepath.Join(own, "gitdir"))
-	}
+	w.protectedOverride = append(w.protectedOverride, s.secretPaths...)
 	for _, name := range protectedNames {
 		w.protected = append(w.protected, filepath.Join(w.root, name))
 	}
@@ -290,6 +308,23 @@ func worktreeGitDir(dir string) string {
 	return real(p)
 }
 
+// darwinTempRoot asks the OS for the per-user directory independently of
+// TMPDIR. The absolute executable avoids trusting a project-controlled PATH.
+var darwinTempRoot = sync.OnceValue(func() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	out, err := exec.Command("/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(dir) || dir == "/" || real(dir) == real("/tmp") {
+		return ""
+	}
+	return real(dir)
+})
+
 // defaultWritable is the persistent, per-user directories a sandboxed
 // command may write to. It deliberately excludes the literal /tmp: on
 // every OS that's a single directory shared by every program any user on
@@ -300,15 +335,20 @@ func worktreeGitDir(dir string) string {
 // (New's tmpDir), which Command exposes to the child as
 // $TMPDIR/$TMP/$TEMP, for tools that read those.
 //
-// os.TempDir() itself stays writable on macOS (unlike on Linux, where it
-// is usually just another name for /tmp): it's scoped to this OS user,
-// not shared machine-wide, and several macOS tools resolve to it via
+// The OS-owned per-user temporary root stays writable on macOS. It is
+// resolved independently of TMPDIR rather than trusting an arbitrary
+// environment path or its parent. Several macOS tools resolve to it via
 // confstr(_CS_DARWIN_USER_TEMP_DIR) regardless of $TMPDIR -- notably
 // mktemp(1) with no template, which real build and setup scripts use.
 func defaultWritable(home string) []string {
 	var paths []string
 	if runtime.GOOS == "darwin" {
-		paths = append(paths, os.TempDir(), filepath.Dir(real(os.TempDir())), filepath.Join(home, "Library", "Caches"))
+		// TMPDIR may point anywhere (including /tmp or /). Never grant
+		// its parent just to support tools that ignore the environment.
+		if dir := darwinTempRoot(); dir != "" {
+			paths = append(paths, dir)
+		}
+		paths = append(paths, filepath.Join(home, "Library", "Caches"))
 	}
 	paths = append(paths,
 		filepath.Join(home, ".cache"),
@@ -376,7 +416,8 @@ func (s *Sandbox) Command(script, dir string) *exec.Cmd {
 		// Placeholders first: bwrapArgs binds the protected paths that exist.
 		var held []string
 		if s.holders != nil {
-			held = s.holders.hold(s.protected, s.writable)
+			protected := append(append([]string(nil), s.protected...), s.protectedOverride...)
+			held = s.holders.hold(protected, append(append([]string(nil), s.writable...), s.writableOverride...))
 		}
 		cmd = exec.Command("bwrap", s.bwrapArgs(script, dir, held...)...)
 		if s.holders != nil {
@@ -466,10 +507,21 @@ func credentialName(k string) bool {
 // every provider key into the model's context. Variables the user listed
 // in env_passthrough stay.
 func (s *Sandbox) scrubEnv(env []string) []string {
+	return scrubEnv(env, s.secretEnv, s.passthrough)
+}
+
+// ScrubEnv removes provider credentials from env for a child that cannot be
+// sandboxed. It uses the same explicit SecretEnv, suffix detection and
+// EnvPassthrough exceptions as sandboxed commands.
+func ScrubEnv(env []string, cfg Config) []string {
+	return scrubEnv(env, nameSet(cfg.SecretEnv), nameSet(cfg.EnvPassthrough))
+}
+
+func scrubEnv(env []string, secretEnv, passthrough map[string]bool) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
-		if !s.passthrough[k] && (s.secretEnv[k] || credentialName(k)) {
+		if !passthrough[k] && (secretEnv[k] || credentialName(k)) {
 			continue
 		}
 		out = append(out, kv)
@@ -534,7 +586,8 @@ func (s *Sandbox) seatbeltProfile() string {
 		b.WriteString("\n  (subpath " + sbQuote(p) + ")")
 	}
 	b.WriteString(")\n")
-	// Later rules win in Seatbelt, so these override the project allow.
+	// Later rules win in Seatbelt. First close protected trees, then reopen
+	// deliberate nested exceptions, and finally close their control files.
 	b.WriteString("(deny file-write*")
 	for _, p := range s.protected {
 		b.WriteString("\n  (subpath " + sbQuote(p) + ")")
@@ -543,6 +596,20 @@ func (s *Sandbox) seatbeltProfile() string {
 		b.WriteString("\n  (literal " + sbQuote(p) + ")")
 	}
 	b.WriteString(")\n")
+	if len(s.writableOverride) > 0 {
+		b.WriteString("(allow file-write*")
+		for _, p := range s.writableOverride {
+			b.WriteString("\n  (subpath " + sbQuote(p) + ")")
+		}
+		b.WriteString(")\n")
+	}
+	if len(s.protectedOverride) > 0 {
+		b.WriteString("(deny file-write*")
+		for _, p := range s.protectedOverride {
+			b.WriteString("\n  (subpath " + sbQuote(p) + ")")
+		}
+		b.WriteString(")\n")
+	}
 	if len(s.secretPaths) > 0 {
 		b.WriteString("(deny file-read*")
 		for _, p := range s.secretPaths {
@@ -579,12 +646,22 @@ func (s *Sandbox) bwrapArgs(script, dir string, held ...string) []string {
 		}
 	}
 	bound := map[string]bool{}
-	for _, p := range append(append([]string(nil), s.protected...), held...) {
-		if _, err := os.Stat(p); err == nil && !bound[p] {
-			bound[p] = true
-			args = append(args, "--ro-bind", p, p)
+	bindReadOnly := func(paths []string) {
+		for _, p := range paths {
+			if _, err := os.Stat(p); err == nil && !bound[p] {
+				bound[p] = true
+				args = append(args, "--ro-bind", p, p)
+			}
 		}
 	}
+	bindReadOnly(s.protected)
+	for _, p := range s.writableOverride {
+		if _, err := os.Stat(p); err == nil {
+			args = append(args, "--bind", p, p)
+		}
+	}
+	// A later nested bind overrides an earlier one, so apply these last.
+	bindReadOnly(append(append([]string(nil), s.protectedOverride...), held...))
 	// Credentials stay unreadable: a file is replaced by an empty one, a
 	// directory by an empty tmpfs.
 	for _, p := range s.secretPaths {

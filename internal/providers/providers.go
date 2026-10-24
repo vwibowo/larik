@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,6 +80,8 @@ func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	}
 	if name == ClaudeCLI {
 		runtime := claudeagent.New()
+		runtime.BridgeDir = filepath.Join(cfg.DataDir, "runtime")
+		runtime.StallTimeout = stallTimeout(cfg, ClaudeCLI)
 		return Resolved{Provider: cliProvider{runtime: runtime}, Runtime: runtime, Model: model}, nil
 	}
 	p, err := build(cfg, name)

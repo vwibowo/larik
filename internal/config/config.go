@@ -1348,6 +1348,17 @@ func (c *Config) ExecutionFor(provider, model string) tools.Execution {
 	return e
 }
 
+// SubagentExecutionFor preserves explicit per-model choices, but defaults
+// Claude CLI children to ordinary tools instead of the global code mode.
+// This does not change the main agent's execution setting.
+func (c *Config) SubagentExecutionFor(provider, model string) tools.Execution {
+	e, source := c.ExecutionSource(provider, model)
+	if provider == "claude-code-cli" && source == "" {
+		return tools.ExecTools
+	}
+	return e
+}
+
 // ExecutionSource is ExecutionFor plus the model_execution key it came
 // from, "" when it is the default.
 func (c *Config) ExecutionSource(provider, model string) (tools.Execution, string) {

@@ -96,7 +96,11 @@ func (a *Agent) StartBackground(label string, fn func(ctx context.Context, emit 
 	h.mu.Unlock()
 
 	go func() {
-		result, failed := fn(ctx, h.emit)
+		emit := func(e Event) {
+			e.TaskID = id
+			h.emit(e)
+		}
+		result, failed := fn(ctx, emit)
 		h.mu.Lock()
 		switch {
 		case t.Status == BgStopped:
@@ -113,7 +117,7 @@ func (a *Agent) StartBackground(label string, fn func(ctx context.Context, emit 
 		h.mu.Unlock()
 		cancel()
 		close(t.done)
-		h.emit(Event{Kind: EvTaskDone, ToolID: snap.ID, Agent: snap.Label, Output: snap.Result, IsError: snap.Status != BgCompleted, StopReason: string(snap.Status)})
+		h.emit(Event{Kind: EvTaskDone, TaskID: snap.ID, ToolID: snap.ID, Agent: snap.Label, Output: snap.Result, IsError: snap.Status != BgCompleted, StopReason: string(snap.Status)})
 	}()
 	return id, nil
 }

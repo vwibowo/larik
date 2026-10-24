@@ -224,6 +224,11 @@ func (s Status) Ready() bool { return s.State == string(StateReady) }
 // Runtime uses the process environment and PATH by default. The fields are
 // seams for deterministic tests with fake Claude executables.
 type Runtime struct {
+	// StallTimeout bounds CLI inactivity outside bridged tool calls; zero disables it.
+	StallTimeout time.Duration
+	// BridgeDir must be private and protected from sandboxed writes.
+	// Providers set it under Larik's data directory, never the shared temp root.
+	BridgeDir  string
 	Executable string
 	LookupPath func(string) (string, error)
 	Environ    func() []string
@@ -333,7 +338,8 @@ func (r *Runtime) Run(ctx context.Context, request llm.AgentRuntimeRequest) (<-c
 	runCtx, cancel := context.WithCancel(ctx)
 	out := make(chan llm.AgentRuntimeEvent, 32)
 	matcher := &callMatcher{}
-	bridge, err := startBridge(runCtx, request.Tools, request.Parallel, out, matcher)
+	activity := newRuntimeActivity(r.StallTimeout)
+	bridge, err := startBridge(runCtx, request.Tools, request.Parallel, out, matcher, r.BridgeDir, activity)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("start Claude tool bridge: %w", err)
@@ -404,20 +410,39 @@ func (r *Runtime) Run(ctx context.Context, request llm.AgentRuntimeRequest) (<-c
 		defer close(out)
 		defer bridge.Close(context.Background())
 		defer cancel()
+		stopWatchdog := activity.watch(runCtx, cancel, out)
+		defer stopWatchdog()
 		inputErr := make(chan error, 1)
 		go writeInput(runCtx, stdin, input, nil, out, matcher, inputErr)
-		parseErr := parseOutput(runCtx, stdout, out, matcher, maxTurns)
-		if parseErr != nil {
+		parseErr := parseOutput(runCtx, activityReader{Reader: stdout, activity: activity}, out, matcher, maxTurns)
+		if parseErr != nil || activity.timedOut() {
 			// Do not wait for a malformed or oversized stream to exit by itself.
 			// Closing the run context invokes the process-group cancellation hook.
 			cancel()
 			_ = command.Wait()
 			_ = stdin.Close()
+			stopWatchdog()
+			bridge.Close(context.Background())
+			if ctx.Err() != nil {
+				return // caller cancellation is not a CLI stall or parse failure
+			}
+			if activity.timedOut() {
+				parseErr = activity.timeoutError()
+			}
 			send(ctx, out, llm.AgentRuntimeEvent{Err: parseErr})
 			return
 		}
 		waitErr := command.Wait()
 		_ = stdin.Close()
+		stopWatchdog()
+		if activity.timedOut() {
+			bridge.Close(context.Background())
+			if ctx.Err() != nil {
+				return
+			}
+			send(ctx, out, llm.AgentRuntimeEvent{Err: activity.timeoutError()})
+			return
+		}
 		select {
 		case err := <-inputErr:
 			if parseErr == nil && err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrClosedPipe) {
@@ -702,9 +727,15 @@ type bridgeServer struct {
 
 var callSequence atomic.Uint64
 
-func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, out chan<- llm.AgentRuntimeEvent, matcher *callMatcher) (*bridgeServer, error) {
+func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, out chan<- llm.AgentRuntimeEvent, matcher *callMatcher, configDir string, activities ...*runtimeActivity) (*bridgeServer, error) {
 	if len(tools) == 0 {
 		return &bridgeServer{}, nil
+	}
+	if !filepath.IsAbs(configDir) {
+		return nil, errors.New("Claude tool bridge requires an absolute private runtime directory")
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create private runtime directory: %w", err)
 	}
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -731,6 +762,10 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, o
 		// and answered on its own channel.
 		server.AddTool(tool,
 			func(callCtx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if len(activities) > 0 && activities[0] != nil {
+					activities[0].toolStarted()
+					defer activities[0].toolFinished()
+				}
 				arguments := request.Params.Arguments
 				id, ok, _ := matcher.take(definition.Name, arguments)
 				if !ok {
@@ -793,13 +828,13 @@ func startBridge(ctx context.Context, tools []llm.ToolSpec, parallel []string, o
 		listener.Close()
 		return nil, err
 	}
-	file, err := os.CreateTemp("", "larik-claude-mcp-*.json")
+	file, err := os.CreateTemp(configDir, "claude-mcp-*.json")
 	if err != nil {
 		listener.Close()
 		return nil, err
 	}
 	bridge.configPath = file.Name()
-	if err := file.Chmod(0o600); err == nil {
+	if err = file.Chmod(0o600); err == nil {
 		_, err = file.Write(encoded)
 	}
 	closeErr := file.Close()

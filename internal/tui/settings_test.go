@@ -245,6 +245,9 @@ func TestVerboseShowsMoreToolOutput(t *testing.T) {
 
 func TestNotifyOnlyWhenUnfocused(t *testing.T) {
 	m := testModel(t)
+	// Isolate notification commands from the idle approval-clock command.
+	// Background/idle clock scheduling is covered in permission_test.go.
+	m.running = true
 	m.notify = "bell"
 	perm := agent.Event{Kind: agent.EvPermission, ToolName: "bash"}
 	if cmd := m.handleEvent(perm); cmd == nil {

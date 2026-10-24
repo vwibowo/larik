@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -139,7 +140,11 @@ func TestProfileAndArgs(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox(t *testing.T) {
+func worktreeSandbox(t *testing.T) (*Sandbox, string, string, func(string, ...string)) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git needed")
+	}
 	// The repository must live outside the temp dirs the sandbox always
 	// allows, as real projects do.
 	realHome, _ := os.UserHomeDir()
@@ -147,12 +152,13 @@ func TestWorktreeSandbox(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	defer os.RemoveAll(root)
+	t.Cleanup(func() { os.RemoveAll(root) })
 	root = real(root)
-	sb, _ := New(Config{}, root, real(t.TempDir()))
+	sb, warning := New(Config{}, root, real(t.TempDir()))
 	if sb == nil {
-		t.Skip("no sandbox on this machine")
+		t.Skipf("no sandbox on this machine: %s", warning)
 	}
+	t.Cleanup(func() { sb.Close() })
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	git := func(dir string, args ...string) {
 		t.Helper()
@@ -165,7 +171,11 @@ func TestWorktreeSandbox(t *testing.T) {
 	git(root, "commit", "-q", "--allow-empty", "-m", "init")
 	wt := filepath.Join(real(t.TempDir()), "wt")
 	git(root, "worktree", "add", "-q", "-b", "larik/t", wt)
-	w := sb.ForWorktree(wt, filepath.Join(root, ".git"))
+	return sb.ForWorktree(wt, filepath.Join(root, ".git")), root, wt, git
+}
+
+func TestWorktreeSandbox(t *testing.T) {
+	w, root, wt, _ := worktreeSandbox(t)
 
 	// The worktree is writable, and committing there works: git writes
 	// objects and refs into the main repository's .git.
@@ -181,6 +191,39 @@ func TestWorktreeSandbox(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "escape.txt")); err == nil {
 		t.Error("escaped into the original checkout")
+	}
+}
+
+func TestWorktreeSandboxProtectsSiblingMetadata(t *testing.T) {
+	w, root, wt, git := worktreeSandbox(t)
+	sibling := filepath.Join(real(t.TempDir()), "sibling")
+	git(root, "worktree", "add", "-q", "-b", "larik/sibling", sibling)
+	siblingGitDir := worktreeGitDir(sibling)
+	for _, name := range []string{"commondir", "gitdir", "config.worktree"} {
+		path := filepath.Join(siblingGitDir, name)
+		if _, err := run(t, w, wt, "echo attacker >> "+strconv.Quote(path)); err == nil {
+			t.Errorf("write to sibling %s must fail", name)
+		}
+	}
+}
+
+func TestWorktreeSandboxProtectsSiblingCreatedLater(t *testing.T) {
+	w, root, wt, git := worktreeSandbox(t)
+	// Derive the policy first, then add another worktree on the host. The
+	// whole administration directory must remain protected, rather than only
+	// the sibling directories that happened to exist at derivation time.
+	sibling := filepath.Join(real(t.TempDir()), "later")
+	git(root, "worktree", "add", "-q", "-b", "larik/later", sibling)
+	path := filepath.Join(worktreeGitDir(sibling), "gitdir")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, w, wt, "echo attacker > "+strconv.Quote(path)); err == nil {
+		t.Error("write to dynamically created sibling metadata must fail")
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
+		t.Errorf("sibling gitdir changed: %v %q", err, after)
 	}
 }
 
@@ -303,6 +346,27 @@ func TestSandboxedCommit(t *testing.T) {
 	script := "echo hi > a.txt && git add a.txt && git -c user.name=t -c user.email=t@t commit -qm first && git log --oneline | wc -l"
 	if out, err := run(t, sb, root, script); err != nil || strings.TrimSpace(out) != "1" {
 		t.Fatalf("commit inside the sandbox: %v %s", err, out)
+	}
+}
+
+func TestScrubEnv(t *testing.T) {
+	env := []string{
+		"NAMED=secret",
+		"UNKNOWN_API_KEY=suffix-secret",
+		"ALLOWED_API_KEY=allowed",
+		"PLAIN=value",
+	}
+	got := strings.Join(ScrubEnv(env, Config{
+		SecretEnv:      []string{"NAMED"},
+		EnvPassthrough: []string{"ALLOWED_API_KEY"},
+	}), "\n")
+	if strings.Contains(got, "secret") || strings.Contains(got, "NAMED=") {
+		t.Errorf("ScrubEnv leaked credentials: %q", got)
+	}
+	for _, want := range []string{"ALLOWED_API_KEY=allowed", "PLAIN=value"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ScrubEnv lost %q: %q", want, got)
+		}
 	}
 }
 

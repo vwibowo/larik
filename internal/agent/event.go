@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"time"
 
 	"larik/internal/llm"
 	"larik/internal/permission"
@@ -40,6 +41,9 @@ type Event struct {
 	// Model is the model a forwarded subagent event ran on, so a front end
 	// can show which tier is doing the work; empty for the main agent.
 	Model string `json:"model,omitempty"`
+	// TaskID identifies the background task forwarding this event. Agent
+	// remains the human-readable subagent label.
+	TaskID string `json:"task_id,omitempty"`
 
 	Text string `json:"text,omitempty"` // deltas, notices, errors
 
@@ -61,6 +65,10 @@ type Event struct {
 
 	// EvPermission: the front end must send exactly one reply.
 	SuggestedRule string `json:"suggested_rule,omitempty"`
+	// RequestedAt is when the approval request was created, not when a front
+	// end displays it. Preserve it when forwarding or queuing the event.
+	// Zero means an older producer did not supply a timestamp.
+	RequestedAt time.Time `json:"requested_at,omitzero"`
 	// Cwd is the directory relative paths in Input are relative to: a
 	// worktree subagent's, not the project's.
 	Cwd string `json:"cwd,omitempty"`

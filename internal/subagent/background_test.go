@@ -213,15 +213,16 @@ func TestBackgroundPermissionsAndLimit(t *testing.T) {
 		return startBG("needs bash")
 	})
 	drain(h.a.Run(context.Background(), "go"), false) // foreground denies; background allows
+	id := idOf(h.a, "general-purpose: bg job")
 	close(h.gate)
 	done := h.waitDone()
-	if done.StopReason != "completed" {
-		t.Fatalf("done = %+v", done)
+	if done.StopReason != "completed" || done.TaskID != id || done.ToolID != id {
+		t.Fatalf("done = %+v, want task id %q", done, id)
 	}
 	h.mu.Lock()
 	asked := false
 	for _, e := range h.bgEvts {
-		if e.Kind == agent.EvPermission && e.Agent == "general-purpose: bg job" {
+		if e.Kind == agent.EvPermission && e.Agent == "general-purpose: bg job" && e.TaskID == id {
 			asked = true
 		}
 	}

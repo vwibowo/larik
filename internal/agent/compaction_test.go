@@ -141,7 +141,11 @@ func TestAResumedFullContextCompactsBeforeTheFirstRequest(t *testing.T) {
 		assistant(llm.TextBlock("<summary>earlier work</summary>")),
 		assistant(llm.TextBlock("answer")),
 	)
-	big := strings.Repeat("x", 200_000) // ~50k tokens each, 200k in all
+	// ~27k tokens each, 108k in all: past the 80% threshold of the 128k
+	// default window but still small enough to summarize in one request
+	// (larger transcripts are summarized in parts; see compactparts_test.go).
+	a.opts.Tools = tools.NewRegistry()
+	big := strings.Repeat("x", 108_000)
 	a.Restore(&session.State{Messages: []llm.Message{
 		llm.UserText(big), assistant(llm.TextBlock(big)),
 		llm.UserText(big), assistant(llm.TextBlock(big)),

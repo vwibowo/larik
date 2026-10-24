@@ -45,6 +45,9 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	path := env.Abs(in.Path)
+	if !env.readAllowed(path) {
+		return errorf("access to %s is denied", path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return errorf("%v", err)

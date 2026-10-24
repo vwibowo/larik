@@ -761,7 +761,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if !m.running && m.recording == nil && m.busyLabel == "" && m.agent.RunningBackground() == 0 {
+		if m.perm == nil && !m.running && m.recording == nil && m.busyLabel == "" && m.agent.RunningBackground() == 0 {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -1510,13 +1510,18 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 			m.permQueue = append(m.permQueue, e)
 			return plan
 		}
+		idleBefore := !m.running && m.recording == nil && m.busyLabel == "" && m.agent.RunningBackground() == 0
 		ev := e
 		m.perm, m.permIdx = &ev, 0
 		what := "needs your permission to use " + e.ToolName
 		if e.ToolName == permission.ExitPlanTool {
 			what = "has a plan for you to review"
 		}
-		return tea.Sequence(plan, m.alert(what))
+		alert := tea.Sequence(plan, m.alert(what))
+		if idleBefore {
+			return tea.Batch(alert, m.spin.Tick)
+		}
+		return alert
 	case agent.EvUsage:
 		m.stats = *e.Usage
 		m.turnStats.Steps++

@@ -211,7 +211,7 @@ type Applied struct {
 // edits with write. Its workspace edit is applied first, then its command
 // runs; edits the server sends back during that command are applied too,
 // and only then.
-func (m *Manager) ApplyAction(ctx context.Context, path string, line, col int, title string, write FileWriter) (Applied, error) {
+func (m *Manager) ApplyAction(ctx context.Context, path string, line, col int, title string, write FileWriter, preflight ...func(string) error) (Applied, error) {
 	actions, err := m.Actions(ctx, path, line, col)
 	if err != nil {
 		return Applied{}, err
@@ -233,7 +233,17 @@ func (m *Manager) ApplyAction(ctx context.Context, path string, line, col int, t
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		for _, p := range sortedKeys(byFile) {
+		paths := sortedKeys(byFile)
+		// Authorize the whole batch before changing any file. Commands can
+		// submit more batches later; each receives the same preflight.
+		for _, p := range paths {
+			for _, check := range preflight {
+				if err := check(p); err != nil {
+					return fmt.Errorf("%s: %w", m.rel(p), err)
+				}
+			}
+		}
+		for _, p := range paths {
 			edits := byFile[p]
 			err := write(p, func(old []byte) ([]byte, error) {
 				out, preview, err := applyTextEdits(string(old), edits)

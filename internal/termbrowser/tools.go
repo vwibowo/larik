@@ -728,9 +728,26 @@ func (s *Session) Show(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("starting the viewer's socket: %w", err)
 	}
+	return s.showPane(ctx, path)
+}
+
+// showPane launches the viewer only through the selected terminal adapter.
+// Ordinary tests inject paneRun; a test executable is never a Larik viewer.
+func (s *Session) showPane(ctx context.Context, path string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
+	}
+	run := s.paneRun
+	if run == nil {
+		if strings.HasSuffix(strings.TrimSuffix(strings.ToLower(exe), ".exe"), ".test") {
+			return "", errors.New("cannot launch a browser viewer from a Go test executable; inject the pane launcher")
+		}
+		run = runCommand
+	}
+	env := s.paneEnv
+	if env == nil {
+		env = os.Getenv
 	}
 	argv := []string{exe, "browser", "view", "--socket", path}
 	size := s.opts.PaneSize
@@ -739,7 +756,7 @@ func (s *Session) Show(ctx context.Context) (string, error) {
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	name, err := openPane(runCtx, os.Getenv, argv, size, runCommand)
+	name, err := openPane(runCtx, env, argv, size, run)
 	if errors.Is(err, errNoSplit) {
 		return "This terminal can't be split from Larik (tmux, cmux, kitty and WezTerm can). Ask the user to open a pane or tab in a terminal that shows kitty graphics and run:\n" + shellJoin(argv), nil
 	}

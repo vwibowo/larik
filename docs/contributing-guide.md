@@ -12,6 +12,8 @@ go build -o larik ./cmd/larik
 go test ./...
 ```
 
+For iteration, prefer targeted package tests and `go test -short ./...`. Short mode skips the Chrome-backed browser integration tests; run the full suite once after integration. Browser tests must inject the pane launcher rather than use the developer's cmux/tmux/kitty/WezTerm environment. The real viewer launcher refuses Go test executables, preventing tests from launching themselves as `larik browser view`. Real terminal checks are manual, explicit opt-in actions, not a side effect of `go test`. Tests that bind Unix sockets need a sufficiently short temporary path and an environment that permits those sockets.
+
 ## Prepare a GitHub release
 
 The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The latest published version is `v0.18.0`. Keep website downloads on the latest published version until the GitHub assets are published.

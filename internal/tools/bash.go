@@ -124,7 +124,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		cmd = exec.Command("bash", "-c", in.Command)
 		cmd.Dir = env.Cwd
 	}
-	cmd.Env = quietEnv(cmd.Env)
+	cmd.Env = env.commandEnv(cmd.Env)
 	// Note the repository's state, to make what the command changes undoable.
 	track := env.trackShell(ctx)
 	// Own process group so cancellation kills children too.

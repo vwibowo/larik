@@ -59,11 +59,17 @@ func (Grep) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	root := env.Abs(in.Path)
+	if !env.readAllowed(root) {
+		return errorf("access to %s is denied", root)
+	}
 	lines := newSearchLines(env.Cwd).forScript(InScript(ctx))
-	if rg := ripgrepPath(); rg != "" {
+	// With credential exclusions, use the walker so paths are filtered before
+	// any file is opened. Parsing rg's text output cannot safely recover every
+	// possible filename (notably names containing newlines).
+	if rg := ripgrepPath(); rg != "" && !env.searchNeedsFilter(root) {
 		err = ripgrep(ctx, rg, root, in, lines)
 	} else {
-		err = goGrep(ctx, root, in, lines)
+		err = goGrep(ctx, root, in, lines, env.readFilter())
 	}
 	if err != nil {
 		return errorf("%v", err)
@@ -105,7 +111,7 @@ var ripgrepPath = sync.OnceValue(func() string {
 // ripgrep streams rg's matches into out and stops rg once out is full, so
 // a broad pattern over a large tree costs no more than the lines shown.
 func ripgrep(ctx context.Context, rg, root string, in grepInput, out *searchLines) error {
-	args := []string{"--line-number", "--no-heading", "--color=never", "--max-columns=300", "--max-count=50"}
+	args := []string{"--line-number", "--with-filename", "--no-heading", "--color=never", "--max-columns=300", "--max-count=50"}
 	if in.IgnoreCase {
 		args = append(args, "-i")
 	}
@@ -155,10 +161,18 @@ func ripgrep(ctx context.Context, rg, root string, in grepInput, out *searchLine
 	return nil
 }
 
+func allowRead(filters []func(string) bool) func(string) bool {
+	if len(filters) > 0 && filters[0] != nil {
+		return filters[0]
+	}
+	return func(string) bool { return true }
+}
+
 // goGrep is grep without ripgrep: files are searched a batch at a time in
 // parallel, and their matches added in walk order, so results stay the
 // same from run to run and the search stops once out is full.
-func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) error {
+func goGrep(ctx context.Context, root string, in grepInput, out *searchLines, filters ...func(string) bool) error {
+	allowed := allowRead(filters)
 	pat := in.Pattern
 	if in.IgnoreCase {
 		pat = "(?i)" + pat
@@ -192,10 +206,22 @@ func goGrep(ctx context.Context, root string, in grepInput, out *searchLines) er
 		batch = batch[:0]
 		return ctx.Err()
 	}
-	err = WalkFiles(ctx, root, func(path string) error {
+	walk := func(ctx context.Context, root string, fn func(string) error) error {
+		if rg := ripgrepPath(); rg != "" && len(filters) > 0 {
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				return rgFiles(ctx, rg, root, fn)
+			}
+		}
+		return WalkFiles(ctx, root, fn)
+	}
+	err = walk(ctx, root, func(path string) error {
+		if !allowed(path) {
+			return nil
+		}
 		if in.Glob != "" {
 			if ok, _ := doublestar.Match(in.Glob, filepath.Base(path)); !ok {
-				if ok, _ := doublestar.Match(in.Glob, path); !ok {
+				rel, _ := filepath.Rel(root, path)
+				if ok, _ := doublestar.Match(in.Glob, filepath.ToSlash(rel)); !ok {
 					return nil
 				}
 			}
@@ -350,18 +376,29 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("invalid glob pattern %q", in.Pattern)
 	}
 	root := env.Abs(in.Path)
+	if !env.readAllowed(root) {
+		return errorf("access to %s is denied", root)
+	}
 	// Start at the pattern's literal directory, so a pattern that names a
 	// directory the walk would skip (.github/workflows/*.yml, dist/**)
 	// still searches it.
 	if base, rest := doublestar.SplitPattern(filepath.ToSlash(in.Pattern)); base != "." && !filepath.IsAbs(base) {
 		root, in.Pattern = filepath.Join(root, filepath.FromSlash(base)), rest
 	}
+	if !env.readAllowed(root) {
+		return errorf("access to %s is denied", root)
+	}
+	filter := env.readFilter()
+	needsFilter := env.searchNeedsFilter(root)
 	type hit struct {
 		path string
 		mod  int64
 	}
 	var hits []hit
 	match := func(path string) error {
+		if needsFilter && !filter(path) {
+			return nil
+		}
 		rel, _ := filepath.Rel(root, path)
 		if ok, _ := doublestar.Match(in.Pattern, filepath.ToSlash(rel)); ok {
 			var mod int64
@@ -413,7 +450,7 @@ func (Glob) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 
 // rgFiles calls fn for each file rg lists under root.
 func rgFiles(ctx context.Context, rg, root string, fn func(path string) error) error {
-	cmd := exec.CommandContext(ctx, rg, "--files", "--no-messages", "--color=never", root)
+	cmd := exec.CommandContext(ctx, rg, "--files", "--null", "--no-messages", "--color=never", root)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -423,13 +460,21 @@ func rgFiles(ctx context.Context, rg, root string, fn func(path string) error) e
 	}
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc.Split(splitNUL)
+	var callbackErr error
 	for sc.Scan() {
-		if err := fn(sc.Text()); err != nil {
+		if callbackErr = fn(sc.Text()); callbackErr != nil {
 			break
 		}
 	}
 	io.Copy(io.Discard, stdout)
 	cmd.Wait() // exit 1 is no files, 2 some unreadable: what was listed stands
+	if callbackErr != nil {
+		return callbackErr
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
 	return ctx.Err()
 }
 

@@ -64,7 +64,7 @@ func (l *live) drainBackground() {
 		case e := <-l.a.Background():
 			l.publish(e, true)
 			if e.Kind == agent.EvTaskDone {
-				l.expireTask(e.Agent)
+				l.expireTask(e.TaskID, e.Agent)
 				l.deliverNotifications()
 			}
 		case <-l.stopDrain:
@@ -100,7 +100,7 @@ func (l *live) expireCall(end agent.Event) {
 	l.pmu.Lock()
 	var gone []string
 	for id, p := range l.pending {
-		if p.ev.ToolID == end.ToolID && p.ev.Agent == end.Agent {
+		if p.ev.ToolID == end.ToolID && p.ev.Agent == end.Agent && p.ev.TaskID == end.TaskID {
 			gone = append(gone, id)
 			delete(l.pending, id)
 		}
@@ -116,20 +116,23 @@ func (l *live) status(busy bool) {
 	l.bus.publish(Event{Session: l.id, Busy: &busy, Event: agent.Event{Kind: EvStatus}})
 }
 
-// prompt starts a turn. The caller gets events from the bus.
-func (l *live) prompt(text string) error {
+// prompt starts a turn. The caller gets events from the bus. The returned
+// sequence is the last event before this run started, captured while the run
+// lock is held so a waiting caller can ignore events from the preceding run.
+func (l *live) prompt(text string) (int64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
-		return errors.New("session closed")
+		return 0, errors.New("session closed")
 	}
 	if l.busy {
-		return errBusy
+		return 0, errBusy
 	}
+	start := l.bus.last()
 	ctx := l.startLocked(context.Background())
 	l.bus.publish(Event{Session: l.id, Event: agent.Event{Kind: EvUserMessage, Text: text}})
 	go l.loop(ctx, l.a.Run(ctx, text))
-	return nil
+	return start, nil
 }
 
 // deliverNotifications runs a notification turn if the session is idle
@@ -269,14 +272,19 @@ func (l *live) expire(all bool) {
 }
 
 // expireTask drops the requests of a background task that has ended.
-// Each gets a denial too, which is harmless if nothing is listening and
-// unblocks a task that happens to share the label.
-func (l *live) expireTask(label string) {
+// Each gets a denial too, which is harmless if nothing is listening. TaskID
+// distinguishes concurrent tasks that happen to have the same label. The
+// label fallback supports events produced without a task ID.
+func (l *live) expireTask(taskID, label string) {
 	l.pmu.Lock()
 	var gone []string
 	var replies []chan<- agent.PermissionReply
 	for id, p := range l.pending {
-		if p.bg && (p.ev.Agent == label || strings.HasPrefix(p.ev.Agent, label+" · ")) {
+		match := p.ev.TaskID == taskID
+		if taskID == "" {
+			match = p.ev.TaskID == "" && (p.ev.Agent == label || strings.HasPrefix(p.ev.Agent, label+" · "))
+		}
+		if p.bg && match {
 			gone = append(gone, id)
 			replies = append(replies, p.reply)
 			delete(l.pending, id)

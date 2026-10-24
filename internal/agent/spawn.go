@@ -52,14 +52,30 @@ type SpawnOptions struct {
 }
 
 // Spawn creates a subagent that shares this agent's permissions (and mode),
-// hooks and checkpoints, but has its own context, prompt and tools.
+// hooks and checkpoints, but has its own context, prompt and tools. Its
+// file changes go to an undo unit of its own (see undo.go), which ends
+// when its run does.
 func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	a.mu.Lock()
 	effort, noAutoCompact, compactWith, tr, exec, execFor := a.opts.Effort, a.opts.NoAutoCompact, a.opts.CompactWith, a.opts.Trace, a.opts.Execution, a.opts.ExecutionFor
+	childExecFor := a.opts.SubagentExecutionFor
 	a.mu.Unlock()
-	// A subagent on another model gets that model's execution.
-	if execFor != nil && o.Provider != nil {
-		exec = execFor(o.Provider.Name(), o.Model)
+	if childExecFor == nil {
+		// Embedders without config resolution still get the CLI default.
+		// Capture the parent's default, not the selected child's execution.
+		parentExec := exec
+		childExecFor = func(provider, model string) tools.Execution {
+			if provider == "claude-code-cli" {
+				return tools.ExecTools
+			}
+			if execFor != nil {
+				return execFor(provider, model)
+			}
+			return parentExec
+		}
+	}
+	if o.Provider != nil {
+		exec = childExecFor(o.Provider.Name(), o.Model)
 	}
 	label := o.Label
 	if label == "" {
@@ -70,30 +86,34 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		runtime = p.AgentRuntime()
 	}
 	opts := Options{
-		Provider:      o.Provider,
-		Runtime:       runtime,
-		Model:         o.Model,
-		Effort:        effort,
-		NoAutoCompact: noAutoCompact,
-		CompactWith:   compactWith,
-		System:        o.System,
-		Cwd:           a.opts.Cwd,
-		MaxTurns:      o.MaxTurns,
-		Tools:         o.Tools,
-		Execution:     exec,
-		ExecutionFor:  execFor,
-		SamplingFor:   a.opts.SamplingFor,
-		Perms:         a.opts.Perms,
-		Session:       o.Session,
-		Checkpoints:   a.opts.Checkpoints,
-		OnAllowRule:   a.opts.OnAllowRule,
-		AutoApprove:   a.autoApprover(),
-		Hooks:         a.opts.Hooks,
-		LSP:           a.opts.LSP,
-		Sandbox:       a.opts.Sandbox,
-		Subagent:      o.Type,
-		Observer:      a.opts.Observer,
-		Trace:         tr.Child(label, o.TraceParent),
+		Provider:             o.Provider,
+		Runtime:              runtime,
+		Model:                o.Model,
+		Effort:               effort,
+		NoAutoCompact:        noAutoCompact,
+		CompactWith:          compactWith,
+		System:               o.System,
+		Cwd:                  a.opts.Cwd,
+		MaxTurns:             o.MaxTurns,
+		Tools:                o.Tools,
+		Execution:            exec,
+		ExecutionFor:         childExecFor,
+		SubagentExecutionFor: childExecFor,
+		SamplingFor:          a.opts.SamplingFor,
+		Perms:                a.opts.Perms,
+		Session:              o.Session,
+		Checkpoints:          a.opts.Checkpoints,
+		OnAllowRule:          a.opts.OnAllowRule,
+		AutoApprove:          a.autoApprover(),
+		Hooks:                a.opts.Hooks,
+		LSP:                  a.opts.LSP,
+		Sandbox:              a.opts.Sandbox,
+		SecretPaths:          a.opts.SecretPaths,
+		SecretEnv:            a.opts.SecretEnv,
+		SanitizeEnv:          a.opts.SanitizeEnv,
+		Subagent:             o.Type,
+		Observer:             a.opts.Observer,
+		Trace:                tr.Child(label, o.TraceParent),
 	}
 	if o.Cwd != "" && o.Cwd != a.opts.Cwd {
 		opts.Cwd = o.Cwd
@@ -110,6 +130,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 	child.tokenSaver = a.tokenSaver
 	child.env.TokenSaver = a.tokenSaver
 	child.env.RawOutputDir = a.env.RawOutputDir
+	a.beginCheckpointUnit(child, label)
 	return child
 }
 

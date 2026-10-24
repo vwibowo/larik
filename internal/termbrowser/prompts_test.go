@@ -209,7 +209,18 @@ func TestShowUsesTheHostsPanel(t *testing.T) {
 		t.Fatalf("Show: %q %v (asked %d)", msg, err, asked)
 	}
 	s.SetShower(func() (string, bool) { return "", false })
-	if msg, _ := s.Show(context.Background()); !strings.Contains(msg, "larik") && !strings.Contains(msg, "pane") {
-		t.Errorf("a host that declines falls back to a pane: %q", msg)
+	var launched []string
+	s.paneEnv = func(key string) string {
+		if key == "CMUX_SURFACE_ID" {
+			return "surface:test"
+		}
+		return ""
+	}
+	s.paneRun = func(_ context.Context, args []string) error {
+		launched = append([]string(nil), args...)
+		return nil
+	}
+	if msg, err := s.Show(context.Background()); err != nil || !strings.Contains(msg, "new cmux pane") || len(launched) == 0 {
+		t.Errorf("a host that declines uses the fake pane launcher: %q %v (%v)", msg, err, launched)
 	}
 }

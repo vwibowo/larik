@@ -84,17 +84,17 @@ sequenceDiagram
     L->>B: status{busy: false}
 ```
 
-With `{"wait": true}`, the handler subscribes before starting the run, reads events itself, and returns the final answer in the HTTP response. If the turn compacted, the response also contains every compaction result for that turn. The compact endpoint returns both `summary` and `compaction`; the latter has `before_tokens`, estimated `after_tokens`, signed `saved_tokens`, `trigger`, `estimated`, and `available`. When a provider reports no usage, `available` is false and clients should not display the zero-valued metric fields. The same object is carried by `compacted` SSE/JSON events, while session status usage includes cumulative `compactions`, `compaction_measurements`, and `compaction_saved_tokens`.
+With `{"wait": true}`, the handler subscribes before starting the run, then filters events using a sequence boundary captured atomically when its own run starts. Completion from a preceding run cannot satisfy the wait. It reads events itself and returns the final answer in the HTTP response. If the turn compacted, the response also contains every compaction result for that turn. The compact endpoint returns both `summary` and `compaction`; the latter has `before_tokens`, estimated `after_tokens`, signed `saved_tokens`, `trigger`, `estimated`, and `available`. When a provider reports no usage, `available` is false and clients should not display the zero-valued metric fields. The same object is carried by `compacted` SSE/JSON events, while session status usage includes cumulative `compactions`, `compaction_measurements`, and `compaction_saved_tokens`.
 
 ## Design points
 
 **Events are the agent's own.** The SSE `data` is the `agent.Event` JSON (the same schema as `-p --output json`) plus `seq`, `session`, and `request_id` for permission requests. The server adds four kinds: `status`, `user_message`, `permission_resolved`, `session_closed`.
 
-**Reconnects replay.** A client reconnecting with `Last-Event-ID` (or `?after=`) gets every retained event after that sequence, then live ones. If the gap is older than the ring, or the client's sequence is ahead of the session's (the server restarted or the session was reloaded, so numbering began again), the stream starts with a `: gap` comment telling the client to refetch `/messages`, followed by every retained event. Without either header, a stream starts with new events only.
+**Reconnects replay.** A client reconnecting with `Last-Event-ID` (or `?after=`) gets every retained event after that sequence, then live ones. If the gap is older than the ring, or the client's sequence is ahead of the session's (the server restarted or the session was reloaded, so numbering began again), the stream starts with a `: gap` comment telling the client to refetch `/messages`, followed by every retained event. Without a cursor, a stream starts with new events only. Malformed or negative `Last-Event-ID` / `?after=` cursors return HTTP 400.
 
 **Slow clients don't slow the agent.** Each subscriber has a 1024-event buffer. `publish` never blocks: a subscriber that falls behind is disconnected and can reconnect and replay. Writes coalesce whatever is queued into one flush, and a keepalive comment goes out every 15 s.
 
-**Permission requests outlive the HTTP request.** A pending request holds the agent's reply channel until any client answers. When a run ends, its unanswered requests expire (`permission_resolved: expired`). Requests from background tasks survive until the tasks end.
+**Permission requests outlive the HTTP request.** A pending request holds the agent's reply channel until any client answers. Its `requested_at` timestamp (RFC 3339) records when the agent asked, not when a queued prompt becomes visible, so clients can distinguish approval waiting from model execution. Older events may omit it. The TUI displays an elapsed approval timer, including while the foreground is idle. When a run ends, its unanswered requests expire (`permission_resolved: expired`). Requests from background tasks survive until the tasks end. Background events include a unique `task_id`; cleanup matches that identity rather than the display label, so tasks with the same description cannot expire one another's requests.
 
 **Auto mode.** With `--mode auto` (or a session in that mode), a permission request is published only for calls the model check didn't approve; its event carries `auto_reason`, why the check handed it over.
 
@@ -104,7 +104,7 @@ With `{"wait": true}`, the handler subscribes before starting the run, reads eve
 
 **Idle sessions still deliver background results.** `drainBackground` reads `Agent.Background()` for the session's whole life. When a task finishes and the session is idle, `deliverNotifications` starts a turn by itself with `RunNotifications`, and `loop` keeps going until no undelivered results remain, so the model always sees them.
 
-**One run at a time.** `prompt`, `compact`, `undo` and `clear` all mark the session busy; a second one returns 409. `cancel` cancels the current run's context.
+**One run at a time.** `prompt`, `compact`, `undo` and `clear` all mark the session busy; a second one returns 409. `cancel` cancels the current run's context. Resuming a session while it is still closing, or closing it twice concurrently, returns 409 until its resources and transcript lock have been released.
 
 ## Security
 

@@ -301,6 +301,9 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 	if use.Name == tools.CodeToolName || use.Name == tools.WriteFilesToolName {
 		runCtx = tools.WithCaller(runCtx, &toolCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
 	}
+	runCtx = tools.WithWriteCheck(runCtx, func(path string) error {
+		return a.checkWriteDestination(use, path)
+	})
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
 	data := out.Data
@@ -424,7 +427,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	rule := permission.SuggestRule(use.Name, input)
 	a.notify("Larik needs your permission to use " + use.Name)
 	asked := time.Now()
-	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, AutoReason: autoReason, Reply: reply})
+	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, AutoReason: autoReason, RequestedAt: asked, Reply: reply})
 	select {
 	case <-ctx.Done():
 		record("interrupted", "", asked)

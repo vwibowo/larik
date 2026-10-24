@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +71,14 @@ type Env struct {
 
 	// Sandbox, if set, confines bash commands (unless a call opts out).
 	Sandbox Sandbox
+	// SecretPaths are files or directory trees built-in read/search tools must
+	// not expose. Symlinks resolving into one of these paths are protected too.
+	SecretPaths []string
+	// SecretEnv names credential variables bash commands must not inherit,
+	// including commands explicitly run outside the sandbox.
+	SecretEnv []string
+	// SanitizeEnv overrides the default scrubber, including personal passthrough rules.
+	SanitizeEnv func([]string) []string
 	// RawOutputDir is a private directory beside the session transcript.
 	RawOutputDir string
 	TokenSaver   *atomic.Bool
@@ -105,6 +114,99 @@ func (e *Env) ForgetShown() {
 }
 
 func NewEnv(cwd string) *Env { return &Env{Cwd: cwd, reads: map[string]readMark{}} }
+
+// readAllowed reports whether path is outside Larik's credential paths. It
+// checks both lexical paths and resolved symlinks. SecretPaths is immutable
+// after an Env is handed to tools.
+func (e *Env) readAllowed(path string) bool {
+	return e.readFilter()(path)
+}
+
+// readFilter resolves the immutable secret roots once per search, rather than
+// repeating their symlink lookups for every candidate file.
+func (e *Env) readFilter() func(string) bool {
+	if e == nil || len(e.SecretPaths) == 0 {
+		return func(string) bool { return true }
+	}
+	plain, resolved := e.secretRoots()
+	return func(path string) bool {
+		path = e.Abs(path)
+		if insideAny(path, plain) {
+			return false
+		}
+		return !insideAny(resolveReadPath(path), resolved)
+	}
+}
+
+func (e *Env) secretRoots() (plain, resolved []string) {
+	for _, path := range e.SecretPaths {
+		path = e.Abs(path)
+		plain = append(plain, path)
+		resolved = append(resolved, resolveReadPath(path))
+	}
+	return plain, resolved
+}
+
+// Resolve existing ancestors too: sign-in files may not exist yet, while
+// their configuration directory is already reached through a symlink.
+func resolveReadPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path
+	}
+	return filepath.Join(resolveReadPath(parent), filepath.Base(path))
+}
+
+// ripgrep does not follow symlinks encountered inside a tree. Once the root
+// itself is allowed, its fast content search is safe unless it contains a
+// protected root (lexically or through resolved ancestor paths).
+func (e *Env) searchNeedsFilter(root string) bool {
+	plain, resolved := e.secretRoots()
+	actual := resolveReadPath(root)
+	for i := range plain {
+		if insideAny(plain[i], []string{root}) || insideAny(resolved[i], []string{actual}) {
+			return true
+		}
+	}
+	return false
+}
+
+func insideAny(path string, roots []string) bool {
+	// Be conservative on case-insensitive filesystems too.
+	path = strings.ToLower(filepath.Clean(path))
+	for _, root := range roots {
+		root = strings.ToLower(filepath.Clean(root))
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Env) commandEnv(current []string) []string {
+	env := quietEnv(current)
+	if e.SanitizeEnv != nil {
+		return e.SanitizeEnv(env)
+	}
+	secret := make(map[string]bool, len(e.SecretEnv))
+	for _, name := range e.SecretEnv {
+		secret[name] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(name)
+		if secret[name] || strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_AUTH_TOKEN") || strings.HasSuffix(upper, "_ACCESS_TOKEN") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
 
 // WriteFile writes bytes to a project path using the same freshness,
 // checkpointing, and path-boundary rules as the built-in file tools.

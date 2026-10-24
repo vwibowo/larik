@@ -1,6 +1,21 @@
 package agent
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// budgetError is a request refused because a session cap is reached, as
+// opposed to one that failed.
+type budgetError struct{ msg string }
+
+func (e *budgetError) Error() string { return e.msg }
+
+// isBudgetError reports whether err is a refusal by the session budget.
+func isBudgetError(err error) bool {
+	var b *budgetError
+	return errors.As(err, &b)
+}
 
 // root is the agent whose totals and budget cover this one: the parent
 // of a subagent, else the agent itself.
@@ -39,7 +54,7 @@ func (r *Agent) checkUSD(emit func(Event)) error {
 	}
 	r.mu.Unlock()
 	if spent >= capUSD {
-		return fmt.Errorf("session budget of $%.2f reached ($%.2f spent); raise it with /routing or /config budget=<usd>, or start a /new session", capUSD, spent)
+		return &budgetError{fmt.Sprintf("session budget of $%.2f reached ($%.2f spent); raise it with /routing or /config budget=<usd>, or start a /new session", capUSD, spent)}
 	}
 	if warn {
 		emit(Event{Kind: EvNotice, Text: fmt.Sprintf("$%.2f of the $%.2f session budget spent (%.0f%%)", spent, capUSD, 100*spent/capUSD)})
@@ -65,7 +80,7 @@ func (r *Agent) checkTokens(emit func(Event)) error {
 	}
 	r.mu.Unlock()
 	if used >= capTokens {
-		return fmt.Errorf("session token budget of %d reached (%d used); raise it with /routing tokens=<n>, or start a /new session", capTokens, used)
+		return &budgetError{fmt.Sprintf("session token budget of %d reached (%d used); raise it with /routing tokens=<n>, or start a /new session", capTokens, used)}
 	}
 	if warn {
 		emit(Event{Kind: EvNotice, Text: fmt.Sprintf("%d of the %d session token budget used (%.0f%%)", used, capTokens, 100*float64(used)/float64(capTokens))})

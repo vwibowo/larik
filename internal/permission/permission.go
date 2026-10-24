@@ -248,8 +248,13 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 	}
 	switch call.Tool {
 	case "bash":
-		if c.sandboxed && wantsSandbox(call.Input) {
-			return Allow, "" // confined by the OS sandbox
+		if c.sandboxed {
+			if wantsSandbox(call.Input) {
+				return Allow, "" // confined by the OS sandbox
+			}
+			// Explicitly escaping an available sandbox always needs a personal
+			// allow rule, even for a command that is normally safe by default.
+			break
 		}
 		if safeCommand(subject) {
 			return Allow, ""
@@ -274,6 +279,9 @@ func SuggestRule(tool string, input json.RawMessage) string {
 		}
 	}
 	if tool != "bash" {
+		if tool == "multi_edit" {
+			return "edit"
+		}
 		return tool
 	}
 	fields := strings.Fields(Subject(tool, input))
@@ -329,9 +337,15 @@ func (c *Checker) matches(rule, tool, subject string) bool {
 		return false
 	}
 	if m[1] != tool {
-		// `mcp__server` covers all of that server's tools.
-		return strings.HasPrefix(m[1], "mcp__") && !strings.Contains(m[1][len("mcp__"):], "__") &&
-			strings.HasPrefix(tool, m[1]+"__") && m[2] == ""
+		// Documented editing aliases inherit the underlying tool rules.
+		// Explicit alias rules remain valid and can distinguish that tool.
+		editAlias := (tool == "multi_edit" || tool == "apply_code_action") && m[1] == "edit"
+		writeAlias := tool == "browser_screenshot" && subject != "" && m[1] == "write"
+		if !editAlias && !writeAlias {
+			// `mcp__server` covers all of that server's tools.
+			return strings.HasPrefix(m[1], "mcp__") && !strings.Contains(m[1][len("mcp__"):], "__") &&
+				strings.HasPrefix(tool, m[1]+"__") && m[2] == ""
+		}
 	}
 	pattern := m[2]
 	if pattern == "" || pattern == "*" {
@@ -481,7 +495,10 @@ var safeExact = map[string]bool{
 	"node --version": true, "python --version": true, "python3 --version": true,
 }
 
-var safeWithArgs = []string{"ls", "cat", "head", "tail", "wc", "which", "echo", "du", "df"}
+// Content-reading commands are not safe defaults when no sandbox exists:
+// arbitrary file arguments (or --files0-from) can expose Larik credentials.
+// Use the credential-aware built-in read/search tools for prompt-free reads.
+var safeWithArgs = []string{"ls", "which", "echo", "df"}
 
 func safeCommand(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)

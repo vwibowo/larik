@@ -147,6 +147,62 @@ func TestParallelCreate(t *testing.T) {
 	}
 }
 
+func TestGitHelpersIgnoreExecutableRepoConfig(t *testing.T) {
+	repo := newRepo(t)
+	// Track the attribute before enabling its repo-controlled filter.
+	os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("*.txt filter=Evil.Driver diff=evil\n"), 0o644)
+	run(t, repo, "add", ".gitattributes")
+	run(t, repo, "commit", "-qm", "attributes")
+
+	marker := filepath.Join(t.TempDir(), "executed")
+	script := filepath.Join(t.TempDir(), "evil.sh")
+	body := "#!/bin/sh\necho ran >> " + marker + "\ncat\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"core.hooksPath":           filepath.Dir(script),
+		"core.fsmonitor":           script,
+		"diff.external":            script,
+		"diff.evil.command":        script,
+		"filter.Evil.Driver.clean": script,
+	} {
+		run(t, repo, "config", key, value)
+	}
+	// Name the hook itself inside hooksPath.
+	if err := os.Rename(script, filepath.Join(filepath.Dir(script), "post-checkout")); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(filepath.Dir(script), "post-checkout")
+	// Also install the default hook: an empty core.hooksPath override would
+	// fall back here and is not a safe substitute for /dev/null.
+	defaultHook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if data, err := os.ReadFile(hook); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(defaultHook, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"core.fsmonitor", "diff.external", "diff.evil.command", "filter.Evil.Driver.clean"} {
+		run(t, repo, "config", key, hook)
+	}
+	run(t, repo, "config", "filter.Evil.Driver.required", "true")
+
+	w, err := Create(context.Background(), t.TempDir(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(w.Path, "a.txt"), []byte("changed\n"), 0o644)
+	out, err := w.Finish("safe finish")
+	if err != nil || !out.Kept {
+		t.Fatalf("Finish: %+v %v", out, err)
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		t.Errorf("repo-controlled executable config ran: %q", data)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 func TestNeedsACommit(t *testing.T) {
 	isolate(t)
 	repo := t.TempDir()

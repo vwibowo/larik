@@ -45,6 +45,7 @@ type Server struct {
 	mu       sync.Mutex
 	sessions map[string]*live
 	opening  map[string]bool // session files being opened
+	closing  map[string]bool // session files being closed
 	shutdown bool
 }
 
@@ -52,7 +53,7 @@ func New(a *app.App, opts Options) *Server {
 	if opts.Keepalive == 0 {
 		opts.Keepalive = 15 * time.Second
 	}
-	return &Server{app: a, opts: opts, sessions: map[string]*live{}, opening: map[string]bool{}}
+	return &Server{app: a, opts: opts, sessions: map[string]*live{}, opening: map[string]bool{}, closing: map[string]bool{}}
 }
 
 // Handler returns the HTTP API.
@@ -225,6 +226,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if s.shutdown {
 		s.mu.Unlock()
 		writeErr(w, http.StatusServiceUnavailable, "server is shutting down")
+		return
+	}
+	if s.closing[id] && id != "" {
+		s.mu.Unlock()
+		writeErr(w, http.StatusConflict, "session is being closed by another request")
 		return
 	}
 	if l, ok := s.sessions[id]; ok && id != "" {
@@ -441,14 +447,26 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, l *live) {
 func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
+	if s.closing[id] {
+		s.mu.Unlock()
+		writeErr(w, http.StatusConflict, "session is already being closed")
+		return
+	}
 	l := s.sessions[id]
-	delete(s.sessions, id)
-	s.mu.Unlock()
 	if l == nil {
+		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, "session not loaded")
 		return
 	}
+	s.closing[id] = true
+	delete(s.sessions, id)
+	s.mu.Unlock()
+
 	l.close()
+
+	s.mu.Lock()
+	delete(s.closing, id)
+	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -493,12 +511,13 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request, l *live) {
 	}
 	var ch chan Event
 	if req.Wait {
-		// Subscribe first so no event of this run is missed.
+		// Subscribe first so no event of this run is missed. prompt returns an
+		// atomic boundary used below to discard a preceding run's tail.
 		_, ch, _ = l.bus.subscribe(l.bus.last())
 		defer l.bus.unsubscribe(ch)
 	}
-	start := l.bus.last()
-	if err := l.prompt(req.Text); err != nil {
+	start, err := l.prompt(req.Text)
+	if err != nil {
 		code := http.StatusConflict
 		if !errors.Is(err, errBusy) {
 			code = http.StatusGone
@@ -528,7 +547,7 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request, l *live) {
 				writeJSON(w, http.StatusOK, res)
 				return
 			}
-			if e.Agent != "" {
+			if e.Seq <= start || e.Agent != "" || e.TaskID != "" {
 				continue
 			}
 			switch e.Kind {
@@ -692,10 +711,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, l *live) {
 		return
 	}
 	after := l.bus.last() // by default, only new events
+	var cursor string
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
-		after, _ = strconv.ParseInt(v, 10, 64)
+		cursor = v
 	} else if v := r.URL.Query().Get("after"); v != "" {
-		after, _ = strconv.ParseInt(v, 10, 64)
+		cursor = v
+	}
+	if cursor != "" {
+		var err error
+		if after, err = strconv.ParseInt(cursor, 10, 64); err != nil || after < 0 {
+			writeErr(w, http.StatusBadRequest, "Last-Event-ID and after must be non-negative integer sequence numbers")
+			return
+		}
 	}
 	replay, ch, gap := l.bus.subscribe(after)
 	defer l.bus.unsubscribe(ch)

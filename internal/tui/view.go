@@ -101,7 +101,7 @@ func (m *model) View() tea.View {
 	// The live view sits below the conversation. When the sidebar is visible,
 	// both share its stable-height column layout.
 	var live []string
-	if m.running || m.busyLabel != "" && !m.voiceActive() || m.agent.RunningBackground() > 0 {
+	if m.perm != nil || m.running || m.busyLabel != "" && !m.voiceActive() || m.agent.RunningBackground() > 0 {
 		if s := m.liveView(conversationWidth); s != "" {
 			live = strings.Split(s, "\n")
 		}
@@ -787,7 +787,7 @@ func (m *model) liveView(widths ...int) string {
 	var label string
 	switch {
 	case m.perm != nil:
-		label = "Waiting for your answer…"
+		label = m.permissionWaitLabel()
 	case m.busyLabel == "Transcribing…":
 		label = "Transcribing…"
 	case m.busyLabel != "":
@@ -811,7 +811,7 @@ func (m *model) liveView(widths ...int) string {
 		label = a + "…"
 	}
 	var meta []string
-	if m.running {
+	if m.running && m.perm == nil {
 		meta = append(meta, elapsed(time.Since(m.turnStart)))
 		if m.turnChars > 0 {
 			meta = append(meta, fmt.Sprintf("↓ ~%d tokens", m.shownTokens())) // a rough count while streaming
@@ -1001,6 +1001,16 @@ func elapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
+// permissionWaitLabel uses the request's creation time, including time spent
+// queued behind another prompt. Legacy requests have no misleading zero date.
+func (m *model) permissionWaitLabel() string {
+	label := "Waiting for your approval"
+	if m.perm != nil && !m.perm.RequestedAt.IsZero() {
+		label += " · " + elapsed(max(time.Since(m.perm.RequestedAt), 0))
+	}
+	return label
+}
+
 // permissionView asks whether a tool call may run: a question naming the
 // action, where the request came from, what exactly will happen, and the
 // three answers with their keys.
@@ -1024,6 +1034,7 @@ func (m *model) permissionView() string {
 	}
 	lines := []string{
 		spread(m.st.accent.Render(m.permQuestion(e)), m.st.dim.Render(strings.Join(meta, " · ")), w),
+		m.st.warn.Render(m.permissionWaitLabel()),
 		"",
 		prefixLines(m.permDetail(e), "  "),
 		"",

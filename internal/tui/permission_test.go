@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -77,8 +78,100 @@ func TestStatusLineWhileAPromptWaits(t *testing.T) {
 	m.running, m.turnStart = true, time.Now()
 	m.perm = permEvent("bash", map[string]any{"command": "ls"})
 	v := plain(m.liveView())
-	if !strings.Contains(v, "Waiting for your answer…") || strings.Contains(v, "esc to interrupt") {
+	if !strings.Contains(v, "Waiting for your approval") || strings.Contains(v, "esc to interrupt") {
 		t.Fatalf("status while a prompt waits: %q", v)
+	}
+}
+
+// Fixed old request times make this independent of tick timing and prove that
+// promoting a queued prompt does not restart its approval timer.
+func TestQueuedPermissionWaitUsesRequestCreation(t *testing.T) {
+	m := testModel(t)
+	m.width = 140
+	first := *permEvent("bash", map[string]any{"command": "first"})
+	first.Reply = make(chan agent.PermissionReply, 1)
+	second := *permEvent("bash", map[string]any{"command": "second"})
+	second.Reply = make(chan agent.PermissionReply, 1)
+	second.RequestedAt = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	m.handleEvent(first)
+	m.handleEvent(second)
+	if len(m.permQueue) != 1 || !m.permQueue[0].RequestedAt.Equal(second.RequestedAt) {
+		t.Fatal("queued request lost its creation timestamp")
+	}
+	m.replyPermission(agent.PermissionReply{Allow: true})
+	if m.perm == nil || !m.perm.RequestedAt.Equal(second.RequestedAt) {
+		t.Fatal("promoting the queued prompt reset its creation timestamp")
+	}
+	// elapsed uses minutes for old requests. A fresh display-time timer
+	// would incorrectly show seconds here instead.
+	wait := regexp.MustCompile(`Waiting for your approval · [1-9][0-9]*m [0-9]{2}s`)
+	for name, view := range map[string]string{"prompt": m.permissionView(), "live footer": m.liveView()} {
+		if !wait.MatchString(plain(view)) {
+			t.Errorf("%s lacks the request's original wait age:\n%s", name, plain(view))
+		}
+	}
+}
+
+func TestBackgroundPermissionWaitVisibleWhileForegroundIdle(t *testing.T) {
+	m := testModel(t)
+	m.width, m.height = 140, 40
+	e := *permEvent("bash", map[string]any{"command": "build"})
+	e.Agent, e.TaskID = "worker: build", "bg1"
+	e.Reply = make(chan agent.PermissionReply, 1)
+	e.RequestedAt = time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	m.Update(bgEventMsg{e, m.agent})
+	if m.running || m.perm == nil || !m.perm.RequestedAt.Equal(e.RequestedAt) {
+		t.Fatal("background approval should remain visible without starting a foreground turn")
+	}
+	for name, view := range map[string]string{"prompt": m.permissionView(), "live footer": m.liveView(), "screen": m.View().Content} {
+		v := plain(view)
+		if !strings.Contains(v, "Waiting for your approval · ") || strings.Contains(v, "Waiting for the model") {
+			t.Errorf("%s hides the idle background approval wait:\n%s", name, v)
+		}
+	}
+	frame := m.motion.frame
+	_, cmd := m.Update(m.spin.Tick())
+	if cmd == nil || m.motion.frame <= frame {
+		t.Fatal("an idle foreground must keep ticking while background approval waits")
+	}
+}
+
+func TestPermissionWaitWithoutTimestamp(t *testing.T) {
+	m := testModel(t)
+	m.perm = permEvent("bash", map[string]any{"command": "ls"})
+	for name, view := range map[string]string{"prompt": m.permissionView(), "live footer": m.liveView()} {
+		v := plain(view)
+		if !strings.Contains(v, "Waiting for your approval") || strings.Contains(v, "2562047") || strings.Contains(v, "-1s") {
+			t.Errorf("%s mishandles a legacy zero timestamp:\n%s", name, v)
+		}
+	}
+}
+
+func TestPermissionRequestedAtJSON(t *testing.T) {
+	at := time.Date(2026, time.October, 24, 12, 34, 56, 123000000, time.UTC)
+	e := agent.Event{Kind: agent.EvPermission, RequestedAt: at, Reply: make(chan agent.PermissionReply, 1)}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["requested_at"]) != `"2026-10-24T12:34:56.123Z"` {
+		t.Fatalf("requested_at JSON = %s", data)
+	}
+	var decoded agent.Event
+	if err := json.Unmarshal(data, &decoded); err != nil || !decoded.RequestedAt.Equal(at) {
+		t.Fatalf("timestamp round trip: %+v, %v", decoded, err)
+	}
+	var legacy agent.Event
+	if err := json.Unmarshal([]byte(`{"type":"permission_request"}`), &legacy); err != nil || !legacy.RequestedAt.IsZero() {
+		t.Fatalf("legacy event: %+v, %v", legacy, err)
+	}
+	data, err = json.Marshal(agent.Event{Kind: agent.EvTextDelta, Text: "hello"})
+	if err != nil || strings.Contains(string(data), "requested_at") {
+		t.Fatalf("unrelated events should not carry an empty timestamp: %s, %v", data, err)
 	}
 }
 

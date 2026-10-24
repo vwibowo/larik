@@ -29,7 +29,7 @@ type holders struct {
 // dirNames are protected entries that are directories when real, and get
 // an empty directory: the host can still use it meanwhile (git worktree
 // add creating an entry under .git/worktrees).
-var dirNames = map[string]bool{".larik": true, ".claude": true, ".git": true, "hooks": true, "info": true, "modules": true, "worktrees": true}
+var dirNames = map[string]bool{".larik": true, ".claude": true, ".git": true, "hooks": true, "info": true, "modules": true, "worktrees": true, "mcp-auth": true, "runtime": true}
 
 const dirHolder = "/"
 

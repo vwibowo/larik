@@ -58,6 +58,12 @@ type Options struct {
 	// AutoApprove judges calls in auto mode; nil sends them all to the user.
 	AutoApprove AutoApprover
 
+	// Credential policy is inherited by subagents and applies independently
+	// of OS sandbox availability. SanitizeEnv includes personal passthrough.
+	SecretPaths []string
+	SecretEnv   []string
+	SanitizeEnv func([]string) []string
+
 	// Execution is how the model carries out actions: with tools only,
 	// or also (or only) with run_code scripts. Empty means tools.
 	Execution tools.Execution
@@ -65,6 +71,9 @@ type Options struct {
 	// it is applied when the model changes (SetModel) and to subagents,
 	// which may run another model.
 	ExecutionFor func(provider, model string) tools.Execution
+	// SubagentExecutionFor resolves child execution independently of the main
+	// agent's default. Children also use it for nested spawns and model changes.
+	SubagentExecutionFor func(provider, model string) tools.Execution
 
 	// SamplingFor, if set, gives the decoding parameters for a provider
 	// and model. It is consulted per request, so a model change and a
@@ -192,6 +201,8 @@ type Agent struct {
 	// owner identifies a subagent to tools that keep per-agent state (the
 	// browser's tabs); "" for the main agent.
 	owner string
+	// undoUnit owns this subagent's edits independently of foreground turns.
+	undoUnit *checkpoint.Unit
 	// autoAllowed remembers the calls auto mode approved (tool and input),
 	// kept on the root agent for its subagents too.
 	autoAllowed    map[string]bool
@@ -246,6 +257,9 @@ func New(opts Options) *Agent {
 		a.env.RecordOriginal = opts.Checkpoints.Record
 	}
 	a.env.Sandbox = opts.Sandbox
+	a.env.SecretPaths = append([]string(nil), opts.SecretPaths...)
+	a.env.SecretEnv = append([]string(nil), opts.SecretEnv...)
+	a.env.SanitizeEnv = opts.SanitizeEnv
 	a.env.NoReadDedup.Store(opts.Runtime != nil)
 	if opts.LSP.Enabled() {
 		a.env.Diagnostics = opts.LSP.Diagnostics
@@ -545,6 +559,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) <-chan Event {
 // runWith runs one turn. system marks Larik-generated prompts (background
 // notifications), which skip prompt hooks and skill expansion.
 func (a *Agent) runWith(ctx context.Context, prompt string, system bool, emit func(Event)) string {
+	defer a.EndCheckpoint()
 	emit = a.traceEvents(a.reportingSaveErrors(emit))
 	// A subagent a script started runs its own tools for its model.
 	ctx = tools.OutsideScript(ctx)
@@ -611,7 +626,7 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		prompt += "\n\n" + hookContext("UserPromptSubmit", res.Context)
 	}
 
-	if a.opts.Checkpoints != nil && !sub { // subagent edits belong to the parent's turn
+	if a.opts.Checkpoints != nil && !sub { // subagents write to their own checkpoint unit (undo.go)
 		a.opts.Checkpoints.BeginTurn()
 	}
 	// Size the request that is about to be sent, not only the transcript
@@ -625,7 +640,9 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		upcoming.Blocks = append(upcoming.Blocks, attached...)
 	}
 	if a.needsCompaction(upcoming) {
-		if err := a.compact(ctx, emit, false, "auto"); err != nil {
+		// A compaction refused by the budget is not a failure to report:
+		// the budget check before the first request ends the turn.
+		if err := a.compact(ctx, emit, false, "auto"); err != nil && !isBudgetError(err) {
 			emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
 		}
 	}
@@ -662,8 +679,11 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 		if turn > 0 && a.needsCompaction() && !compactedThisTurn && !compactFailed {
 			if err := a.compact(ctx, emit, true, "auto"); err != nil {
 				// Reporting this on every request of a long turn would be
-				// noise; it isn't attempted again until one succeeds.
-				emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
+				// noise; it isn't attempted again until one succeeds. One
+				// the budget refused is reported by the check below.
+				if !isBudgetError(err) {
+					emit(Event{Kind: EvNotice, Text: "auto-compaction failed: " + err.Error()})
+				}
 				compactFailed = true
 			} else {
 				compactedThisTurn = true
@@ -687,9 +707,21 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 			// unlike the threshold compaction above its failure is fatal.
 			if cerr := a.compact(ctx, emit, true, "overflow"); cerr != nil {
 				emit(Event{Kind: EvError, Text: cerr.Error()})
+				if isBudgetError(cerr) {
+					return "budget"
+				}
+				if ctx.Err() != nil {
+					return "interrupted"
+				}
 				return "error"
 			}
 			compactedThisTurn, compactFailed = true, false
+			// The summary was spent from the same budget, so the retry is
+			// admitted like any other request.
+			if berr := a.checkBudget(emit); berr != nil {
+				emit(Event{Kind: EvError, Text: berr.Error()})
+				return "budget"
+			}
 			msg, stop, err = a.stream(ctx, emit)
 		}
 		if err != nil {
@@ -792,6 +824,12 @@ func (a *Agent) runRuntime(ctx context.Context, emit func(Event)) string {
 }
 
 func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
+	// A pass is a run of model requests like the loop's, so it is
+	// admitted by the same budget before the runtime starts.
+	if err := a.checkBudget(emit); err != nil {
+		emit(Event{Kind: EvError, Text: err.Error()})
+		return "budget"
+	}
 	var loops loopGuard
 	loopWarned := false
 	a.mu.Lock()
@@ -895,6 +933,9 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 				emit(Event{Kind: EvError, Text: "Claude Code CLI runtime ended without completing the turn"})
 				return "error"
 			}
+			if event.Notice != "" {
+				emit(Event{Kind: EvNotice, Text: event.Notice})
+			}
 			if event.Text != "" {
 				emit(Event{Kind: EvTextDelta, Text: event.Text})
 			}
@@ -918,7 +959,12 @@ func (a *Agent) runRuntimePass(ctx context.Context, emit func(Event)) string {
 				a.noteResolvedModel(req.Model, event.ResolvedModel)
 			}
 			if event.Usage != nil {
+				// The runtime's assistant messages are saved without usage,
+				// so its spend is saved here, once, for a resume to count.
 				a.recordUsage(req.Model, *event.Usage, emit)
+				if a.opts.Session != nil {
+					a.saveFailed(a.opts.Session.AppendUsage(req.Model, *event.Usage))
+				}
 			}
 			if event.Err != nil {
 				if ctx.Err() != nil {
@@ -1165,6 +1211,11 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if wholeTurn {
 		return errors.New("compaction is managed by the Claude Code CLI runtime")
 	}
+	// A summary is a model request, admitted by the budget like any other,
+	// manual or automatic.
+	if err := a.checkBudget(emit); err != nil {
+		return err
+	}
 	hookTrigger := trigger
 	if hookTrigger == "overflow" {
 		hookTrigger = "auto" // preserve the documented PreCompact matcher contract
@@ -1187,12 +1238,18 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	}
 	pick := a.opts.CompactWith
 	tr := a.opts.Trace
+	lastContext := a.lastContext
 	a.mu.Unlock()
 	if len(msgs) == 0 {
 		return errors.New("nothing to compact")
 	}
+	// Parts are sized by the window of the model writing the summary.
+	sumWindow := window
 	if pick != nil {
 		if p, m := pick(); p != nil && m != "" {
+			if m != req.Model {
+				sumWindow = llm.Lookup(m).ContextWindow
+			}
 			provider, req.Model = p, m
 		}
 	}
@@ -1204,42 +1261,27 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 	if window > 0 {
 		req.MaxTokens = min(req.MaxTokens, max(int(compactWindowShare*float64(window)), compactMinOutput))
 	}
-	req.Messages = withUserText(msgs, compactionPrompt)
 
-	reqID := tr.Request(provider.Name(), req, "compaction")
-	ctx = tr.Wire(ctx, reqID)
-	start := time.Now()
-	var final llm.Message
-	var compactUsage llm.Usage
-	for ev, err := range provider.Stream(ctx, req) {
-		if err != nil {
-			tr.Response(reqID, trace.Response{Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds(), Error: err.Error()})
-			return err
-		}
-		switch ev.Type {
-		case llm.EventNotice:
-			emit(Event{Kind: EvNotice, Text: ev.Text})
-		case llm.EventDone:
-			final = ev.Message
-			usage := ev.Usage
-			compactUsage = usage
-			tr.Response(reqID, trace.Response{Message: &final, Usage: &usage, CostUSD: llm.Lookup(req.Model).Cost(usage),
-				StopReason: string(ev.StopReason), Start: start.UnixMilli(), DurationMS: time.Since(start).Milliseconds()})
-			model := final.Model
-			if model == "" {
-				model = req.Model
-			}
-			// The summary replaces the transcript's context rather than
-			// joining it, so its spend is recorded on its own.
-			a.recordUsage(model, ev.Usage, emit)
-			if a.opts.Session != nil {
-				a.saveFailed(a.opts.Session.AppendUsage(model, ev.Usage))
-			}
-		}
+	if sumWindow > 0 {
+		req.MaxTokens = min(req.MaxTokens, max(int(compactWindowShare*float64(sumWindow)), compactMinOutput))
 	}
-	summary := extractSummary(final.Text())
-	if summary == "" {
-		return errors.New("model returned an empty summary")
+	res, err := a.summarize(ctx, emit, tr, provider, req, msgs, sumWindow)
+	if err != nil {
+		// A summary request measured itself, not the conversation, which
+		// is unchanged.
+		a.mu.Lock()
+		a.lastContext = lastContext
+		a.mu.Unlock()
+		return err
+	}
+	summary := res.summary
+	if res.parts > 1 || res.lost {
+		note := fmt.Sprintf("the conversation was too large to summarize in one request, so it was summarized in %d parts", res.parts)
+		if res.lost {
+			note += "; some of it was shortened or left out to fit (the oldest first), so details from earlier in the conversation may be lost"
+		}
+		emit(Event{Kind: EvNotice, Text: "compaction: " + note})
+		summary += "\n\nNote: " + note + ". Check files and the full transcript rather than relying on remembered details."
 	}
 	// The task list lives in the transcript being replaced; carry over
 	// what is left of it so the model can keep ticking items off.
@@ -1250,11 +1292,14 @@ func (a *Agent) compactWith(ctx context.Context, emit func(Event), midTurn bool,
 		summary += "\n\nContinue the task from where it left off."
 	}
 
-	info := CompactionInfo{
-		Trigger:      trigger,
-		BeforeTokens: compactUsage.ContextTokens(),
-		AfterTokens:  compactUsage.Output,
-		Available:    compactUsage.ContextTokens() > 0 || compactUsage.Output > 0,
+	info := CompactionInfo{Trigger: trigger}
+	// Only a summary written in one request measured the conversation it
+	// replaces; parts each measured a piece of it.
+	if res.parts == 1 {
+		compactUsage := res.usage
+		info.BeforeTokens = compactUsage.ContextTokens()
+		info.AfterTokens = compactUsage.Output
+		info.Available = compactUsage.ContextTokens() > 0 || compactUsage.Output > 0
 	}
 	if info.Available {
 		info.Estimated = true

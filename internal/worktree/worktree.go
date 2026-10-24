@@ -121,7 +121,7 @@ func (w *Worktree) Finish(message string) (Outcome, error) {
 		return out, err
 	}
 	out.Commits, _ = strconv.Atoi(count)
-	if files, err := git(ctx, w.Path, "diff", "--name-only", w.Base, "HEAD"); err == nil && files != "" {
+	if files, err := git(ctx, w.Path, "diff", "--no-ext-diff", "--name-only", w.Base, "HEAD"); err == nil && files != "" {
 		out.Files = strings.Split(files, "\n")
 	}
 	if out.Commits > 0 || out.Warning != "" {
@@ -231,8 +231,23 @@ func short(sha string) string {
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// These Git processes are trusted Larik helpers and run outside the
+	// sandbox. Do not let repository configuration turn an otherwise local
+	// status/add/commit/diff into arbitrary code execution.
+	gitArgs := []string{
+		"-C", dir,
+		"-c", "core.hooksPath=" + os.DevNull,
+		"-c", "core.fsmonitor=false",
+		"-c", "core.pager=cat",
+		"-c", "diff.external=",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+	}
+	for _, override := range executableRepoConfig(ctx, dir) {
+		gitArgs = append(gitArgs, "-c", override)
+	}
+	cmd := exec.CommandContext(ctx, "git", append(gitArgs, args...)...)
+	cmd.Env = gitEnv()
 	out, err := cmd.CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
@@ -242,4 +257,57 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %s", args[0], s)
 	}
 	return s, nil
+}
+
+// executableRepoConfig returns command-line overrides for local/worktree
+// config whose values Git can execute. Querying config does not run those
+// values; overriding each on the real invocation also covers named diff and
+// filter drivers, whose names cannot be known in advance.
+func executableRepoConfig(ctx context.Context, dir string) []string {
+	const pattern = `^(core\.(fsmonitor|hookspath|sshcommand|editor|pager)|sequence\.editor|diff\.external|diff\..*\.(command|textconv)|filter\..*\.(clean|smudge|process)|merge\..*\.driver|gpg\..*\.program|gpg\.program|credential\..*\.helper|pager\..*)$`
+	seen := map[string]bool{}
+	var keys []string
+	for _, scope := range []string{"--local", "--worktree"} {
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", scope, "--includes", "--name-only", "--get-regexp", pattern)
+		cmd.Env = gitEnv()
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		for _, key := range strings.Fields(string(out)) {
+			// These have deliberate safe values in git(), which an empty
+			// override could accidentally weaken (an empty hooksPath means
+			// Git's default hooks directory).
+			switch strings.ToLower(key) {
+			case "core.hookspath", "core.fsmonitor", "core.pager", "diff.external":
+				continue
+			}
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key+"=")
+			}
+			if strings.HasPrefix(key, "filter.") {
+				// Subsection names are case-sensitive and may contain dots.
+				required := key[:strings.LastIndex(key, ".")] + ".required"
+				if !seen[required] {
+					seen[required] = true
+					keys = append(keys, required+"=false")
+				}
+			}
+		}
+	}
+	return keys
+}
+
+func gitEnv() []string {
+	out := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "GIT_EXTERNAL_DIFF" || key == "GIT_CONFIG_PARAMETERS" || key == "GIT_CONFIG_COUNT" ||
+			strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "GIT_TERMINAL_PROMPT=0")
 }

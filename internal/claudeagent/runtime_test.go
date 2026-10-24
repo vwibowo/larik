@@ -262,11 +262,18 @@ func TestBridgeIsLoopbackAuthenticatedPrivateAndRemoved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan llm.AgentRuntimeEvent, 1)
-	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "read_file", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{})
+	privateDir := filepath.Join(t.TempDir(), "runtime")
+	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "read_file", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{}, privateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := bridge.configPath
+	if filepath.Dir(path) != privateDir {
+		t.Fatalf("bridge config escaped private directory: %s", path)
+	}
+	if info, err := os.Stat(privateDir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("private runtime directory permissions: %v %v", info, err)
+	}
 	if !strings.HasPrefix(bridge.listener.Addr().String(), "127.0.0.1:") {
 		t.Fatalf("bridge address = %s", bridge.listener.Addr())
 	}
@@ -358,7 +365,7 @@ func TestBridgeServesCallsConcurrently(t *testing.T) {
 	defer cancel()
 	out := make(chan llm.AgentRuntimeEvent, 4)
 	specs := []llm.ToolSpec{{Name: "grep", Schema: []byte(`{"type":"object"}`)}, {Name: "write", Schema: []byte(`{"type":"object"}`)}}
-	bridge, err := startBridge(ctx, specs, []string{"grep"}, out, &callMatcher{})
+	bridge, err := startBridge(ctx, specs, []string{"grep"}, out, &callMatcher{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +423,7 @@ func TestBridgeOutlastsSlowCalls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan llm.AgentRuntimeEvent, 1)
-	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "write", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{})
+	bridge, err := startBridge(ctx, []llm.ToolSpec{{Name: "write", Schema: []byte(`{"type":"object"}`)}}, nil, out, &callMatcher{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
