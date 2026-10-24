@@ -235,11 +235,11 @@ Larik's colors come from [CharmTone](https://github.com/charmbracelet/tone). Eac
 | Mode `accept edits` | a violet pill |
 | Mode `auto` | a mint pill |
 | Mode `yolo` | a coral-red pill |
-| Effort `low` … `max` | a ramp from teal to violet that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
+| Effort `low` … `max` | a ramp from violet to pink that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
 | `◈ sandbox` / `⚠ no sandbox` | green when the sandbox is on; amber when it is off (red if you are also in `yolo`) |
 | Cost | hidden, unless a session budget is set and spending reaches its warning threshold: then it reads `$1.70/$2.00`, amber, and red at the cap |
 
-The composer's border takes the mode's color too (amber for a `!` shell command). Teal is kept for Larik's own chrome: the model marker, headings, the gutter beside your prompts and the spinner, a row of blocks the teal-to-violet gradient runs along. A subagent that is waiting for a permission answer is shown in amber.
+The composer's border takes the mode's color too (amber for a `!` shell command). Violet is kept for Larik's own chrome: the model marker, headings, the gutter beside your prompts and the spinner, a row of blocks the violet-to-pink gradient runs along. A subagent that is waiting for a permission answer is shown in amber.
 
 ### Status line
 
