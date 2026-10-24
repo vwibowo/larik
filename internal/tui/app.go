@@ -238,6 +238,7 @@ type model struct {
 	traceView *viewer.Server
 	traceDir  string
 	spin      spinner.Model
+	motion    motion
 	view      viewport.Model // the conversation, pre-wrapped to width
 	panelView viewport.Model
 	panelKind string
@@ -448,6 +449,7 @@ func newModel(opts Options) *model {
 		bgStop:      make(chan struct{}),
 		input:       ta,
 		spin:        spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		motion:      newMotion("on"),
 		view:        viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
 		panelView:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(1)),
 		width:       80,
@@ -479,6 +481,7 @@ func (m *model) applyUIConfig() {
 		}
 		m.verbose = m.appearance == "verbose"
 		m.tips, m.notify, m.mouse = c.TipsOn(), c.Notifications, c.MouseOn()
+		m.setAnimations(c.AnimationLevel())
 		m.suggest = c.PromptSuggestionsOn()
 		if m.notify == "" {
 			m.notify = "off"
@@ -752,6 +755,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		m.motion.step(m.turnChars / 4)
 		return m, cmd
 
 	case agentEventMsg:
@@ -1242,6 +1246,7 @@ func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.motion.resetTokens()
 	m.turnStats = turnStats{}
 	m.tip = nextTip(m.keys)
 	m.events = m.agent.Run(ctx, text)
@@ -1722,6 +1727,7 @@ func (m *model) deliverBackground() tea.Cmd {
 	}
 	m.running, m.cancel, m.events = true, cancel, events
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.motion.resetTokens()
 	m.turnStats = turnStats{}
 	return tea.Sequence(
 		m.println("\n"+m.st.dim.Render("⚙ delivering background task results to the model")),

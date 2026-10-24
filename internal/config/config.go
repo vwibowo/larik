@@ -114,6 +114,9 @@ type Config struct {
 	Language string `json:"language,omitempty"`
 	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
 	SpinnerTips *bool `json:"spinner_tips,omitempty"`
+	// Animations is how much the TUI moves: "on" (the default), "reduced"
+	// (the spinner turns, nothing else moves) or "off" (nothing moves).
+	Animations string `json:"animations,omitempty"`
 	// PromptSuggestions offers a predicted next prompt after each turn.
 	// Nil means on. It spends tokens, so a shared file can only turn it off.
 	PromptSuggestions *bool `json:"prompt_suggestions,omitempty"`
@@ -622,6 +625,13 @@ func (c *Config) merge(path string, trusted bool) error {
 	if o.Language != "" {
 		c.Language = o.Language
 	}
+	if o.Animations != "" {
+		if o.Animations == "on" || o.Animations == "reduced" || o.Animations == "off" {
+			c.Animations = o.Animations
+		} else if trusted {
+			return fmt.Errorf("%s: animations must be on, reduced, or off", path)
+		}
+	}
 	if o.Appearance != "" {
 		if o.Appearance == "compact" || o.Appearance == "default" || o.Appearance == "verbose" {
 			c.Appearance = o.Appearance
@@ -1079,6 +1089,14 @@ func (c *Config) TokenSaverOn() bool { return on(c.TokenSaver, false) }
 
 // TipsOn reports whether spinner tips are shown (default on).
 func (c *Config) TipsOn() bool { return on(c.SpinnerTips, true) }
+
+// AnimationLevel is the animations setting, or its default.
+func (c *Config) AnimationLevel() string {
+	if c.Animations == "" {
+		return "on"
+	}
+	return c.Animations
+}
 
 // PromptSuggestionsOn reports whether a next prompt is suggested after each
 // turn (default on).

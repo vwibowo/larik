@@ -580,6 +580,9 @@ func TestLiveViewStatusLine(t *testing.T) {
 	m := testModel(t)
 	m.running, m.turnStart = true, time.Now().Add(-75*time.Second)
 	m.handleEvent(agent.Event{Kind: agent.EvThinkingDelta, Text: strings.Repeat("x", 800)})
+	for range 3 * motionFPS { // the count eases up to the estimate
+		m.motion.step(m.turnChars / 4)
+	}
 	line := plain(m.liveView())
 	for _, want := range []string{"Thinking…", "1m 15s", "~200 tokens", "ctrl+o to show thinking", "esc to interrupt"} {
 		if !strings.Contains(line, want) {

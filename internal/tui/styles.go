@@ -34,6 +34,8 @@ type styles struct {
 	// accentColor and sparkColor are the gradient stops for the brand mark,
 	// the spinner and the shimmer.
 	accentColor, sparkColor, dimColor, fgColor color.Color
+	// spinRamp is the gradient out and back that runs along the spinner.
+	spinRamp []lipgloss.Style
 }
 
 // modeStyle is the colored-text style for a permission mode.
@@ -155,6 +157,13 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 	}
 	for i, c := range st.gradient(len(st.effort)) {
 		st.effort[i] = lipgloss.NewStyle().Foreground(c).Bold(i >= 3)
+	}
+	ramp := st.gradient(spinnerCells)
+	for i := len(ramp) - 2; i > 0; i-- {
+		ramp = append(ramp, ramp[i])
+	}
+	for _, c := range ramp {
+		st.spinRamp = append(st.spinRamp, lipgloss.NewStyle().Foreground(c))
 	}
 	return st
 }

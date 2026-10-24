@@ -13,6 +13,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.78.0
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20260922123528-4e49372c11f9
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/chromedp/cdproto v0.0.0-20260922220944-a19bff23514f

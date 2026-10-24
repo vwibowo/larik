@@ -192,6 +192,20 @@ var settingSpecs = []settingSpec{
 			m.opts.Config.SpinnerTips = &on
 			m.tips = on
 		}),
+	{
+		key: "animations", title: "Animations", section: "appearance", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "on", label: "On", desc: "gradient spinner, shimmer and easing counters"},
+			{value: "reduced", label: "Reduced", desc: "the spinner turns, nothing else moves"},
+			{value: "off", label: "Off", desc: "nothing moves; the elapsed time still updates"},
+		},
+		get:   func(m *model) string { return m.motion.level },
+		store: orEmpty("on"),
+		set: func(m *model, v string) {
+			m.opts.Config.Animations = v
+			m.setAnimations(v)
+		},
+	},
 	toggle("prompt_suggestions", "Prompt suggestions", "appearance",
 		(*config.Config).PromptSuggestionsOn,
 		func(m *model, on bool) {

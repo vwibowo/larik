@@ -766,7 +766,7 @@ func (m *model) liveView(widths ...int) string {
 		if len(tasks) > 0 && (t.name == "task" || t.agent != "") {
 			continue // task activity is grouped by subagent above
 		}
-		line := m.st.accent.Render(m.spin.View()+" ") + m.toolHead(t.name, t.input)
+		line := m.pulse() + " " + m.toolHead(t.name, t.input)
 		// A script's calls sit under it, as a subagent's do under its task.
 		indent := ""
 		if m.scriptOf(t.agent, t.id) != nil {
@@ -814,7 +814,7 @@ func (m *model) liveView(widths ...int) string {
 	if m.running {
 		meta = append(meta, elapsed(time.Since(m.turnStart)))
 		if m.turnChars > 0 {
-			meta = append(meta, fmt.Sprintf("↓ ~%d tokens", m.turnChars/4)) // a rough count while streaming
+			meta = append(meta, fmt.Sprintf("↓ ~%d tokens", m.shownTokens())) // a rough count while streaming
 		}
 		if thinkingNow && !m.showThinking {
 			meta = appendHint(meta, m.keyHint(actToggleThinking, "to show thinking"))
@@ -823,7 +823,7 @@ func (m *model) liveView(widths ...int) string {
 			meta = appendHint(meta, m.keyHint(actInterrupt, "to interrupt"))
 		}
 	}
-	line := m.st.accent.Render("✻ ") + label
+	line := m.rowSpinner() + " " + m.shimmer(label)
 	if len(meta) > 0 {
 		line += m.st.dim.Render("  " + strings.Join(meta, " · "))
 	}
