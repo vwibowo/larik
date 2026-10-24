@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{if eq .Page.Kind "landing"}}{{.Page.Title}}{{else}}{{.Page.Title}} · {{.Site.Name}}{{end}}</title>
 <meta name="description" content="{{.Page.Desc}}">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#0a090d">
 {{if eq .Page.Kind "redirect"}}<meta http-equiv="refresh" content="0;url={{.Page.Redirect}}">{{end}}
 <meta property="og:title" content="{{.Page.Title}}">
 <meta property="og:description" content="{{.Page.Desc}}">
 <link rel="icon" href="{{url "/favicon.svg"}}" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@1&display=swap">
 <link rel="stylesheet" href="{{url "/css/chroma.css"}}">
 <link rel="stylesheet" href="{{url "/css/site.css"}}">
 {{if eq .Page.Kind "landing"}}<link rel="stylesheet" href="{{url "/css/landing.css"}}">{{end}}
@@ -29,6 +29,7 @@
     </nav>
     <button class="search-open" type="button" aria-label="Search docs"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search docs</span><kbd>/</kbd></button>
     <span class="version">{{.Site.Version}}</span>
+    <a class="topbar-gh" href="{{.Site.RepositoryURL}}" aria-label="Larik on GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
   </div>
 </header>
 
@@ -58,7 +59,7 @@
       <div><h2>Project</h2><a href="{{url "/download/"}}">Download</a><a href="{{url "/changelog/"}}">Changelog</a><a href="https://github.com/vwibowo/larik/blob/main/docs/README.md">Contributor docs</a></div>
     </div>
   </div>
-  <div class="footer-base">{{.Site.Name}} {{.Site.Version}} · Built with Go. Guide generated from the repository README.</div>
+  <div class="footer-base"><span><span class="brand-mark" aria-hidden="true">✻</span> {{.Site.Name}} {{.Site.Version}} · open source · written in Go</span><a href="{{.Site.RepositoryURL}}">GitHub</a></div>
 </footer>
 
 <div class="search" hidden>
@@ -82,28 +83,28 @@
   mermaid.initialize({
     startOnLoad: true,
     theme: "base",
-    fontFamily: "Inter, system-ui, sans-serif",
+    fontFamily: "Geist, system-ui, sans-serif",
     themeVariables: {
       darkMode: true,
-      background: "#050506",
-      primaryColor: "#0e1113",
-      primaryTextColor: "#ececf1",
-      primaryBorderColor: "#2a6f67",
-      secondaryColor: "#0b0d0e",
-      tertiaryColor: "#090a0b",
-      lineColor: "#6f8f8a",
-      textColor: "#d6d6de",
-      clusterBkg: "#08090a",
-      clusterBorder: "#1f2a29",
-      edgeLabelBackground: "#050506",
-      actorBkg: "#0e1113",
-      actorBorder: "#2a6f67",
-      actorTextColor: "#ececf1",
-      signalColor: "#9fd9d0",
-      signalTextColor: "#d6d6de",
-      noteBkgColor: "#0c2421",
-      noteTextColor: "#ececf1",
-      noteBorderColor: "#2a6f67"
+      background: "#0a090d",
+      primaryColor: "#16151c",
+      primaryTextColor: "#edebf2",
+      primaryBorderColor: "#7a4a6a",
+      secondaryColor: "#121117",
+      tertiaryColor: "#0e0d12",
+      lineColor: "#8c899a",
+      textColor: "#d6d4de",
+      clusterBkg: "#0e0d12",
+      clusterBorder: "#2e2b38",
+      edgeLabelBackground: "#0a090d",
+      actorBkg: "#16151c",
+      actorBorder: "#7a4a6a",
+      actorTextColor: "#edebf2",
+      signalColor: "#ff8acf",
+      signalTextColor: "#d6d4de",
+      noteBkgColor: "#1a0b14",
+      noteTextColor: "#edebf2",
+      noteBorderColor: "#7a4a6a"
     }
   });
 </script>

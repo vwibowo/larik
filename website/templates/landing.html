@@ -3,369 +3,196 @@
 <main id="main" class="lx">
 
 <section class="lx-hero">
-  <canvas class="lx-canvas" data-scene="harness" aria-hidden="true"></canvas>
-  <div class="lx-hero-fallback" aria-hidden="true"></div>
+  <canvas class="lx-field" aria-hidden="true"></canvas>
   <div class="lx-hero-fade" aria-hidden="true"></div>
   <div class="lx-wrap lx-hero-inner">
-    <div class="lx-hero-copy">
-      <p class="lx-eyebrow"><span class="lx-pulse" aria-hidden="true"></span>{{.Site.Version}} · written in Go · one binary</p>
-      <h1 class="lx-h1">One terminal agent.<br><span class="lx-silver">Every model.</span></h1>
-      <p class="lx-lead">Larik plans with your strongest model, hands the searching, reading and routine edits to cheap or local ones, and runs shell commands inside an OS sandbox by default.</p>
-      <div class="lx-cta">
-        <a class="lx-btn lx-btn-primary" href="{{url "/docs/getting-started/"}}">Get started <span aria-hidden="true">→</span></a>
-        <a class="lx-btn" href="{{url "/download/"}}">Download</a>
+    <p class="lx-eyebrow"><span class="lx-dot" aria-hidden="true"></span>Terminal coding agent · written in Go</p>
+    <h1 class="lx-h1">Plan on the best.<br><span class="lx-accent">Run on the rest.</span></h1>
+    <p class="lx-lead">Larik is one terminal agent for every model. Your strongest model plans and reviews, cheap or local models do the reading and editing, and every shell command runs in an OS sandbox.</p>
+
+    <div class="lx-install">
+      <div class="lx-tabs" role="tablist" aria-label="Install method">
+        <button type="button" role="tab" id="tab-curl" aria-selected="true" aria-controls="panel-curl">curl</button>
+        <button type="button" role="tab" id="tab-binary" aria-selected="false" aria-controls="panel-binary" tabindex="-1">binary</button>
+        <span class="lx-tabs-note">macOS · Linux</span>
       </div>
-      <div class="lx-install">
-        <span aria-hidden="true">$</span>
-        <code>curl -fsSL {{.Site.InstallURL}} | sh</code>
+      <div class="lx-tabpanel" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl">
+        <code><span aria-hidden="true">$ </span>curl -fsSL {{.Site.InstallURL}} | sh</code>
         <button class="copy" type="button" data-copy="curl -fsSL {{.Site.InstallURL}} | sh">Copy</button>
       </div>
+      <div class="lx-tabpanel" role="tabpanel" id="panel-binary" aria-labelledby="tab-binary" hidden>
+        <span>Prebuilt for macOS, Linux and Windows.</span>
+        <a class="lx-tabpanel-link" href="{{url "/download/"}}">Downloads →</a>
+      </div>
     </div>
-    <ul class="lx-pills" aria-hidden="true">
-      <li style="--d:0s"><i class="lx-tick"></i>Planned on sonnet-5</li>
-      <li style="--d:1.2s"><i class="lx-tick"></i>Explored on gemini-flash · $0.002</li>
-      <li style="--d:2.4s"><i class="lx-tick"></i>Tests passed in the sandbox</li>
-    </ul>
+
+    <div class="lx-cta">
+      <a class="btn btn-primary" href="{{url "/docs/getting-started/"}}">Get started <span aria-hidden="true">→</span></a>
+      <a class="btn lx-btn-ghost" href="{{.Site.RepositoryURL}}">View source on GitHub</a>
+    </div>
+
+    <div class="lx-works">
+      <p class="lx-label">Works with</p>
+      <ul aria-label="Supported providers">
+        <li>Anthropic</li><li>OpenAI</li><li>Gemini</li><li>Ollama</li><li>LM Studio</li><li>OpenRouter</li><li>Groq</li><li>DeepSeek</li><li>xAI</li><li>Mistral</li><li class="lx-dim"><a href="{{url "/docs/getting-started/"}}">+4 more</a></li>
+      </ul>
+    </div>
   </div>
-  <div class="lx-wrap lx-providers">
-    <p>Anthropic, OpenAI, Gemini, your Claude or ChatGPT plan, Ollama and any OpenAI-compatible endpoint, in one session.</p>
-    <ul aria-label="Supported providers">
-      <li>Anthropic</li><li>Claude Code CLI</li><li>OpenAI</li><li>Google Gemini</li><li>ChatGPT plan</li><li>NVIDIA NIM</li><li>Ollama</li><li>LM Studio</li><li>OpenRouter</li><li>Groq</li><li>DeepSeek</li><li>xAI</li><li>Mistral</li><li>Together</li>
-    </ul>
+  <p class="lx-define" aria-hidden="true">larik (n.) — an array · a row</p>
+</section>
+
+<section class="lx-wrap lx-session" aria-labelledby="session-title">
+  <div class="lx-session-head reveal">
+    <h2 id="session-title">One task. Three models. <span class="lx-muted">Four cents.</span></h2>
+    <p class="lx-label">Real session · ~/code/api</p>
+  </div>
+  <div class="term" aria-label="An example Larik session" role="img">
+    <div class="term-bar"><span></span><span></span><span></span><em>larik — ~/code/api</em></div>
+    <div class="term-body">
+      <p class="t-line"><b class="c-acc">✻ larik</b><i> {{.Site.Version}} · ~/code/api · seatbelt sandbox</i></p>
+      <p class="t-line"><i>  / commands · ? shortcuts · alt+p model · shift+tab mode</i></p>
+      <p class="t-line t-gap"><b class="c-user">› fix the failing auth tests and tell me what broke</b></p>
+      <p class="t-line t-gap"><i class="c-think">✻ Thought for 6s</i><i> · ctrl+o to show</i></p>
+      <p class="t-line"><b class="c-ok">●</b> <b>todos(0/3 done)</b></p>
+      <p class="t-line"><b class="c-ok">●</b> <b>task › explore(find where session tokens are validated)</b></p>
+      <p class="t-line t-sub"><i>  └ gemini/gemini-3.8-flash · 9 tool calls · $0.002</i></p>
+      <p class="t-line"><b class="c-ok">●</b> <b>read(internal/auth/token.go)</b></p>
+      <p class="t-line t-sub"><i>  read 184 lines</i></p>
+      <p class="t-line"><b class="c-ok">●</b> <b>edit(internal/auth/token.go)</b></p>
+      <p class="t-line t-sub c-del">  - if exp.Before(now) {</p>
+      <p class="t-line t-sub c-add">  + if !exp.After(now) {</p>
+      <p class="t-line"><b class="c-ok">●</b> <b>bash(go test ./internal/auth/...)</b></p>
+      <p class="t-line t-sub"><i>  ok   api/internal/auth   0.41s</i></p>
+      <p class="t-line t-gap">A token expiring this very second still counted as</p>
+      <p class="t-line">valid. <code>exp == now</code> is now expired; all 23 tests pass.</p>
+      <p class="t-line t-gap t-foot"><span class="chip">sonnet-5</span><span class="chip chip-plain">default</span><i>  18% context · $0.04</i><span class="cursor" aria-hidden="true"></span></p>
+    </div>
   </div>
 </section>
 
-<section class="lx-section">
-  <div class="lx-wrap">
-    <div class="lx-head lx-head-row reveal">
-      <div>
-        <p class="lx-kicker">Model routing</p>
-        <h2 class="lx-h2">Pay frontier prices<br>only for the thinking.</h2>
-      </div>
-      <a class="lx-btn lx-btn-sm" href="{{url "/docs/model-routing/"}}">Routing guide</a>
+<section class="lx-wrap lx-section" id="routing">
+  <div class="lx-head reveal">
+    <div>
+      <p class="lx-kicker">01 / Model routing</p>
+      <h2 class="lx-h2">Pay frontier prices<br><em>only for the thinking.</em></h2>
     </div>
-
-    <div class="lx-card lx-card-hero reveal">
-      <div class="lx-card-glow" aria-hidden="true"></div>
-      <div class="lx-stack" aria-hidden="true"><span>Plan.</span><span>Delegate.</span><span>Review.</span></div>
-      <ol class="lx-timeline">
-        <li><b class="lx-node lx-node-main"></b><div><strong>anthropic/claude-sonnet-5</strong><span>main · plans, decides, reviews</span></div><em>$0.031</em></li>
-        <li><b class="lx-node"></b><div><strong>gemini/gemini-3.8-flash</strong><span>explore · 9 tool calls, search and read</span></div><em>$0.002</em></li>
-        <li><b class="lx-node"></b><div><strong>ollama/qwen3-coder</strong><span>worker · edits and tests, in a worktree</span></div><em class="lx-free">free</em></li>
-        <li><b class="lx-node lx-node-main"></b><div><strong>anthropic/claude-sonnet-5</strong><span>main · reviews the diff, merges</span></div><em>$0.007</em></li>
-        <li class="lx-dim"><b class="lx-node"></b><div><strong>fallback ready</strong><span>rate limit → next model, before output starts</span></div></li>
-      </ol>
+    <a class="lx-more" href="{{url "/docs/model-routing/"}}">Routing guide →</a>
+  </div>
+  <div class="lx-split">
+    <div class="lx-card lx-table reveal">
+      <table>
+        <caption>One task, four turns</caption>
+        <thead><tr><th scope="col">Role</th><th scope="col">Model</th><th scope="col">Cost</th></tr></thead>
+        <tbody>
+          <tr><td class="lx-accent">main · plan</td><td>anthropic/claude-sonnet-5</td><td>$0.031</td></tr>
+          <tr><td>explore</td><td>gemini/gemini-3.8-flash</td><td>$0.002</td></tr>
+          <tr><td>worker</td><td>ollama/qwen3-coder</td><td class="lx-free">free</td></tr>
+          <tr><td class="lx-accent">main · review</td><td>anthropic/claude-sonnet-5</td><td>$0.007</td></tr>
+        </tbody>
+        <tfoot><tr><td colspan="2">Session total</td><td>$0.040</td></tr></tfoot>
+      </table>
     </div>
-
-    <div class="lx-grid-2">
-      <div class="lx-card reveal">
-        <div class="lx-card-art lx-budget" aria-hidden="true">
-          <div class="lx-budget-ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50"/><circle class="lx-budget-arc" cx="60" cy="60" r="50"/></svg><b>$0.68</b><span>of $2.00</span></div>
+    <div class="lx-stack">
+      <div class="lx-card lx-budget reveal">
+        <div class="lx-ring" aria-hidden="true"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52"/><circle class="lx-ring-arc" cx="60" cy="60" r="52"/></svg><b>$0.68</b><span>of $2.00</span></div>
+        <div>
+          <h3>A budget that holds.</h3>
+          <p>Warn at 80%, stop before the request that would cross the cap. Local and plan models count as free.</p>
         </div>
-        <h3>A budget that holds.</h3>
-        <p>Warn at 80%, stop before the request that would cross the cap. Local and plan models count as free.</p>
       </div>
-      <div class="lx-card lx-card-code reveal">
-        {{code "json" `{
-  "model": "anthropic/claude-sonnet-5",
-  "roles": {
-    "worker": "ollama/qwen3-coder",
-    "explore": "gemini/gemini-3.8-flash"
-  },
-  "fallbacks": { "worker": ["gemini/gemini-3.8-flash"] },
-  "budget": { "session_usd": 2.00, "warn_at": 0.8 }
-}`}}
-        <h3>Presets in one command.</h3>
-        <p><code>/routing</code> lists every connected model with prices and offers Balanced, Cheapest, or Local and plan first.</p>
+      <div class="lx-card reveal">
+        <h3>Fallbacks that don't waste a turn.</h3>
+        <p>Rate limited? Larik moves to the next model before any output starts. Small models get a leash: worktrees, turn caps, loop detection.</p>
+        <p class="lx-mono"><code>/routing</code> → Balanced · Cheapest · Local and plan first</p>
       </div>
     </div>
-
-    <ul class="lx-chips reveal">
-      <li><strong>Fallbacks</strong> that don't waste a turn</li>
-      <li><strong>A leash</strong> for small models: worktrees, turn caps, loop detection</li>
-      <li><strong><code>larik bench</code></strong> measures pass/fail, cost and time per model</li>
-    </ul>
   </div>
 </section>
 
-<section class="lx-section">
-  <div class="lx-wrap">
-    <div class="lx-head lx-head-row reveal">
-      <div>
-        <p class="lx-kicker">Execution</p>
-        <h2 class="lx-h2">Tool calls or scripts.<br><span class="lx-muted">Chosen per model.</span></h2>
-        <p class="lx-sub">A model can write a short script that calls your tools. Loops, chained lookups and filtering happen in the script, and only what it prints comes back. Reading forty files to count something costs the context one summary, not forty results.</p>
-      </div>
-      <a class="lx-btn lx-btn-sm" href="{{url "/docs/execution/"}}">Execution guide</a>
+<section class="lx-wrap lx-section" id="execution">
+  <div class="lx-head reveal">
+    <div>
+      <p class="lx-kicker">02 / Execution</p>
+      <h2 class="lx-h2">Tool calls or scripts.<br><em>Chosen per model.</em></h2>
+      <p class="lx-sub">A model can write a short script that calls your tools. Reading forty files to count something costs the context one summary, not forty results.</p>
     </div>
-
-    <div class="lx-grid-2">
-      <div class="lx-card lx-card-code reveal">
-        {{code "js" `// run_code: tests per package, top five
-const hits = tools.grep({ pattern: "^func Test", glob: "*_test.go" })
+    <a class="lx-more" href="{{url "/docs/execution/"}}">Execution guide →</a>
+  </div>
+  <div class="lx-split">
+    <div class="lx-script reveal">
+      {{code "js" `// run_code: tests per package, top five
+const hits = tools.grep({ pattern: "^func Test" })
 const perPkg = {}
 for (const line of hits.split("\n")) {
-  const file = line.split(":")[0]
-  if (!file.endsWith("_test.go")) continue
-  const pkg = file.slice(0, file.lastIndexOf("/"))
+  const pkg = dir(line.split(":")[0])
   perPkg[pkg] = (perPkg[pkg] || 0) + 1
 }
-Object.entries(perPkg).sort((a, b) => b[1] - a[1]).slice(0, 5)`}}
-        <h3>Hundreds of matches in, five rows out.</h3>
-        <p>The script sees the full results; the conversation sees the answer. Fewer turns, a smaller context, and nothing copied by hand.</p>
-      </div>
-      <div class="lx-card lx-card-code reveal">
-        {{code "json" `{
-  "execution": "tools",
-  "model_execution": {
-    "codex/gpt-6-luna": "code",
-    "claude-opus-5": "hybrid"
-  }
-}`}}
-        <h3>Three settings, one per model.</h3>
-        <p><code>tools</code>: one call per step. <code>hybrid</code>: the model picks scripts or calls each step. <code>code</code>: scripts only. Pick with <code>/execution</code>; switching models switches the setting.</p>
-      </div>
+top(perPkg, 5)`}}
+      <p class="lx-script-foot"><span>in: <b>hundreds of matches</b></span><span>back to context: <b class="lx-accent">5 rows</b></span></p>
     </div>
-
-    <ul class="lx-chips reveal">
-      <li><strong>Same rules</strong> for every call a script makes: permissions, hooks, auto mode, <code>/undo</code></li>
-      <li><strong>Sandboxed:</strong> no writes, no network, no keys, 256 MB cap</li>
-      <li><strong><code>larik bench --execution</code></strong> measures it on your model</li>
+    <ul class="lx-card lx-modes reveal">
+      <li><code>tools</code><div><strong>One call per step</strong><span>The classic loop. Every result lands in context.</span></div></li>
+      <li class="on"><code>hybrid</code><div><strong>The model picks</strong><span>Scripts for loops and filtering, direct calls for the rest.</span></div></li>
+      <li><code>code</code><div><strong>Scripts only</strong><span>Same permissions, hooks and <code>/undo</code> for every call a script makes. No writes, no network, 256 MB cap.</span></div></li>
+      <li class="lx-modes-foot">Set per model with <code>/execution</code> · measure with <code>larik bench --execution</code></li>
     </ul>
   </div>
 </section>
 
-<section class="lx-section">
-  <div class="lx-wrap">
-    <div class="lx-head reveal">
-      <p class="lx-kicker">The agent loop</p>
-      <h2 class="lx-h2">Read. Edit. Verify.<br><span class="lx-muted">In a sandbox, by default.</span></h2>
+<section class="lx-wrap lx-section" id="safety">
+  <div class="lx-head reveal">
+    <div>
+      <p class="lx-kicker">03 / Safety</p>
+      <h2 class="lx-h2">Read. Edit. Verify.<br><em>In a sandbox, by default.</em></h2>
     </div>
-
-    <div class="lx-card lx-card-term reveal">
-      <div class="lx-card-glow" aria-hidden="true"></div>
-      <div class="term" aria-label="An example Larik session" role="img">
-        <div class="term-bar"><span></span><span></span><span></span><em>larik — ~/code/api</em></div>
-        <div class="term-body">
-          <p class="t-line"><b class="c-acc">✻ larik</b><i> {{.Site.Version}} · ~/code/api · seatbelt sandbox</i></p>
-          <p class="t-line"><i>  / commands · ? shortcuts · alt+p model · shift+tab mode</i></p>
-          <p class="t-line t-gap"><b class="c-user">› fix the failing auth tests and tell me what broke</b></p>
-          <p class="t-line t-gap"><i class="c-think">✻ Thought for 6s</i><i> · ctrl+o to show</i></p>
-          <p class="t-line"><b class="c-ok">●</b> <b>todos(0/3 done)</b></p>
-          <p class="t-line"><b class="c-ok">●</b> <b>task › explore(find where session tokens are validated)</b></p>
-          <p class="t-line t-sub"><i>  └ gemini/gemini-3.8-flash · 9 tool calls · $0.002</i></p>
-          <p class="t-line"><b class="c-ok">●</b> <b>read(internal/auth/token.go)</b></p>
-          <p class="t-line t-sub"><i>  read 184 lines</i></p>
-          <p class="t-line"><b class="c-ok">●</b> <b>edit(internal/auth/token.go)</b></p>
-          <p class="t-line t-sub c-del">  - if exp.Before(now) {</p>
-          <p class="t-line t-sub c-add">  + if !exp.After(now) {</p>
-          <p class="t-line"><b class="c-ok">●</b> <b>bash(go test ./internal/auth/...)</b></p>
-          <p class="t-line t-sub"><i>  ok   api/internal/auth   0.41s</i></p>
-          <p class="t-line t-gap">A token expiring this very second still counted as</p>
-          <p class="t-line">valid. <code>exp == now</code> is now expired; all 23 tests pass.</p>
-          <p class="t-line t-gap t-foot"><span class="chip">sonnet-5</span><span class="chip chip-plain">default</span><i>  18% context · $0.04</i><span class="cursor" aria-hidden="true"></span></p>
-        </div>
-      </div>
-    </div>
-
-    <div class="lx-grid-2">
-      <a class="lx-card lx-card-link reveal" href="{{url "/docs/sandbox/"}}">
-        <div class="lx-card-art lx-spot" aria-hidden="true">
-          <i style="--x:18%;--y:22%"></i><i style="--x:82%;--y:26%"></i><i style="--x:24%;--y:84%"></i><i style="--x:78%;--y:80%"></i>
-          <svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
-        </div>
-        <h3>OS sandbox, on by default.</h3>
-        <p>Seatbelt on macOS, bubblewrap on Linux: write only to the project, no network but localhost, no way to rewrite git hooks. Sandboxed commands don't need to ask.</p>
-      </a>
-      <a class="lx-card lx-card-link reveal" href="{{url "/docs/hooks/"}}">
-        <div class="lx-card-art lx-orbit" aria-hidden="true">
-          <span class="lx-orbit-core">✻</span>
-          <span class="lx-orbit-ring"></span>
-          <em style="--a:0deg">hooks</em><em style="--a:60deg">skills</em><em style="--a:120deg">CLAUDE.md</em><em style="--a:180deg">.mcp.json</em><em style="--a:240deg">agents</em><em style="--a:300deg">statusLine</em>
-        </div>
-        <h3>Claude Code–compatible.</h3>
-        <p>Your existing hooks, Agent Skills, custom commands, subagent definitions, <code>CLAUDE.md</code> and <code>.mcp.json</code> work unchanged. Bring your setup; switch models.</p>
-      </a>
-    </div>
+  </div>
+  <div class="lx-split">
+    <a class="lx-card lx-card-link reveal" href="{{url "/docs/sandbox/"}}">
+      <svg class="lx-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+      <h3>OS sandbox, on by default.</h3>
+      <p>Seatbelt on macOS, bubblewrap on Linux: write only to the project, no network but localhost, no way to rewrite git hooks. Sandboxed commands don't need to ask.</p>
+      <ul class="lx-tags" aria-label="Permission modes"><li>plan</li><li>default</li><li>accept edits</li><li>auto</li><li>yolo</li></ul>
+    </a>
+    <a class="lx-card lx-card-link reveal" href="{{url "/docs/hooks/"}}">
+      <svg class="lx-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/></svg>
+      <h3>Claude Code–compatible.</h3>
+      <p>Your existing hooks, Agent Skills, custom commands, subagent definitions, <code>CLAUDE.md</code> and <code>.mcp.json</code> work unchanged. Bring your setup; switch models.</p>
+      <ul class="lx-tags" aria-label="Compatible files"><li>hooks</li><li>skills</li><li>CLAUDE.md</li><li>.mcp.json</li><li>agents</li><li>statusLine</li></ul>
+    </a>
   </div>
 </section>
 
-<section class="lx-section">
-  <div class="lx-wrap">
-    <div class="lx-head reveal">
-      <h2 class="lx-h3">Everything a serious coding agent needs,<br><span class="lx-muted">built in, not bolted on.</span></h2>
-    </div>
-    <div class="lx-features">
-      <a class="lx-feature reveal" href="{{url "/docs/subagents/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 7l7.4 3.8M8.3 17l7.4-3.8"/></svg>
-        <h3>Subagents in git worktrees</h3>
-        <p>Parallel subagents with fresh contexts. Isolated ones work on their own branch for the main agent to review and merge.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/commands/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9a6 6 0 0 1-6 6H6"/></svg>
-        <h3>Branch, rewind, undo</h3>
-        <p><code>/fork</code> a conversation, <code>/rewind</code> to before any prompt, <code>/undo</code> the last turn's file changes, resume any of them later.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/mcp/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
-        <h3>MCP, with approval</h3>
-        <p>stdio, HTTP or SSE servers with OAuth sign-in. Servers from shared project files wait for your approval.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/mcp/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 6 6M8 10.5h5M10.5 8v5"/></svg>
-        <h3>Tools on demand</h3>
-        <p>With dozens of MCP tools connected, the model searches for the one it needs instead of carrying every definition in every request.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/lsp/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/><path d="m13.5 5-3 14"/></svg>
-        <h3>Language servers</h3>
-        <p>Diagnostics after every edit, so the model sees the type error it just introduced. Jump to definitions, apply code actions.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/web/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/></svg>
-        <h3>Web fetch and search</h3>
-        <p>Pages as clean Markdown. Domain rules, blocked metadata addresses, cross-host redirects reported rather than followed.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/web/#browser"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M6.5 6.5h.01M9 6.5h.01"/><path d="m11 13 6 2.5-2.6 1-1 2.5Z"/></svg>
-        <h3>Browser control</h3>
-        <p>Drives a real headless Chrome and shows it in a terminal pane you can click and type in. Every request is checked, sign-ins persist.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-        <h3>Permissions you control</h3>
-        <p>Five modes, from plan to yolo, on <code>shift+tab</code>. Allow and deny rules with globs; deny always wins.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z"/><path d="M12 8v4M12 16h.01"/></svg>
-        <h3>Auto mode</h3>
-        <p>A model approves routine steps against your recent prompts. Pushes, deletes, secrets and <code>sudo</code> still ask, with the reason.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/permissions/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/></svg>
-        <h3>Plan, then approve</h3>
-        <p>In plan mode the model reads, then puts its plan to you. Longer work runs from a checklist in the sidebar.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/skills/#reviewing-changes"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5M8 11l2 2 4-4"/></svg>
-        <h3>Reviews and a GitHub Action</h3>
-        <p><code>/review</code> and <code>/security-review</code> report findings with file, line and fix. The Action posts them on every pull request.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/memory/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>
-        <h3>Memory</h3>
-        <p>Your preferences, corrections and project decisions, kept as short notes outside the repo and recalled in later sessions.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/commands/#composer"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>
-        <h3>A project-aware prompt</h3>
-        <p><code>@</code> attaches files and images, <code>!</code> runs a shell command, <code>ctrl+r</code> searches history.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/debug-mode-and-traces/"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
-        <h3>Debug traces</h3>
-        <p><code>--debug</code> records every request as sent. <code>larik trace</code> opens a timeline that diffs each prompt against the last.</p>
-      </a>
-      <a class="lx-feature reveal" href="{{url "/docs/commands/#status-line"}}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-        <h3>Make it yours</h3>
-        <p>Your own status line, rebindable keys, vim mode for the prompt, light or dark themes.</p>
-      </a>
-    </div>
+<section class="lx-wrap lx-section">
+  <div class="lx-head reveal">
+    <h2 class="lx-h3">Built in,<br><span class="lx-muted">not bolted on.</span></h2>
+    <p class="lx-label">12 capabilities</p>
+  </div>
+  <div class="lx-grid">
+    <a class="reveal" href="{{url "/docs/subagents/"}}"><span>01</span><h3>Subagents in git worktrees</h3><p>Parallel subagents with fresh contexts, each on its own branch for the main agent to review and merge.</p></a>
+    <a class="reveal" href="{{url "/docs/commands/"}}"><span>02</span><h3>Branch, rewind, undo</h3><p><code>/fork</code> a conversation, <code>/rewind</code> to before any prompt, <code>/undo</code> the last turn's file changes.</p></a>
+    <a class="reveal" href="{{url "/docs/mcp/"}}"><span>03</span><h3>MCP, with approval</h3><p>stdio, HTTP or SSE servers with OAuth sign-in. Servers from shared project files wait for your approval.</p></a>
+    <a class="reveal" href="{{url "/docs/mcp/"}}"><span>04</span><h3>Tools on demand</h3><p>With dozens of MCP tools connected, the model searches for the one it needs instead of carrying every definition.</p></a>
+    <a class="reveal" href="{{url "/docs/lsp/"}}"><span>05</span><h3>Language servers</h3><p>Diagnostics after every edit, so the model sees the type error it just introduced.</p></a>
+    <a class="reveal" href="{{url "/docs/web/"}}"><span>06</span><h3>Web fetch and search</h3><p>Pages as clean Markdown, with domain rules and cross-host redirects reported rather than followed.</p></a>
+    <a class="reveal" href="{{url "/docs/web/#browser"}}"><span>07</span><h3>Browser control</h3><p>A real headless Chrome in a terminal pane you can click and type in. Sign-ins persist.</p></a>
+    <a class="reveal" href="{{url "/docs/permissions/"}}"><span>08</span><h3>Permissions you control</h3><p>Five modes on <code>shift+tab</code>. Allow and deny rules with globs; deny always wins.</p></a>
+    <a class="reveal" href="{{url "/docs/permissions/"}}"><span>09</span><h3>Auto mode</h3><p>A model approves routine steps. Pushes, deletes, secrets and <code>sudo</code> still ask, with the reason.</p></a>
+    <a class="reveal" href="{{url "/docs/permissions/"}}"><span>10</span><h3>Plan, then approve</h3><p>In plan mode the model reads, then puts its plan to you. Longer work runs from a checklist.</p></a>
+    <a class="reveal" href="{{url "/docs/skills/#reviewing-changes"}}"><span>11</span><h3>Reviews and a GitHub Action</h3><p><code>/review</code> and <code>/security-review</code> report findings with file, line and fix.</p></a>
+    <a class="reveal" href="{{url "/docs/memory/"}}"><span>12</span><h3>Memory</h3><p>Preferences, corrections and project decisions kept as short notes and recalled in later sessions.</p></a>
   </div>
 </section>
 
-<section class="lx-section lx-shapes">
-  <canvas class="lx-canvas" data-scene="box" aria-hidden="true"></canvas>
-  <div class="lx-shapes-fallback" aria-hidden="true"></div>
-  <div class="lx-wrap lx-shapes-inner">
-    <div class="lx-shapes-copy reveal">
-      <h2 class="lx-display">Your models<br>Your machine<br>Your terminal</h2>
-      <p class="lx-lead">The first-run wizard finds a running Ollama or LM Studio server and any API keys in your environment, tests the connection and can download a recommended model with a progress bar.</p>
-      <ul class="lx-list">
-        <li><strong>A usable context window.</strong> Larik talks to Ollama natively and asks for a 32K window instead of the 4K default, then reads back what actually loaded.</li>
-        <li><strong>Honest warnings.</strong> It tells you when a request fills the window or the model can't call tools.</li>
-        <li><strong>Your ChatGPT plan.</strong> <code>/connect codex</code> signs in with the same OAuth flow as the Codex CLI.</li>
-      </ul>
-      <div class="wizard lx-wizard">
-        <p><b class="c-acc">✻ Welcome to larik</b><i> · let's connect a model</i></p>
-        <p class="w-row w-on"><span>›</span> Ollama <i>● running · 6 models</i></p>
-        <p class="w-row"><span> </span> LM Studio <i>not running</i></p>
-        <p class="w-row"><span> </span> Anthropic <i>● ANTHROPIC_API_KEY found</i></p>
-        <p class="w-pull">pulling qwen3-coder <span class="w-bar"><i></i></span> 62%</p>
-      </div>
-      <a class="lx-link" href="{{url "/docs/getting-started/"}}">Set up a provider →</a>
+<section class="lx-wrap lx-final">
+  <span class="lx-final-mark" aria-hidden="true">✻</span>
+  <h2 class="lx-h2">Bring any model.<br><em>Keep your setup.</em></h2>
+  <div class="lx-install lx-install-solo">
+    <div class="lx-tabpanel">
+      <code><span aria-hidden="true">$ </span>curl -fsSL {{.Site.InstallURL}} | sh</code>
+      <button class="copy" type="button" data-copy="curl -fsSL {{.Site.InstallURL}} | sh">Copy</button>
     </div>
   </div>
-</section>
-
-<section class="lx-section lx-number">
-  <div class="lx-wrap">
-    <div class="lx-head lx-center reveal">
-      <p class="lx-kicker">Designed around the loop</p>
-      <h2 class="lx-h2">One static binary.<br>Small choices that keep it fast.</h2>
-    </div>
-    <div class="lx-bignum reveal" aria-hidden="true">
-      <span class="lx-note lx-note-l">no Node<br>no Python</span>
-      <b data-text="1">1</b>
-      <span class="lx-note lx-note-r">go build<br>starts in ms</span>
-    </div>
-    <div class="lx-principles">
-      <div class="reveal"><h3>Cache-stable prompts</h3><p>The system prompt and tool set stay fixed within a context and the transcript is append-only, so every request after the first reads from the prompt cache.</p></div>
-      <div class="reveal"><h3>Reasoning kept per model</h3><p>Switch from Claude to GPT to a local model mid-session. Each model gets its own thinking replayed.</p></div>
-      <div class="reveal"><h3>Clean compaction</h3><p>When context fills, the history becomes one summary that names the transcript file, so the model can grep what it left out.</p></div>
-      <div class="reveal"><h3>No runtime to install</h3><p>Build it with <code>go build</code>, copy it anywhere, start it in milliseconds.</p></div>
-    </div>
-    <p class="lx-center"><a class="lx-link" href="{{url "/docs/how-it-works/"}}">See how Larik works →</a></p>
-  </div>
-</section>
-
-<section class="lx-section">
-  <div class="lx-wrap">
-    <div class="lx-head lx-head-row reveal">
-      <div>
-        <p class="lx-kicker">Three front ends, one loop</p>
-        <h2 class="lx-h2">Terminal, scripts<br>or your editor.</h2>
-        <p class="lx-sub">All three read the same event stream from the same agent loop, so they behave the same way.</p>
-      </div>
-      <a class="lx-btn lx-btn-sm" href="{{url "/docs/"}}">Read the docs</a>
-    </div>
-    <div class="lx-fronts">
-      <div class="lx-front reveal">
-        <span class="lx-front-icon" aria-hidden="true">▍</span>
-        <h3>Terminal UI</h3>
-        <p>Command palette, model picker, <code>@</code> mentions, nested subagent activity, a session sidebar on <code>F2</code> and per-model cost.</p>
-        {{code "bash" "larik\nlarik -c            # continue here\nlarik -c --fork     # branch it"}}
-      </div>
-      <div class="lx-front reveal">
-        <span class="lx-front-icon" aria-hidden="true">{ }</span>
-        <h3>Headless</h3>
-        <p>One-shot prompts for CI and scripts, as plain text or one JSON event per line.</p>
-        {{code "bash" "larik -p \"summarize this repo\"\nlarik -p --output json \\\n  --mode yolo \"run tests\""}}
-      </div>
-      <div class="lx-front reveal">
-        <span class="lx-front-icon" aria-hidden="true">⇄</span>
-        <h3>HTTP + SSE server</h3>
-        <p>Drive sessions from an editor or web UI. Loopback only, token auth, replayable event stream.</p>
-        {{code "bash" "larik serve\n# {\"url\": \"http://127.0.0.1:4096\",\n#  \"token\": \"…\"}"}}
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="lx-final">
-  <div class="lx-wrap lx-center reveal">
-    <h2 class="lx-h2">Bring your models.<br>Keep your setup.</h2>
-    <p class="lx-sub">Start with any key you already have, or none at all.</p>
-    <div class="lx-cta lx-cta-center">
-      <a class="lx-btn lx-btn-primary" href="{{url "/docs/getting-started/"}}">Get started <span aria-hidden="true">→</span></a>
-    </div>
-  </div>
-  <div class="lx-stage" aria-hidden="true">
-    <div class="lx-beam"></div>
-    <div class="lx-monitor"><span>✻ larik</span><i></i></div>
-    <div class="lx-floor"></div>
-  </div>
+  <p class="lx-label">macOS · Linux · Windows — or <a href="{{url "/download/"}}">download a binary</a></p>
 </section>
 
 </main>
