@@ -77,7 +77,7 @@ func TestScriptCallsPrintInsideItsCard(t *testing.T) {
 	}
 	card := plain(printed(m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolID: "c1", ToolName: tools.CodeToolName, Input: scriptInput(code), Output: "total 2\n[run_code: 4 tool calls]"})))
 	for _, want := range []string{
-		"● script(count lines in Go files) · 4 calls",
+		"✓ script(count lines in Go files) · 4 calls",
 		"│ const files = tools.glob",
 		"… +1 line",
 		"├ glob(*.go)",
@@ -137,7 +137,7 @@ func TestHistoryShowsScripts(t *testing.T) {
 		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "c1", Name: tools.CodeToolName, Content: "7\n[run_code: 2 tool calls]"}}},
 	}
 	got := plain(m.renderHistory(history, "resumed", 80))
-	if !strings.Contains(got, "● script(tally the files) · 2 calls") || strings.Contains(got, `{"code"`) {
+	if !strings.Contains(got, "✓ script(tally the files) · 2 calls") || strings.Contains(got, `{"code"`) {
 		t.Fatalf("history should show the script's title and calls:\n%s", got)
 	}
 }

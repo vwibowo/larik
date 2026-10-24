@@ -106,7 +106,7 @@ func groupSummary(calls []agent.Event) string {
 // renderGroupCard is a run's card: its summary, and what each call was
 // about on one line beneath.
 func (m *model) renderGroupCard(calls []agent.Event) string {
-	head := m.st.ok.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(groupSummary(calls))
+	head := m.toolMark(false) + " " + lipgloss.NewStyle().Bold(true).Render(groupSummary(calls))
 	titles := make([]string, len(calls))
 	for i, c := range calls {
 		titles[i] = toolTitle(c.ToolName, c.Input, m.shortPaths)

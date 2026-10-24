@@ -653,6 +653,11 @@ func (m *model) floatTodos(conversation string, width int) string {
 
 func (m *model) composerView() string {
 	box := m.st.box
+	// The border takes the permission mode's color, so the mode is in view
+	// where you type.
+	if mode := m.agent.Perms().Mode(); mode != permission.ModeDefault {
+		box = box.BorderForeground(m.st.modeStyle(mode).GetForeground())
+	}
 	if m.voiceActive() {
 		box = box.BorderForeground(m.st.accent.GetForeground())
 		return box.Width(max(m.width, 7)).Render(m.voiceView())
@@ -761,7 +766,7 @@ func (m *model) liveView(widths ...int) string {
 		if len(tasks) > 0 && (t.name == "task" || t.agent != "") {
 			continue // task activity is grouped by subagent above
 		}
-		line := m.st.accent.Render(m.spin.View()+" ") + toolTitle(t.name, t.input, m.shortPaths)
+		line := m.st.accent.Render(m.spin.View()+" ") + m.toolHead(t.name, t.input)
 		// A script's calls sit under it, as a subagent's do under its task.
 		indent := ""
 		if m.scriptOf(t.agent, t.id) != nil {
@@ -1194,7 +1199,7 @@ func (m *model) permDetail(e *agent.Event) string {
 // effort and cost on the right. Hints drop out first when narrow.
 func (m *model) statusLine() string {
 	mode := m.agent.Perms().Mode()
-	modeChip := m.st.modeStyle(mode).Render(modeLabels[mode]) + m.execTag() + m.vimTag()
+	modeChip := m.st.modePill(mode).Render(modeLabels[mode]) + m.execTag() + m.vimTag()
 	if m.sess != nil && m.sess.Trace() != nil {
 		modeChip += " " + m.st.err.Render("● rec")
 	}
@@ -1220,7 +1225,8 @@ func (m *model) statusLine() string {
 		}
 	}
 	var tail []string
-	if m.stats.CostUSD > 0 {
+	// Cost stays out of the footer until it nears a session budget.
+	if m.budgetWarning() {
 		tail = append(tail, m.costText())
 	}
 	if n := m.agent.RunningBackground(); n > 0 {
@@ -1356,6 +1362,16 @@ func contextPercent(stats agent.UsageInfo) int {
 	return min(max(stats.ContextTokens, 0)*100/stats.ContextWindow, 100)
 }
 
+// budgetWarning is whether a session budget is set and spending has
+// reached its warn threshold.
+func (m *model) budgetWarning() bool {
+	if m.opts.Config == nil {
+		return false
+	}
+	b := m.opts.Config.Routing().Budget
+	return b.SessionUSD > 0 && m.stats.CostUSD >= b.WarnFraction()*b.SessionUSD
+}
+
 // costText is the session cost. With a session budget it shows the cap and
 // turns amber at the warn threshold and red at the cap.
 func (m *model) costText() string {
@@ -1407,20 +1423,22 @@ func (m *model) renderPromptWidth(ref *promptRef, width int) string {
 
 func (m *model) renderPromptFrame(text string, width int, border lipgloss.Style) string {
 	w := max(width, 14)
-	gutter := m.st.accent.Render("▌ ")
-	edge := border.Render(" │")
-	// The gutter and the right edge take two columns each, so the text wraps
-	// four columns narrower and is padded out to that width, measured on the
-	// plain text so wide characters keep the right edge in line.
-	inner := w - 4
-	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), inner), "\n")
-	out := make([]string, 0, len(lines)+4)
-	out = append(out, "", border.Render("╭"+strings.Repeat("─", w-2)+"╮"))
-	for _, l := range lines {
-		pad := strings.Repeat(" ", max(inner-lipgloss.Width(l), 0))
-		out = append(out, gutter+m.st.user.Render(l)+pad+edge)
+	gutter := m.st.accent
+	if border.GetForeground() == m.st.accent.GetForeground() {
+		gutter = m.st.spark // the prompt menu is open on this prompt
 	}
-	out = append(out, border.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+	// The gutter takes two columns and the band one more on the right, so
+	// the text wraps three columns narrower and is padded out to the full
+	// width, measured on the plain text so wide characters stay in line.
+	inner := w - 3
+	band := m.st.band
+	lines := strings.Split(wrap(strings.TrimRight(text, "\n"), inner), "\n")
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, "")
+	for _, l := range lines {
+		pad := strings.Repeat(" ", max(inner-lipgloss.Width(l), 0)+1)
+		out = append(out, gutter.Inherit(band).Render("▌ ")+m.st.user.Inherit(band).Render(l)+band.Render(pad))
+	}
 	return strings.Join(append(out, ""), "\n")
 }
 
@@ -1433,6 +1451,7 @@ func (m *model) renderAssistant(msg llm.Message, thought time.Duration) string {
 
 func (m *model) renderAssistantWidth(msg llm.Message, thought time.Duration, width int) string {
 	var out []string
+	said := false // the reply's first text block carries the bullet
 	for _, b := range msg.Blocks {
 		switch b.Type {
 		case llm.BlockThinking:
@@ -1451,7 +1470,11 @@ func (m *model) renderAssistantWidth(msg llm.Message, thought time.Duration, wid
 			}
 		case llm.BlockText:
 			if t := strings.TrimSpace(b.Text); t != "" {
-				out = append(out, m.renderMarkdownWidth(t, width))
+				r := m.renderMarkdownWidth(t, width)
+				if !said {
+					r, said = m.assistantBullet(r), true
+				}
+				out = append(out, r)
 			}
 		}
 	}
@@ -1571,11 +1594,7 @@ func (m *model) renderToolCard(e agent.Event) string {
 	if e.ToolName == tools.CodeToolName {
 		return m.renderScriptCard(e, nil)
 	}
-	bullet := m.st.ok.Render("●")
-	if e.IsError {
-		bullet = m.st.err.Render("●")
-	}
-	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input, m.shortPaths))
+	head := m.toolMark(e.IsError) + " " + m.toolHead(e.ToolName, e.Input)
 	// Name the model a finished top-level task ran on; nested events already
 	// carry it in their subagent label.
 	if e.Agent == "" && e.ToolName == "task" {
@@ -1846,13 +1865,13 @@ func (m *model) renderPlanWidth(input json.RawMessage, width int) string {
 
 // printBanner prints two short lines, plus warnings only when they apply.
 func (m *model) printBanner() tea.Cmd {
-	head := m.st.accent.Render("✻ larik") + m.st.dim.Render(" v"+m.opts.Version+" · "+shortPath(m.opts.Config.Cwd))
+	head := m.brandMark() + " " + m.st.user.Render("larik") + m.st.dim.Render("  v"+m.opts.Version+" · "+shortPath(m.opts.Config.Cwd))
 	if m.opts.Sandbox != nil {
 		head += m.st.dim.Render(" · " + m.opts.Sandbox.Kind() + " sandbox")
 	}
 	lines := []string{
 		head,
-		m.st.dim.Render("  " + strings.Join(appendHint(appendHint([]string{"/ commands", "? shortcuts"},
+		m.st.dim.Render("    " + strings.Join(appendHint(appendHint([]string{"/ commands", "? shortcuts"},
 			m.keyHint(actModelPicker, "model")), m.keyHint(actCycleMode, "mode")), " · ")),
 	}
 	for _, w := range m.keyWarn {
@@ -2056,12 +2075,9 @@ func (m *model) renderHistoryChunk(c historyChunk, width int) string {
 				b = append(b, out)
 			}
 			for _, u := range msg.ToolUses() {
-				line := m.st.dim.Render("● " + toolTitle(u.Name, u.Input, m.shortPaths))
+				line := m.toolMark(u.IsError) + " " + m.st.dim.Render(toolTitle(u.Name, u.Input, m.shortPaths))
 				if u.Content != "" {
 					line += m.st.dim.Render(" · " + u.Content)
-				}
-				if u.IsError {
-					line += m.st.err.Render(" · failed")
 				}
 				b = append(b, line)
 			}

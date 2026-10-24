@@ -530,7 +530,9 @@ func (m *model) applyTheme(isDark bool) {
 		}
 	}
 	m.st = newStylesWithPalette(isDark, m.themePalette)
-	m.input.SetStyles(transparentInput(isDark))
+	in := transparentInput(isDark)
+	in.Focused.Prompt = in.Focused.Prompt.Foreground(m.st.accentColor)
+	m.input.SetStyles(in)
 	if m.permFeedback != nil {
 		m.permFeedback.SetStyles(transparentInput(isDark))
 	}

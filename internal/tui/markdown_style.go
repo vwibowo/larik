@@ -54,6 +54,8 @@ func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleCon
 	cfg.Item = flat(cfg.Item, accent)
 	cfg.Enumeration = flat(cfg.Enumeration, accent)
 	cfg.Code.StylePrimitive = flat(cfg.Code.StylePrimitive, spark)
+	// The spaces glamour pads inline code with only made sense inside its fill.
+	cfg.Code.Prefix, cfg.Code.Suffix = "", ""
 	cfg.CodeBlock.StylePrimitive = flat(cfg.CodeBlock.StylePrimitive, dim)
 	if cfg.CodeBlock.Chroma != nil {
 		chroma := *cfg.CodeBlock.Chroma

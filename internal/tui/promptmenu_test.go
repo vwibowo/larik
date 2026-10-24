@@ -58,11 +58,11 @@ func TestClickingAPromptOpensItsMenu(t *testing.T) {
 			t.Errorf("menu should show %q:\n%s", want, view)
 		}
 	}
-	// The box of the chosen prompt changes color, nothing else moves.
+	// The gutter of the chosen prompt changes color, nothing else moves.
 	before := len(m.convLines)
-	accent, _, _ := strings.Cut(m.st.accent.Render("x"), "x")
-	if o := m.outputFor(m.promptMenu.ref); o == nil || !strings.Contains(o.text, accent+"╭") {
-		t.Error("the chosen prompt's frame should take the accent color")
+	spark, _, _ := strings.Cut(m.st.spark.Render("x"), "x")
+	if o := m.outputFor(m.promptMenu.ref); o == nil || !strings.Contains(o.text, strings.TrimSuffix(spark, "m")) {
+		t.Error("the chosen prompt's gutter should take the spark color")
 	}
 	if len(m.convLines) != before {
 		t.Error("highlighting must not change the layout")

@@ -42,7 +42,7 @@ func TestReadOnlyRunPrintsAsOneCard(t *testing.T) {
 		t.Fatalf("the run should print before the reply; %d calls left", len(m.grouped))
 	}
 	card := plain(m.renderGroupCard(grouped))
-	for _, want := range []string{"● Read 2 files · searched 1 pattern", "⎿ read(a.go), read(b.go), read(a.go), grep(TODO)"} {
+	for _, want := range []string{"✓ Read 2 files · searched 1 pattern", "⎿ read(a.go), read(b.go), read(a.go), grep(TODO)"} {
 		if !strings.Contains(card, want) {
 			t.Errorf("card lacks %q:\n%s", want, card)
 		}
@@ -52,7 +52,7 @@ func TestReadOnlyRunPrintsAsOneCard(t *testing.T) {
 func TestARunOfOneKeepsItsCard(t *testing.T) {
 	m := testModel(t)
 	m.handleEvent(readEnd("r1", "a.go"))
-	if got := plain(printed(m.flushGroup())); !strings.HasPrefix(got, "● read(a.go)") || strings.Contains(got, "Read 1 file") {
+	if got := plain(printed(m.flushGroup())); !strings.HasPrefix(got, "✓ read(a.go)") || strings.Contains(got, "Read 1 file") {
 		t.Fatalf("a lone call should print its own card: %q", got)
 	}
 	if printed(m.flushGroup()) != "" {

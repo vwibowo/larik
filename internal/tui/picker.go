@@ -191,41 +191,50 @@ func (p *picker) view(st styles, width int) string {
 		label := pad(ansi.Truncate(it.label, labelW, "…"), labelW)
 		detail := pad(ansi.Truncate(it.detail, detailW, "…"), detailW)
 		note := ansi.Truncate(it.note, noteW, "…")
+		// The selected row sits on the band, so every piece of it, the
+		// gaps included, carries the band's background.
+		selected := i == p.cursor
+		on := func(s lipgloss.Style) lipgloss.Style {
+			if selected {
+				return s.Inherit(st.band)
+			}
+			return s
+		}
+		plainStyle := on(lipgloss.NewStyle())
+		labelStyle, detailStyle, noteStyle := plainStyle, on(st.dim), on(st.dim)
 		switch {
 		case it.disabled:
-			label, detail = st.dim.Render(label), st.dim.Render(detail)
-			note = st.dim.Render(note)
+			labelStyle = on(st.dim)
 		case it.warn:
-			label, detail = st.warn.Render(label), st.warn.Render(detail)
-		case i == p.cursor:
-			label = st.accent.Render(label)
-			detail = st.dim.Render(detail)
-		default:
-			detail = st.dim.Render(detail)
+			labelStyle, detailStyle = on(st.warn), on(st.warn)
+		case selected:
+			labelStyle = on(st.accent)
 		}
 		if !it.disabled {
 			switch {
 			case it.noteOK:
-				note = st.ok.Render(note)
+				noteStyle = on(st.ok)
 			case it.noteWarn:
-				note = st.warn.Render(note)
-			default:
-				note = st.dim.Render(note)
+				noteStyle = on(st.warn)
 			}
 		}
 		cursor := "  "
-		if i == p.cursor {
-			cursor = st.accent.Render("› ")
+		if selected {
+			cursor = on(st.accent).Render("› ")
 			cursorLine = len(lines)
 		}
-		row := cursor + label
+		row := cursor + labelStyle.Render(label)
 		if detailW > 0 {
-			row += "  " + detail
+			row += plainStyle.Render("  ") + detailStyle.Render(detail)
 		}
 		if noteW > 0 {
-			row += "  " + note
+			row += plainStyle.Render("  ") + noteStyle.Render(note)
 		}
-		lines = append(lines, ansi.Truncate(row, max(width, 1), "…"))
+		row = ansi.Truncate(row, max(width, 1), "…")
+		if selected {
+			row += plainStyle.Render(strings.Repeat(" ", max(width-lipgloss.Width(row), 0)))
+		}
+		lines = append(lines, row)
 	}
 
 	if p.height <= 0 || len(lines) <= p.height {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/tone"
@@ -156,4 +157,41 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 		st.effort[i] = lipgloss.NewStyle().Foreground(c).Bold(i >= 3)
 	}
 	return st
+}
+
+// brandMark is larik's mark: a row of three blocks from accent to spark.
+func (m *model) brandMark() string {
+	var b strings.Builder
+	for _, c := range m.st.gradient(3) {
+		b.WriteString(lipgloss.NewStyle().Foreground(c).Render("▰"))
+	}
+	return b.String()
+}
+
+// toolMark is a finished call's mark: a check, or a cross when it failed.
+func (m *model) toolMark(failed bool) string {
+	if failed {
+		return m.st.err.Render("✗")
+	}
+	return m.st.ok.Render("✓")
+}
+
+// toolHead is a call's title with the tool's name in bold and its
+// argument in parentheses after it.
+func (m *model) toolHead(name string, input []byte) string {
+	title := toolTitle(name, input, m.shortPaths)
+	i := strings.Index(title, "(")
+	if i < 0 || !strings.HasSuffix(title, ")") {
+		return lipgloss.NewStyle().Bold(true).Render(title)
+	}
+	return lipgloss.NewStyle().Bold(true).Render(title[:i]) + m.st.dim.Render("(") + title[i+1:len(title)-1] + m.st.dim.Render(")")
+}
+
+// assistantBullet marks the start of a reply: the accent dot takes the
+// first line's left margin when it has one.
+func (m *model) assistantBullet(rendered string) string {
+	if strings.HasPrefix(rendered, "  ") {
+		return m.st.accent.Render("●") + " " + rendered[2:]
+	}
+	return rendered
 }

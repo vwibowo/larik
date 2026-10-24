@@ -329,37 +329,31 @@ func checkPromptBox(t *testing.T, name, got string, width int) {
 	t.Helper()
 	lines := strings.Split(got, "\n")
 	n := len(lines)
-	if n < 5 {
-		t.Fatalf("%s: too few rows for a framed prompt: %q", name, got)
+	if n < 3 {
+		t.Fatalf("%s: too few rows for a prompt band: %q", name, got)
 	}
 	if lines[0] != "" || lines[n-1] != "" {
 		t.Errorf("%s: a prompt should open and close on a blank row: %q", name, got)
 	}
-	if want := "╭" + strings.Repeat("─", width-2) + "╮"; lines[1] != want {
-		t.Errorf("%s: top border should span the conversation: %q", name, lines[1])
-	}
-	if want := "╰" + strings.Repeat("─", width-2) + "╯"; lines[n-2] != want {
-		t.Errorf("%s: bottom border should span the conversation: %q", name, lines[n-2])
-	}
 	for i := 1; i <= n-2; i++ {
 		l := lines[i]
-		if i > 1 && i < n-2 && (!strings.HasPrefix(l, "▌ ") || !strings.HasSuffix(l, " │")) {
-			t.Errorf("%s: content line without a gutter and a right edge: %q in %q", name, l, got)
+		if !strings.HasPrefix(l, "▌ ") {
+			t.Errorf("%s: content line without a gutter: %q in %q", name, l, got)
 		}
 		if lipgloss.Width(l) != width {
-			t.Errorf("%s: framed row is %d columns, want %d: %q", name, lipgloss.Width(l), width, l)
+			t.Errorf("%s: band row is %d columns, want %d: %q", name, lipgloss.Width(l), width, l)
 		}
 	}
 }
 
-// Your own messages sit in a frame with a gutter on every line, wrapped ones
+// Your own messages sit on a band with a gutter on every line, wrapped ones
 // included, so they are told apart from the model's replies.
 func TestUserMessageGutterOnEveryLine(t *testing.T) {
 	m := testModel(t)
 	m.setWidth(40)
 	m.convWidth = 40
 	got := plain(m.renderUserMessage("this prompt is long enough that it has to wrap over several rows\nand it has a hard newline too"))
-	if n := len(strings.Split(got, "\n")); n < 7 {
+	if n := len(strings.Split(got, "\n")); n < 5 {
 		t.Fatalf("expected a wrapped message, got %q", got)
 	}
 	checkPromptBox(t, "wrapped", got, 40)
@@ -381,7 +375,7 @@ func TestUserMessageGutterHandlesLongWordsAndBlankEnds(t *testing.T) {
 		got := plain(m.renderUserMessage(text))
 		checkPromptBox(t, name, got, 40)
 		lines := strings.Split(got, "\n")
-		last := strings.TrimSuffix(strings.TrimPrefix(lines[len(lines)-3], "▌ "), " │")
+		last := strings.TrimPrefix(lines[len(lines)-2], "▌ ")
 		if text != "" && strings.TrimSpace(last) == "" {
 			t.Errorf("%s: trailing blank lines shouldn't add gutter rows: %q", name, got)
 		}
@@ -934,10 +928,17 @@ func TestFooterShowsSandboxEffortBarAndBudget(t *testing.T) {
 	m.opts.Config.Budget = config.Budget{SessionUSD: 2}
 
 	got := plain(m.statusLine())
-	for _, want := range []string{"⚠ no sandbox", "effort max █", "$0.68/$2.00"} {
+	for _, want := range []string{"⚠ no sandbox", "effort max █"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("footer lacks %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "$") {
+		t.Errorf("footer should leave the cost out below the budget's warn threshold: %q", got)
+	}
+	m.stats.CostUSD = 1.7
+	if got := plain(m.statusLine()); !strings.Contains(got, "$1.70/$2.00") {
+		t.Errorf("footer should show the cost once it nears the budget: %q", got)
 	}
 
 	// Amber at the warn threshold, red at the cap, plain below it.

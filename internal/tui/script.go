@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/agent"
@@ -108,16 +107,13 @@ func scriptMeta(calls int, took time.Duration) string {
 // code, the calls it made and what it printed. s is nil when the calls
 // weren't collected; the card then counts them from the output.
 func (m *model) renderScriptCard(e agent.Event, s *scriptRun) string {
-	bullet := m.st.ok.Render("●")
-	if e.IsError {
-		bullet = m.st.err.Render("●")
-	}
+	bullet := m.toolMark(e.IsError)
 	out, calls, _ := scriptResult(m.shortPaths(e.Output))
 	var took time.Duration
 	if s != nil {
 		calls, took = len(s.calls), time.Since(s.started)
 	}
-	head := bullet + " " + lipgloss.NewStyle().Bold(true).Render(toolTitle(e.ToolName, e.Input, m.shortPaths)) +
+	head := bullet + " " + m.toolHead(e.ToolName, e.Input) +
 		m.st.dim.Render(scriptMeta(calls, took))
 	if e.Agent != "" { // a subagent's script stays one line, like its other calls
 		return prefixLines(head, "  ↳ ", "    ") + m.st.dim.Render("  ("+e.Agent+")")
