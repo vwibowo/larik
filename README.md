@@ -226,24 +226,24 @@ Actions and their defaults: `submit` (enter), `newline` (shift+enter, alt+enter,
 
 ### Footer colors
 
-Each thing you should recognize at a glance has its own color in the footer:
+Larik's colors come from [CharmTone](https://github.com/charmbracelet/tone). Each thing you should recognize at a glance has its own color in the footer:
 
 | Item | Color |
 |---|---|
-| Mode `default` | plain text |
-| Mode `plan` (read-only) | blue |
-| Mode `accept edits` | violet |
-| Mode `auto` | green |
-| Mode `yolo` | red |
-| Effort `low` … `max` | one magenta hue that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
+| Mode `default` | a neutral pill |
+| Mode `plan` (read-only) | a blue pill |
+| Mode `accept edits` | a violet pill |
+| Mode `auto` | a green pill |
+| Mode `yolo` | a red pill |
+| Effort `low` … `max` | a ramp from violet to pink that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
 | `◈ sandbox` / `⚠ no sandbox` | green when the sandbox is on; amber when it is off (red if you are also in `yolo`) |
-| Cost | plain; with a session budget it reads `$0.68/$2.00`, amber at the warning threshold and red at the cap |
+| Cost | hidden, unless a session budget is set and spending reaches its warning threshold: then it reads `$1.70/$2.00`, amber, and red at the cap |
 
-Teal is kept for Larik's own chrome: the model marker, the spinner, headings and borders. A subagent that is waiting for a permission answer is shown in amber.
+The composer's border takes the mode's color too (amber for a `!` shell command). Violet is kept for Larik's own chrome: the model marker, headings, the gutter beside your prompts and the spinner, a row of blocks the violet-to-pink gradient runs along. A subagent that is waiting for a permission answer is shown in amber.
 
 ### Status line
 
-`status_line` adds a command's output to the left side of the footer while keeping Larik's model, cost and other safety information on the right. Context usage is available in `/info` and the status command's JSON input, but not in the built-in footer because its estimate can be misinterpreted. The permission mode stays at the start. Use `/statusline` or **Custom status line** in `/config` to edit the command and refresh interval, test a preview with current session data, or disable it:
+`status_line` adds a command's output to the left side of the footer while keeping Larik's model and other safety information on the right. Context usage is available in `/info` and the status command's JSON input, but not in the built-in footer because its estimate can be misinterpreted. The permission mode stays at the start. Use `/statusline` or **Custom status line** in `/config` to edit the command and refresh interval, test a preview with current session data, or disable it:
 
 ```json
 { "status_line": { "type": "command", "command": "~/.config/larik/status.sh" } }
@@ -719,6 +719,7 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
   "theme": "auto",
   "appearance": "default",
   "spinner_tips": true,
+  "animations": "on",
   "prompt_suggestions": true,
   "auto_compact": true,
   "notifications": "off",
@@ -750,9 +751,10 @@ Put provider definitions, model selection, roles, fallbacks, permission mode, an
 
 Every editor reports a save the same way, because there are only two outcomes: `active now`, meaning the running session already uses it, or `active after /reload (fresh context)`, meaning the setting builds a service and `/reload` puts it in force at the cost of the context the model is holding. When an editor can reload straight away it does, names what it saved in the conversation, and closes. A `/config` row for an editor that writes only your personal file shows both counts when they differ — `1 personal · 4 servers in use` — because a shared `.larik/settings.json` or a project `.mcp.json` can add entries the session uses but the editor deliberately will not touch.
 
-- `theme`: `auto` (follow the terminal's background, the default), `dark`, `light`, or the name of an installed iTerm2 color scheme. Larik follows the terminal's light/dark background in `auto`; it does not change the terminal application's own theme. To install a scheme, download its `.itermcolors` file from [iTerm2 Color Schemes](https://iterm2colorschemes.com/) into `~/.config/larik/themes/`, then choose it in `/config` or run `/theme <name>`. Larik leaves the background transparent, so the terminal's own background shows through; only diff lines keep a faint green or red tint.
+- `theme`: `auto` (follow the terminal's background, the default), `dark`, `light`, or the name of an installed iTerm2 color scheme. Larik follows the terminal's light/dark background in `auto`; it does not change the terminal application's own theme. To install a scheme, download its `.itermcolors` file from [iTerm2 Color Schemes](https://iterm2colorschemes.com/) into `~/.config/larik/themes/`, then choose it in `/config` or run `/theme <name>`. Larik leaves the background transparent, so the terminal's own background shows through; only your prompts, the mode pill, the selected row of a picker and diff lines carry a faint tint.
 - `appearance`: `compact` groups successful tool calls into a friendly summary after the reply while keeping errors visible; `default` shows tool cards as they happen, with a run of successful reads, searches and fetches in one card (`Read 6 files · searched 3 patterns`) and a `run_code` script's calls inside its card; `verbose` expands tool output and thinking. `ctrl+o` still toggles thinking. The deprecated `verbose` boolean is still read: when no `appearance` is set, `true` means `verbose` and `false` means `default`.
 - `spinner_tips`: a one-line tip under the spinner during a turn.
+- `animations`: `on` (the default) runs the gradient along the spinner, sweeps a highlight across the activity label and eases the token count; `reduced` keeps the spinner turning and stills the rest; `off` stills everything (the elapsed time still updates). Nothing animates while Larik is idle.
 - `prompt_suggestions`: after each turn, suggest a next prompt in the empty input (default on); see [Composer](#composer). A shared `.larik/settings.json` can turn it off but not on, because it spends your tokens.
 - `debug` and `debug_retention_days`: see [Debug mode and traces](#debug-mode-and-traces). Honored only from personal settings.
 - `telemetry`: see [OpenTelemetry export](#opentelemetry-export). Honored only from personal settings.
