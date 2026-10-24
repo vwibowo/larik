@@ -729,6 +729,17 @@ var settingSpecs = []settingSpec{
 		},
 	},
 	{
+		key: "trace_open_in", path: "trace.open_in", title: "Where /trace opens", section: "advanced", kind: kindChoice,
+		choices: []settingChoice{
+			{value: "auto", label: "Automatic", desc: "Larik's browser panel when it fits, else the system browser"},
+			{value: "browser", label: "Browser panel", desc: "needs browser tools on and a wide enough window"},
+			{value: "external", label: "System browser"},
+		},
+		get:   func(m *model) string { return m.opts.Config.TraceOpenIn() },
+		store: orEmpty("auto"),
+		set:   func(m *model, v string) { m.opts.Config.Trace.OpenIn = v },
+	},
+	{
 		key: "debug_retention_days", title: "Trace history", section: "advanced", kind: kindChoice,
 		unit:  "days",
 		later: "old traces are deleted when larik starts",

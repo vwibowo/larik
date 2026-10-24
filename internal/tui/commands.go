@@ -282,7 +282,7 @@ func (m *model) command(line string) tea.Cmd {
 		return m.debugCommand(arg)
 
 	case "/trace":
-		return m.openTrace()
+		return m.openTrace(arg)
 
 	case "/vim":
 		if m.vim != nil {

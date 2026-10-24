@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -54,9 +56,39 @@ func (m *model) setRecording(on bool) (*trace.Recorder, error) {
 	return m.sess.StartTrace()
 }
 
-// openTrace is /trace: serve this session's trace and open it in the
-// browser.
-func (m *model) openTrace() tea.Cmd {
+// traceOwner names the browser tab /trace uses, apart from the agents' tabs.
+const traceOwner = "trace"
+
+// tracePlacement decides where /trace opens: usePanel for Larik's browser
+// panel, else the system browser. A forced "browser" that can't be honored
+// returns why in problem and opens nothing.
+func tracePlacement(mode string, panelOK bool) (usePanel bool, problem string) {
+	switch mode {
+	case "external":
+		return false, ""
+	case "browser":
+		if !panelOK {
+			return false, "the browser panel can't be shown here: browser tools must be on (/browser on) and the window wide enough"
+		}
+		return true, ""
+	}
+	return panelOK, ""
+}
+
+// openTrace is /trace [browser|external]: serve this session's trace and
+// open it in Larik's browser panel, or the system browser.
+func (m *model) openTrace(arg string) tea.Cmd {
+	mode := "auto"
+	if m.opts.Config != nil {
+		mode = m.opts.Config.TraceOpenIn()
+	}
+	switch arg {
+	case "":
+	case "browser", "external":
+		mode = arg
+	default:
+		return m.println(m.st.err.Render("usage: /trace [browser|external]"))
+	}
 	path := m.agent.SessionPath()
 	if path == "" {
 		return m.println(m.st.err.Render("this session has no transcript, so no trace"))
@@ -75,8 +107,28 @@ func (m *model) openTrace() tea.Cmd {
 		}
 		m.traceView, m.traceDir = srv, dir
 	}
-	openBrowser(m.traceView.URL())
-	return m.println(m.st.dim.Render("trace viewer: ") + m.traceView.URL())
+	url := m.traceView.URL()
+	line := m.println(m.st.dim.Render("trace viewer: ") + url)
+	panelOK := m.opts.App != nil && m.opts.App.Browser != nil && (m.browser != nil || m.panelAllowed())
+	usePanel, problem := tracePlacement(mode, panelOK)
+	if problem != "" {
+		return tea.Batch(line, m.println(m.st.err.Render("trace: "+problem)))
+	}
+	if !usePanel {
+		openBrowser(url)
+		return line
+	}
+	b := m.opts.App.Browser
+	nav := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := b.OpenURL(ctx, traceOwner, url); err != nil {
+			openBrowser(url)
+			return outputMsg(m.st.warn.Render("trace: couldn't show it in the browser panel (" + err.Error() + "); opened the system browser"))
+		}
+		return nil
+	}
+	return tea.Batch(line, m.openBrowser(), nav)
 }
 
 func sizeOf(n int64) string {

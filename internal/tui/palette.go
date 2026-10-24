@@ -58,7 +58,7 @@ var commands = []command{
 	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},
 	{"/vim", "", "switch vim editing of the prompt on or off", "other", ""},
 	{"/debug", "[on|off]", "record this session's requests, responses and tool calls for review", "other", ""},
-	{"/trace", "", "review the recorded trace in the browser: timeline, requests as sent, raw HTTP", "other", ""},
+	{"/trace", "[browser|external]", "review the recorded trace in Larik's browser panel or the system browser: timeline, requests as sent, raw HTTP", "other", ""},
 	{"/theme", "[auto|dark|light]", "pick the color theme, or follow the terminal (auto)", "other", ""},
 	{"/keys", "", "keyboard shortcuts", "other", "?"},
 	{"/keybindings", "", "edit, unbind or restore personal keyboard shortcuts", "other", ""},

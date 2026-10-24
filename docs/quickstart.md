@@ -39,4 +39,4 @@ Type a request and press enter. Larik reads, edits and runs commands to do it, a
 ## When something is off
 
 - `/cost` shows token use and cost, and `/info` shows the session sidebar.
-- `/debug on` records requests and tool calls, and `/trace` opens them in your browser.
+- `/debug on` records requests and tool calls, and `/trace` opens them in Larik's browser panel, or your browser (`/trace external`).

@@ -18,6 +18,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
+	"larik/internal/tools"
 	"larik/internal/web"
 )
 
@@ -159,6 +160,15 @@ func (s *Session) Navigate(ctx context.Context, rawURL string) (loading bool, er
 		time.Sleep(100 * time.Millisecond)
 	}
 	return true, nil
+}
+
+// OpenURL opens rawURL in owner's own tab, leaving the main agent's and
+// other owners' tabs alone, and waits as Navigate does. The viewer follows
+// the tab, since Tab marks it as the one in use. It applies the same address
+// checks as browser_navigate.
+func (s *Session) OpenURL(ctx context.Context, owner, rawURL string) error {
+	_, err := s.Navigate(tools.WithOwner(ctx, owner), rawURL)
+	return err
 }
 
 // History goes back or forward in the active tab.

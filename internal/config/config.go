@@ -91,6 +91,9 @@ type Config struct {
 	// Telemetry exports traces to an OpenTelemetry collector. Honored only
 	// from personal files: the collector learns about every request.
 	Telemetry Telemetry `json:"telemetry,omitempty"`
+	// Trace says where /trace opens the viewer. Honored only from personal
+	// files.
+	Trace TraceConfig `json:"trace,omitempty"`
 	// DebugRetentionDays is how long traces are kept: 0 means the
 	// default (14), a negative value keeps them forever.
 	DebugRetentionDays int `json:"debug_retention_days,omitempty"`
@@ -288,6 +291,22 @@ func delegationRank(p DelegationPolicy) int {
 	default:
 		return 0
 	}
+}
+
+// TraceConfig configures /trace.
+type TraceConfig struct {
+	// OpenIn is "auto" (default: Larik's browser panel when it can be
+	// shown, else the system browser), "browser" or "external".
+	OpenIn string `json:"open_in,omitempty"`
+}
+
+// TraceOpenIn is the validated open_in value; unknown values mean auto.
+func (c *Config) TraceOpenIn() string {
+	switch c.Trace.OpenIn {
+	case "browser", "external":
+		return c.Trace.OpenIn
+	}
+	return "auto"
 }
 
 // Telemetry is the opt-in OpenTelemetry export. Spans carry model names,
@@ -601,6 +620,14 @@ func (c *Config) merge(path string, trusted bool) error {
 			return fmt.Errorf("%s: telemetry.otlp_endpoint must be an http(s) URL, such as http://localhost:4318", path)
 		}
 		c.Telemetry.OTLPEndpoint = o.Telemetry.OTLPEndpoint
+	}
+	if trusted && o.Trace.OpenIn != "" {
+		switch o.Trace.OpenIn {
+		case "auto", "browser", "external":
+			c.Trace.OpenIn = o.Trace.OpenIn
+		default:
+			return fmt.Errorf("%s: trace.open_in must be auto, browser or external", path)
+		}
 	}
 	if trusted && o.DebugRetentionDays != 0 {
 		c.DebugRetentionDays = o.DebugRetentionDays
