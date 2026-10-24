@@ -2,6 +2,7 @@ package tui
 
 import (
 	"charm.land/glamour/v2/ansi"
+	"charm.land/tone"
 
 	glamourstyles "charm.land/glamour/v2/styles"
 	"larik/internal/config"
@@ -14,10 +15,10 @@ func markdownStyle(isDark bool) ansi.StyleConfig { return markdownStyleWithPalet
 
 func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleConfig {
 	cfg := glamourstyles.LightStyleConfig
-	text, dim, accent := "#1F1F24", "#6B6B76", "#0D9488"
+	text, dim, accent, spark := tone.Pepper.Hex(), tone.Oyster.Hex(), tone.Darple.Hex(), tone.Macaron.Hex()
 	if isDark {
 		cfg = glamourstyles.DarkStyleConfig
-		text, dim, accent = "#ECECF0", "#7D7E87", "#2DD4BF"
+		text, dim, accent, spark = tone.Sash.Hex(), tone.Squid.Hex(), tone.Hazy.Hex(), tone.Dolly.Hex()
 	}
 	if p != nil {
 		if p.Foreground != "" {
@@ -28,6 +29,9 @@ func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleCon
 		}
 		if p.ANSI[14] != "" {
 			accent = p.ANSI[14]
+		}
+		if p.ANSI[13] != "" {
+			spark = p.ANSI[13]
 		}
 	}
 	ptr := func(s string) *string { return &s }
@@ -49,7 +53,7 @@ func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleCon
 	cfg.ImageText = flat(cfg.ImageText, dim)
 	cfg.Item = flat(cfg.Item, accent)
 	cfg.Enumeration = flat(cfg.Enumeration, accent)
-	cfg.Code.StylePrimitive = flat(cfg.Code.StylePrimitive, accent)
+	cfg.Code.StylePrimitive = flat(cfg.Code.StylePrimitive, spark)
 	cfg.CodeBlock.StylePrimitive = flat(cfg.CodeBlock.StylePrimitive, dim)
 	if cfg.CodeBlock.Chroma != nil {
 		chroma := *cfg.CodeBlock.Chroma
