@@ -239,6 +239,8 @@ type model struct {
 	traceDir  string
 	spin      spinner.Model
 	motion    motion
+	toast     string // the confirmation in the corner, if any
+	toastID   int
 	view      viewport.Model // the conversation, pre-wrapped to width
 	panelView viewport.Model
 	panelKind string
@@ -746,6 +748,15 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.recording != nil || m.voiceReturn > 0 {
 			return m, m.voiceTick()
+		}
+		return m, nil
+
+	case toastMsg:
+		return m, m.showToast(string(msg))
+
+	case toastExpiredMsg:
+		if msg.id == m.toastID {
+			m.toast = ""
 		}
 		return m, nil
 

@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // The spinner moves with motion on and holds still with it off; the
@@ -57,5 +59,30 @@ func TestTokenCountEases(t *testing.T) {
 	m.motion.resetTokens()
 	if n := m.shownTokens(); n != 1000 {
 		t.Fatalf("reduced motion should show the estimate at once: %d", n)
+	}
+}
+
+// A copy confirmation shows in the corner and goes away on its own,
+// leaving the conversation as it was.
+func TestToastOverlaysAndExpires(t *testing.T) {
+	m := testModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	before := len(m.convLines)
+	_, cmd := m.Update(toastMsg("copied the last reply (3 lines)"))
+	if cmd == nil || len(m.convLines) != before {
+		t.Fatal("a toast should schedule its expiry and leave the conversation alone")
+	}
+	view := plain(m.View().Content)
+	top := strings.SplitN(view, "\n", 3)
+	if len(top) < 2 || !strings.Contains(top[1], "✓ copied the last reply") {
+		t.Fatalf("the toast should sit at the top right:\n%s", view)
+	}
+	m.Update(toastExpiredMsg{id: m.toastID - 1})
+	if m.toast == "" {
+		t.Fatal("an older toast's expiry must not close a newer one")
+	}
+	m.Update(toastExpiredMsg{id: m.toastID})
+	if strings.Contains(plain(m.View().Content), "copied") {
+		t.Fatal("the toast should be gone once it expires")
 	}
 }

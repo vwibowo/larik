@@ -177,7 +177,7 @@ func (m *model) View() tea.View {
 	}
 	rows = append(rows, bottom)
 
-	v := tea.NewView(strings.Join(rows, "\n"))
+	v := tea.NewView(m.overlayToast(strings.Join(rows, "\n"), m.width))
 	v.AltScreen = true
 	switch {
 	case m.browser != nil:

@@ -707,7 +707,7 @@ func (m *model) copyText(text, what string) tea.Cmd {
 		if err := clipboard.WriteText(ctx, text); err != nil {
 			return outputMsg(m.st.dim.Render("sent " + what + " to the terminal's clipboard; if nothing was copied, the terminal doesn't allow it (OSC 52)"))
 		}
-		return outputMsg(m.st.dim.Render("✓ copied " + what))
+		return toastMsg("copied " + what)
 	}
 	return tea.Batch(tea.SetClipboard(text), native)
 }
