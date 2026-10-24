@@ -1162,3 +1162,7 @@ The website in `website/` builds the user guide from this README, plus a short p
 To prepare the next GitHub release locally, see the [release steps](docs/contributing-guide.md#prepare-a-github-release). The packaging script checks tests and website links, builds cross-platform archives, and writes SHA-256 checksums; tagging, pushing, and publishing remain manual.
 
 **Not yet supported:** MCP OAuth, MCP resources and prompts, prompt-type hooks, LSP pull diagnostics and code actions.
+
+## License
+
+Larik is released under the [MIT License](LICENSE). It is built on open-source Go modules under MIT, BSD, ISC and Apache 2.0 licenses; [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) reproduces their license and NOTICE texts, and every release archive carries both files next to the binary. After changing dependencies, run `scripts/gen-notices.sh` and commit the result; the packaging script refuses a stale notices file.

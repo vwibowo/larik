@@ -40,6 +40,11 @@ printf 'release: testing %s\n' "$version"
 go test ./...
 printf 'release: checking website links\n'
 (cd website && go run . -out "$stage/site")
+printf 'release: checking third-party notices\n'
+scripts/gen-notices.sh "$stage/THIRD_PARTY_NOTICES.txt" >/dev/null
+cmp -s "$stage/THIRD_PARTY_NOTICES.txt" THIRD_PARTY_NOTICES.txt ||
+  die 'THIRD_PARTY_NOTICES.txt is stale; run scripts/gen-notices.sh and commit it'
+cp LICENSE THIRD_PARTY_NOTICES.txt "$stage/bin/"
 
 archives=()
 for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
@@ -58,9 +63,9 @@ for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; d
     go build -trimpath -ldflags "-s -w -X main.version=$binary_version" \
     -o "$stage/bin/$binary" ./cmd/larik
   if [[ $os == windows ]]; then
-    (cd "$stage/bin" && zip -q "$stage/artifacts/$archive" "$binary")
+    (cd "$stage/bin" && zip -q "$stage/artifacts/$archive" "$binary" LICENSE THIRD_PARTY_NOTICES.txt)
   else
-    tar -czf "$stage/artifacts/$archive" -C "$stage/bin" "$binary"
+    tar -czf "$stage/artifacts/$archive" -C "$stage/bin" "$binary" LICENSE THIRD_PARTY_NOTICES.txt
   fi
   archives+=("$archive")
   rm "$stage/bin/$binary"
