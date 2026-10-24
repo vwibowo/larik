@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.18.0
+
+<p class="release-meta"><time datetime="2026-10-24">October 24, 2026</time></p>
+
+### Added
+
+- **A fresh look.** Colors now come from [CharmTone](https://github.com/charmbracelet/tone): violet fading to pink for Larik's own chrome, with the terminal's background showing through everywhere else.
+  - Your prompts sit on a faint band with a violet bar beside them; replies start with a `●`.
+  - Tool cards show `✓` or `✗` with the tool's name in bold, and a running call's dot pulses.
+  - The permission mode is a filled pill in the footer, and the composer's border takes its color.
+  - The spinner is a row of blocks the gradient runs along, a highlight sweeps across the activity label, and the token count eases up instead of jumping.
+  - The selected row of a picker sits on the same faint band, and panel borders carry the gradient.
+- **`animations` setting:** `on` (the default), `reduced` (the spinner turns, nothing else moves) or `off`. Nothing animates while Larik is idle. It's the "Animations" row of `/config`.
+- **Copy confirmations as a toast.** "copied …" shows in the top-right corner for two seconds instead of staying in the conversation.
+- **Read-only runs as one card.** In the default appearance, consecutive reads, searches and fetches collect into one card (`Read 6 files · searched 3 patterns`) with the calls listed beneath. A file read twice counts once.
+- **Scripts as one card.** A `run_code` script's calls show inside its card: a title from its opening comment, the call count and time, a few lines of code, the calls, then its output. What a script prints shows live while it runs, and a permission prompt for a script's call names the script.
+- **`log-summary` bench task,** a data-heavy case for comparing tool calls and code execution.
+
+### Changed
+
+- **Code is the default execution.** Code mode declares `todo_write`, `skill`, `memory`, the task tools and `exit_plan_mode` as direct tools; `run_code` describes the core tools in full; and in scripts `read`, `grep` and `glob` return objects. The prompt advises one bash command for bulk data, which took the log-summary task from 110 tool calls to 13.
+- **The footer leaves the cost out** until spending nears a session budget, then shows it in amber, and red at the cap. Context usage stays in `/info`.
+- **Plan mode tells the model its web tools still work** (each call asks first), and subagents get their own plan-mode note instead of being told to call `exit_plan_mode`, which they don't have.
+
+### Fixed
+
+- **A script's time limit pauses while a call waits on a permission prompt,** so a slow answer no longer times the script out.
+- **Slow tool calls through `claude-code-cli`.** The CLI no longer gives up after 60 seconds on a plan approval or a long command; when it drops a call anyway, Larik ends the call and closes its prompt, and `larik serve` expires the pending request.
+
 ## v0.17.0
 
 <p class="release-meta"><time datetime="2026-10-22">October 22, 2026</time></p>
