@@ -111,6 +111,9 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 	warn := paletteColor(3, pick(lipgloss.Color("#9A6700"), tone.Tang))
 	ok := paletteColor(2, pick(tone.Pickle, tone.Guac))
 
+	// A border blend runs once around the box, so it ends where it starts,
+	// back on accent: two stops would leave a seam at the top-left corner.
+
 	// The band and the neutral pill sit a step off the terminal background
 	// toward the text color, so they read on any scheme.
 	band, pillBg := pick(tone.Sash, tone.BBQ), pick(tone.Steep, tone.Char)
@@ -138,7 +141,7 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 		diffDelBg:   lipgloss.NewStyle().Background(pick(lipgloss.Color("#FBE9E7"), tone.Toast)),
 		thinking:    lipgloss.NewStyle().Foreground(dim).Italic(true),
 		box:         lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim).Padding(0, 1),
-		modal:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(accent, spark).Padding(0, 1),
+		modal:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(accent, spark, accent).Padding(0, 1),
 		statusMode:  lipgloss.NewStyle().Foreground(accent),
 		chip:        lipgloss.NewStyle().Foreground(accent).Bold(true).Padding(0, 1),
 		chipWarn:    lipgloss.NewStyle().Foreground(warn).Bold(true).Padding(0, 1),

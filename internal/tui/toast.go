@@ -31,7 +31,7 @@ func (m *model) overlayToast(screen string, width int) string {
 	if m.toast == "" {
 		return screen
 	}
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(m.st.accentColor, m.st.sparkColor).Padding(0, 1).
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(m.st.accentColor, m.st.sparkColor, m.st.accentColor).Padding(0, 1).
 		Render(m.st.ok.Render("✓ ") + m.toast)
 	x := width - lipgloss.Width(box) - 1
 	if x < 0 {

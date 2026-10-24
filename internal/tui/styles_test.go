@@ -2,6 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"larik/internal/llm"
 	"larik/internal/permission"
@@ -84,6 +87,28 @@ func TestModeAndEffortColorsAreDistinct(t *testing.T) {
 		}
 		if _, mark := st.effortStyle(llm.EffortDefault); mark != "" {
 			t.Errorf("default effort should have no bar, got %q", mark)
+		}
+	}
+}
+
+// A gradient border runs around the box and back to where it began, so
+// the cells either side of the top-left corner are close in color.
+func TestModalBorderHasNoSeam(t *testing.T) {
+	re := regexp.MustCompile(`\x1b\[38;2;(\d+);(\d+);(\d+)m`)
+	for _, dark := range []bool{true, false} {
+		lines := strings.Split(newStyles(dark).modal.Width(30).Render("a\nb\nc\nd"), "\n")
+		corner, below := re.FindStringSubmatch(lines[0]), re.FindStringSubmatch(lines[1])
+		if corner == nil || below == nil {
+			t.Fatalf("dark=%v border has no truecolor foreground", dark)
+		}
+		diff := 0
+		for i := 1; i <= 3; i++ {
+			a, _ := strconv.Atoi(corner[i])
+			b, _ := strconv.Atoi(below[i])
+			diff = max(diff, abs(a-b))
+		}
+		if diff > 40 {
+			t.Errorf("dark=%v the border jumps %d at the top-left corner: %v → %v", dark, diff, corner[1:], below[1:])
 		}
 	}
 }
