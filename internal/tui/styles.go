@@ -101,11 +101,11 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 	if p != nil && p.Foreground != "" {
 		foreground = lipgloss.Color(p.Foreground)
 	}
-	accent := paletteColor(6, pick(tone.Darple, tone.Hazy))
+	accent := paletteColor(6, pick(lipgloss.Color("#0D9488"), tone.Turtle))
 	if p != nil && p.ANSI[14] != "" {
 		accent = lipgloss.Color(p.ANSI[14])
 	}
-	spark := paletteColor(13, pick(tone.Macaron, tone.Dolly))
+	spark := paletteColor(13, pick(tone.Darple, tone.Hazy))
 	dim := paletteColor(8, pick(tone.Oyster, tone.Squid))
 	err := paletteColor(1, pick(tone.Pom, tone.Coral))
 	warn := paletteColor(3, pick(lipgloss.Color("#9A6700"), tone.Tang))
@@ -113,7 +113,7 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 
 	// The band and the neutral pill sit a step off the terminal background
 	// toward the text color, so they read on any scheme.
-	band, pillBg := pick(tone.Sash, tone.BBQ), pick(tone.Steep, tone.Char)
+	band, pillBg := pick(lipgloss.Color("#E3F6F5"), lipgloss.Color("#16302F")), pick(tone.Steep, tone.Char)
 	pillInk := pick(tone.Salt, tone.Pepper)
 	if p != nil && p.Background != "" {
 		bg := lipgloss.Color(p.Background)
@@ -143,10 +143,10 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 		chip:        lipgloss.NewStyle().Foreground(accent).Bold(true).Padding(0, 1),
 		chipWarn:    lipgloss.NewStyle().Foreground(warn).Bold(true).Padding(0, 1),
 		chipPlain:   lipgloss.NewStyle().Foreground(foreground).Padding(0, 1),
-		modePlan:    chipFg(pick(tone.Damson, tone.Malibu)),
-		modeAccept:  chipFg(pick(tone.Prince, tone.Violet)),
-		modeAuto:    chipFg(pick(tone.Pickle, tone.Guac)),
-		modeYolo:    chipFg(pick(tone.Chili, tone.Cherry)),
+		modePlan:    chipFg(pick(tone.Damson, tone.Sardine)),
+		modeAccept:  chipFg(pick(tone.Prince, tone.Hazy)),
+		modeAuto:    chipFg(pick(tone.Pickle, tone.Julep)),
+		modeYolo:    chipFg(pick(tone.Sriracha, tone.Coral)),
 		band:        lipgloss.NewStyle().Background(band),
 		pillInk:     pillInk,
 		pillBg:      pillBg,

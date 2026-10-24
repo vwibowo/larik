@@ -15,10 +15,10 @@ func markdownStyle(isDark bool) ansi.StyleConfig { return markdownStyleWithPalet
 
 func markdownStyleWithPalette(isDark bool, p *config.ThemePalette) ansi.StyleConfig {
 	cfg := glamourstyles.LightStyleConfig
-	text, dim, accent, spark := tone.Pepper.Hex(), tone.Oyster.Hex(), tone.Darple.Hex(), tone.Macaron.Hex()
+	text, dim, accent, spark := tone.Pepper.Hex(), tone.Oyster.Hex(), "#0D9488", tone.Darple.Hex()
 	if isDark {
 		cfg = glamourstyles.DarkStyleConfig
-		text, dim, accent, spark = tone.Sash.Hex(), tone.Squid.Hex(), tone.Hazy.Hex(), tone.Dolly.Hex()
+		text, dim, accent, spark = tone.Sash.Hex(), tone.Squid.Hex(), tone.Turtle.Hex(), tone.Hazy.Hex()
 	}
 	if p != nil {
 		if p.Foreground != "" {
