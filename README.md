@@ -233,8 +233,8 @@ Larik's colors come from [CharmTone](https://github.com/charmbracelet/tone). Eac
 | Mode `default` | a neutral pill |
 | Mode `plan` (read-only) | a blue pill |
 | Mode `accept edits` | a violet pill |
-| Mode `auto` | a mint pill |
-| Mode `yolo` | a coral-red pill |
+| Mode `auto` | a green pill |
+| Mode `yolo` | a red pill |
 | Effort `low` … `max` | a ramp from violet to pink that gets brighter, with a bar (`▂ ▃ ▅ ▆ █`) that grows |
 | `◈ sandbox` / `⚠ no sandbox` | green when the sandbox is on; amber when it is off (red if you are also in `yolo`) |
 | Cost | hidden, unless a session budget is set and spending reaches its warning threshold: then it reads `$1.70/$2.00`, amber, and red at the cap |
