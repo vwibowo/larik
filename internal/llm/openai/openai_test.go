@@ -162,13 +162,19 @@ func TestOutputFromStreamedItems(t *testing.T) {
 
 func TestToolResultImages(t *testing.T) {
 	items := inputItems(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleAssistant, Blocks: []llm.Block{
+			{Type: llm.BlockToolUse, ID: "call_1", Name: "read", Input: json.RawMessage(`{}`)},
+			{Type: llm.BlockToolUse, ID: "call_2", Name: "browser_screenshot", Input: json.RawMessage(`{}`)},
+		}},
 		{Role: llm.RoleUser, Blocks: []llm.Block{
 			{Type: llm.BlockToolResult, ID: "call_1", Content: "plain"},
 			{Type: llm.BlockToolResult, ID: "call_2", Content: "Screenshot.", Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}},
 		}},
 	}}, "openai")
 	got, _ := json.Marshal(items)
-	want := `[{"call_id":"call_1","output":"plain","type":"function_call_output"},` +
+	want := `[{"arguments":"{}","call_id":"call_1","name":"read","type":"function_call"},` +
+		`{"arguments":"{}","call_id":"call_2","name":"browser_screenshot","type":"function_call"},` +
+		`{"call_id":"call_1","output":"plain","type":"function_call_output"},` +
 		`{"call_id":"call_2","output":[{"text":"Screenshot.","type":"input_text"},{"image_url":"data:image/png;base64,AAAA","type":"input_image"}],"type":"function_call_output"}]`
 	if string(got) != want {
 		t.Errorf("got  %s\nwant %s", got, want)

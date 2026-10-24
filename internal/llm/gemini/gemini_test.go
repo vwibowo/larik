@@ -69,14 +69,15 @@ func TestStream(t *testing.T) {
 
 func TestToolResultImagesAreSiblingParts(t *testing.T) {
 	cs := contents(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "c", Name: "browser_screenshot"}}},
 		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "c", Name: "browser_screenshot", Content: "Screenshot.",
 			Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: "AAAA"}}}}},
 	}})
-	if len(cs) != 1 || len(cs[0].Parts) != 2 {
+	if len(cs) != 2 || len(cs[1].Parts) != 2 {
 		t.Fatalf("want a function response and an image part: %+v", cs)
 	}
-	if cs[0].Parts[0].FunctionResponse == nil || cs[0].Parts[1].InlineData == nil || cs[0].Parts[1].InlineData.MIMEType != "image/png" || len(cs[0].Parts[1].InlineData.Data) != 3 {
-		t.Errorf("parts: %+v %+v", cs[0].Parts[0], cs[0].Parts[1])
+	if cs[1].Parts[0].FunctionResponse == nil || cs[1].Parts[1].InlineData == nil || cs[1].Parts[1].InlineData.MIMEType != "image/png" || len(cs[1].Parts[1].InlineData.Data) != 3 {
+		t.Errorf("parts: %+v %+v", cs[1].Parts[0], cs[1].Parts[1])
 	}
 }
 
