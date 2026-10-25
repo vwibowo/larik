@@ -4,7 +4,7 @@
 
 ## v0.19.0
 
-<p class="release-meta">Prepared locally; not yet published.</p>
+<p class="release-meta"><time datetime="2026-10-25">October 25, 2026</time></p>
 
 ### Added
 
@@ -36,6 +36,7 @@
 - **`grep` on a single file** returned no matches to scripts.
 - **`larik serve`:** a `wait: true` prompt could return the previous run's answer, and a finished background task could deny another task's pending permission request.
 - **Tool results with no matching call** (left by a runtime that answered its own calls) made Anthropic and OpenAI reject every later request; they are now dropped from the request.
+- **Cleaner release archives** omit macOS AppleDouble metadata files, including when building Linux archives on a Mac.
 - **Reproducible third-party notices** use a fixed sort locale so packaging does not depend on the machine's locale.
 - **Browser tests no longer open a real terminal pane** (cmux, tmux, kitty, WezTerm), and the browser test suite probes Chrome once instead of per test.
 

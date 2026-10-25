@@ -65,7 +65,9 @@ for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; d
   if [[ $os == windows ]]; then
     (cd "$stage/bin" && zip -q "$stage/artifacts/$archive" "$binary" LICENSE THIRD_PARTY_NOTICES.txt)
   else
-    tar -czf "$stage/artifacts/$archive" -C "$stage/bin" "$binary" LICENSE THIRD_PARTY_NOTICES.txt
+    # BSD tar otherwise adds macOS AppleDouble (._*) metadata files, even
+    # to Linux archives. GNU tar safely ignores this environment variable.
+    COPYFILE_DISABLE=1 tar -czf "$stage/artifacts/$archive" -C "$stage/bin" "$binary" LICENSE THIRD_PARTY_NOTICES.txt
   fi
   archives+=("$archive")
   rm "$stage/bin/$binary"

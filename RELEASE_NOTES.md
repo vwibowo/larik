@@ -1,6 +1,6 @@
 # Larik v0.19.0
 
-_Local release candidate; not yet published. Previous release: v0.18.0._
+_October 25, 2026 · Previous release: v0.18.0._
 
 ### Highlights
 
@@ -11,20 +11,20 @@ _Local release candidate; not yet published. Previous release: v0.18.0._
 - **Compaction and undo.** Oversized conversations can be summarized in parts. In-place subagent edits have their own undo units, and undo/rewind refuse unsafe restores while tasks are writing or changes overlap.
 - **Server reliability.** Shutdown has one five-second budget and promptly disconnects SSE clients while preserving transcript locks until writers finish. This release also fixes wait-response races and background permission cleanup, rejects malformed event cursors with HTTP 400, and returns HTTP 409 during conflicting session-close operations.
 - **Provider and tool fixes.** Unmatched tool results no longer break subsequent provider requests, and script grep works on a single file.
-- **Distribution and website.** Larik is MIT licensed; archives include the license and third-party notices. Notice ordering is locale-independent. The website has a new dark design and install tabs, with accurate default-sandbox wording.
+- **Distribution and website.** Larik is MIT licensed; archives include the license and third-party notices. Notice ordering is locale-independent, and tar archives omit macOS AppleDouble metadata files. The website has a new dark design and install tabs, with accurate default-sandbox wording.
 
 ### Compatibility notes
 
 - Server event consumers should tolerate optional `requested_at` and `task_id` fields, HTTP 400 for malformed event cursors, and HTTP 409 during session closure.
 - Existing `edit(...)` rules now cover `multi_edit` and `apply_code_action`; `write(...)` rules cover saved browser screenshots. Automation may see additional approval prompts for unsandboxed commands and user-scope memory mutations.
 
-### Local preparation status
+### Publication checklist and verification limits
 
-- Binary source version: `0.19.0`. No tag, push or GitHub publication is performed by local preparation.
+- Release version: `0.19.0`; metadata finalized for October 25, 2026. Manual tagging and publication are still pending.
 - Website version and downloads remain on published `v0.18.0` until the new assets exist.
-- After the release commit is approved and the checkout is clean, run `scripts/package-release.sh v0.19.0`. Verify all five archives, `SHA256SUMS`, and the packaged macOS arm64 binary's version before publication.
+- Build from the final clean release commit with `scripts/package-release.sh v0.19.0`. Verify all five archives and `SHA256SUMS`, ensure each archive contains only its binary, `LICENSE` and `THIRD_PARTY_NOTICES.txt`, and check the packaged macOS arm64 binary's version before publication.
 - Interactive checks passed for trace-tab isolation, approval wait timing, an Auto-mode user-memory prompt, and server shutdown with an active SSE client. The temporary memory marker was removed. Live Claude CLI tool-use and watchdog verification remains pending because its smoke run hit the subscription session limit; automated tests cover those paths.
-- Add the actual publication date to the changelog when finalizing the release.
+- If publication occurs after October 25, update the release date before the final build. Publish only this v0.19.0 section, not the historical release notes below.
 
 # Larik v0.14.0
 
