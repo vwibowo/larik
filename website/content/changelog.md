@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`/trace` opens in Larik's browser panel** when browser tools are on and the window is wide enough, in a tab of its own that the agent's `browser_*` tools never touch. `/trace external` uses the system browser, `/trace browser` insists on the panel, and `trace.open_in` (also a `/config` row) sets the default.
+- **Approval waits are visible.** A permission prompt and the live status show "Waiting for your approval" with the time since the request was made, including queued requests and ones from background subagents while the main agent is idle. Permission events carry a `requested_at` timestamp.
+- **`claude-code-cli` stall watchdog.** The runtime now uses `stall_timeout` (300 seconds by default). It warns after one minute of silence, pauses while a tool or permission request is outstanding, and stops a stalled CLI without replaying the turn.
+- **Oversized conversations can still be compacted.** When the transcript is too large for the summarizing model, Larik summarizes it in parts and says if anything was shortened.
+- **Subagent undo.** Edits by an in-place subagent are their own undo unit. `/undo` and `/rewind` refuse, with a reason, while a task is still writing or when restoring would discard another task's changes.
+- **`task_id` on background events** and **HTTP 409** when resuming or closing a session that is still closing in `larik serve`.
+
+### Changed
+
+- **`claude-code-cli` subagents default to the `tools` execution,** whatever the global default is. An explicit `model_execution` entry still wins; the main agent is unchanged.
+- **Budgets also cover compaction, overflow retries and `claude-code-cli` turns,** and that runtime's usage is saved with the session so a resume counts it.
+- **Unsandboxed bash (`"sandbox": false`) always asks** when a sandbox is available, and `cat`, `head`, `tail`, `wc` and `du` are no longer safe defaults without one.
+- **`edit(...)` permission rules also cover `multi_edit`** and `apply_code_action`, and a code action's other files are checked against deny rules before any is written.
+- **Malformed `Last-Event-ID` or `?after=` values** return HTTP 400 instead of replaying everything.
+
+### Fixed
+
+- **Credentials.** `read`, `grep` and `glob` no longer expose Larik's sign-in files, provider keys are removed from unsandboxed bash environments too, and the Claude CLI bridge config no longer sits in a sandbox-writable temp directory.
+- **Sandbox.** Worktree subagents can no longer rewrite other worktrees' git metadata, git commands Larik runs itself ignore repository hooks and executable config, and a custom `TMPDIR` no longer makes its parent writable.
+- **`grep` on a single file** returned no matches to scripts.
+- **`larik serve`:** a `wait: true` prompt could return the previous run's answer, and a finished background task could deny another task's pending permission request.
+- **Tool results with no matching call** (left by a runtime that answered its own calls) made Anthropic and OpenAI reject every later request; they are now dropped from the request.
+- **Browser tests no longer open a real terminal pane** (cmux, tmux, kitty, WezTerm), and the browser test suite probes Chrome once instead of per test.
+
 ## v0.18.0
 
 <p class="release-meta"><time datetime="2026-10-24">October 24, 2026</time></p>

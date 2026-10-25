@@ -189,13 +189,22 @@ func chrome(t *testing.T) string {
 	// The suite runs packages in parallel, which can slow Chrome's start
 	// past the product's timeouts, so tests give it longer. A timeout then
 	// reads as one; "context canceled" still means Chrome was killed.
-	if err := probeChrome(path, testStartupTimeout); err != nil {
+	// Chrome is launched to probe it once per test binary; every test after
+	// the first reuses the verdict instead of paying a launch for it.
+	chromeProbe.once.Do(func() { chromeProbe.err = probeChrome(path, testStartupTimeout) })
+	if err := chromeProbe.err; err != nil {
 		if strings.Contains(err.Error(), "context canceled") {
 			t.Fatalf("Chrome started but its context was canceled during the availability probe: %v", err)
 		}
 		t.Skipf("Chrome/Chromium is not usable in this environment: %v", err)
 	}
 	return path
+}
+
+// chromeProbe holds the one availability probe of the test binary.
+var chromeProbe struct {
+	once sync.Once
+	err  error
 }
 
 // probeChrome starts Chrome the way a session does and loads a page, so an

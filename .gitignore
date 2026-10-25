@@ -32,3 +32,7 @@ benchmarks
 
 .archify
 website/wrangler.toml
+
+# Local editor/tool state.
+.claude/launch.json
+.wrangler/

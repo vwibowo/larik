@@ -216,21 +216,22 @@ func TestRunCodeTimeout(t *testing.T) {
 }
 
 func TestRunCodeTimeLeavesOutWaitsForTheUser(t *testing.T) {
-	res := runCode(t, &fakeCaller{wait: 2 * time.Second, asks: true}, `tools.echo({text: "x"})`, 1)
+	s := time.Duration(timeScale)
+	res := runCode(t, &fakeCaller{wait: 2 * s * time.Second, asks: true}, `tools.echo({text: "x"})`, timeScale)
 	if res.IsError || !strings.Contains(res.Content, "got") {
 		t.Fatalf("a slow answer to a prompt should not time the script out:\n%s", res.Content)
 	}
 	// The clock runs again once the user has answered.
 	start := time.Now()
-	res = runCode(t, &fakeCaller{wait: 1500 * time.Millisecond, asks: true}, `tools.echo({text: "x"}); while (true) {}`, 1)
+	res = runCode(t, &fakeCaller{wait: 1500 * s * time.Millisecond, asks: true}, `tools.echo({text: "x"}); while (true) {}`, timeScale)
 	if !res.IsError || !strings.Contains(res.Content, "timed out") {
 		t.Fatalf("the script should still time out after the wait:\n%s", res.Content)
 	}
-	if d := time.Since(start); d < 2*time.Second || d > 6*time.Second {
+	if d := time.Since(start); d < 2*s*time.Second || d > 6*s*time.Second {
 		t.Fatalf("timed out after %s, want about the wait plus the limit", d)
 	}
 	// Other waits count.
-	res = runCode(t, &fakeCaller{wait: 3 * time.Second}, `tools.echo({text: "x"})`, 1)
+	res = runCode(t, &fakeCaller{wait: 3 * s * time.Second}, `tools.echo({text: "x"})`, timeScale)
 	if !res.IsError || !strings.Contains(res.Content, "timed out") {
 		t.Fatalf("a slow tool should time the script out:\n%s", res.Content)
 	}
@@ -242,7 +243,7 @@ func TestRunnerOutlivesItsDeadlineWhileTheUserAnswers(t *testing.T) {
 	}
 	// Past the deadline plus the runner's 5s grace, the runner would stop
 	// itself if it counted the wait.
-	res := runCode(t, &fakeCaller{wait: 7 * time.Second, asks: true}, `tools.echo({text: "x"}); "ok"`, 1)
+	res := runCode(t, &fakeCaller{wait: (timeScale + 6) * time.Second, asks: true}, `tools.echo({text: "x"}); "ok"`, timeScale)
 	if res.IsError || !strings.Contains(res.Content, "=> ok") {
 		t.Fatalf("the runner should wait for the user:\n%s", res.Content)
 	}
