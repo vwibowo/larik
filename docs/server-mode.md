@@ -106,6 +106,12 @@ With `{"wait": true}`, the handler subscribes before starting the run, then filt
 
 **One run at a time.** `prompt`, `compact`, `undo` and `clear` all mark the session busy; a second one returns 409. `cancel` cancels the current run's context. Resuming a session while it is still closing, or closing it twice concurrently, returns 409 until its resources and transcript lock have been released.
 
+## Shutdown
+
+On SIGINT/SIGTERM, `larik serve` gives session cleanup, HTTP shutdown and shared-service cleanup one five-second budget. New API work is rejected with 503, runs and background tasks are canceled, and SSE streams disconnect immediately. Loaded sessions, opens in flight and DELETE operations already closing sessions are all included in safe cleanup. `Server.Shutdown(ctx)` is idempotent and context-bounded; `Close()` remains the blocking cleanup API.
+
+If a tool ignores cancellation or a cleanup callback stalls, the command force-closes HTTP connections at the deadline and returns a timeout. Cleanup may continue in the background for embedded callers. Transcript locks are held and shared services remain available until actual writers finish, rather than falsely reporting that a merely canceled task is done. Go cannot forcibly stop an arbitrary goroutine; a permanently uncooperative task may remain until process exit.
+
 ## Security
 
 See [security: server mode](security.md#server-mode): bearer token (constant-time compare), loopback-only listener, Host header check against DNS rebinding, and `--allow-remote` to lift both.

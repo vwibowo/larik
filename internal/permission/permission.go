@@ -177,9 +177,9 @@ func urlHost(raw string) string {
 // approval; elsewhere it has nothing to do and is allowed.
 const ExitPlanTool = "exit_plan_mode"
 
-// MemoryTool saves notes in Larik's own memory directory, outside the
-// project. It needs no approval in any mode (plan included: it changes
-// nothing in the project), though a deny rule can still block it.
+// MemoryTool manages notes in Larik's own directories. Project notes and
+// reads need no approval, including in plan mode. User-scoped mutations
+// affect every project and ask unless explicitly allowed or in yolo mode.
 const MemoryTool = "memory"
 
 // fileWriteTools write one file named by their path argument.
@@ -234,8 +234,14 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		}
 		return Allow, ""
 	}
-	if c.mode == ModeYolo || call.Tool == MemoryTool {
+	if c.mode == ModeYolo {
 		return Allow, ""
+	}
+	if call.Tool == MemoryTool {
+		if !UserMemoryMutation(call.Tool, call.Input) || c.allows(call.Tool, subject) {
+			return Allow, ""
+		}
+		return Ask, "user-scope memory changes affect every project"
 	}
 	if call.ReadOnly {
 		return Allow, ""

@@ -1121,6 +1121,22 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Run this script in the page?"
 	case "browser_upload":
 		return "Upload these files to the page?"
+	case permission.MemoryTool:
+		scope := str(in["scope"])
+		if scope == "" {
+			scope = "project"
+		}
+		switch str(in["action"]) {
+		case "save":
+			return "Save " + scope + "-scope memory?"
+		case "delete":
+			return "Delete " + scope + "-scope memory?"
+		case "read":
+			return "Read this memory note?"
+		case "list":
+			return "List memory notes?"
+		}
+		return "Manage memory?"
 	case permission.ExitPlanTool:
 		return "Ready to start on this plan?"
 	}
@@ -1184,6 +1200,13 @@ func (m *model) permDetail(e *agent.Event) string {
 	case "apply_code_action":
 		line, _ := in["line"].(float64)
 		return bold.Render(str(in["title"])) + "\n" + m.st.dim.Render(fmt.Sprintf("from the language server, at %s:%d; it may change other files too", m.shortPaths(str(in["path"])), int(line)))
+	case permission.MemoryTool:
+		pretty, _ := json.MarshalIndent(in, "", "  ")
+		detail := m.st.dim.Render(truncateLines(string(pretty), 16))
+		if permission.UserMemoryMutation(e.ToolName, e.Input) {
+			detail = m.st.warn.Render("! changes a persistent note used by every project, not just this one") + "\n" + detail
+		}
+		return detail
 	case permission.ExitPlanTool:
 		plan := agent.PlanOf(e.Input)
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", textutil.Plural(strings.Count(plan, "\n")+1, "line")))

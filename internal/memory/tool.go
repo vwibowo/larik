@@ -14,9 +14,9 @@ import (
 // ToolName is the name of the memory tool.
 const ToolName = "memory"
 
-// Tool lets the model save, read, list and delete notes. It writes only
-// inside the store's directories, so it runs without asking (see
-// permission.Decide); what it did shows in the conversation.
+// Tool lets the model save, read, list and delete notes. Project changes
+// need no approval; user-scope mutations ask because they affect every
+// project (see permission.Decide). Results show what changed.
 type Tool struct{ S *Store }
 
 func (Tool) ReadOnly() bool { return false }
@@ -26,7 +26,7 @@ func (Tool) Spec() llm.ToolSpec {
 		Name: ToolName,
 		Description: "Manage your memory: short notes that carry across sessions (see the memory section of your instructions for when to save). " +
 			// What not to save is in the memory section, which comes with this tool.
-			"save writes a note (saving under an existing name replaces it); read returns a note's content; list shows all notes; delete removes one.",
+			"save writes a note (saving under an existing name replaces it); read returns a note's content; list shows all notes; delete removes one. User-scope saves and deletes need approval; delete defaults to project scope.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"action":{"type":"string","enum":["save","read","list","delete"]},
 			"name":{"type":"string","description":"Short kebab-case name, e.g. prefers-table-tests"},
@@ -51,6 +51,9 @@ func (t Tool) Run(_ context.Context, _ *tools.Env, input json.RawMessage) tools.
 		return tools.Result{Content: `INVALID_JSON: expected {"action": ...}`, IsError: true}
 	}
 	fail := func(err error) tools.Result { return tools.Result{Content: "Error: " + err.Error(), IsError: true} }
+	if in.Scope != "" && in.Scope != ScopeProject && in.Scope != ScopeUser {
+		return fail(fmt.Errorf("unknown scope %q: project or user", in.Scope))
+	}
 	switch in.Action {
 	case "save":
 		created, err := t.S.Save(Note{Name: in.Name, Description: in.Description, Type: in.Type, Body: in.Content, Scope: in.Scope})
@@ -90,6 +93,11 @@ func (t Tool) Run(_ context.Context, _ *tools.Env, input json.RawMessage) tools.
 		}
 		return tools.Result{Content: strings.TrimRight(b.String(), "\n"), Display: fmt.Sprintf("%d notes", len(notes))}
 	case "delete":
+		// Never let an omitted scope fall through to the user's global
+		// notes: only an explicit user-scope call was authorized for that.
+		if in.Scope == "" {
+			in.Scope = ScopeProject
+		}
 		scope, err := t.S.Delete(in.Name, in.Scope)
 		if err != nil {
 			return fail(err)

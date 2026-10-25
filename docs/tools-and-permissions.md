@@ -59,7 +59,7 @@ classDiagram
 | `raw_output` | tools | yes | Reads bounded byte ranges of exact bash output captured while `token_saver` is enabled, or of a `run_code` script's output that was too long to show in full; does not rerun the command |
 | `grep`, `glob` | tools | yes | ripgrep when installed, a Go fallback (parallel) otherwise. Paths inside the working directory are shown relative to it. Results stop at 500 lines or about 30 KB, on a line boundary; `grep` stops ripgrep there. `glob` lists files through `rg --files`, leaving out what `.gitignore` excludes, and walks the tree when that finds nothing (a pattern aimed at an ignored directory) |
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. The result tells the model only the progress and the item in progress, since it just sent the list. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
-| `memory` | memory | no | Saves, reads, lists and deletes notes kept across sessions; allowed in every mode (deny rules aside); see [state](state-and-persistence.md#memory). Not offered to subagents |
+| `memory` | memory | no | Saves, reads, lists and deletes notes kept across sessions; reads/listing and project changes are prompt-free, but user-scoped saves/replacements/deletes ask (including in plan/auto mode), unless explicitly allowed or in yolo; omitted delete scope means project only; see [state](state-and-persistence.md#memory). Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
 | `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_upload`, `browser_history`, `browser_tabs`, `browser_eval` | termbrowser | no | Only when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
 | `browser_snapshot`, `browser_wait_for`, `browser_console`, `browser_network` | termbrowser | yes | Read the active tab |
@@ -179,7 +179,7 @@ Every outcome of `authorize` except a read-only call allowed by rules or mode is
 
 1. `write`/`edit` outside the project, through a symlink, or to a protected project file → Deny (even in yolo).
 2. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
-3. Mode **yolo**, or the `memory` tool (it writes only to Larik's memory directory) → Allow.
+3. Mode **yolo** → Allow. The `memory` tool also allows reads/listing and project changes; user-scoped saves/replacements/deletes Ask unless a personal allow rule covers them. This memory decision precedes the generic plan-mode write restriction.
 4. Tool is **read-only** → Allow.
 5. Mode **plan** → Deny, except `web_fetch`/`web_search`/`browser_navigate`, which fall through to ask (research is part of planning).
 6. Any **allow rule** matches → Allow.
@@ -194,9 +194,10 @@ In `auto` mode an Ask from `Decide` doesn't go straight to the user. `authorize`
 
 - **Input.** `AutoCall` carries the tool name and input, the working directory, whether the sandbox is on, and the last three prompts the *user* typed (`session.IsPrompt` messages of the root agent). Tool results and assistant text are left out on purpose: an instruction injected into a web page or a file must not read as the user's wish. A subagent's call also carries its task, labeled as written by the main agent, not the user. Inputs over 12 KB are cut and marked, which the policy treats as a reason to ask.
 - **Verdict.** The model replies `{"decision": "allow"|"ask", "reason": "…"}`. Allow runs the call. Ask, an unreadable reply, an error or a 30 s timeout all fall through to the normal permission prompt, with the reason in the event's `auto_reason` (shown in the TUI prompt, and in the JSON events of `-p` and the server).
-- **Skipped.** A PreToolUse hook that answered `ask` wants the user, and `exit_plan_mode` is always the user's to approve; neither is checked. Everything `Decide` allows or denies by itself (deny and allow rules, sandboxed bash, the safe list, in-project edits) never reaches the check.
+- **Skipped.** A PreToolUse hook that answered `ask` wants the user, and `exit_plan_mode` is always the user's to approve; neither is checked. User-scoped memory mutations also bypass the classifier and go to the user, including when checks are prefetched. Everything `Decide` allows or denies by itself (deny and allow rules, sandboxed bash, the safe list, in-project edits) never reaches the check.
 - **Batches.** When the model makes several calls in one turn, the checks for all of them start at once (`prefetchAuto`), so they cost one model round trip of wall time rather than one each. Hooks still run, and the user is still asked, one call at a time in order; a verdict a PreToolUse hook made moot (it decided, or rewrote the input) is left unused.
 - **Memory.** An approved call (same tool, same input) is approved again for the rest of the session without another request, up to 200 entries, kept on the root agent so subagents share it.
+- **Script time.** Awaiting the classifier (including a prefetched verdict) pauses the script's execution clock, just like waiting for the user. The clock resumes before the tool runs; caller cancellation still works while paused.
 - **Model and cost.** `auto_mode.model` (personal files only), else the session's model, at low reasoning effort, with no tools. The spend counts toward the session's cost and budget, through the same `askModel` prompt hooks use.
 - **Trust.** Shared settings can neither select `auto` (mode is a personal setting) nor set `auto_mode.model`.
 

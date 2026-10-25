@@ -54,6 +54,7 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer ln.Close()
 	if tcp, ok := ln.Addr().(*net.TCPAddr); ok && !tcp.IP.IsLoopback() && !*allowRemote {
 		ln.Close()
 		return errors.New("refusing to listen on a non-loopback address without --allow-remote")
@@ -76,7 +77,12 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	cleanup := a.Close
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
 	if *debug || envDebug() {
 		a.Debug = true
 	}
@@ -111,16 +117,47 @@ func runServe(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(ln) }()
 	select {
-	case err := <-errc:
-		srv.Close()
-		return err
+	case err = <-errc:
 	case <-ctx.Done():
 	}
 	fmt.Fprintln(os.Stderr, "shutting down")
-	// Ending the sessions closes their event streams, so Shutdown can
-	// finish instead of waiting on open SSE connections.
-	srv.Close()
+	// One budget includes sessions, HTTP connections and shared services.
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return hs.Shutdown(sctx)
+	closeApp := cleanup
+	cleanup = nil // shutdownServe owns cleanup, including after a timeout
+	shutdownErr := shutdownServe(sctx, hs, srv.Shutdown, closeApp)
+	if shutdownErr != nil {
+		shutdownErr = fmt.Errorf("server shutdown: %w", shutdownErr)
+	}
+	return errors.Join(err, shutdownErr)
+}
+
+// shutdownServe bounds waiting, not the lifetime of cleanup goroutines. Shared
+// services remain available to session writers until safe session cleanup ends.
+func shutdownServe(ctx context.Context, hs *http.Server, shutdown func(context.Context) error, cleanup func()) error {
+	results := make(chan error, 2)
+	go func() {
+		err := shutdown(context.Background())
+		if err == nil {
+			cleanup()
+		}
+		results <- err
+	}()
+	go func() { results <- hs.Shutdown(ctx) }()
+	var errs error
+	for range 2 {
+		select {
+		case err := <-results:
+			errs = errors.Join(errs, err)
+		case <-ctx.Done():
+			_ = hs.Close()
+			return errors.Join(errs, ctx.Err())
+		}
+	}
+	if ctx.Err() != nil {
+		_ = hs.Close()
+		return errors.Join(errs, ctx.Err())
+	}
+	return errs
 }

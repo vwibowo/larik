@@ -67,6 +67,9 @@ func (a *Agent) autoApprover() AutoApprover {
 // in the session (the same tool with the same input) are approved again
 // without asking it.
 func (a *Agent) autoApprove(ctx context.Context, tool string, input json.RawMessage) (AutoVerdict, error) {
+	if permission.UserMemoryMutation(tool, input) {
+		return AutoVerdict{Reason: "user-scope memory changes need your approval"}, nil
+	}
 	approve := a.autoApprover()
 	if approve == nil {
 		return AutoVerdict{}, errors.New("no model is set up to check calls")
@@ -143,6 +146,9 @@ func (a *Agent) prefetchAuto(ctx context.Context, uses []llm.Block, registry *to
 		}
 		if name == tools.CodeToolName || name == tools.WriteFilesToolName || name == permission.ExitPlanTool {
 			continue // authorized call by call, or always the user's
+		}
+		if permission.UserMemoryMutation(name, input) {
+			continue // only the user may grant cross-project memory changes
 		}
 		if d, _ := perms.Decide(permission.Call{Tool: name, ReadOnly: toolReadOnly(tool, input), Input: input}); d == permission.Ask {
 			calls = append(calls, call{name, input})

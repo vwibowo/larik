@@ -406,9 +406,14 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	// approve reaches the user. A hook that said "ask" wants the user, and
 	// a plan is always the user's to approve.
 	autoReason := ""
-	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan {
+	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan && !permission.UserMemoryMutation(use.Name, input) {
 		started := time.Now()
+		// A script must not spend its execution budget waiting for the
+		// classifier, including a verdict prefetched for this call. Resume
+		// before handling the verdict or running the approved tool.
+		resume := tools.WaitingForUser(ctx)
 		verdict, err := auto.get(ctx, a, use.Name, input)
+		resume()
 		switch {
 		case ctx.Err() != nil:
 			return false, "interrupted by user", input

@@ -42,18 +42,20 @@ type Server struct {
 	app  *app.App
 	opts Options
 
-	mu       sync.Mutex
-	sessions map[string]*live
-	opening  map[string]bool // session files being opened
-	closing  map[string]bool // session files being closed
-	shutdown bool
+	mu           sync.Mutex
+	sessions     map[string]*live
+	opening      map[string]bool // session files being opened
+	closing      map[string]bool // session files being closed
+	shutdown     bool
+	work         sync.WaitGroup // openings and live sessions, including DELETEs in progress
+	shutdownDone chan struct{}
 }
 
 func New(a *app.App, opts Options) *Server {
 	if opts.Keepalive == 0 {
 		opts.Keepalive = 15 * time.Second
 	}
-	return &Server{app: a, opts: opts, sessions: map[string]*live{}, opening: map[string]bool{}, closing: map[string]bool{}}
+	return &Server{app: a, opts: opts, sessions: map[string]*live{}, opening: map[string]bool{}, closing: map[string]bool{}, shutdownDone: make(chan struct{})}
 }
 
 // Handler returns the HTTP API.
@@ -85,23 +87,41 @@ func (s *Server) Handler() http.Handler {
 	return s.checkHost(mux)
 }
 
-// Close ends every loaded session. The Server rejects new sessions after.
-func (s *Server) Close() {
+// Shutdown rejects new work, cancels sessions and disconnects their event
+// streams. It waits for all sessions (including opens and closes in flight)
+// to finish safe cleanup, or returns ctx.Err(). Cleanup continues in the
+// background after a timeout; transcript locks remain held until writers exit.
+// Concurrent calls share cleanup but each observes its own context.
+func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	s.shutdown = true
-	all := make([]*live, 0, len(s.sessions))
-	for _, l := range s.sessions {
-		all = append(all, l)
+	if s.shutdownDone == nil {
+		s.shutdownDone = make(chan struct{})
 	}
-	s.sessions = map[string]*live{}
+	if !s.shutdown {
+		s.shutdown = true
+		for _, l := range s.sessions {
+			l.beginClose()
+		}
+		s.sessions = map[string]*live{}
+		go func() { s.work.Wait(); close(s.shutdownDone) }()
+	}
+	done := s.shutdownDone
 	s.mu.Unlock()
-	var wg sync.WaitGroup
-	for _, l := range all {
-		wg.Add(1)
-		go func() { defer wg.Done(); l.close() }()
+	select {
+	case <-done:
+		return nil
+	default:
 	}
-	wg.Wait()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
+
+// Close is the blocking, safe-cleanup equivalent of Shutdown with no deadline.
+func (s *Server) Close() { _ = s.Shutdown(context.Background()) }
 
 // ---- middleware ----
 
@@ -113,6 +133,13 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		}
 		if s.opts.Token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.Token)) != 1 {
 			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
+			return
+		}
+		s.mu.Lock()
+		shuttingDown := s.shutdown
+		s.mu.Unlock()
+		if shuttingDown {
+			writeErr(w, http.StatusServiceUnavailable, "server is shutting down")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -244,8 +271,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opening[id] = true
+	s.work.Add(1)
 	s.mu.Unlock()
 
+	defer s.work.Done()
 	sess, err := s.app.Open(o)
 
 	s.mu.Lock()
@@ -263,14 +292,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 // register makes an opened session live, unless the server is shutting down.
 func (s *Server) register(w http.ResponseWriter, sess *app.Session) (*live, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.shutdown {
+		s.mu.Unlock()
 		sess.Close("other")
 		writeErr(w, http.StatusServiceUnavailable, "server is shutting down")
 		return nil, false
 	}
 	l := newLive(sess)
 	s.sessions[l.id] = l
+	s.work.Add(1)
+	s.mu.Unlock()
+	go func() { <-l.closeDone; s.work.Done() }()
 	return l, true
 }
 
@@ -310,6 +342,15 @@ func (s *Server) fork(w http.ResponseWriter, r *http.Request) {
 		o.Effort = or(o.Effort, eff)
 		o.Mode = or(o.Mode, string(src.a.Perms().Mode()))
 	}
+	s.mu.Lock()
+	if s.shutdown {
+		s.mu.Unlock()
+		writeErr(w, http.StatusServiceUnavailable, "server is shutting down")
+		return
+	}
+	s.work.Add(1)
+	s.mu.Unlock()
+	defer s.work.Done()
 	var sess *app.Session
 	open := func(context.Context) error {
 		var err error

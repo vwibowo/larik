@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **User-scope memory changes ask for approval** because they affect every project. Auto mode does not approve these on your behalf; explicit trusted allow rules and yolo remain intentional overrides. A tool delete without scope targets only project notes, and invalid scopes are rejected.
 - **`claude-code-cli` subagents default to the `tools` execution,** whatever the global default is. An explicit `model_execution` entry still wins; the main agent is unchanged.
 - **Budgets also cover compaction, overflow retries and `claude-code-cli` turns,** and that runtime's usage is saved with the session so a resume counts it.
 - **Unsandboxed bash (`"sandbox": false`) always asks** when a sandbox is available, and `cat`, `head`, `tail`, `wc` and `du` are no longer safe defaults without one.
@@ -21,6 +22,8 @@
 
 ### Fixed
 
+- **Server shutdown has one five-second budget** covering sessions, HTTP and shared cleanup. A tool ignoring cancellation no longer makes the command wait indefinitely; SSE clients disconnect promptly while transcript locks remain held until actual writers finish.
+- **Auto-mode checks no longer consume script execution time**, including awaiting a prefetched verdict. The clock resumes before tool execution, and cancellation remains effective during approval waits.
 - **Credentials.** `read`, `grep` and `glob` no longer expose Larik's sign-in files, provider keys are removed from unsandboxed bash environments too, and the Claude CLI bridge config no longer sits in a sandbox-writable temp directory.
 - **Sandbox.** Worktree subagents can no longer rewrite other worktrees' git metadata, git commands Larik runs itself ignore repository hooks and executable config, and a custom `TMPDIR` no longer makes its parent writable.
 - **`grep` on a single file** returned no matches to scripts.

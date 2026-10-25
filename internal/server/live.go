@@ -31,6 +31,8 @@ type live struct {
 	pseq    int
 	pending map[string]*pendingPerm
 
+	closeOnce sync.Once
+	closeDone chan struct{}
 	stopDrain chan struct{}
 	drained   chan struct{}
 }
@@ -48,6 +50,7 @@ func newLive(s *app.Session) *live {
 		a:         s.Agent,
 		bus:       newBus(),
 		pending:   map[string]*pendingPerm{},
+		closeDone: make(chan struct{}),
 		stopDrain: make(chan struct{}),
 		drained:   make(chan struct{}),
 	}
@@ -314,25 +317,46 @@ func (l *live) pendingPerms() []Event {
 	return out
 }
 
-// close stops the run and background work, ends the session and
-// disconnects subscribers.
-func (l *live) close() {
-	l.mu.Lock()
-	if l.closed {
+// beginClose separates prompt cancellation/disconnection from eventual safe
+// cleanup. No transcript resource is released while a run or task can write.
+func (l *live) beginClose() {
+	l.closeOnce.Do(func() {
+		l.mu.Lock()
+		l.closed = true
+		if l.cancel != nil {
+			l.cancel()
+		}
 		l.mu.Unlock()
-		return
-	}
-	l.closed = true
-	if l.cancel != nil {
-		l.cancel()
-	}
-	l.mu.Unlock()
-	l.runs.Wait()
-	l.a.StopAllBackground()
-	close(l.stopDrain)
-	<-l.drained
-	l.expire(true)
-	l.s.Close("other")
-	l.bus.publish(Event{Session: l.id, Event: agent.Event{Kind: EvClosed}})
-	l.bus.close()
+		l.bus.publish(Event{Session: l.id, Event: agent.Event{Kind: EvClosed}})
+		l.bus.close()
+		go func() {
+			defer close(l.closeDone)
+			// Cancel tasks before waiting for foreground work, which might depend
+			// on them. StopAllBackground itself only waits briefly.
+			l.a.StopAllBackground()
+			l.runs.Wait()
+			// A canceled foreground tool may have started another task as it
+			// wound down. Cancel again, then wait for actual completion, not the
+			// "stopped" status (which only means cancellation was requested).
+			l.a.StopAllBackground()
+			var pending []string
+			for _, task := range l.a.BackgroundTasks() {
+				if task.Finished.IsZero() {
+					pending = append(pending, task.ID)
+				}
+			}
+			if len(pending) > 0 {
+				// Pass explicit IDs: the implicit set excludes stopped tasks
+				// already marked delivered, although their writers may still run.
+				_, _ = l.a.WaitBackground(context.Background(), pending)
+			}
+			close(l.stopDrain)
+			<-l.drained
+			l.expire(true)
+			l.s.Close("other")
+		}()
+	})
 }
+
+// close waits for the same cleanup even when another caller initiated it.
+func (l *live) close() { l.beginClose(); <-l.closeDone }
