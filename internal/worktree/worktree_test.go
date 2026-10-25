@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -209,5 +210,22 @@ func TestNeedsACommit(t *testing.T) {
 	run(t, repo, "init", "-q")
 	if _, err := Create(context.Background(), t.TempDir(), repo); err == nil || !strings.Contains(err.Error(), "at least one commit") {
 		t.Errorf("empty repo: %v", err)
+	}
+}
+
+// Subsection names may contain spaces; overriding the pieces of a split name
+// instead of the whole key would hand git keys without a section.
+func TestExecutableRepoConfigKeepsSpacedSubsections(t *testing.T) {
+	repo := newRepo(t)
+	run(t, repo, "config", "filter.a b c.clean", "false")
+	if got := executableRepoConfig(context.Background(), repo); !slices.Contains(got, "filter.a b c.clean=") || !slices.Contains(got, "filter.a b c.required=false") {
+		t.Errorf("overrides: %q", got)
+	}
+	w, err := Create(context.Background(), t.TempDir(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Finish("spaced"); err != nil {
+		t.Fatal(err)
 	}
 }

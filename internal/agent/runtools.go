@@ -36,6 +36,8 @@ type approved struct {
 	// name is the tool the model called, for the result block: it differs
 	// from use.Name when the call went through call_tool.
 	name string
+	// granted is set when the user or a hook approved the call itself.
+	granted bool
 }
 
 // runTools checks permissions for every call (in order, since asking is
@@ -144,10 +146,10 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 		// path as direct tool calls (see toolCaller).
 		return approved{use: use, tool: tool, name: called}, res, true
 	default:
-		allow, reason, input := a.authorize(ctx, use, tool, auto, emit)
+		allow, reason, input, granted := a.authorize(ctx, use, tool, auto, emit)
 		if allow {
 			use.Input = input
-			return approved{use: use, tool: tool, name: called}, res, true
+			return approved{use: use, tool: tool, name: called, granted: granted}, res, true
 		}
 		res.Content, res.IsError = reason, true
 	}
@@ -302,7 +304,7 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 		runCtx = tools.WithCaller(runCtx, &toolCaller{a: a, emit: emit, parent: use.ID, tools: a.Tools()})
 	}
 	runCtx = tools.WithWriteCheck(runCtx, func(path string) error {
-		return a.checkWriteDestination(use, path)
+		return a.checkWriteDestination(use, path, job.granted)
 	})
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
@@ -345,19 +347,21 @@ func withHookNotes(data any, notes []string) any {
 }
 
 // authorize runs PreToolUse hooks and permission rules, asking the front
-// end when needed. It returns the (possibly hook-rewritten) input to run.
+// end when needed. It returns the (possibly hook-rewritten) input to run,
+// and whether the user or a hook granted the call itself rather than a
+// rule or mode (see checkWriteDestination).
 // Order: hook deny > rule deny > hook allow/ask > rules/mode > prompt.
-func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, auto autoVerdicts, emit func(Event)) (bool, string, json.RawMessage) {
+func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, auto autoVerdicts, emit func(Event)) (bool, string, json.RawMessage, bool) {
 	input := use.Input
 	pre := a.runHook(ctx, emit, hooks.Input{HookEventName: hooks.PreToolUse, ToolName: use.Name, ToolInput: input, ToolUseID: use.ID}, use.Name)
 	if pre.Halt {
 		a.requestHalt(pre.HaltReason)
 		a.logDecision(use, "halt (hook)", pre.HaltReason, "")
-		return false, "Stopped by a PreToolUse hook: " + pre.HaltReason, input
+		return false, "Stopped by a PreToolUse hook: " + pre.HaltReason, input, false
 	}
 	if pre.Block || pre.Permission == "deny" {
 		a.logDecision(use, "deny (hook)", pre.Reason, "")
-		return false, "Blocked by PreToolUse hook: " + pre.Reason, input
+		return false, "Blocked by PreToolUse hook: " + pre.Reason, input, false
 	}
 	if pre.UpdatedInput != nil {
 		input = pre.UpdatedInput
@@ -365,7 +369,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 
 	perms := a.opts.Perms
 	if perms == nil {
-		return true, "", input
+		return true, "", input, true
 	}
 	readOnly := toolReadOnly(tool, input)
 	decision, reason := perms.Decide(permission.Call{Tool: use.Name, ReadOnly: readOnly, Input: input})
@@ -386,21 +390,21 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 			reason += a.planDenyHint()
 		}
 		record("deny (rule)", reason, time.Now())
-		return false, "Permission denied: " + reason, input
+		return false, "Permission denied: " + reason, input, false
 	case pre.Permission == "allow":
 		record("allow (hook)", pre.Reason, time.Now())
-		return true, "", input
+		return true, "", input, true
 	case pre.Permission == "ask":
 		decision = permission.Ask
 	}
 	if decision == permission.Allow {
 		record("allow (rules or mode)", reason, time.Now())
-		return true, "", input
+		return true, "", input, false
 	}
 
 	exitPlan := use.Name == permission.ExitPlanTool
 	if exitPlan && PlanOf(input) == "" {
-		return false, "exit_plan_mode needs the plan: pass it as plan, in Markdown.", input
+		return false, "exit_plan_mode needs the plan: pass it as plan, in Markdown.", input, false
 	}
 	// Auto mode: a model judges the call first, and only what it doesn't
 	// approve reaches the user. A hook that said "ask" wants the user, and
@@ -416,12 +420,12 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 		resume()
 		switch {
 		case ctx.Err() != nil:
-			return false, "interrupted by user", input
+			return false, "interrupted by user", input, false
 		case err != nil:
 			autoReason = "the automatic check failed (" + err.Error() + ")"
 		case verdict.Allow:
 			record("allow (auto)", verdict.Reason, started)
-			return true, "", input
+			return true, "", input, false
 		default:
 			autoReason = verdict.Reason
 		}
@@ -436,7 +440,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	select {
 	case <-ctx.Done():
 		record("interrupted", "", asked)
-		return false, "interrupted by user", input
+		return false, "interrupted by user", input, false
 	case r := <-reply:
 		switch {
 		case exitPlan && r.Allow:
@@ -454,19 +458,19 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 			if !r.Allow {
 				msg := "The user didn't approve the plan, so plan mode stays on. Revise the plan"
 				if r.Reason != "" {
-					return false, msg + " with their feedback: " + r.Reason, input
+					return false, msg + " with their feedback: " + r.Reason, input, false
 				}
-				return false, msg + ", or ask them what to change.", input
+				return false, msg + ", or ask them what to change.", input, false
 			}
 			a.approvePlan(r.Mode)
-			return true, "", input
+			return true, "", input, true
 		}
 		if !r.Allow {
 			msg := "The user denied this tool call."
 			if r.Reason != "" {
 				msg += " Their feedback: " + r.Reason
 			}
-			return false, msg, input
+			return false, msg, input, false
 		}
 		if r.Always {
 			perms.AddAllow(rule)
@@ -486,7 +490,7 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 				}
 			}
 		}
-		return true, "", input
+		return true, "", input, true
 	}
 }
 

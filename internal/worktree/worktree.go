@@ -268,13 +268,17 @@ func executableRepoConfig(ctx context.Context, dir string) []string {
 	seen := map[string]bool{}
 	var keys []string
 	for _, scope := range []string{"--local", "--worktree"} {
-		cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", scope, "--includes", "--name-only", "--get-regexp", pattern)
+		// NUL-terminated: subsection names may contain spaces and newlines.
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", scope, "--includes", "--name-only", "-z", "--get-regexp", pattern)
 		cmd.Env = gitEnv()
 		out, err := cmd.Output()
 		if err != nil {
 			continue
 		}
-		for _, key := range strings.Fields(string(out)) {
+		for _, key := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+			if key == "" {
+				continue
+			}
 			// These have deliberate safe values in git(), which an empty
 			// override could accidentally weaken (an empty hooksPath means
 			// Git's default hooks directory).
