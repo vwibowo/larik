@@ -35,7 +35,7 @@ type Task struct {
 
 // Tasks are the built-in benchmark cases, in a fixed list.
 func Tasks() []Task {
-	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), logSummaryTask(), persistentStateTask(), compactionRetentionTask()}
+	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), logSummaryTask(), persistentStateTask(), overfitTask(), sourceTask(), conventionTask(), compactionRetentionTask()}
 }
 
 // MainOnly reports whether the task runs only as the main agent, as the
