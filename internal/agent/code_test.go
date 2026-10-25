@@ -72,22 +72,53 @@ func TestRunCodeCallsAreAuthorizedOneByOne(t *testing.T) {
 }
 
 func TestRunCodeTimeStopsWhileTheUserIsAsked(t *testing.T) {
-	in, _ := json.Marshal(map[string]any{"code": `tools.write({path: "a.txt", content: "A"}); "written"`, "timeout_seconds": 1})
-	a, fp, dir := setup(t, permission.ModeDefault,
-		assistant(toolUse("c1", tools.CodeToolName, string(in))),
-		assistant(llm.TextBlock("done")))
-	a.SetExecution(tools.ExecCode)
-	for e := range a.Run(context.Background(), "go") {
-		if e.Kind == EvPermission {
-			time.Sleep(2 * time.Second) // longer than the script's limit
-			e.Reply <- PermissionReply{Allow: true}
-		}
-	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(data) != "A" {
-		t.Fatalf("the write should have run once approved: %q", data)
-	}
-	if res := lastResult(fp, 1); res.IsError || !strings.Contains(res.Content, "=> written") {
-		t.Fatalf("a slow answer should not time the script out: %+v", res)
+	for _, tc := range []struct {
+		name    string
+		after   string
+		timeout bool
+	}{
+		{name: "finishes after approval", after: `"written"`},
+		{name: "clock resumes after approval", after: `while (true) {}`, timeout: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, _ := json.Marshal(map[string]any{
+				"code":            `tools.write({path: "a.txt", content: "A"}); ` + tc.after,
+				"timeout_seconds": codeTimeScale,
+			})
+			a, fp, dir := setup(t, permission.ModeDefault,
+				assistant(toolUse("c1", tools.CodeToolName, string(in))),
+				assistant(llm.TextBlock("done")))
+			a.SetExecution(tools.ExecCode)
+			// Bound a broken resume implementation too: cancellation must not be
+			// mistaken for the script's own timeout below.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Duration(codeTimeScale)*time.Second)
+			defer cancel()
+			asked := 0
+			for e := range a.Run(ctx, "go") {
+				if e.Kind == EvPermission {
+					asked++
+					// Scale both the limit and this wait under -race. Runner
+					// startup is slower, but the answer must still take longer
+					// than the entire script budget.
+					time.Sleep(2 * time.Duration(codeTimeScale) * time.Second)
+					e.Reply <- PermissionReply{Allow: true}
+				}
+			}
+			if asked != 1 {
+				t.Fatalf("permission prompts = %d, want 1", asked)
+			}
+			if data, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(data) != "A" {
+				t.Fatalf("the write should have run once approved: %q", data)
+			}
+			res := lastResult(fp, 1)
+			if tc.timeout {
+				if !res.IsError || !strings.Contains(res.Content, "the script timed out") {
+					t.Fatalf("actual work after approval should time out: %+v", res)
+				}
+			} else if res.IsError || !strings.Contains(res.Content, "=> written") {
+				t.Fatalf("a slow answer should not time the script out: %+v", res)
+			}
+		})
 	}
 }
 

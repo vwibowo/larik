@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- **Trace tabs keep their ownership through popup chains**, regardless of Chrome's target ordering. `/trace` falls back to the system browser if panel setup or browser startup fails in automatic mode; forced browser mode reports the failure without opening an external window.
 - **Server shutdown has one five-second budget** covering sessions, HTTP and shared cleanup. A tool ignoring cancellation no longer makes the command wait indefinitely; SSE clients disconnect promptly while transcript locks remain held until actual writers finish.
 - **Auto-mode checks no longer consume script execution time**, including awaiting a prefetched verdict. The clock resumes before tool execution, and cancellation remains effective during approval waits.
 - **Credentials.** `read`, `grep` and `glob` no longer expose Larik's sign-in files, provider keys are removed from unsandboxed bash environments too, and the Claude CLI bridge config no longer sits in a sandbox-writable temp directory.

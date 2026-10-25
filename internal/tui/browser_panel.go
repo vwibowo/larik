@@ -41,6 +41,10 @@ func (m *model) browserPanelWidth() int {
 	if m.browser == nil {
 		return 0
 	}
+	return m.browserPanelWidthAt(m.width)
+}
+
+func (m *model) browserPanelWidthAt(width int) int {
 	pct := 50
 	if c := m.opts.Config; c != nil && c.Browser.PaneSize > 0 {
 		pct = c.Browser.PaneSize
@@ -48,8 +52,8 @@ func (m *model) browserPanelWidth() int {
 	if m.browserPct > 0 {
 		pct = m.browserPct
 	}
-	w := max(m.width*pct/100, browserMinWidth)
-	if m.width-w-1 < browserMinConversation {
+	w := max(width*pct/100, browserMinWidth)
+	if width-w-1 < browserMinConversation {
 		return 0
 	}
 	return w
@@ -71,6 +75,27 @@ func (m *model) browserColumn(width, height int) string {
 // panelAllowed says whether the browser can open as a panel here.
 func (m *model) panelAllowed() bool { return m.panelAllowedAt(m.width) }
 
+// prepareBrowserPanel attaches the viewer without starting Chrome or changing
+// the active tab. Callers can handle setup errors before navigating a URL.
+func (m *model) prepareBrowserPanel() (tea.Cmd, error) {
+	if m.browser != nil {
+		m.browserFocused = true
+		return nil, nil
+	}
+	b := m.opts.App.Browser
+	path, err := b.ServeDefault()
+	if err != nil {
+		return nil, err
+	}
+	p, err := termbrowser.NewPanel(path, m.send)
+	if err != nil {
+		return nil, err
+	}
+	m.browser, m.browserFocused, m.browserLaid = p, true, browserRect{}
+	m.showInfo = false // the panel takes the sidebar's column
+	return p.Init(), nil
+}
+
 // openBrowser opens the panel, starting Chrome if it isn't running.
 func (m *model) openBrowser() tea.Cmd {
 	if m.browser != nil {
@@ -78,16 +103,10 @@ func (m *model) openBrowser() tea.Cmd {
 		return nil
 	}
 	b := m.opts.App.Browser
-	path, err := b.ServeDefault()
+	init, err := m.prepareBrowserPanel()
 	if err != nil {
 		return m.println(m.st.err.Render("browser: " + err.Error()))
 	}
-	p, err := termbrowser.NewPanel(path, m.send)
-	if err != nil {
-		return m.println(m.st.err.Render("browser: " + err.Error()))
-	}
-	m.browser, m.browserFocused, m.browserLaid = p, true, browserRect{}
-	m.showInfo = false // the panel takes the sidebar's column
 	start := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -96,7 +115,7 @@ func (m *model) openBrowser() tea.Cmd {
 		}
 		return nil
 	}
-	return tea.Batch(p.Init(), start)
+	return tea.Batch(init, start)
 }
 
 // noteBrowserMoved is called by View once it has placed the panel: if that
@@ -288,6 +307,6 @@ func (m *model) toggleBrowser() tea.Cmd {
 // browser_show, which asks from another goroutine.
 func (m *model) panelAllowedAt(width int) bool {
 	c := m.opts.Config
-	return m.send != nil && termbrowser.GraphicsTerminal() && width >= browserMinWidth+browserMinConversation+1 &&
+	return m.send != nil && termbrowser.GraphicsTerminal() && m.browserPanelWidthAt(width) > 0 &&
 		(c == nil || c.Browser.Show != "pane")
 }

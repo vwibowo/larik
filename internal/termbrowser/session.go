@@ -734,6 +734,43 @@ func (s *Session) own(owner string) []*tab {
 	return out
 }
 
+// resolveTabOwners inherits ownership through the complete opener graph, not
+// the order GetTargets happens to return. Known ownership (including the main
+// agent's empty owner) is authoritative. Missing openers and cycles without a
+// known owner fall back to the main agent.
+func resolveTabOwners(infos []*target.Info, known map[target.ID]string) map[target.ID]string {
+	owners := make(map[target.ID]string, len(infos)+len(known))
+	for id, owner := range known {
+		owners[id] = owner
+	}
+	openers := make(map[target.ID]target.ID, len(infos))
+	for _, info := range infos {
+		openers[info.TargetID] = info.OpenerID
+	}
+	for _, info := range infos {
+		id := info.TargetID
+		var path []target.ID
+		seen := map[target.ID]bool{}
+		owner := ""
+		for id != "" {
+			if knownOwner, ok := owners[id]; ok {
+				owner = knownOwner
+				break
+			}
+			if seen[id] {
+				break
+			}
+			seen[id] = true
+			path = append(path, id)
+			id = openers[id]
+		}
+		for _, id := range path {
+			owners[id] = owner
+		}
+	}
+	return owners
+}
+
 // syncTabs drops tabs the user closed and adopts ones a page opened
 // (target=_blank links, window.open). A new tab belongs to the agent whose
 // tab opened it (the main agent when nobody's did) and becomes that agent's
@@ -754,9 +791,10 @@ func (s *Session) syncTabs() {
 	kept := s.tabs[:0]
 	owners := map[target.ID]string{}
 	for _, t := range s.tabs {
+		// A closed opener can still identify its surviving popup's owner.
+		owners[t.id] = t.owner
 		if live[t.id] {
 			kept = append(kept, t)
-			owners[t.id] = t.owner
 			continue
 		}
 		if t.cancel != nil {
@@ -767,12 +805,13 @@ func (s *Session) syncTabs() {
 		}
 	}
 	s.tabs = kept
+	resolved := resolveTabOwners(infos, owners)
 	for _, info := range infos {
 		if _, known := owners[info.TargetID]; known || info.Type != "page" || strings.HasPrefix(info.URL, "devtools://") {
 			continue
 		}
 		tabCtx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
-		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: owners[info.OpenerID]}
+		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: resolved[info.TargetID]}
 		s.watch(t)
 		// A target may disappear between GetTargets and attachTarget, so
 		// attaching is bounded. The first Run attaches with the context it is

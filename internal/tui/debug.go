@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"larik/internal/session"
+	"larik/internal/termbrowser"
 	"larik/internal/trace"
 	"larik/internal/trace/viewer"
 )
@@ -59,6 +60,17 @@ func (m *model) setRecording(on bool) (*trace.Recorder, error) {
 // traceOwner names the browser tab /trace uses, apart from the agents' tabs.
 const traceOwner = "trace"
 
+// Trace navigation completes back on the UI thread, where stale results can
+// be ignored and failed panels cleaned up before considering a fallback.
+type traceOpenedMsg struct {
+	id        uint64
+	browser   *termbrowser.Session
+	panel     *termbrowser.Panel
+	created   bool
+	url, mode string
+	err       error
+}
+
 // tracePlacement decides where /trace opens: usePanel for Larik's browser
 // panel, else the system browser. A forced "browser" that can't be honored
 // returns why in problem and opens nothing.
@@ -107,9 +119,11 @@ func (m *model) openTrace(arg string) tea.Cmd {
 		}
 		m.traceView, m.traceDir = srv, dir
 	}
+	m.traceOpenID++
+	id := m.traceOpenID
 	url := m.traceView.URL()
 	line := m.println(m.st.dim.Render("trace viewer: ") + url)
-	panelOK := m.opts.App != nil && m.opts.App.Browser != nil && (m.browser != nil || m.panelAllowed())
+	panelOK := m.opts.App != nil && m.opts.App.Browser != nil && m.panelAllowed()
 	usePanel, problem := tracePlacement(mode, panelOK)
 	if problem != "" {
 		return tea.Batch(line, m.println(m.st.err.Render("trace: "+problem)))
@@ -119,16 +133,46 @@ func (m *model) openTrace(arg string) tea.Cmd {
 		return line
 	}
 	b := m.opts.App.Browser
+	created := m.browser == nil
+	init, err := m.prepareBrowserPanel()
+	if err != nil {
+		return tea.Batch(line, m.traceOpenFailed(mode, url, err))
+	}
+	panel := m.browser
+	navigate := m.traceNavigate
+	if navigate == nil {
+		navigate = b.OpenURL
+	}
 	nav := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := b.OpenURL(ctx, traceOwner, url); err != nil {
-			openBrowser(url)
-			return outputMsg(m.st.warn.Render("trace: couldn't show it in the browser panel (" + err.Error() + "); opened the system browser"))
-		}
+		return traceOpenedMsg{id: id, browser: b, panel: panel, created: created, url: url, mode: mode, err: navigate(ctx, traceOwner, url)}
+	}
+	// OpenURL starts Chrome in the trace owner's tab. Do not concurrently
+	// run the main-tab startup path from openBrowser.
+	return tea.Batch(line, init, nav)
+}
+
+func (m *model) traceOpenFailed(mode, url string, err error) tea.Cmd {
+	if mode == "browser" {
+		return m.println(m.st.err.Render("trace: couldn't show the browser panel: " + err.Error() + "; use /trace external to open the system browser"))
+	}
+	openBrowser(url)
+	return m.println(m.st.warn.Render("trace: couldn't show the browser panel (" + err.Error() + "); opened the system browser"))
+}
+
+func (m *model) traceOpened(msg traceOpenedMsg) tea.Cmd {
+	if msg.id != m.traceOpenID || m.opts.App == nil || m.opts.App.Browser != msg.browser || m.traceView == nil || m.traceView.URL() != msg.url {
+		return nil // superseded invocation or session/app we switched away from
+	}
+	if msg.err == nil {
 		return nil
 	}
-	return tea.Batch(line, m.openBrowser(), nav)
+	var clear tea.Cmd
+	if msg.created && m.browser == msg.panel {
+		clear = m.closeBrowser()
+	}
+	return tea.Batch(clear, m.traceOpenFailed(msg.mode, msg.url, msg.err))
 }
 
 func sizeOf(n int64) string {

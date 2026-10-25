@@ -2,9 +2,12 @@ package termbrowser
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"larik/internal/tools"
 )
 
 // OpenURL gives its owner a tab of its own: the main agent's page stays.
@@ -32,6 +35,16 @@ func TestOpenURLUsesItsOwnTab(t *testing.T) {
 	s.mu.Unlock()
 	if owned != 1 {
 		t.Fatalf("tabs owned by trace = %d, want 1", owned)
+	}
+	for _, owner := range []string{"", "trace"} {
+		r := (TabsTool{s}).Run(tools.WithOwner(ctx, owner), nil, json.RawMessage(`{"action":"list"}`))
+		want, hidden := "Test form", "Other"
+		if owner == "trace" {
+			want, hidden = hidden, want
+		}
+		if r.IsError || !strings.Contains(r.Content, want) || strings.Contains(r.Content, hidden) {
+			t.Fatalf("owner %q tabs: %+v", owner, r)
+		}
 	}
 }
 

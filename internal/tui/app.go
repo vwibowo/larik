@@ -235,15 +235,19 @@ type model struct {
 	sidebarStatus *statusCmd
 	vim           *vimEditor // nil unless editor_mode is vim
 	// traceView serves traceDir to the browser once /trace opened it.
-	traceView *viewer.Server
-	traceDir  string
-	spin      spinner.Model
-	motion    motion
-	toast     string // the confirmation in the corner, if any
-	toastID   int
-	view      viewport.Model // the conversation, pre-wrapped to width
-	panelView viewport.Model
-	panelKind string
+	traceView   *viewer.Server
+	traceDir    string
+	traceOpenID uint64 // discard completions from superseded /trace invocations
+	// traceNavigate is an optional navigation seam for command-path tests.
+	// Nil uses the current App browser session's OpenURL.
+	traceNavigate func(context.Context, string, string) error
+	spin          spinner.Model
+	motion        motion
+	toast         string // the confirmation in the corner, if any
+	toastID       int
+	view          viewport.Model // the conversation, pre-wrapped to width
+	panelView     viewport.Model
+	panelKind     string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
 	outputs                   []conversationOutput
@@ -624,6 +628,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.println(m.st.warn.Render("  ! update available: " + msg.version + " (current v" + strings.TrimPrefix(m.opts.Version, "v") + ")"))
+
+	case traceOpenedMsg:
+		return m, m.traceOpened(msg)
 
 	case outputMsg:
 		m.appendOutput(string(msg))
