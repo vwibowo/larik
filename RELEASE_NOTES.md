@@ -23,7 +23,8 @@ _October 25, 2026 · Previous release: v0.18.0._
 - Release version: `0.19.0`; metadata finalized for October 25, 2026. Manual tagging and publication are still pending.
 - Website version and downloads remain on published `v0.18.0` until the new assets exist.
 - Build from the final clean release commit with `scripts/package-release.sh v0.19.0`. Verify all five archives and `SHA256SUMS`, ensure each archive contains only its binary, `LICENSE` and `THIRD_PARTY_NOTICES.txt`, and check the packaged macOS arm64 binary's version before publication.
-- Interactive checks passed for trace-tab isolation, approval wait timing, an Auto-mode user-memory prompt, and server shutdown with an active SSE client. The temporary memory marker was removed. Live Claude CLI tool-use and watchdog verification remains pending because its smoke run hit the subscription session limit; automated tests cover those paths.
+- Interactive checks passed for trace-tab isolation, approval wait timing, an Auto-mode user-memory prompt, and server shutdown with an active SSE client. The temporary memory marker was removed.
+- The live Claude CLI Opus subagent retry passed: Larik's `read` tool returned the first three lines of `go.mod`, and sandboxed `bash` completed a 65.082-second wait and returned the expected marker, with no tool errors, stall warnings, retries or model substitutions. This verifies tool use and watchdog behavior during a long-running tool call. Deliberately stalled CLI and Claude-specific human-approval waits were not exercised live; automated tests cover those paths.
 - If publication occurs after October 25, update the release date before the final build. Publish only this v0.19.0 section, not the historical release notes below.
 
 # Larik v0.14.0
