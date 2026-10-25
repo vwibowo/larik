@@ -12,9 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"larik/internal/agent"
 	"larik/internal/bench"
 	"larik/internal/config"
 	"larik/internal/providers"
+	"larik/internal/skills"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 )
 
@@ -30,7 +33,9 @@ func runBench(args []string) error {
 		execFlag   = fs.String("execution", string(tools.DefaultExecution), "comma-separated execution settings to compare: tools, hybrid, code")
 		runs       = fs.Int("runs", 1, "how many times to run each task; with more than one, a table of medians and ranges follows")
 		keepFailed = fs.Bool("keep-failed", false, "keep each failed run's directory, with transcript.md and calls.jsonl (every tool call, scripts' included)")
-		harness    = fs.String("harness", "", "comma-separated harness directories to compare, each laid out like a config directory (AGENTS.md, skills/); \"none\" is the default empty one")
+		harness    = fs.String("harness", "", "comma-separated harness directories to compare, each laid out like a config directory (AGENTS.md, skills/); \"none\" is the default empty one, \"personal\" your own instructions and skills")
+		asFlag     = fs.String("as", "", "run each task as a subagent on this role or agent (worker, explore, or an agent definition's name), with its prompt, tools and role_options turn cap")
+		ctxFlag    = fs.String("context", "", "with --as, comma-separated context settings to compare: full, minimal (default: the role's role_options context)")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: larik bench --models spec1,spec2,... [flags]\n\n"+
@@ -39,7 +44,8 @@ func runBench(args []string) error {
 			"is touched), then checks the result mechanically (`go test`, exact output, or retained facts).\n"+
 			"Use it to compare a cheap model against your main one before trusting it with real work,\n"+
 			"to see what a routing preset actually buys you, or to compare execution settings and\n"+
-			"harness variants (instructions and skills).\n\n", taskNames())
+			"harness variants (instructions and skills). With --as, each task runs the way a subagent\n"+
+			"on that role runs it, to see how a model does in the job routing gives it.\n\n", taskNames())
 		fs.PrintDefaults()
 	}
 	fs.Parse(args)
@@ -63,11 +69,6 @@ func runBench(args []string) error {
 		}
 		execs = append(execs, x)
 	}
-	harnesses, err := benchHarnesses(*harness)
-	if err != nil {
-		return err
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -75,6 +76,18 @@ func runBench(args []string) error {
 	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
+	}
+	home, _ := os.UserHomeDir()
+	harnesses, err := benchHarnesses(*harness, home, cfg.ConfigDir)
+	if err != nil {
+		return err
+	}
+	role, err := benchRole(*asFlag, *ctxFlag, cfg, home, cwd)
+	if err != nil {
+		return err
+	}
+	if role.def != nil && strings.TrimSpace(*tasksFlag) == "" {
+		tasks = role.tasks(tasks)
 	}
 
 	var specs []string
@@ -110,20 +123,33 @@ func runBench(args []string) error {
 					if len(harnesses) > 1 || h.dir != "" {
 						row += " {" + h.name + "}"
 					}
-					for _, task := range tasks {
-						name := task.Name
-						if *runs > 1 {
-							name = fmt.Sprintf("%s #%d", task.Name, run)
+					if role.def != nil {
+						row += " as " + role.name
+					}
+					for _, minimal := range role.contexts {
+						row := row
+						if len(role.contexts) > 1 || role.explicitContext {
+							setting := "full"
+							if minimal {
+								setting = "minimal"
+							}
+							row += " <" + setting + ">"
 						}
-						fmt.Printf("%-40s %-24s ", row, name)
-						if ctx.Err() != nil {
-							fmt.Println("interrupted")
-							return ctx.Err()
+						for _, task := range tasks {
+							name := task.Name
+							if *runs > 1 {
+								name = fmt.Sprintf("%s #%d", task.Name, run)
+							}
+							fmt.Printf("%-40s %-24s ", row, name)
+							if ctx.Err() != nil {
+								fmt.Println("interrupted")
+								return ctx.Err()
+							}
+							res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime, ConfigDir: h.dir, SkillRoots: h.skillRoots, Agent: role.def, MinimalContext: minimal, MaxTurns: role.maxTurns})
+							res.Model = row
+							all = append(all, res)
+							printResult(res)
 						}
-						res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime, ConfigDir: h.dir})
-						res.Model = row
-						all = append(all, res)
-						printResult(res)
 					}
 				}
 			}
@@ -151,12 +177,18 @@ func benchModelSpec(spec string) string {
 }
 
 // benchHarness is one harness variant: a config-like directory, or "" for
-// the default empty one, and the name its rows carry.
-type benchHarness struct{ name, dir string }
+// the default empty one, and the name its rows carry. skillRoots, when
+// set, replace the directory's skills/ as where skills come from.
+type benchHarness struct {
+	name, dir  string
+	skillRoots []skills.Root
+}
 
 // benchHarnesses parses --harness. With none given there is one variant,
-// the default, and rows are labeled as before.
-func benchHarnesses(flagValue string) ([]benchHarness, error) {
+// the default, and rows are labeled as before. "personal" is the user's
+// own config directory with every user-wide skill directory, as a session
+// outside any project sees them.
+func benchHarnesses(flagValue, home, configDir string) ([]benchHarness, error) {
 	if strings.TrimSpace(flagValue) == "" {
 		return []benchHarness{{name: "none"}}, nil
 	}
@@ -168,7 +200,14 @@ func benchHarnesses(flagValue string) ([]benchHarness, error) {
 			continue
 		}
 		h := benchHarness{name: "none"}
-		if d != "none" {
+		if d == "personal" {
+			h = benchHarness{name: "personal", dir: configDir}
+			for _, r := range skills.Roots(home, configDir, home, home) {
+				if r.Scope == "user" {
+					h.skillRoots = append(h.skillRoots, r)
+				}
+			}
+		} else if d != "none" {
 			abs, err := filepath.Abs(d)
 			if err != nil {
 				return nil, fmt.Errorf("bench: harness %q: %w", d, err)
@@ -189,6 +228,82 @@ func benchHarnesses(flagValue string) ([]benchHarness, error) {
 		return nil, fmt.Errorf("bench: --harness names no directory")
 	}
 	return out, nil
+}
+
+// benchRunRole is how --as runs tasks: as a subagent of def on its role,
+// once per context setting. A nil def means as the main agent.
+type benchRunRole struct {
+	name            string
+	def             *subagent.Definition
+	maxTurns        int
+	contexts        []bool // minimal or not, one run each
+	explicitContext bool
+	canWrite        bool
+}
+
+// benchRole resolves --as and --context. Roles map to the built-in agent
+// that runs on them by default; any other name is an agent definition,
+// which runs with the options of the role it names as its model.
+func benchRole(as, contexts string, cfg *config.Config, home, cwd string) (benchRunRole, error) {
+	as = strings.TrimSpace(as)
+	if as == "" {
+		if strings.TrimSpace(contexts) != "" {
+			return benchRunRole{}, fmt.Errorf("bench: --context needs --as")
+		}
+		return benchRunRole{contexts: []bool{false}}, nil
+	}
+	name := as
+	switch as {
+	case providers.RoleWorker:
+		name = "general-purpose"
+	case providers.RoleExplore:
+		name = "explore"
+	}
+	defs := subagent.Discover(subagent.Dirs(home, cfg.ConfigDir, cwd, agent.GitRoot(cwd)))
+	def, ok := defs.Get(name)
+	if !ok {
+		var names []string
+		for _, d := range defs.List() {
+			names = append(names, d.Name)
+		}
+		return benchRunRole{}, fmt.Errorf("bench: --as %q is neither worker, explore nor an agent (available: %s)", as, strings.Join(names, ", "))
+	}
+	opt := cfg.Routing().Options[def.Model]
+	r := benchRunRole{name: as, def: &def, maxTurns: subagent.DefaultMaxTurns}
+	if opt.MaxTurns > 0 {
+		r.maxTurns = opt.MaxTurns
+	}
+	_, r.canWrite = subagent.Tools(tools.Default(), def).Get("write")
+	if strings.TrimSpace(contexts) == "" {
+		r.contexts = []bool{opt.Context == "minimal"}
+		return r, nil
+	}
+	r.explicitContext = true
+	for _, c := range strings.Split(contexts, ",") {
+		switch strings.TrimSpace(c) {
+		case "full":
+			r.contexts = append(r.contexts, false)
+		case "minimal":
+			r.contexts = append(r.contexts, true)
+		default:
+			return benchRunRole{}, fmt.Errorf("bench: --context %q: want full or minimal", c)
+		}
+	}
+	return r, nil
+}
+
+// tasks narrows the default task list to what a subagent can be scored
+// on: never the main-agent-only ones, and for an agent that can't write
+// files, only tasks it can answer in its reply.
+func (r benchRunRole) tasks(all []bench.Task) []bench.Task {
+	var out []bench.Task
+	for _, t := range all {
+		if t.MainOnly() || (!r.canWrite && t.VerifyReply == nil) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 func selectTasks(namesFlag string) ([]bench.Task, error) {

@@ -15,6 +15,7 @@ import (
 	"larik/internal/permission"
 	"larik/internal/session"
 	"larik/internal/skills"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 )
 
@@ -107,6 +108,17 @@ type Options struct {
 	// Empty means an empty config directory, so a run never depends on the
 	// runner's own instructions or skills.
 	ConfigDir string
+	// SkillRoots replace ConfigDir's skills/ as where skills come from.
+	SkillRoots []skills.Root
+	// Agent, when set, runs the task the way a subagent of that definition
+	// runs on a role: its prompt around the context it shares with the main
+	// agent, only the tools it allows, and MinimalContext as the role's
+	// context setting. An agent that can't write files gets the task's
+	// ReplyPrompt; a task without one fails, saying so.
+	Agent          *subagent.Definition
+	MinimalContext bool
+	// MaxTurns caps the run; zero means 40.
+	MaxTurns int
 }
 
 // Run sets up task in a fresh temporary directory, gives its prompt to a
@@ -165,30 +177,72 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 	if configDir == "" {
 		configDir = filepath.Join(root, "config")
 	}
-	system := agent.BuildSystemPrompt(dir, configDir)
 	registry := tools.Default()
+	var skillsIndex string
+	roots := o.SkillRoots
+	if roots == nil && o.ConfigDir != "" {
+		roots = []skills.Root{{Dir: filepath.Join(o.ConfigDir, "skills"), Scope: "user"}}
+	}
+	if task.compaction == nil && roots != nil {
+		// Only the variant's own skills: built-in commands are not
+		// model-invocable, so a variant without skills/ adds nothing.
+		set := skills.Discover(roots)
+		if skillsIndex = set.Index(); skillsIndex != "" {
+			registry = registry.With(skills.Tool{Set: set})
+		}
+	}
+	prompt, verify := task.Prompt, func() (bool, string) { return task.Verify(dir) }
+	var finalText string
+	var system string
+	if def := o.Agent; def != nil {
+		if task.compaction != nil {
+			res.Detail = task.Name + " runs as the main agent only"
+			return res
+		}
+		// As the task tool builds a child's prompt (subagent.runChild).
+		registry = subagent.Tools(registry, *def)
+		var shared string
+		if o.MinimalContext {
+			shared = agent.MinimalContextSections(dir)
+		} else {
+			shared = agent.ContextSections(dir, configDir)
+			if _, ok := registry.Get(skills.ToolName); ok && skillsIndex != "" {
+				shared = skillsIndex + "\n\n" + shared
+			}
+		}
+		system = subagent.SystemPrompt(*def, agent.SafetySection+"\n\n"+shared+"\n\n"+agent.DateSection())
+		if _, canWrite := registry.Get("write"); !canWrite {
+			if task.VerifyReply == nil {
+				res.Detail = fmt.Sprintf("%s needs file edits, which the %s agent can't make", task.Name, def.Name)
+				return res
+			}
+			prompt = task.ReplyPrompt
+			verify = func() (bool, string) { return task.VerifyReply(finalText) }
+		}
+	} else {
+		system = agent.BuildSystemPrompt(dir, configDir)
+		if skillsIndex != "" {
+			system += "\n\n" + skillsIndex
+		}
+		system += "\n\n" + agent.DateSection()
+	}
 	if task.compaction != nil {
 		// The recovery answer must come from the summary alone. In particular,
 		// --keep-failed gives the compaction wrapper a transcript path for the
 		// saved artifact; no tools means the model cannot use it as a back door.
 		registry = tools.NewRegistry()
-	} else if o.ConfigDir != "" {
-		// Only the variant's own skills: built-in commands are not
-		// model-invocable, so a variant without skills/ adds nothing.
-		set := skills.Discover([]skills.Root{{Dir: filepath.Join(o.ConfigDir, "skills"), Scope: "user"}})
-		if idx := set.Index(); idx != "" {
-			system += "\n\n" + idx
-			registry = registry.With(skills.Tool{Set: set})
-		}
 	}
-	system += "\n\n" + agent.DateSection()
+	maxTurns := 40
+	if o.MaxTurns > 0 {
+		maxTurns = o.MaxTurns
+	}
 	a := agent.New(agent.Options{
 		Provider:  provider,
 		Runtime:   o.Runtime,
 		Model:     model,
 		System:    system,
 		Cwd:       dir,
-		MaxTurns:  40,
+		MaxTurns:  maxTurns,
 		Tools:     registry,
 		Execution: exec,
 		Perms:     permission.NewChecker(permission.ModeYolo, permission.Rules{}, dir),
@@ -199,7 +253,6 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 	defer cancel()
 
 	var calls []callRecord
-	var finalText string
 	var state scriptState
 	consume := func(e agent.Event) {
 		switch e.Kind {
@@ -282,11 +335,11 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 			}
 		}
 	} else {
-		for e := range a.Run(runCtx, task.Prompt) {
+		for e := range a.Run(runCtx, prompt) {
 			consume(e)
 		}
 		if runCtx.Err() == nil {
-			res.Pass, res.Detail = task.Verify(dir)
+			res.Pass, res.Detail = verify()
 			if res.Pass && task.requireScriptState && exec != tools.ExecTools && !state.loaded {
 				res.Pass = false
 				res.Detail = "run_code was available, but store and load were not used in separate scripts"

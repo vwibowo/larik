@@ -15,6 +15,7 @@ import (
 	"larik/internal/agent"
 
 	"larik/internal/llm"
+	"larik/internal/subagent"
 	"larik/internal/tools"
 )
 
@@ -728,5 +729,88 @@ func TestLogSummaryFixture(t *testing.T) {
 	}
 	if ok, detail := compareSummary(off, want); ok || !strings.Contains(detail, "and 4 more") {
 		t.Errorf("wrong error counts should fail on every route: %s", detail)
+	}
+}
+
+func TestRunAsSubagentUsesItsPromptToolsAndContext(t *testing.T) {
+	harness := t.TempDir()
+	if err := os.WriteFile(filepath.Join(harness, "AGENTS.md"), []byte("HARNESS-MARKER"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := subagent.Discover(nil).Get("general-purpose")
+	for _, minimal := range []bool{false, true} {
+		p := &scriptedProvider{steps: []llm.Message{{Blocks: []llm.Block{llm.TextBlock("Done.")}}}}
+		RunWith(context.Background(), Tasks()[0], p, "fake-model", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, ConfigDir: harness, Agent: &worker, MinimalContext: minimal})
+		if len(p.requests) == 0 {
+			t.Fatal("the provider got no request")
+		}
+		req := p.requests[0]
+		if !strings.Contains(req.System, worker.Prompt) || !strings.Contains(req.System, "returned verbatim to the agent that delegated to you") {
+			t.Errorf("minimal=%v: the worker should get its subagent prompt and footer", minimal)
+		}
+		if strings.Contains(req.System, "You are Larik, a coding agent") {
+			t.Errorf("minimal=%v: a subagent run should not get the main agent's prompt", minimal)
+		}
+		if got := strings.Contains(req.System, "HARNESS-MARKER"); got == minimal {
+			t.Errorf("minimal=%v: global instructions present = %v", minimal, got)
+		}
+		for _, spec := range req.Tools {
+			if spec.Name == subagent.ToolName || spec.Name == tools.TodoToolName {
+				t.Errorf("minimal=%v: a subagent should not get the %s tool", minimal, spec.Name)
+			}
+		}
+	}
+}
+
+func TestRunAsReadOnlyAgentAnswersInItsReply(t *testing.T) {
+	explore, _ := subagent.Discover(nil).Get("explore")
+	var survey Task
+	for _, task := range Tasks() {
+		if task.Name == "find-undocumented" {
+			survey = task
+		}
+	}
+	reply := "These are undocumented:\n\n" + strings.Join(surveyAnswer(), "\n")
+	p := &scriptedProvider{steps: []llm.Message{{Blocks: []llm.Block{llm.TextBlock(reply)}}}}
+	res := RunWith(context.Background(), survey, p, "fake-model", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, Agent: &explore})
+	if !res.Pass {
+		t.Fatalf("a correct reply should pass: %s", res.Detail)
+	}
+	req := p.requests[0]
+	if !strings.Contains(req.Messages[0].Text(), "Reply with them") {
+		t.Errorf("explore should get the reply form of the task: %q", req.Messages[0].Text())
+	}
+	if slices.ContainsFunc(req.Tools, func(s llm.ToolSpec) bool { return s.Name == "write" }) {
+		t.Error("explore should not get the write tool")
+	}
+
+	res = RunWith(context.Background(), Tasks()[0], &scriptedProvider{}, "fake-model", Options{Timeout: 30 * time.Second, Agent: &explore})
+	if res.Pass || !strings.Contains(res.Detail, "can't make") {
+		t.Errorf("an edit task without a reply form should fail without running: %+v", res)
+	}
+}
+
+func TestReplyFormsCheckTheAnswer(t *testing.T) {
+	for _, task := range Tasks() {
+		if task.VerifyReply == nil {
+			continue
+		}
+		if task.ReplyPrompt == "" {
+			t.Errorf("%s: VerifyReply without a ReplyPrompt", task.Name)
+		}
+		if pass, _ := task.VerifyReply("I could not find anything."); pass {
+			t.Errorf("%s: an empty answer passed", task.Name)
+		}
+	}
+	answer, err := json.Marshal(logAnswer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range Tasks() {
+		if task.Name == "log-summary" {
+			if pass, detail := task.VerifyReply("Here it is:\n```json\n" + string(answer) + "\n```"); !pass {
+				t.Errorf("log-summary: a correct fenced answer failed: %s", detail)
+			}
+		}
 	}
 }

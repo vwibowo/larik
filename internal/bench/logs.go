@@ -61,6 +61,21 @@ func logSummaryTask() Task {
 			}
 			return compareSummary(got, logAnswer())
 		},
+		ReplyPrompt: "The logs/ directory has request logs from several services, in two formats. " +
+			"Ignore lines starting with #, blank lines, and requests to /healthz. " +
+			"For each route, count the requests, count the server errors (status 500 to 599) and find the highest latency in milliseconds. " +
+			`Reply with a JSON object keyed by route, each value {"requests": n, "errors": n, "max_latency_ms": n}. Don't change any file.`,
+		VerifyReply: func(reply string) (bool, string) {
+			start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
+			if start < 0 || end < start {
+				return false, "the reply has no JSON object"
+			}
+			var got map[string]routeStats
+			if err := json.Unmarshal([]byte(reply[start:end+1]), &got); err != nil {
+				return false, "the reply's JSON isn't an object of routes: " + err.Error()
+			}
+			return compareSummary(got, logAnswer())
+		},
 	}
 }
 

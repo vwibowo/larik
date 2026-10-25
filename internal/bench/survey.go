@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -28,7 +29,6 @@ func undocumentedTask() Task {
 			return err
 		},
 		Verify: func(dir string) (bool, string) {
-			want := surveyAnswer()
 			data, err := os.ReadFile(filepath.Join(dir, "UNDOCUMENTED.txt"))
 			if err != nil {
 				return false, "UNDOCUMENTED.txt is missing"
@@ -39,12 +39,27 @@ func undocumentedTask() Task {
 					got = append(got, l)
 				}
 			}
-			if !slices.Equal(got, want) {
-				return false, fmt.Sprintf("got %d names, want %d:\ngot:  %s\nwant: %s", len(got), len(want), strings.Join(got, " "), strings.Join(want, " "))
-			}
-			return true, ""
+			return checkUndocumented(got)
+		},
+		ReplyPrompt: "List every exported top-level function in this repository that has no doc comment directly above it. " +
+			"Reply with them one per line as package.Function (for example pkg01.Compute3), sorted. Don't change any file.",
+		VerifyReply: func(reply string) (bool, string) {
+			got := surveyNamePattern.FindAllString(reply, -1)
+			slices.Sort(got)
+			return checkUndocumented(slices.Compact(got))
 		},
 	}
+}
+
+// surveyNamePattern finds package.Function names in a reply.
+var surveyNamePattern = regexp.MustCompile(`\bpkg\d{2}\.[A-Z]\w*`)
+
+func checkUndocumented(got []string) (bool, string) {
+	want := surveyAnswer()
+	if !slices.Equal(got, want) {
+		return false, fmt.Sprintf("got %d names, want %d:\ngot:  %s\nwant: %s", len(got), len(want), strings.Join(got, " "), strings.Join(want, " "))
+	}
+	return true, ""
 }
 
 // surveyUndocumented decides which exported functions lack a doc comment,

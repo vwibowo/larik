@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"larik/internal/bench"
+	"larik/internal/config"
+	"larik/internal/subagent"
 )
 
 func TestBenchModelSpec(t *testing.T) {
@@ -46,7 +51,7 @@ func TestSpread(t *testing.T) {
 }
 
 func TestBenchHarnesses(t *testing.T) {
-	if hs, err := benchHarnesses(""); err != nil || len(hs) != 1 || hs[0].dir != "" {
+	if hs, err := benchHarnesses("", "", ""); err != nil || len(hs) != 1 || hs[0].dir != "" {
 		t.Fatalf("no flag = %v, %v; want only the default harness", hs, err)
 	}
 	base := t.TempDir()
@@ -56,17 +61,49 @@ func TestBenchHarnesses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	hs, err := benchHarnesses("none," + a + ", " + b)
+	hs, err := benchHarnesses("none,"+a+", "+b, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hs) != 3 || hs[0].dir != "" || hs[1].name != "terse" || hs[2].dir != b {
 		t.Errorf("harnesses = %+v", hs)
 	}
-	if _, err := benchHarnesses(filepath.Join(base, "missing")); err == nil {
+	if _, err := benchHarnesses(filepath.Join(base, "missing"), "", ""); err == nil {
 		t.Error("a missing directory should be rejected")
 	}
-	if _, err := benchHarnesses(a + "," + filepath.Join(base, "x", "terse")); err == nil {
+	if _, err := benchHarnesses(a+","+filepath.Join(base, "x", "terse"), "", ""); err == nil {
 		t.Error("two harnesses with the same name would share result rows")
+	}
+}
+
+func TestBenchRole(t *testing.T) {
+	cfg := &config.Config{}
+	dir := t.TempDir()
+	if _, err := benchRole("", "minimal", cfg, dir, dir); err == nil {
+		t.Error("--context without --as should be rejected")
+	}
+	if r, err := benchRole("", "", cfg, dir, dir); err != nil || r.def != nil || len(r.contexts) != 1 {
+		t.Errorf("no --as = %+v, %v; want one main-agent run", r, err)
+	}
+	r, err := benchRole("worker", "", cfg, dir, dir)
+	if err != nil || r.def.Name != "general-purpose" || r.maxTurns != subagent.DefaultMaxTurns || !r.canWrite || len(r.contexts) != 1 || r.contexts[0] {
+		t.Errorf("worker = %+v, %v", r, err)
+	}
+	r, err = benchRole("explore", "full, minimal", cfg, dir, dir)
+	if err != nil || r.canWrite || !slices.Equal(r.contexts, []bool{false, true}) {
+		t.Fatalf("explore = %+v, %v", r, err)
+	}
+	var names []string
+	for _, task := range r.tasks(bench.Tasks()) {
+		names = append(names, task.Name)
+	}
+	if !slices.Equal(names, []string{"find-undocumented", "log-summary"}) {
+		t.Errorf("explore's tasks = %v, want only those with a reply form", names)
+	}
+	if _, err := benchRole("explore", "tiny", cfg, dir, dir); err == nil {
+		t.Error("an unknown context setting should be rejected")
+	}
+	if _, err := benchRole("nobody", "", cfg, dir, dir); err == nil {
+		t.Error("an unknown agent should be rejected")
 	}
 }

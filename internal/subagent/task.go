@@ -19,7 +19,8 @@ import (
 // ToolName is the name the model uses to delegate.
 const ToolName = "task"
 
-const childMaxTurns = 100
+// DefaultMaxTurns caps a subagent whose role sets no max_turns.
+const DefaultMaxTurns = 100
 
 // Resolver turns a model spec ("provider/model" or bare id) into a provider.
 type Resolver func(spec string) (llm.Provider, string, error)
@@ -212,7 +213,7 @@ func (t *Tool) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) too
 	if isolation == "worktree" && parent.Perms().Mode() == permission.ModePlan {
 		return tools.Result{Content: "plan mode cannot create a worktree", IsError: true}
 	}
-	c := childRun{def: def, label: label, callID: tools.CallID(ctx), prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: childMaxTurns, minimalContext: role.Context == "minimal"}
+	c := childRun{def: def, label: label, callID: tools.CallID(ctx), prompt: in.Prompt, worktree: isolation == "worktree", model: strings.TrimSpace(in.Model), maxTurns: DefaultMaxTurns, minimalContext: role.Context == "minimal"}
 	if role.MaxTurns > 0 {
 		c.maxTurns = role.MaxTurns
 	}
@@ -269,7 +270,7 @@ func (t *Tool) runChild(ctx context.Context, parent *agent.Agent, emit func(agen
 		Type:     def.Name,
 		Provider: provider,
 		Model:    model,
-		System:   def.Prompt + "\n\n" + footer + "\n\n" + shared,
+		System:   SystemPrompt(def, shared),
 		MaxTurns: c.maxTurns,
 
 		Label:       label,
@@ -448,6 +449,18 @@ func (t *Tool) offeredRoles() []Role {
 // browserPrefix starts the browser tools' names (termbrowser.Prefix); a
 // definition can allow them all with "browser".
 const browserPrefix = "browser_"
+
+// SystemPrompt is the system prompt of a subagent of def: its own prompt,
+// the footer on reporting back, then shared, the context it shares with
+// the main agent.
+func SystemPrompt(def Definition, shared string) string {
+	return def.Prompt + "\n\n" + footer + "\n\n" + shared
+}
+
+// Tools is what a subagent of def outside a worktree may use of parent.
+func Tools(parent *tools.Registry, def Definition) *tools.Registry {
+	return childTools(parent, def, false)
+}
 
 // childTools is the parent's registry filtered by the definition, minus
 // the delegation tools (no nested or background delegation).

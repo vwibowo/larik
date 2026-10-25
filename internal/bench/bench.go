@@ -21,6 +21,11 @@ type Task struct {
 	// Verify checks whether the task was completed, after the agent has
 	// finished. detail explains a failure, or is empty on success.
 	Verify func(dir string) (pass bool, detail string)
+	// ReplyPrompt and VerifyReply, when set, are the task for an agent
+	// that can't write files, such as explore: it gives the answer in its
+	// final reply instead, and VerifyReply checks that reply.
+	ReplyPrompt string
+	VerifyReply func(reply string) (pass bool, detail string)
 
 	// compaction is set only for a context-retention benchmark. Its source
 	// conversation is compacted before Prompt asks the model to recover it.
@@ -32,6 +37,10 @@ type Task struct {
 func Tasks() []Task {
 	return []Task{fixOffByOneTask(), implementValidationTask(), renameAcrossFilesTask(), undocumentedTask(), logSummaryTask(), persistentStateTask(), compactionRetentionTask()}
 }
+
+// MainOnly reports whether the task runs only as the main agent, as the
+// context-retention task does: a subagent never compacts its context.
+func (t Task) MainOnly() bool { return t.compaction != nil }
 
 // goTest runs `go test ./...` in dir and reports whether it passed.
 func goTest(dir string) (bool, string) {
