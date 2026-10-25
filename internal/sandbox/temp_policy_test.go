@@ -34,3 +34,28 @@ func TestSecretControlFilesCannotBeChanged(t *testing.T) {
 		t.Fatalf("secret file changed: %q %v", data, err)
 	}
 }
+
+// On a case-insensitive disk (macOS default) git and Larik open
+// .git/COMMONDIR and .LARIK as the protected lowercase names, so a
+// differently-cased spelling must be refused too.
+func TestProtectedPathsAreNotBypassedByCase(t *testing.T) {
+	sb, root, _ := newTest(t, Config{})
+	probe := filepath.Join(root, "CaseProbe")
+	if err := os.WriteFile(probe, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "caseprobe")); err != nil {
+		t.Skip("case-sensitive file system: other spellings are other files")
+	}
+	for _, cmd := range []string{
+		"echo /tmp/x > .git/COMMONDIR",
+		"echo x > .git/CONFIG",
+		"echo x > .git/HOOKS/pre-commit",
+		"mkdir .LARIK && echo {} > .LARIK/settings.json",
+		"echo {} > .MCP.JSON",
+	} {
+		if out, err := run(t, sb, root, cmd); err == nil {
+			t.Errorf("%q succeeded in the sandbox: %s", cmd, out)
+		}
+	}
+}
