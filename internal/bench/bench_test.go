@@ -287,6 +287,44 @@ func TestRunPassesWhenTheAgentFixesIt(t *testing.T) {
 	if strings.Contains(system, "Larik is a terminal coding agent written in Go") {
 		t.Error("bench loaded this repository's AGENTS.md instead of only the fixture's instructions")
 	}
+	for _, spec := range p.requests[0].Tools {
+		if spec.Name == "skill" {
+			t.Error("the default harness should offer no skill tool")
+		}
+	}
+}
+
+func TestRunWithHarnessUsesItsInstructionsAndSkills(t *testing.T) {
+	harness := t.TempDir()
+	if err := os.WriteFile(filepath.Join(harness, "AGENTS.md"), []byte("HARNESS-MARKER: run the tests first."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skill := filepath.Join(harness, "skills", "go-fix")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: go-fix\ndescription: Fix a failing Go test\n---\nRun go test, then fix."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &scriptedProvider{steps: []llm.Message{{Blocks: []llm.Block{llm.TextBlock("Done.")}}}}
+	RunWith(context.Background(), Tasks()[0], p, "fake-model", Options{Execution: tools.ExecTools, Timeout: 30 * time.Second, ConfigDir: harness})
+	if len(p.requests) == 0 {
+		t.Fatal("the provider got no request")
+	}
+	req := p.requests[0]
+	if !strings.Contains(req.System, "HARNESS-MARKER") {
+		t.Error("the harness's AGENTS.md is missing from the system prompt")
+	}
+	if !strings.Contains(req.System, "go-fix") {
+		t.Error("the harness's skill is missing from the skills index")
+	}
+	if strings.Index(req.System, agent.DateSection()) < strings.Index(req.System, "go-fix") {
+		t.Error("the date should follow the skills index, as in the app, so the prompt caches")
+	}
+	if !slices.ContainsFunc(req.Tools, func(s llm.ToolSpec) bool { return s.Name == "skill" }) {
+		t.Error("a harness with skills should offer the skill tool")
+	}
 }
 
 func TestRunUsesWholeTurnRuntime(t *testing.T) {

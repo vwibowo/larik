@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -29,6 +30,7 @@ func runBench(args []string) error {
 		execFlag   = fs.String("execution", string(tools.DefaultExecution), "comma-separated execution settings to compare: tools, hybrid, code")
 		runs       = fs.Int("runs", 1, "how many times to run each task; with more than one, a table of medians and ranges follows")
 		keepFailed = fs.Bool("keep-failed", false, "keep each failed run's directory, with transcript.md and calls.jsonl (every tool call, scripts' included)")
+		harness    = fs.String("harness", "", "comma-separated harness directories to compare, each laid out like a config directory (AGENTS.md, skills/); \"none\" is the default empty one")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: larik bench --models spec1,spec2,... [flags]\n\n"+
@@ -36,7 +38,8 @@ func runBench(args []string) error {
 			"(the directory is discarded after unless --keep-failed keeps a failure; nothing you have\n"+
 			"is touched), then checks the result mechanically (`go test`, exact output, or retained facts).\n"+
 			"Use it to compare a cheap model against your main one before trusting it with real work,\n"+
-			"to see what a routing preset actually buys you, or to compare execution settings.\n\n", taskNames())
+			"to see what a routing preset actually buys you, or to compare execution settings and\n"+
+			"harness variants (instructions and skills).\n\n", taskNames())
 		fs.PrintDefaults()
 	}
 	fs.Parse(args)
@@ -59,6 +62,10 @@ func runBench(args []string) error {
 			return fmt.Errorf("bench: %w", err)
 		}
 		execs = append(execs, x)
+	}
+	harnesses, err := benchHarnesses(*harness)
+	if err != nil {
+		return err
 	}
 
 	cwd, err := os.Getwd()
@@ -94,25 +101,30 @@ func runBench(args []string) error {
 		// Runs go round all settings before repeating, so a provider
 		// that slows down mid-bench affects every setting alike.
 		for run := 1; run <= *runs; run++ {
-			for _, exec := range execs {
-				row := label
-				if len(execs) > 1 || exec != tools.DefaultExecution {
-					row += " [" + string(exec) + "]"
-				}
-				for _, task := range tasks {
-					name := task.Name
-					if *runs > 1 {
-						name = fmt.Sprintf("%s #%d", task.Name, run)
+			for _, h := range harnesses {
+				for _, exec := range execs {
+					row := label
+					if len(execs) > 1 || exec != tools.DefaultExecution {
+						row += " [" + string(exec) + "]"
 					}
-					fmt.Printf("%-40s %-24s ", row, name)
-					if ctx.Err() != nil {
-						fmt.Println("interrupted")
-						return ctx.Err()
+					if len(harnesses) > 1 || h.dir != "" {
+						row += " {" + h.name + "}"
 					}
-					res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime})
-					res.Model = row
-					all = append(all, res)
-					printResult(res)
+					for _, task := range tasks {
+						name := task.Name
+						if *runs > 1 {
+							name = fmt.Sprintf("%s #%d", task.Name, run)
+						}
+						fmt.Printf("%-40s %-24s ", row, name)
+						if ctx.Err() != nil {
+							fmt.Println("interrupted")
+							return ctx.Err()
+						}
+						res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime, ConfigDir: h.dir})
+						res.Model = row
+						all = append(all, res)
+						printResult(res)
+					}
 				}
 			}
 		}
@@ -136,6 +148,47 @@ func benchModelSpec(spec string) string {
 		return ""
 	}
 	return spec
+}
+
+// benchHarness is one harness variant: a config-like directory, or "" for
+// the default empty one, and the name its rows carry.
+type benchHarness struct{ name, dir string }
+
+// benchHarnesses parses --harness. With none given there is one variant,
+// the default, and rows are labeled as before.
+func benchHarnesses(flagValue string) ([]benchHarness, error) {
+	if strings.TrimSpace(flagValue) == "" {
+		return []benchHarness{{name: "none"}}, nil
+	}
+	var out []benchHarness
+	seen := map[string]bool{}
+	for _, d := range strings.Split(flagValue, ",") {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		h := benchHarness{name: "none"}
+		if d != "none" {
+			abs, err := filepath.Abs(d)
+			if err != nil {
+				return nil, fmt.Errorf("bench: harness %q: %w", d, err)
+			}
+			if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+				return nil, fmt.Errorf("bench: harness %q is not a directory", d)
+			}
+			h = benchHarness{name: filepath.Base(abs), dir: abs}
+		}
+		// Rows are keyed by label, so two variants must not share a name.
+		if seen[h.name] {
+			return nil, fmt.Errorf("bench: two harnesses are named %q; give the directories different names", h.name)
+		}
+		seen[h.name] = true
+		out = append(out, h)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("bench: --harness names no directory")
+	}
+	return out, nil
 }
 
 func selectTasks(namesFlag string) ([]bench.Task, error) {

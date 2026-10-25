@@ -14,6 +14,7 @@ import (
 	"larik/internal/llm"
 	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/skills"
 	"larik/internal/tools"
 )
 
@@ -100,6 +101,12 @@ type Options struct {
 	// Runtime handles a whole agent turn (for example claude-code-cli),
 	// instead of streaming through Provider.
 	Runtime llm.AgentRuntime
+	// ConfigDir is a harness variant laid out like Larik's config
+	// directory: its AGENTS.md joins the system prompt as the global
+	// instructions, and skills/ provides the skills index and skill tool.
+	// Empty means an empty config directory, so a run never depends on the
+	// runner's own instructions or skills.
+	ConfigDir string
 }
 
 // Run sets up task in a fresh temporary directory, gives its prompt to a
@@ -150,17 +157,31 @@ func RunWith(ctx context.Context, task Task, provider llm.Provider, model string
 		}
 	}
 	// Bench uses Larik's real base prompt, not a blank prompt (which lets
-	// agent runtimes such as claude-code-cli substitute their own). Keep the
-	// config directory empty so a benchmark never depends on the runner's
-	// personal instructions; project instructions in the fixture still apply.
-	system := agent.BuildSystemPrompt(dir, filepath.Join(root, "config")) + "\n\n" + agent.DateSection()
+	// agent runtimes such as claude-code-cli substitute their own). The
+	// config directory is empty unless o.ConfigDir names a harness variant,
+	// so a benchmark never depends on the runner's personal instructions;
+	// project instructions in the fixture still apply.
+	configDir := o.ConfigDir
+	if configDir == "" {
+		configDir = filepath.Join(root, "config")
+	}
+	system := agent.BuildSystemPrompt(dir, configDir)
 	registry := tools.Default()
 	if task.compaction != nil {
 		// The recovery answer must come from the summary alone. In particular,
 		// --keep-failed gives the compaction wrapper a transcript path for the
 		// saved artifact; no tools means the model cannot use it as a back door.
 		registry = tools.NewRegistry()
+	} else if o.ConfigDir != "" {
+		// Only the variant's own skills: built-in commands are not
+		// model-invocable, so a variant without skills/ adds nothing.
+		set := skills.Discover([]skills.Root{{Dir: filepath.Join(o.ConfigDir, "skills"), Scope: "user"}})
+		if idx := set.Index(); idx != "" {
+			system += "\n\n" + idx
+			registry = registry.With(skills.Tool{Set: set})
+		}
 	}
+	system += "\n\n" + agent.DateSection()
 	a := agent.New(agent.Options{
 		Provider:  provider,
 		Runtime:   o.Runtime,
