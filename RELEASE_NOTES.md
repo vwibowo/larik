@@ -1,3 +1,31 @@
+# Larik v0.19.0
+
+_Local release candidate; not yet published. Previous release: v0.18.0._
+
+### Highlights
+
+- **Trace viewer in the terminal.** `/trace` uses Larik's browser panel when available, with owner-isolated tabs and popup chains. `/trace external` opens the system browser; `/trace browser` insists on the panel. Personal `trace.open_in` settings select the default, and automatic mode falls back on setup/startup failure.
+- **Visible approval waits.** Permission prompts and live status show elapsed waiting time, including background requests. Auto-mode checks pause script clocks; execution time resumes before the tool runs.
+- **More reliable Claude CLI subagents.** Subagents default to tools execution unless explicitly configured otherwise. A stall watchdog pauses for tool and permission waits, warns after a minute of silence, and uses the configured stall timeout. Runtime usage and budgets survive resume.
+- **Safer execution and persistence.** User-scope memory changes ask for approval outside yolo or explicit trusted allow rules. Unsandboxed bash asks when a sandbox is available; provider credentials are scrubbed unless explicitly passed through. Editing aliases, saved screenshots, LSP code actions, worktree metadata and case-variant protected paths have stronger permission/sandbox coverage.
+- **Compaction and undo.** Oversized conversations can be summarized in parts. In-place subagent edits have their own undo units, and undo/rewind refuse unsafe restores while tasks are writing or changes overlap.
+- **Server reliability.** Shutdown has one five-second budget and promptly disconnects SSE clients while preserving transcript locks until writers finish. This release also fixes wait-response races and background permission cleanup, rejects malformed event cursors with HTTP 400, and returns HTTP 409 during conflicting session-close operations.
+- **Provider and tool fixes.** Unmatched tool results no longer break subsequent provider requests, and script grep works on a single file.
+- **Distribution and website.** Larik is MIT licensed; archives include the license and third-party notices. Notice ordering is locale-independent. The website has a new dark design and install tabs, with accurate default-sandbox wording.
+
+### Compatibility notes
+
+- Server event consumers should tolerate optional `requested_at` and `task_id` fields, HTTP 400 for malformed event cursors, and HTTP 409 during session closure.
+- Existing `edit(...)` rules now cover `multi_edit` and `apply_code_action`; `write(...)` rules cover saved browser screenshots. Automation may see additional approval prompts for unsandboxed commands and user-scope memory mutations.
+
+### Local preparation status
+
+- Binary source version: `0.19.0`. No tag, push or GitHub publication is performed by local preparation.
+- Website version and downloads remain on published `v0.18.0` until the new assets exist.
+- After the release commit is approved and the checkout is clean, run `scripts/package-release.sh v0.19.0`. Verify all five archives, `SHA256SUMS`, and the packaged macOS arm64 binary's version before publication.
+- Interactive checks passed for trace-tab isolation, approval wait timing, an Auto-mode user-memory prompt, and server shutdown with an active SSE client. The temporary memory marker was removed. Live Claude CLI tool-use and watchdog verification remains pending because its smoke run hit the subscription session limit; automated tests cover those paths.
+- Add the actual publication date to the changelog when finalizing the release.
+
 # Larik v0.14.0
 
 _October 10, 2026_

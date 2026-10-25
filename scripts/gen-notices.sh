@@ -3,6 +3,9 @@
 # binaries, plus Go's own, to THIRD_PARTY_NOTICES.txt (or the given path).
 set -euo pipefail
 
+# Keep notice ordering identical across release machines and locales.
+export LC_ALL=C
+
 die() {
   printf 'notices: %s\n' "$*" >&2
   exit 1

@@ -16,7 +16,7 @@ For iteration, prefer targeted package tests and `go test -short ./...`. Short m
 
 ## Prepare a GitHub release
 
-The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The latest published version is `v0.18.0`. Keep website downloads on the latest published version until the GitHub assets are published.
+The release script packages binaries locally. It does not create a tag, push code, or publish a GitHub Release. The latest published version is `v0.18.0`; `v0.19.0` is being prepared locally. Keep `website/site.json` and its download URLs on `v0.18.0` until the `v0.19.0` GitHub assets are published. After the release changes are committed, package the candidate with `scripts/package-release.sh v0.19.0`, verify its checksums and binary version, and replace the changelog's pending-publication notice with the actual publication date when finalizing.
 
 1. Review and commit the changes intended for the release; the script refuses a dirty checkout. This repository keeps remotes and publishing under explicit manual control.
 2. Run `scripts/package-release.sh vX.Y.Z`. It runs `go test ./...`, builds the website to check links, checks that `THIRD_PARTY_NOTICES.txt` matches the current dependencies (regenerate it with `scripts/gen-notices.sh`), and creates five archives plus `SHA256SUMS` in `dist/release/vX.Y.Z/`. The archives cover macOS and Linux on arm64 and amd64, plus Windows on amd64; each holds the binary, `LICENSE` and `THIRD_PARTY_NOTICES.txt`. Check the archives and checksums before publishing.
