@@ -10,6 +10,7 @@ import (
 	"larik/internal/bench"
 	"larik/internal/config"
 	"larik/internal/subagent"
+	"larik/internal/tools"
 )
 
 func TestBenchModelSpec(t *testing.T) {
@@ -105,5 +106,33 @@ func TestBenchRole(t *testing.T) {
 	}
 	if _, err := benchRole("nobody", "", cfg, dir, dir); err == nil {
 		t.Error("an unknown agent should be rejected")
+	}
+}
+
+func TestBenchSettingsAndWidth(t *testing.T) {
+	plain := benchSettings("m", []tools.Execution{tools.DefaultExecution}, []benchHarness{{name: "none"}}, benchRunRole{contexts: []bool{false}})
+	if len(plain) != 1 || plain[0].row != "m" {
+		t.Errorf("a plain run should keep the model's label: %+v", plain)
+	}
+	explore, _ := subagent.Discover(nil).Get("explore")
+	role := benchRunRole{name: "explore", def: &explore, contexts: []bool{false, true}}
+	var rows []string
+	for _, st := range benchSettings("a-rather-long/provider-model-name", []tools.Execution{tools.DefaultExecution}, []benchHarness{{name: "none"}, {name: "personal", dir: "/x"}}, role) {
+		rows = append(rows, st.row)
+	}
+	want := []string{
+		"a-rather-long/provider-model-name {none} as explore <full>",
+		"a-rather-long/provider-model-name {none} as explore <minimal>",
+		"a-rather-long/provider-model-name {personal} as explore <full>",
+		"a-rather-long/provider-model-name {personal} as explore <minimal>",
+	}
+	if !slices.Equal(rows, want) {
+		t.Errorf("rows = %q", rows)
+	}
+	if got := labelWidth(rows); got != len(want[3]) {
+		t.Errorf("width = %d, want the longest label's %d", got, len(want[3]))
+	}
+	if got := labelWidth([]string{"short"}); got != 40 {
+		t.Errorf("width of short labels = %d, want 40", got)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"larik/internal/agent"
 	"larik/internal/bench"
@@ -100,7 +101,14 @@ func runBench(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var all []bench.Result
+	// Resolve every model first: the rows' labels set the column width
+	// before the first one prints.
+	type benchModel struct {
+		resolved providers.Resolved
+		settings []benchSetting
+	}
+	var models []benchModel
+	var rows []string
 	for _, spec := range specs {
 		resolved, err := providers.Resolve(cfg, benchModelSpec(spec))
 		if err != nil {
@@ -111,46 +119,35 @@ func runBench(args []string) error {
 		if spec != resolved.String() {
 			label = fmt.Sprintf("%s (%s)", spec, resolved.String())
 		}
+		m := benchModel{resolved, benchSettings(label, execs, harnesses, role)}
+		for _, st := range m.settings {
+			rows = append(rows, st.row)
+		}
+		models = append(models, m)
+	}
+	width := labelWidth(rows)
+
+	var all []bench.Result
+	for _, m := range models {
+		resolved := m.resolved
 		// Runs go round all settings before repeating, so a provider
 		// that slows down mid-bench affects every setting alike.
 		for run := 1; run <= *runs; run++ {
-			for _, h := range harnesses {
-				for _, exec := range execs {
-					row := label
-					if len(execs) > 1 || exec != tools.DefaultExecution {
-						row += " [" + string(exec) + "]"
+			for _, st := range m.settings {
+				for _, task := range tasks {
+					name := task.Name
+					if *runs > 1 {
+						name = fmt.Sprintf("%s #%d", task.Name, run)
 					}
-					if len(harnesses) > 1 || h.dir != "" {
-						row += " {" + h.name + "}"
+					fmt.Printf("%-*s %-24s ", width, st.row, name)
+					if ctx.Err() != nil {
+						fmt.Println("interrupted")
+						return ctx.Err()
 					}
-					if role.def != nil {
-						row += " as " + role.name
-					}
-					for _, minimal := range role.contexts {
-						row := row
-						if len(role.contexts) > 1 || role.explicitContext {
-							setting := "full"
-							if minimal {
-								setting = "minimal"
-							}
-							row += " <" + setting + ">"
-						}
-						for _, task := range tasks {
-							name := task.Name
-							if *runs > 1 {
-								name = fmt.Sprintf("%s #%d", task.Name, run)
-							}
-							fmt.Printf("%-40s %-24s ", row, name)
-							if ctx.Err() != nil {
-								fmt.Println("interrupted")
-								return ctx.Err()
-							}
-							res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime, ConfigDir: h.dir, SkillRoots: h.skillRoots, Agent: role.def, MinimalContext: minimal, MaxTurns: role.maxTurns})
-							res.Model = row
-							all = append(all, res)
-							printResult(res)
-						}
-					}
+					res := bench.RunWith(ctx, task, resolved.Provider, resolved.Model, bench.Options{Execution: st.exec, Timeout: *timeout, KeepFailed: *keepFailed, Runtime: resolved.Runtime, ConfigDir: st.harness.dir, SkillRoots: st.harness.skillRoots, Agent: role.def, MinimalContext: st.minimal, MaxTurns: role.maxTurns})
+					res.Model = st.row
+					all = append(all, res)
+					printResult(res)
 				}
 			}
 		}
@@ -165,6 +162,67 @@ func runBench(args []string) error {
 		return fmt.Errorf("bench: no model ran any task")
 	}
 	return nil
+}
+
+// benchSetting is one row of results: a model under one harness,
+// execution and context setting.
+type benchSetting struct {
+	row     string
+	exec    tools.Execution
+	harness benchHarness
+	minimal bool
+}
+
+// benchSettings lists a model's rows in run order. A row's label names
+// only what varies or differs from the default, so a plain run keeps
+// the model's own label.
+func benchSettings(label string, execs []tools.Execution, harnesses []benchHarness, role benchRunRole) []benchSetting {
+	var out []benchSetting
+	for _, h := range harnesses {
+		for _, exec := range execs {
+			row := label
+			if len(execs) > 1 || exec != tools.DefaultExecution {
+				row += " [" + string(exec) + "]"
+			}
+			if len(harnesses) > 1 || h.dir != "" {
+				row += " {" + h.name + "}"
+			}
+			if role.def != nil {
+				row += " as " + role.name
+			}
+			for _, minimal := range role.contexts {
+				row := row
+				if len(role.contexts) > 1 || role.explicitContext {
+					setting := "full"
+					if minimal {
+						setting = "minimal"
+					}
+					row += " <" + setting + ">"
+				}
+				out = append(out, benchSetting{row: row, exec: exec, harness: h, minimal: minimal})
+			}
+		}
+	}
+	return out
+}
+
+// labelWidth is the row-label column: wide enough for the longest label,
+// and never narrower than the 40 columns plain model names use.
+func labelWidth(labels []string) int {
+	width := 40
+	for _, l := range labels {
+		width = max(width, utf8.RuneCountInString(l))
+	}
+	return width
+}
+
+// resultLabels are the row labels of results, for sizing a table.
+func resultLabels(results []bench.Result) []string {
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = r.Model
+	}
+	return out
 }
 
 // benchModelSpec gives the configured primary model a name alongside routing
@@ -426,6 +484,7 @@ func printSpread(results []bench.Result) {
 		}
 		groups[k] = append(groups[k], r)
 	}
+	width := labelWidth(resultLabels(results))
 	fmt.Println("Per task, median (range):")
 	for _, k := range order {
 		rs := groups[k]
@@ -451,7 +510,7 @@ func printSpread(results []bench.Result) {
 			}
 		}
 		seconds := func(n int) string { return fmt.Sprintf("%.1fs", float64(n)/1000) }
-		fmt.Printf("  %-40s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s", k.model, k.task, pass, len(rs),
+		fmt.Printf("  %-*s %-20s %d/%d passed  ·  in %s  ·  peak ctx %s  ·  %s req  ·  %s", width, k.model, k.task, pass, len(rs),
 			spread(in, kilo), spread(peak, kilo), spread(req, func(n int) string { return fmt.Sprint(n) }), spread(ms, seconds))
 		if anyMalformed {
 			fmt.Printf("  ·  malformed %s", spread(malformed, func(n int) string { return fmt.Sprint(n) }))
@@ -530,6 +589,7 @@ func printSummary(results []bench.Result) {
 			t.measured = true
 		}
 	}
+	width := labelWidth(order)
 	fmt.Println("Summary:")
 	for _, model := range order {
 		t := byModel[model]
@@ -537,7 +597,7 @@ func printSummary(results []bench.Result) {
 		if t.anyPriced {
 			cost = fmt.Sprintf("$%.4f", t.cost)
 		}
-		fmt.Printf("  %-40s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s", model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
+		fmt.Printf("  %-*s %d/%d passed  ·  %s total  ·  %.1fs total  ·  %s in, %s out  ·  peak ctx %s", width, model, t.pass, t.n, cost, t.dur.Seconds(), kilo(t.in), kilo(t.out), kilo(t.peak))
 		// The share of calls the model formed unusably: the figure to
 		// compare when changing sampling, since a model can fumble many
 		// calls and still pass by retrying.
