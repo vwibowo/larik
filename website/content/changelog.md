@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.19.1
+
+<p class="release-meta"><time datetime="2026-10-25">October 25, 2026</time></p>
+
+### Fixed
+
+- **Code actions stay within the rule that allowed them.** When only a scoped allow rule such as `edit(src/**)` approved `apply_code_action`, a file the language server adds outside that rule is refused instead of written without asking. Approving the prompt yourself still covers every file the action changes.
+- **Worktree subagents work with spaced git config names.** A repository config key whose subsection contains spaces (for example `filter.a b c.clean`) made every git command Larik ran for a worktree fail.
+
 ## v0.19.0
 
 <p class="release-meta"><time datetime="2026-10-25">October 25, 2026</time></p>

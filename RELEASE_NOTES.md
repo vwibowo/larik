@@ -1,3 +1,18 @@
+# Larik v0.19.1
+
+_October 25, 2026 · Previous release: v0.19.0._
+
+A patch release with two fixes found reviewing v0.19.0.
+
+### Fixed
+
+- **Code actions stay within the rule that allowed them.** When only a scoped allow rule such as `edit(src/**)` approved `apply_code_action`, a file the language server adds outside that rule is now refused instead of written without asking. Approving the prompt yourself still covers every file the action changes.
+- **Worktree subagents work with spaced git config names.** A repository config key whose subsection contains spaces (for example `filter.a b c.clean`) made every git command Larik ran for a worktree fail, reported as a repository without commits.
+
+### Compatibility notes
+
+- Automation relying on a scoped `edit(...)` rule for code actions that touch other files will now see those actions refused; widen the rule or approve the call.
+
 # Larik v0.19.0
 
 _October 25, 2026 · Previous release: v0.18.0._
