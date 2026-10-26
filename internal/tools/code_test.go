@@ -390,3 +390,21 @@ func TestRunCodeReportsWhatItPrints(t *testing.T) {
 		t.Fatalf("the script's output should show while it runs: %q", tails)
 	}
 }
+
+func TestRunCodeBacktickHint(t *testing.T) {
+	// Go source with a struct tag inside a template literal: the tag's
+	// backtick ends the literal, and the script no longer parses.
+	code := "const src = `type T struct {\n\tN int `json:\"n\"`\n}`\ntools.echo({text: src})"
+	res := runCode(t, &fakeCaller{}, code, 0)
+	if !res.IsError || !strings.Contains(res.Content, "script.js") || !strings.Contains(res.Content, "double-quoted string") {
+		t.Fatalf("a parse error in a script with a template literal should explain backticks:\n%s", res.Content)
+	}
+	res = runCode(t, &fakeCaller{}, `const = 1`, 0)
+	if !res.IsError || strings.Contains(res.Content, "double-quoted string") {
+		t.Fatalf("a syntax error without a template literal should get no backtick hint:\n%s", res.Content)
+	}
+	res = runCode(t, &fakeCaller{}, "tools.echo({text: \"type T struct {\\n\\tN int `json:\\\"n\\\"`\\n}\"})", 0)
+	if res.IsError {
+		t.Fatalf("the suggested double-quoted form should run:\n%s", res.Content)
+	}
+}

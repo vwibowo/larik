@@ -786,6 +786,13 @@ func (s *script) install() {
 	_ = s.vm.Set("tools", t)
 }
 
+// backtickHint follows a script that doesn't parse and uses a template
+// literal. The usual cause is file content put in one, such as Go source
+// with struct tags: the literal ends at the content's first backtick.
+const backtickHint = "If a template literal (`...`) in the script holds text that contains backticks, such as Go struct tags, " +
+	"Markdown code fences or JavaScript template strings, it ends at the first one. " +
+	"Put that text in a double-quoted string with \\n escapes instead, and run the script again."
+
 // run runs code as a script. Top-level await, which only async functions
 // allow, is supported by wrapping code in one when it doesn't compile.
 func (s *script) run(code string) (goja.Value, error) {
@@ -796,6 +803,9 @@ func (s *script) run(code string) (goja.Value, error) {
 		}
 	}
 	if err != nil {
+		if strings.Contains(code, "`") {
+			return nil, fmt.Errorf("%w\n%s", err, backtickHint)
+		}
 		return nil, err
 	}
 	v, err := s.vm.RunProgram(prog)

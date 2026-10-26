@@ -67,6 +67,7 @@ const (
 - For bulk data (many files, large logs), process it with one bash command (awk, python, jq) inside the script instead of reading every file.
 - Print only what the next step needs: counts, matching lines, short excerpts. Print a whole file only when you need all of it.
 - Read a file before editing it, and copy old_string from the content read returns.
+- Put file content in a double-quoted string with \n escapes, not a template literal, which ends early at any backtick in the content (Go struct tags, Markdown code fences).
 - Wrap calls that may fail in try/catch when the rest of the script should still run, and print what failed.`
 )
 
