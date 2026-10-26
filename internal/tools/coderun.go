@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime/debug"
 	"runtime/metrics"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -828,13 +830,35 @@ const backtickHint = "If a template literal (`...`) in the script holds text tha
 	"Markdown code fences or JavaScript template strings, it ends at the first one. " +
 	"Put that text in a double-quoted string with \\n escapes instead, or write whole files with the write tool, not a script."
 
+// asyncWrapper opens the async function a script with top-level await
+// runs in. It ends in a newline, so the script's columns stay the same
+// and its lines move down one.
+const asyncWrapper = "(async () => {\n"
+
+var errorLine = regexp.MustCompile(`Line (\d+):`)
+
+// unwrapLines gives the line numbers in a compile error of the wrapped
+// script as lines of the script itself.
+func unwrapLines(msg string) string {
+	return errorLine.ReplaceAllStringFunc(msg, func(m string) string {
+		n, _ := strconv.Atoi(errorLine.FindStringSubmatch(m)[1])
+		return fmt.Sprintf("Line %d:", max(n-1, 1))
+	})
+}
+
 // run runs code as a script. Top-level await, which only async functions
 // allow, is supported by wrapping code in one when it doesn't compile.
 func (s *script) run(code string) (goja.Value, error) {
 	prog, err := goja.Compile("script.js", code, false)
 	if err != nil && strings.Contains(code, "await") {
-		if wrapped, werr := goja.Compile("script.js", "(async () => {\n"+code+"\n})()", false); werr == nil {
+		// Unwrapped, a script using top-level await fails at its first
+		// await, which says nothing of a real mistake elsewhere; wrapped,
+		// it fails at that mistake, which is the error to report.
+		wrapped, werr := goja.Compile("script.js", asyncWrapper+code+"\n})()", false)
+		if werr == nil {
 			prog, err = wrapped, nil
+		} else {
+			err = errors.New(unwrapLines(werr.Error()))
 		}
 	}
 	if err != nil {

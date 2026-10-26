@@ -29,7 +29,7 @@ var astPkg = reflect.TypeOf(ast.StringLiteral{}).PkgPath()
 func lostEscapes(code string) []string {
 	prog, err := parser.ParseFile(nil, "", code, 0)
 	if err != nil {
-		if prog, err = parser.ParseFile(nil, "", "(async () => {\n"+code+"\n})()", 0); err != nil {
+		if prog, err = parser.ParseFile(nil, "", asyncWrapper+code+"\n})()", 0); err != nil {
 			return nil
 		}
 	}

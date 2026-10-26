@@ -436,3 +436,20 @@ func TestRunCodeNotesLostEscapes(t *testing.T) {
 		t.Fatalf("a doubled backslash needs no note:\n%s", res.Content)
 	}
 }
+
+// A script with top-level await and a real syntax error gets the real
+// error, on the script's own line, not one about await.
+func TestRunCodeAwaitSyntaxError(t *testing.T) {
+	// From a bugfix run: the edit's arguments miss their closing brace.
+	res := runCode(t, &fakeCaller{}, `const x=await tools.echo({text:"a"); console.log(x)`, 0)
+	if !res.IsError || strings.Contains(res.Content, "Unexpected identifier") || !strings.Contains(res.Content, "Line 1:") {
+		t.Fatalf("the error should be the missing brace on line 1, not await:\n%s", res.Content)
+	}
+	res = runCode(t, &fakeCaller{}, "const a = await tools.echo({text: \"a\"})\nconsole.log(a)\nconst b = )", 0)
+	if !res.IsError || !strings.Contains(res.Content, "Line 3:") {
+		t.Fatalf("the error should be on line 3:\n%s", res.Content)
+	}
+	if res := runCode(t, &fakeCaller{}, `const r = await tools.echo({text: "ok"}); console.log(r)`, 0); res.IsError {
+		t.Fatalf("top-level await should still run:\n%s", res.Content)
+	}
+}
