@@ -661,9 +661,41 @@ type script struct {
 	dirty  map[string]*json.RawMessage // nil value means delete
 }
 
+// namePrefixes are what models put before a tool's name in a script: the
+// tools object itself, or the namespace their provider lists tools under.
+var namePrefixes = []string{"tools.", "functions.", "mcp__functions__"}
+
+// find looks a tool up by its name or its script name, ignoring one of
+// namePrefixes when the name with it isn't a tool.
 func (s *script) find(name string) (llm.ToolSpec, bool) {
-	sp, ok := s.byName[name]
-	return sp, ok
+	if sp, ok := s.byName[name]; ok {
+		return sp, true
+	}
+	for _, p := range namePrefixes {
+		if rest, ok := strings.CutPrefix(name, p); ok {
+			if sp, ok := s.byName[rest]; ok {
+				return sp, true
+			}
+		}
+	}
+	return llm.ToolSpec{}, false
+}
+
+// missingNames caps the names an unknown-tool error lists.
+const missingNames = 30
+
+// missing says there is no tool named name and lists the names there are,
+// so the script can be fixed without a tools.list() round trip.
+func (s *script) missing(name string) string {
+	names := make([]string, 0, min(len(s.specs), missingNames))
+	for _, sp := range s.specs[:min(len(s.specs), missingNames)] {
+		names = append(names, s.bound[sp.Name])
+	}
+	msg := fmt.Sprintf("no tool named %q; the tools are %s", name, strings.Join(names, ", "))
+	if more := len(s.specs) - len(names); more > 0 {
+		msg += fmt.Sprintf(", and %d more that tools.list() returns", more)
+	}
+	return msg
 }
 
 func (s *script) stateKey(v goja.Value) string {
@@ -766,7 +798,7 @@ func (s *script) install() {
 	_ = t.Set("describe", func(name string) goja.Value {
 		sp, ok := s.find(name)
 		if !ok {
-			s.throw("no tool named %q; tools.list() returns the names", name)
+			s.throw("%s", s.missing(name))
 		}
 		var sch any
 		_ = json.Unmarshal(sp.Schema, &sch)
@@ -839,7 +871,7 @@ func (s *script) throw(format string, args ...any) {
 func (s *script) prepare(name string, args goja.Value) (Call, string) {
 	sp, ok := s.find(name)
 	if !ok {
-		return Call{}, fmt.Sprintf("no tool named %q is available to scripts; tools.list() returns the names", name)
+		return Call{}, s.missing(name)
 	}
 	if s.calls >= s.maxCalls {
 		return Call{}, fmt.Sprintf("the script reached its limit of %d tool calls", s.maxCalls)

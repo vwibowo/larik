@@ -477,3 +477,26 @@ func TestDescribeSaysWhatAToolReturns(t *testing.T) {
 		t.Fatalf("describe: %s", res.Content)
 	}
 }
+
+// Models write a tool's name the way their provider listed it, or with the
+// tools object in front; those resolve, and an unknown name lists the real
+// ones so the script can be fixed without calling tools.list().
+func TestScriptToolNamePrefixes(t *testing.T) {
+	c := &scriptCaller{}
+	res := runScript(t, context.Background(), nil, c, `
+const rs = tools.parallel([
+  {name: "tools.echo", args: {text: "a"}},
+  {name: "mcp__functions__echo", args: {text: "b"}},
+  {name: "functions.echo", args: {text: "c"}},
+  {name: "tools.nope"},
+]);
+rs.map(r => r.ok ? r.value : "error: " + r.error).join("\n") + "\n" + tools.describe("tools.exit").name`)
+	if res.IsError {
+		t.Fatalf("unexpected error:\n%s", res.Content)
+	}
+	for _, want := range []string{`got {"text":"a"}`, `got {"text":"b"}`, `got {"text":"c"}`, `error: no tool named "tools.nope"; the tools are `, "echo, exit", "\nexit"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("missing %q in:\n%s", want, res.Content)
+		}
+	}
+}
