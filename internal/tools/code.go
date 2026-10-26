@@ -230,7 +230,7 @@ func scriptNames(specs []llm.ToolSpec) map[string]string {
 }
 
 // ForExecution returns the registry the model sees under e. Hybrid adds
-// run_code; code declares run_code and, when present, exit_plan_mode.
+// run_code; code declares run_code and the directInCode tools present.
 // Script calls resolve against the base registry instead.
 func (r *Registry) ForExecution(e Execution) *Registry {
 	if e != ExecHybrid && e != ExecCode {
@@ -252,7 +252,9 @@ func (r *Registry) ForExecution(e Execution) *Registry {
 	// Conversation-level tools are steps of the conversation, not of a
 	// script, so scripts cannot call them; the model still needs them
 	// directly: subagents for delegation, the task list, skills, memory
-	// and plan approval.
+	// and plan approval. So are the whole-file writes, whose content then
+	// travels as a JSON argument instead of a string the model escapes
+	// inside a script, where one slip fails the whole script.
 	for _, name := range directInCode {
 		if tool, ok := r.Get(name); ok {
 			modelTools = append(modelTools, tool)
@@ -269,7 +271,7 @@ func (r *Registry) ScriptName(name string) (string, bool) {
 }
 
 // directInCode are the tools the model calls directly under ExecCode.
-var directInCode = []string{"task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode"}
+var directInCode = []string{"write", WriteFilesToolName, "task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode"}
 
 // bindable lists the specs of the tools scripts may call, sorted by name.
 func (r *Registry) bindable() []llm.ToolSpec {

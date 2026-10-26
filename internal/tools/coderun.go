@@ -823,7 +823,7 @@ func (s *script) install() {
 // with struct tags: the literal ends at the content's first backtick.
 const backtickHint = "If a template literal (`...`) in the script holds text that contains backticks, such as Go struct tags, " +
 	"Markdown code fences or JavaScript template strings, it ends at the first one. " +
-	"Put that text in a double-quoted string with \\n escapes instead, and run the script again."
+	"Put that text in a double-quoted string with \\n escapes instead, or write whole files with the write tool, not a script."
 
 // run runs code as a script. Top-level await, which only async functions
 // allow, is supported by wrapping code in one when it doesn't compile.

@@ -17,9 +17,9 @@ import (
 )
 
 // codeDeclared is what code execution declares over tools.Default():
-// run_code and the conversation-level tools it has (plan mode adds
-// exit_plan_mode).
-const codeDeclared = "run_code,todo_write"
+// run_code, the whole-file writes and the conversation-level tools it has
+// (plan mode adds exit_plan_mode).
+const codeDeclared = "run_code,write,write_files,todo_write"
 
 func declaredNames(specs []llm.ToolSpec) string {
 	names := make([]string, len(specs))
@@ -394,6 +394,24 @@ func TestCodeExecutionRejectsDirectUndeclaredTool(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "run_code") || !strings.Contains(res.Content, "tools.read(") {
 		t.Errorf("the rejection should say how to make the call in a script: %q", res.Content)
+	}
+}
+
+// Whole files go through write_files called directly, so content with
+// backticks and quotes never has to survive JavaScript escaping.
+func TestCodeExecutionWritesFilesDirectly(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeYolo,
+		assistant(toolUse("w1", "write_files", `{"files":[{"path":"a.go","content":"type T struct {\n\tN int `+"`json:\\\"n\\\"`"+`\n}\n"},{"path":"b.md","content":"`+"```"+`sh\nls\n`+"```"+`\n"}]}`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if res := lastResult(fp, 1); res.IsError {
+		t.Fatalf("write_files in code execution: %s", res.Content)
+	}
+	for name, want := range map[string]string{"a.go": "type T struct {\n\tN int `json:\"n\"`\n}\n", "b.md": "```sh\nls\n```\n"} {
+		if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", name, got, err, want)
+		}
 	}
 }
 
