@@ -408,3 +408,31 @@ func TestRunCodeBacktickHint(t *testing.T) {
 		t.Fatalf("the suggested double-quoted form should run:\n%s", res.Content)
 	}
 }
+
+func TestLostEscapes(t *testing.T) {
+	for code, want := range map[string]string{
+		// The check a model wrote in a Snake game run: grep got
+		// '@import|https?://', matched nothing, and the stray line stayed.
+		`const r = await tools.bash({command:"node --check script.js && grep -n '@import\|https\?://' style.css || true"})`: `\| \?`,
+		"tools.bash({command: `sed -n '/^\\s*x/p' f`})":                                                                     `\s`,
+		`console.log("a\.b", "c\.d")`:                        `\.`,
+		`const ok = "tab\there\nline \"q\" \\| é \x41"`:      "",
+		`const re = /\d+\.\d+/; console.log(re.test("1.2"))`: "",
+		"const s = `a \\` b \\${c}`":                         "",
+		`this is not JavaScript (`:                           "",
+	} {
+		if got := strings.Join(lostEscapes(code), " "); got != want {
+			t.Errorf("lostEscapes(%s) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+func TestRunCodeNotesLostEscapes(t *testing.T) {
+	res := runScript(t, context.Background(), nil, &fakeCaller{}, `console.log("grep -E 'a\|b'")`)
+	if res.IsError || !strings.Contains(res.Content, "grep -E 'a|b'") || !strings.Contains(res.Content, `drop the backslash in \|`) || !strings.Contains(res.Content, `(\\|)`) {
+		t.Fatalf("run_code should note the dropped backslash:\n%s", res.Content)
+	}
+	if res := runScript(t, context.Background(), nil, &fakeCaller{}, `console.log("a\\|b")`); strings.Contains(res.Content, "[note:") {
+		t.Fatalf("a doubled backslash needs no note:\n%s", res.Content)
+	}
+}

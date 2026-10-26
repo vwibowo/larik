@@ -178,6 +178,9 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	if saved {
 		out += fmt.Sprintf("\n[full output, %d bytes: raw_output tool_call_id=%s]", r.out.total, r.callID)
 	}
+	if lost := lostEscapes(in.Code); len(lost) > 0 {
+		out += "\n" + escapeNote(lost)
+	}
 	out += fmt.Sprintf("\n[%s: %d tool call%s]", CodeToolName, r.calls, plural(r.calls))
 	return Result{Content: out, IsError: msg != ""}
 }
