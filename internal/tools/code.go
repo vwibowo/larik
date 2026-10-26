@@ -261,6 +261,13 @@ func (r *Registry) ForExecution(e Execution) *Registry {
 	return NewRegistry(modelTools...)
 }
 
+// ScriptName is what a script calls the named tool by on the tools
+// object, and whether scripts can call it at all.
+func (r *Registry) ScriptName(name string) (string, bool) {
+	js, ok := scriptNames(r.bindable())[name]
+	return js, ok
+}
+
 // directInCode are the tools the model calls directly under ExecCode.
 var directInCode = []string{"task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode"}
 

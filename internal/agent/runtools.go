@@ -98,6 +98,24 @@ func inGroups(queue []approved, limit int, run func(approved)) {
 	}
 }
 
+// unknownTool is the error for a call to a tool the model wasn't offered.
+// Under code execution the core tools are offered only inside run_code,
+// and a model that calls one directly anyway would otherwise retry the
+// same call: it is told how to make it instead.
+func (a *Agent) unknownTool(name string) string {
+	msg := "unknown tool: " + name
+	a.mu.Lock()
+	base := a.opts.Tools
+	a.mu.Unlock()
+	if base == nil {
+		return msg
+	}
+	if js, ok := base.ScriptName(name); ok {
+		msg += fmt.Sprintf("; %s is not a direct tool in this session, only a function in run_code scripts: call run_code with a script that does it, such as `console.log(tools.%s({...}))`", name, js)
+	}
+	return msg
+}
+
 // prepare resolves a call to its tool and authorizes it. When the call
 // may not run, ok is false and res is the error result to return. auto
 // holds auto-mode verdicts started ahead for the batch; it may be nil.
@@ -130,7 +148,7 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	case ctx.Err() != nil:
 		res.Content, res.IsError = "interrupted by user", true
 	case !found:
-		res.Content, res.IsError = "unknown tool: "+use.Name, true
+		res.Content, res.IsError = a.unknownTool(use.Name), true
 		fault = FaultUnknownTool
 	case use.Input == nil:
 		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true

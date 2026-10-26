@@ -388,8 +388,23 @@ func TestCodeExecutionRejectsDirectUndeclaredTool(t *testing.T) {
 		assistant(llm.TextBlock("done")))
 	a.SetExecution(tools.ExecCode)
 	drain(a.Run(context.Background(), "go"), PermissionReply{})
-	if res := lastResult(fp, 1); !res.IsError || !strings.Contains(res.Content, "unknown tool: read") {
+	res := lastResult(fp, 1)
+	if !res.IsError || !strings.Contains(res.Content, "unknown tool: read") {
 		t.Fatalf("a direct tool call in code execution must be rejected: %+v", res)
+	}
+	if !strings.Contains(res.Content, "run_code") || !strings.Contains(res.Content, "tools.read(") {
+		t.Errorf("the rejection should say how to make the call in a script: %q", res.Content)
+	}
+}
+
+func TestUnknownToolGetsNoScriptHint(t *testing.T) {
+	a, fp, _ := setup(t, permission.ModeYolo,
+		assistant(toolUse("r1", "no_such_tool", `{}`)),
+		assistant(llm.TextBlock("done")))
+	a.SetExecution(tools.ExecCode)
+	drain(a.Run(context.Background(), "go"), PermissionReply{})
+	if res := lastResult(fp, 1); res.Content != "unknown tool: no_such_tool" {
+		t.Errorf("a tool that doesn't exist anywhere should get the plain error: %q", res.Content)
 	}
 }
 
