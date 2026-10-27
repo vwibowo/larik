@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.20.1
+
+<p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>
+
+### Fixed
+
+- **Scripts cut off by a broken JSON string are no longer run.** When a model leaves a double quote unescaped inside a `run_code` script, the script ends early and the rest lands in a stray argument. Larik used to run the fragment and report a syntax error on a line of its own wrapper, such as `Line 2:1 Unexpected token }`. It now refuses the call and asks for the script again with the quotes escaped.
+- **Script syntax errors point at the script's own lines**, and say when the script ends unfinished, such as an unclosed bracket or string.
+
 ## v0.20.0
 
 <p class="release-meta"><time datetime="2026-10-27">October 27, 2026</time></p>
