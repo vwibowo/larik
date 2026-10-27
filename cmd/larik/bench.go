@@ -90,6 +90,9 @@ func runBench(args []string) error {
 	if role.def != nil && strings.TrimSpace(*tasksFlag) == "" {
 		tasks = role.tasks(tasks)
 	}
+	if w := harnessWarning(harnesses, role); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
 	var specs []string
 	for _, s := range strings.Split(*modelsFlag, ",") {
@@ -184,14 +187,19 @@ func benchSettings(label string, execs []tools.Execution, harnesses []benchHarne
 			if len(execs) > 1 || exec != tools.DefaultExecution {
 				row += " [" + string(exec) + "]"
 			}
-			if len(harnesses) > 1 || h.dir != "" {
-				row += " {" + h.name + "}"
-			}
-			if role.def != nil {
-				row += " as " + role.name
-			}
+			showHarness := len(harnesses) > 1 || h.dir != ""
 			for _, minimal := range role.contexts {
 				row := row
+				if showHarness {
+					if harnessUnseen(h, role, minimal) {
+						row += " {" + h.name + ", unseen}"
+					} else {
+						row += " {" + h.name + "}"
+					}
+				}
+				if role.def != nil {
+					row += " as " + role.name
+				}
 				if len(role.contexts) > 1 || role.explicitContext {
 					setting := "full"
 					if minimal {
@@ -204,6 +212,28 @@ func benchSettings(label string, execs []tools.Execution, harnesses []benchHarne
 		}
 	}
 	return out
+}
+
+// harnessUnseen reports whether a row runs without its harness: a
+// subagent with minimal context gets neither the harness's AGENTS.md nor
+// its skills index (agent.MinimalContextSections), so such rows run the
+// same prompt under every harness.
+func harnessUnseen(h benchHarness, role benchRunRole, minimal bool) bool {
+	return role.def != nil && minimal && h.dir != ""
+}
+
+// harnessWarning explains rows marked unseen, when there are any.
+func harnessWarning(harnesses []benchHarness, role benchRunRole) string {
+	for _, h := range harnesses {
+		for _, minimal := range role.contexts {
+			if harnessUnseen(h, role, minimal) {
+				return "bench: with --as and minimal context, a subagent's prompt leaves out the harness's AGENTS.md and skills index, " +
+					"so the <minimal> rows run the same prompt under every harness (marked \"unseen\"). " +
+					"Compare harnesses on the full-context rows; the minimal rows show how much runs vary on their own."
+			}
+		}
+	}
+	return ""
 }
 
 // labelWidth is the row-label column: wide enough for the longest label,

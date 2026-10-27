@@ -124,7 +124,7 @@ func TestBenchSettingsAndWidth(t *testing.T) {
 		"a-rather-long/provider-model-name {none} as explore <full>",
 		"a-rather-long/provider-model-name {none} as explore <minimal>",
 		"a-rather-long/provider-model-name {personal} as explore <full>",
-		"a-rather-long/provider-model-name {personal} as explore <minimal>",
+		"a-rather-long/provider-model-name {personal, unseen} as explore <minimal>",
 	}
 	if !slices.Equal(rows, want) {
 		t.Errorf("rows = %q", rows)
@@ -134,5 +134,26 @@ func TestBenchSettingsAndWidth(t *testing.T) {
 	}
 	if got := labelWidth([]string{"short"}); got != 40 {
 		t.Errorf("width of short labels = %d, want 40", got)
+	}
+}
+
+// With --as and minimal context the harness never reaches the prompt, so
+// those rows are marked and the run warns, once.
+func TestHarnessWarning(t *testing.T) {
+	explore, _ := subagent.Discover(nil).Get("explore")
+	variants := []benchHarness{{name: "personal", dir: "/x"}, {name: "h-finish", dir: "/y"}}
+	for name, c := range map[string]struct {
+		harnesses []benchHarness
+		role      benchRunRole
+		warn      bool
+	}{
+		"minimal subagent": {variants, benchRunRole{name: "explore", def: &explore, contexts: []bool{false, true}}, true},
+		"full subagent":    {variants, benchRunRole{name: "explore", def: &explore, contexts: []bool{false}}, false},
+		"main agent":       {variants, benchRunRole{contexts: []bool{false}}, false},
+		"no harness dir":   {[]benchHarness{{name: "none"}}, benchRunRole{name: "explore", def: &explore, contexts: []bool{true}}, false},
+	} {
+		if got := harnessWarning(c.harnesses, c.role) != ""; got != c.warn {
+			t.Errorf("%s: warning = %v, want %v", name, got, c.warn)
+		}
 	}
 }
