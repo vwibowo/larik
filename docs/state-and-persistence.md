@@ -169,4 +169,4 @@ The approvals are pinned to a content hash (`MCPServer.Hash`, `hooks.Config.Hash
 
 ## Instruction files
 
-Not config, but loaded at the same time: `~/.config/larik/AGENTS.md`, then `AGENTS.md` (or `CLAUDE.md` if there's no `AGENTS.md`) in each directory from the git root down to cwd. They go into the system prompt inside `<instructions source="…">` tags, general first ([prompt.go:67](../internal/agent/prompt.go:67)).
+Not config, but loaded at the same time: `~/.config/larik/AGENTS.md`, then `AGENTS.md` (or `CLAUDE.md` if there's no `AGENTS.md`) in each directory from the git root down to cwd. They go into the system prompt inside `<instructions source="…">` tags, general first ([prompt.go:119](../internal/agent/prompt.go:119)), after one line asking the model to do every step they ask of a change before it finishes (`instructionsNote`). Without it, models fix what the request names and skip what only the files ask for, such as a changelog entry.

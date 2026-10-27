@@ -29,6 +29,20 @@ func TestMinimalContextDropsGlobalInstructions(t *testing.T) {
 	}
 }
 
+func TestInstructionsNoteOnlyWithInstructionFiles(t *testing.T) {
+	cwd, configDir := t.TempDir(), t.TempDir()
+	if got := ContextSections(cwd, configDir); strings.Contains(got, instructionsNote) {
+		t.Errorf("no instruction files, but the note is there:\n%s", got)
+	}
+	os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("project rule"), 0o644)
+	os.WriteFile(filepath.Join(configDir, "AGENTS.md"), []byte("global rule"), 0o644)
+	for name, got := range map[string]string{"full": ContextSections(cwd, configDir), "minimal": MinimalContextSections(cwd)} {
+		if strings.Count(got, instructionsNote) != 1 || strings.Index(got, instructionsNote) > strings.Index(got, "<instructions") {
+			t.Errorf("%s: want the note once, before the instruction files:\n%s", name, got)
+		}
+	}
+}
+
 // TestPromptSizeBudget caps the fixed prompt text sent with every request
 // (the plan-mode note with every prompt in plan mode). Growing it costs
 // tokens on every turn of every session, so it should be a decision: if a
@@ -46,6 +60,7 @@ func TestPromptSizeBudget(t *testing.T) {
 		{"toolsSection", toolsSection, 350},
 		{"hybridSection", hybridSection, 550},
 		{"codeSection", codeSection, 975},
+		{"instructionsNote", instructionsNote, 200},
 	} {
 		if len(c.text) > c.limit {
 			t.Errorf("%s is %d bytes, over its %d-byte budget: trim it, or raise the limit on purpose", c.name, len(c.text), c.limit)

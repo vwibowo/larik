@@ -124,15 +124,26 @@ func contextSections(cwd, root string, files []string) string {
 	}
 	b.WriteString("</env>")
 
+	noted := false
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 			continue
 		}
+		if !noted {
+			b.WriteString("\n\n" + instructionsNote)
+			noted = true
+		}
 		fmt.Fprintf(&b, "\n\n<instructions source=%q>\n%s\n</instructions>", f, strings.TrimSpace(string(data)))
 	}
 	return b.String()
 }
+
+// instructionsNote comes before the instruction files. Models fix what the
+// request names and skip what only the files ask for: with the note, the
+// NIM nemotron model, as a worker, added follow-conventions' changelog
+// entry in 23 of 35 bench runs, against 14 of 35 without.
+const instructionsNote = "Before you finish, go back over these instruction files and do every step they ask of a change, such as a changelog entry or a docs update, not only the tests."
 
 func instructionFilesUnder(cwd, root, configDir string) []string {
 	var out []string
