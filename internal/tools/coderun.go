@@ -119,6 +119,9 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	if err != nil {
 		return errorf("%v", err)
 	}
+	if msg := brokenCode(input, in.Code); msg != "" {
+		return errorf("%s", msg)
+	}
 	if strings.TrimSpace(in.Code) == "" {
 		return errorf("code is empty")
 	}
@@ -870,12 +873,51 @@ const asyncWrapper = "(async () => {\n"
 var errorLine = regexp.MustCompile(`Line (\d+):`)
 
 // unwrapLines gives the line numbers in a compile error of the wrapped
-// script as lines of the script itself.
-func unwrapLines(msg string) string {
-	return errorLine.ReplaceAllStringFunc(msg, func(m string) string {
+// script as lines of the script itself. An error past the script's last
+// line is in the wrapper's closing line: the script ended unfinished.
+func unwrapLines(msg, code string) string {
+	lines := strings.Count(code, "\n") + 1
+	past := false
+	msg = errorLine.ReplaceAllStringFunc(msg, func(m string) string {
 		n, _ := strconv.Atoi(errorLine.FindStringSubmatch(m)[1])
-		return fmt.Sprintf("Line %d:", max(n-1, 1))
+		n = max(n-1, 1)
+		if n > lines {
+			past = true
+			n = lines
+		}
+		return fmt.Sprintf("Line %d:", n)
 	})
+	if past {
+		msg += "\nThe script ends unfinished, such as an unclosed bracket or string: check that the whole script was sent."
+	}
+	return msg
+}
+
+// codeKey is a key a model means as an argument name.
+var codeKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// brokenCode explains arguments whose code string an unescaped double
+// quote ended early, so the rest of the script became stray keys, such as
+// {"code": "tools.parallel([{name:", "+ ": ",args:{}}])"}. Run, the cut
+// script fails with a syntax error that says nothing of why.
+func brokenCode(input json.RawMessage, code string) string {
+	var args map[string]json.RawMessage
+	if json.Unmarshal(input, &args) != nil {
+		return ""
+	}
+	for k := range args {
+		if k == "code" || k == "timeout_seconds" || codeKey.MatchString(k) {
+			continue
+		}
+		end := code
+		if r := []rune(end); len(r) > 40 {
+			end = "..." + string(r[len(r)-40:])
+		}
+		return fmt.Sprintf("the code argument ends at %q and the arguments have a stray key %q: "+
+			"an unescaped double quote in the script ended its JSON string early, so the script was not run. "+
+			"Send it again with double quotes inside the code escaped (\\\"), or use single quotes.", end, k)
+	}
+	return ""
 }
 
 // wrapAsync wraps code in the async function, returning the value of its
@@ -920,7 +962,7 @@ func (s *script) run(code string) (goja.Value, error) {
 		if werr == nil {
 			prog, err = wrapped, nil
 		} else {
-			err = errors.New(unwrapLines(werr.Error()))
+			err = errors.New(unwrapLines(werr.Error(), code))
 		}
 	}
 	if err != nil {

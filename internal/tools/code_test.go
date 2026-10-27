@@ -497,3 +497,26 @@ func TestRunCodeNodeHint(t *testing.T) {
 		t.Errorf("an ordinary ReferenceError shouldn't get the hint:\n%s", res.Content)
 	}
 }
+
+// From a gpt-6-luna session: an unescaped double quote ended the code
+// string, the rest of the script became a stray key, and the cut script
+// failed with "Line 2:1 Unexpected token }", which points at nothing the
+// model wrote.
+func TestRunCodeBrokenCodeString(t *testing.T) {
+	tool, _ := codeRegistry().ForExecution(ExecHybrid).Get(CodeToolName)
+	ctx := WithCaller(context.Background(), &fakeCaller{})
+	res := tool.Run(ctx, nil, json.RawMessage(`{"code": "const r=await tools.parallel([{name:", "+ ": ",args:{}}]);"}`))
+	if !res.IsError || !strings.Contains(res.Content, `stray key "+ "`) || !strings.Contains(res.Content, "was not run") {
+		t.Errorf("want the broken string explained:\n%s", res.Content)
+	}
+	// Word keys are extra arguments, not a broken string.
+	res = tool.Run(ctx, nil, json.RawMessage(`{"code": "console.log(1)", "description": "test"}`))
+	if res.IsError || !strings.Contains(res.Content, "1") {
+		t.Errorf("an extra word key should still run:\n%s", res.Content)
+	}
+	// The cut script alone says it ended unfinished, on its own line.
+	res = runCode(t, &fakeCaller{}, "const r=await tools.parallel([{name:", 0)
+	if !res.IsError || !strings.Contains(res.Content, "Line 1:") || !strings.Contains(res.Content, "ends unfinished") {
+		t.Errorf("want the unfinished script explained on line 1:\n%s", res.Content)
+	}
+}
