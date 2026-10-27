@@ -90,6 +90,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		// its response.completed with an empty output list, so these are
 		// the only copy of the answer there.
 		var done []responses.ResponseOutputItemUnion
+		var blank llm.WhitespaceRun // in the current tool call's arguments
 		for stream.Next() {
 			ev := stream.Current()
 			var out llm.StreamEvent
@@ -103,10 +104,17 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 				out = llm.StreamEvent{Type: llm.EventThinkingDelta, Text: ev.Delta}
 			case "response.reasoning_summary_part.done":
 				out = llm.StreamEvent{Type: llm.EventThinkingDelta, Text: "\n\n"}
+			case "response.function_call_arguments.delta":
+				if n := blank.Feed(ev.Delta); n > llm.RunawayLimit {
+					yield(llm.StreamEvent{}, &llm.RunawayError{Provider: p.name, Chars: n})
+					return
+				}
+				continue
 			case "response.output_item.added":
 				if ev.Item.Type != "function_call" {
 					continue
 				}
+				blank = llm.WhitespaceRun{}
 				out = llm.StreamEvent{Type: llm.EventToolUseStart, Text: ev.Item.Name}
 			case "response.completed", "response.incomplete":
 				r := ev.Response

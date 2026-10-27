@@ -88,7 +88,8 @@ func resolveSpec(cfg *config.Config, spec string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
-	return Resolved{Provider: llm.WithStallTimeout(p, stallTimeout(cfg, name)), Model: model}, nil
+	// Each attempt after a runaway gets its own stall timeout.
+	return Resolved{Provider: llm.WithRunawayRetry(llm.WithStallTimeout(p, stallTimeout(cfg, name))), Model: model}, nil
 }
 
 type cliProvider struct{ runtime llm.AgentRuntime }

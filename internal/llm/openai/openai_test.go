@@ -3,6 +3,8 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -215,5 +217,30 @@ func TestProviderDeclaresPDFSupport(t *testing.T) {
 	}
 	if llm.AcceptsDocuments(p, "application/zip") {
 		t.Error("only PDF should be claimed")
+	}
+}
+
+// A tool call whose arguments turn into nothing but whitespace is stopped
+// long before the server's output limit.
+func TestRunawayToolArgumentsStop(t *testing.T) {
+	call := `{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run_code","arguments":"","status":"in_progress"}`
+	events := []string{
+		`{"type":"response.output_item.added","output_index":0,"item":` + call + `,"sequence_number":1}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"code\":\"tools.glob({pattern:","sequence_number":2}`,
+	}
+	for i := range 2000 {
+		events = append(events, fmt.Sprintf(`{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"\\n \\t\\t","sequence_number":%d}`, i+3))
+	}
+	srv := llmtest.NewServer(t, 200, llmtest.SSE(events...))
+	p := NewChatGPT("codex", srv.URL, func(context.Context) (string, string, error) { return "t", "a", nil })
+	var err error
+	for _, e := range p.Stream(context.Background(), llm.Request{Model: "gpt-6-luna", Messages: []llm.Message{llm.UserText("go")}}) {
+		if e != nil {
+			err = e
+		}
+	}
+	var r *llm.RunawayError
+	if !errors.As(err, &r) || r.Chars <= llm.RunawayLimit || r.Chars > llm.RunawayLimit+10 {
+		t.Fatalf("want a RunawayError just past the limit, got %v", err)
 	}
 }
