@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v0.20.0
+
+<p class="release-meta"><time datetime="2026-10-27">October 27, 2026</time></p>
+
+### Added
+
+- **Compare harness variants with `larik bench --harness`.** Each variant is a directory laid out like `~/.config/larik` (`AGENTS.md`, `skills/`), so a prompt or skill change can be measured before you adopt it. `none` is the empty default and `personal` your own instructions and skills.
+- **Bench a model in the job it will have.** `--as worker` runs each task the way that role's subagent runs it (its prompt, tools, turn cap and context setting), and `--context full,minimal` compares the two context settings. Rows a harness can't reach (minimal-context subagents) are marked `unseen`, with a warning.
+- **Three harder bench tasks** with a shortcut that hidden tests reject: `fix-without-overfitting`, `fix-at-the-source` and `follow-conventions`. Bench rows size to the longest label.
+
+### Changed
+
+- **Code mode declares `write` and `write_files` directly**, so whole files are written without escaping them inside a script.
+- **Direct calls to script-only tools run.** In code mode, a model that calls `read`, `grep`, `edit` or `bash` directly now gets the call run, with the same permission checks, instead of an "unknown tool" round trip. On the NVIDIA NIM Nemotron model this cut malformed calls from 29% to 5% and bench time by 40%.
+- **The prompt asks the model to finish what instruction files ask.** A line before `AGENTS.md`/`CLAUDE.md` asks it to go back over them before finishing, such as a changelog entry. The Nemotron model's `follow-conventions` pass rate went from 14/35 to 23/35.
+- **Scripts explain their own mistakes.** `run_code` resolves prefixed tool names (`tools.read`, `functions.read`), reports the real syntax error in scripts that use `await`, shows a script's last value after `await`, and adds notes for template literals broken by backticks, backslashes JavaScript drops, Node.js or Python habits (`require`, `import`, `process`) and `.then` on results.
+- **Near-miss paths point at the real one.** A result saying a path doesn't exist notes the correct path when the one called is the working directory with a character or two changed.
+
+### Fixed
+
+- **Runaway tool calls stop.** A response whose tool-call arguments turn into thousands of whitespace characters is stopped and asked again once, instead of streaming until the output limit (one run streamed 33 MB over 13 minutes).
+
 ## v0.19.1
 
 <p class="release-meta"><time datetime="2026-10-25">October 25, 2026</time></p>
