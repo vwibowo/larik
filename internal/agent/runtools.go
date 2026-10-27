@@ -329,6 +329,9 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 	})
 	out := job.tool.Run(runCtx, a.env, use.Input)
 	res.Content, res.IsError, res.Images = out.Content, out.IsError, out.Images
+	if note := pathNote(a.opts.Cwd, use.Input, out.Content); note != "" {
+		res.Content += "\n\n" + note
+	}
 	data := out.Data
 	emit(Event{Kind: EvToolEnd, ToolID: use.ID, ToolName: use.Name, Input: use.Input, Output: out.Content, Display: out.Display, IsError: out.IsError})
 

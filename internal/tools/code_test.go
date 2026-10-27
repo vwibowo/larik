@@ -453,3 +453,47 @@ func TestRunCodeAwaitSyntaxError(t *testing.T) {
 		t.Fatalf("top-level await should still run:\n%s", res.Content)
 	}
 }
+
+// From NIM bench runs: scripts ending in `await tools.bash(...)` got "no
+// output", and the model ran them again and again.
+func TestRunCodeAwaitShowsLastValue(t *testing.T) {
+	for _, code := range []string{
+		`await tools.echo({text: "hi"})`,
+		"const r = await tools.echo({text: \"hi\"});\nr;",
+		`const r = await tools.echo({text: "hi"}); r`,
+	} {
+		res := runCode(t, &fakeCaller{}, code, 0)
+		if res.IsError || !strings.Contains(res.Content, "=> ") || !strings.Contains(res.Content, "hi") {
+			t.Errorf("%q should show its last value:\n%s", code, res.Content)
+		}
+	}
+	for _, code := range []string{
+		`const r = await tools.echo({text: "hi"})`,
+		`if (true) { await tools.echo({text: "hi"}) }`,
+	} {
+		if res := runCode(t, &fakeCaller{}, code, 0); res.IsError || strings.Contains(res.Content, "=> ") {
+			t.Errorf("%q has no last expression to show:\n%s", code, res.Content)
+		}
+	}
+}
+
+func TestRunCodeNodeHint(t *testing.T) {
+	for _, code := range []string{
+		`const fs = require('fs'); console.log(fs.readdirSync('.'))`,
+		`process.chdir('/tmp')`,
+		`import { glob, grep, read } from '@lusoperat/playground';`,
+		"import(\"os\")\nos.system(\"ls\")",
+	} {
+		res := runCode(t, &fakeCaller{}, code, 0)
+		if !res.IsError || !strings.Contains(res.Content, "not Node.js or Python") {
+			t.Errorf("%q should get the script environment hint:\n%s", code, res.Content)
+		}
+	}
+	res := runCode(t, &fakeCaller{}, `tools.echo({text: "a"}).then(r => console.log(r))`, 0)
+	if !res.IsError || !strings.Contains(res.Content, "not a promise") {
+		t.Errorf(".then should get the hint:\n%s", res.Content)
+	}
+	if res := runCode(t, &fakeCaller{}, `undefinedThing()`, 0); strings.Contains(res.Content, "Node.js") {
+		t.Errorf("an ordinary ReferenceError shouldn't get the hint:\n%s", res.Content)
+	}
+}

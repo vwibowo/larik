@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"runtime/debug"
 	"runtime/metrics"
@@ -20,6 +21,8 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
 
 	"larik/internal/llm"
 )
@@ -547,6 +550,9 @@ func serveCode(r io.Reader, w io.Writer) int {
 	switch {
 	case err != nil:
 		done.Error = scriptError(err)
+		if hint := scriptEnvHint(done.Error, start.Code); hint != "" {
+			done.Error += "\n" + hint
+		}
 	case v != nil && !goja.IsUndefined(v) && !goja.IsNull(v):
 		done.HasValue, done.Text = true, safeCut(s.show(v), codeMaxValue)
 	}
@@ -830,6 +836,32 @@ const backtickHint = "If a template literal (`...`) in the script holds text tha
 	"Markdown code fences or JavaScript template strings, it ends at the first one. " +
 	"Put that text in a double-quoted string with \\n escapes instead, or write whole files with the write tool, not a script."
 
+// Weaker models write scripts for Node.js or Python: require, import,
+// process, os. Told only "require is not defined", they try the next
+// module system; scriptEnvHint says what a script has instead.
+var (
+	nodeGlobal = regexp.MustCompile(`ReferenceError: (require|process|module|exports|__dirname|__filename|fs|os|path|subprocess|Deno|Bun) is not defined`)
+	importUse  = regexp.MustCompile(`(^|[^\w.])import\s*[({"'\w*]`)
+)
+
+const envHint = "Scripts are plain JavaScript, not Node.js or Python: there is no require, import, process, fs or os. " +
+	"Read files and run commands through tools, such as await tools.read({path}) or await tools.bash({command}), " +
+	"and print what you need with console.log."
+
+// thenHint follows a script that calls .then on a tool's result.
+const thenHint = "A tools.* call returns its result directly, not a promise: use the value, as in const r = await tools.bash({command}); console.log(r.output)."
+
+func scriptEnvHint(msg, code string) string {
+	switch {
+	case nodeGlobal.MatchString(msg),
+		strings.Contains(msg, "Unexpected reserved word") && importUse.MatchString(code):
+		return envHint
+	case strings.Contains(msg, "has no member 'then'"):
+		return thenHint
+	}
+	return ""
+}
+
 // asyncWrapper opens the async function a script with top-level await
 // runs in. It ends in a newline, so the script's columns stay the same
 // and its lines move down one.
@@ -846,6 +878,33 @@ func unwrapLines(msg string) string {
 	})
 }
 
+// wrapAsync wraps code in the async function, returning the value of its
+// last statement when that is an expression, as a script without await
+// gives it: models end a script with `await tools.bash(...)` to see the
+// result, and would otherwise get "no output".
+func wrapAsync(code string) string {
+	wrapped := asyncWrapper + code + "\n})()"
+	prog, err := parser.ParseFile(nil, "", wrapped, 0)
+	if err != nil {
+		return wrapped
+	}
+	var body *ast.BlockStatement
+	walkAST(reflect.ValueOf(prog), func(n any) {
+		if f, ok := n.(*ast.ArrowFunctionLiteral); ok && body == nil {
+			body, _ = f.Body.(*ast.BlockStatement)
+		}
+	})
+	if body == nil || len(body.List) == 0 {
+		return wrapped
+	}
+	last, ok := body.List[len(body.List)-1].(*ast.ExpressionStatement)
+	if !ok {
+		return wrapped
+	}
+	start, end := int(last.Idx0())-1, int(last.Idx1())-1
+	return wrapped[:start] + "return (" + wrapped[start:end] + ")" + wrapped[end:]
+}
+
 // run runs code as a script. Top-level await, which only async functions
 // allow, is supported by wrapping code in one when it doesn't compile.
 func (s *script) run(code string) (goja.Value, error) {
@@ -854,7 +913,10 @@ func (s *script) run(code string) (goja.Value, error) {
 		// Unwrapped, a script using top-level await fails at its first
 		// await, which says nothing of a real mistake elsewhere; wrapped,
 		// it fails at that mistake, which is the error to report.
-		wrapped, werr := goja.Compile("script.js", asyncWrapper+code+"\n})()", false)
+		wrapped, werr := goja.Compile("script.js", wrapAsync(code), false)
+		if werr != nil {
+			wrapped, werr = goja.Compile("script.js", asyncWrapper+code+"\n})()", false)
+		}
 		if werr == nil {
 			prog, err = wrapped, nil
 		} else {
