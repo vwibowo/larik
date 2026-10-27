@@ -382,18 +382,30 @@ func TestExecutionSetsTheDeclaredTools(t *testing.T) {
 	}
 }
 
-func TestCodeExecutionRejectsDirectUndeclaredTool(t *testing.T) {
-	a, fp, _ := setup(t, permission.ModeYolo,
-		assistant(toolUse("r1", "read", `{"path":"missing.txt"}`)),
+// A model that calls a script-only tool directly under code execution
+// gets the call run, with the same permission checks as from a script,
+// rather than an error that costs it another round trip.
+func TestCodeExecutionRunsDirectScriptTool(t *testing.T) {
+	a, fp, dir := setup(t, permission.ModeDefault,
+		assistant(toolUse("r1", "read", `{"path":"notes.txt"}`)),
+		assistant(toolUse("e1", "edit", `{"path":"notes.txt","old_string":"hello","new_string":"bye"}`)),
 		assistant(llm.TextBlock("done")))
-	a.SetExecution(tools.ExecCode)
-	drain(a.Run(context.Background(), "go"), PermissionReply{})
-	res := lastResult(fp, 1)
-	if !res.IsError || !strings.Contains(res.Content, "unknown tool: read") {
-		t.Fatalf("a direct tool call in code execution must be rejected: %+v", res)
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(res.Content, "run_code") || !strings.Contains(res.Content, "tools.read(") {
-		t.Errorf("the rejection should say how to make the call in a script: %q", res.Content)
+	a.SetExecution(tools.ExecCode)
+	evs := drain(a.Run(context.Background(), "go"), PermissionReply{Allow: false})
+	if res := lastResult(fp, 1); res.IsError || !strings.Contains(res.Content, "hello") {
+		t.Fatalf("a direct read should run: %+v", res)
+	}
+	if asked := permissionEvents(evs); len(asked) != 1 || asked[0].ToolName != "edit" {
+		t.Fatalf("a direct edit must still ask: %+v", asked)
+	}
+	if res := lastResult(fp, 2); !res.IsError {
+		t.Fatalf("a refused edit should fail: %+v", res)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "notes.txt")); string(data) != "hello\n" {
+		t.Fatalf("the refused edit changed the file: %q", data)
 	}
 }
 

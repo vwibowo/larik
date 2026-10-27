@@ -98,22 +98,22 @@ func inGroups(queue []approved, limit int, run func(approved)) {
 	}
 }
 
-// unknownTool is the error for a call to a tool the model wasn't offered.
-// Under code execution the core tools are offered only inside run_code,
-// and a model that calls one directly anyway would otherwise retry the
-// same call: it is told how to make it instead.
-func (a *Agent) unknownTool(name string) string {
-	msg := "unknown tool: " + name
+// scriptTool finds a tool the model called directly that it was offered
+// only inside run_code scripts, as under code execution. Such a call runs
+// as a script's would, with the same checks: weaker models reach for read
+// or edit directly anyway, and turning the call away cost a model round
+// trip each time, often several in a run.
+func (a *Agent) scriptTool(name string) (tools.Tool, bool) {
 	a.mu.Lock()
 	base := a.opts.Tools
 	a.mu.Unlock()
 	if base == nil {
-		return msg
+		return nil, false
 	}
-	if js, ok := base.ScriptName(name); ok {
-		msg += fmt.Sprintf("; %s is not a direct tool in this session, only a function in run_code scripts: call run_code with a script that does it, such as `console.log(tools.%s({...}))`", name, js)
+	if _, ok := base.ScriptName(name); !ok {
+		return nil, false
 	}
-	return msg
+	return base.Get(name)
 }
 
 // prepare resolves a call to its tool and authorizes it. When the call
@@ -125,6 +125,9 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	called := use.Name
 	res = llm.Block{Type: llm.BlockToolResult, ID: use.ID, Name: called}
 	tool, found := registry.Get(use.Name)
+	if !found {
+		tool, found = a.scriptTool(use.Name)
+	}
 	// call_tool runs a deferred tool. From here on the call is that
 	// tool's: permission rules, hooks, auto mode and the events all
 	// see its name and arguments, not the wrapper's.
@@ -148,7 +151,7 @@ func (a *Agent) prepare(ctx context.Context, use llm.Block, registry *tools.Regi
 	case ctx.Err() != nil:
 		res.Content, res.IsError = "interrupted by user", true
 	case !found:
-		res.Content, res.IsError = a.unknownTool(use.Name), true
+		res.Content, res.IsError = "unknown tool: "+use.Name, true
 		fault = FaultUnknownTool
 	case use.Input == nil:
 		res.Content, res.IsError = "INVALID_JSON: the tool input was truncated or malformed; retry the call with complete, valid JSON", true
