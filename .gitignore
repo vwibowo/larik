@@ -21,6 +21,7 @@ benchmarks
 /scripts/audit_dashboard.cjs
 /scripts/compare_agents.py
 /scripts/compare_agents_dashboard.txt
+/scripts/compare_agents_game.txt
 /scripts/extended_tasks.py
 /scripts/measure_agent_startup.py
 /scripts/regrade_code.py
@@ -29,6 +30,7 @@ benchmarks
 /scripts/regrade_extended_code.py
 /scripts/retry_compare_cases.py
 /scripts/verify_dashboard.cjs
+/scripts/verify_game.cjs
 
 .archify
 website/wrangler.toml
