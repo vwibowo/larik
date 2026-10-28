@@ -588,8 +588,8 @@ var settingSpecs = []settingSpec{
 		set: func(m *model, v string) { m.opts.Config.Browser.PaneSize, _ = strconv.Atoi(v) },
 	},
 	{
-		key: "browser_chrome_path", path: "browser.chrome_path", title: "Chrome to launch", section: "tools", kind: kindText,
-		placeholder: "a path to Chrome or Chromium; empty finds it for you",
+		key: "browser_chrome_path", path: "browser.chrome_path", title: "Browser to launch", section: "tools", kind: kindText,
+		placeholder: "a path to Chrome, Edge, Brave or another Chromium; empty finds one for you",
 		applies:     applyReload,
 		get:         func(m *model) string { return m.opts.Config.Browser.ChromePath },
 		store:       orEmpty(""),

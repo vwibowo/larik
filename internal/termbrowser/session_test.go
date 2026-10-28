@@ -134,6 +134,51 @@ func TestFindChromeRejectsMissingChrome(t *testing.T) {
 	}
 }
 
+// Every platform looks for the other Chromium-based browsers too, after
+// Chrome.
+func TestBrowserCandidatesIncludeOtherChromiums(t *testing.T) {
+	env := map[string]string{`ProgramFiles`: `C:\Program Files`, `LOCALAPPDATA`: `C:\Users\u\AppData\Local`}
+	for goos, want := range map[string][]string{
+		"darwin":  {"Google Chrome", "Microsoft Edge", "Brave Browser", "Vivaldi"},
+		"linux":   {"google-chrome", "microsoft-edge", "brave-browser", "vivaldi"},
+		"windows": {`chrome.exe`, `msedge.exe`, `brave.exe`, `vivaldi.exe`},
+	} {
+		got := strings.Join(browserCandidates(goos, "/home/u", func(k string) string { return env[k] }), "\n")
+		last := -1
+		for _, w := range want {
+			i := strings.Index(got, w)
+			if i < 0 {
+				t.Errorf("%s: no %q among candidates:\n%s", goos, w, got)
+				continue
+			}
+			if i < last {
+				t.Errorf("%s: %q should come later in the order of preference", goos, w)
+			}
+			last = i
+		}
+	}
+}
+
+func TestFirstInstalledPrefersEarlierCandidate(t *testing.T) {
+	dir := t.TempDir()
+	chrome, edge := filepath.Join(dir, "chrome"), filepath.Join(dir, "msedge")
+	if err := os.WriteFile(edge, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstInstalled([]string{chrome, edge}); got != edge {
+		t.Fatalf("with only Edge installed, got %q, want %q", got, edge)
+	}
+	if err := os.WriteFile(chrome, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstInstalled([]string{chrome, edge}); got != chrome {
+		t.Fatalf("with Chrome and Edge installed, got %q, want Chrome", got)
+	}
+	if got := firstInstalled([]string{filepath.Join(dir, "none"), "larik-no-such-browser"}); got != "" {
+		t.Fatalf("with nothing installed, got %q", got)
+	}
+}
+
 // testStartupTimeout is how long tests let Chrome take to start.
 const testStartupTimeout = 45 * time.Second
 

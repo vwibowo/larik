@@ -181,10 +181,13 @@ func New(opts Options) *Session {
 	return &Session{opts: opts, startupTimeout: browserStartupTimeout}
 }
 
-// FindChrome reports whether a Chrome or Chromium that the browser tools can
-// drive is installed, without starting it. Chrome is launched on the first
-// browser tool call, so this is only used for an early warning: a path this
-// misses still works, since chromedp finds Chrome on its own.
+// noBrowser is the advice given when no Chromium-based browser is found.
+const noBrowser = "install a Chromium-based browser (Chrome, Chromium, Edge, Brave or Vivaldi) or set browser.chrome_path"
+
+// FindChrome reports whether a Chromium-based browser that the browser tools
+// can drive is installed, without starting it. The browser is launched on the
+// first browser tool call, so this is only used for an early warning: a path
+// this misses still works, since chromedp finds Chrome on its own.
 func FindChrome(opts Options) error {
 	if opts.ChromePath != "" {
 		if _, err := exec.LookPath(opts.ChromePath); err != nil {
@@ -195,31 +198,73 @@ func FindChrome(opts Options) error {
 	if chromeBinary() != "" {
 		return nil
 	}
-	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
-		if _, err := exec.LookPath(name); err == nil {
-			return nil
-		}
-	}
-	return errors.New("no Google Chrome or Chromium found; install one or set browser.chrome_path")
+	return errors.New("no Chromium-based browser found; " + noBrowser)
 }
 
-// chromeBinary is a standard macOS Chrome or Chromium executable, or "".
-// Elsewhere chromedp finds Chrome on PATH by itself.
+// chromeBinary is the first installed Chromium-based browser in
+// browserCandidates' order of preference, or "" to leave the search to
+// chromedp. They all speak the DevTools Protocol, and each runs on Larik's
+// own profile, so the user's profile for that browser is never touched.
 func chromeBinary() string {
-	if goruntime.GOOS != "darwin" {
-		return ""
-	}
 	home, _ := os.UserHomeDir()
-	for _, app := range []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		filepath.Join(home, "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
-		"/Applications/Chromium.app/Contents/MacOS/Chromium",
-		filepath.Join(home, "Applications", "Chromium.app", "Contents", "MacOS", "Chromium"),
-		"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
-		"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-	} {
-		if fi, err := os.Stat(app); err == nil && fi.Mode().IsRegular() {
-			return app
+	return firstInstalled(browserCandidates(goruntime.GOOS, home, os.Getenv))
+}
+
+// browserCandidates lists where a Chromium-based browser is usually installed
+// on goos, Chrome first, then Chromium, Edge, Brave and Vivaldi. An entry is
+// an absolute path or, on Linux, a name to look up on PATH.
+func browserCandidates(goos, home string, getenv func(string) string) []string {
+	switch goos {
+	case "darwin":
+		var paths []string
+		for _, app := range []string{
+			"Google Chrome", "Google Chrome Beta", "Google Chrome Canary", "Chromium",
+			"Microsoft Edge", "Brave Browser", "Vivaldi",
+		} {
+			bin := filepath.Join(app+".app", "Contents", "MacOS", app)
+			paths = append(paths, filepath.Join("/Applications", bin))
+			if home != "" {
+				paths = append(paths, filepath.Join(home, "Applications", bin))
+			}
+		}
+		return paths
+	case "windows":
+		var paths []string
+		for _, exe := range []string{
+			`Google\Chrome\Application\chrome.exe`,
+			`Chromium\Application\chrome.exe`,
+			`Microsoft\Edge\Application\msedge.exe`,
+			`BraveSoftware\Brave-Browser\Application\brave.exe`,
+			`Vivaldi\Application\vivaldi.exe`,
+		} {
+			for _, dir := range []string{getenv("ProgramFiles"), getenv("ProgramFiles(x86)"), getenv("LOCALAPPDATA")} {
+				if dir != "" {
+					paths = append(paths, dir+`\`+exe)
+				}
+			}
+		}
+		return paths
+	default:
+		return []string{
+			"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "/snap/bin/chromium",
+			"microsoft-edge", "microsoft-edge-stable", "brave-browser", "brave", "vivaldi", "vivaldi-stable",
+		}
+	}
+}
+
+// firstInstalled is the first candidate that exists: a regular file for an
+// absolute path, an executable on PATH for a bare name. It returns "" if none
+// does.
+func firstInstalled(candidates []string) string {
+	for _, c := range candidates {
+		if filepath.IsAbs(c) || strings.ContainsAny(c, `/\`) {
+			if fi, err := os.Stat(c); err == nil && fi.Mode().IsRegular() {
+				return c
+			}
+			continue
+		}
+		if path, err := exec.LookPath(c); err == nil {
+			return path
 		}
 	}
 	return ""
@@ -327,7 +372,7 @@ func (s *Session) launch(profile string) error {
 			_ = os.RemoveAll(s.tempProfile)
 			s.tempProfile = ""
 		}
-		return fmt.Errorf("starting Chrome: %w (install Google Chrome or Chromium, or set browser.chrome_path)", err)
+		return fmt.Errorf("starting the browser: %w (%s)", err, noBrowser)
 	}
 	return nil
 }
