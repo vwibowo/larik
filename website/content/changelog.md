@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.20.2
+
+<p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>
+
+### Fixed
+
+- **Code-mode scripts are told up front that they are plain JavaScript.** The `run_code` description now says scripts are not Node.js (no `require`, `import`, `process` or `fs`) and have no browser APIs (`TextEncoder`, `crypto`, `fetch`, `Blob`, timers), and points to `tools.bash` for hashing, byte counts and downloads. Models used to find this out from a failed script.
+- **A script that uses a missing browser API gets a hint**, the way one using `require` already did, naming the `tools.bash` command to use instead, such as `shasum -a 256` or `wc -c`.
+- **Script hints no longer show `await`** in their examples, matching the description's "Calls are synchronous".
+
 ## v0.20.1
 
 <p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>

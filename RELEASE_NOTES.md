@@ -1,3 +1,15 @@
+# Larik v0.20.2
+
+_October 28, 2026 · Previous release: v0.20.1._
+
+Code-mode scripts now know what runtime they're in.
+
+### Fixed
+
+- **Code-mode scripts are told up front that they are plain JavaScript.** The `run_code` description now says scripts are not Node.js (no `require`, `import`, `process` or `fs`) and have no browser APIs (`TextEncoder`, `crypto`, `fetch`, `Blob`, timers), and points to `tools.bash` for hashing, byte counts and downloads. Models used to find this out from a failed script.
+- **A script that uses a missing browser API gets a hint**, the way one using `require` already did, naming the `tools.bash` command to use instead, such as `shasum -a 256` or `wc -c`.
+- **Script hints no longer show `await`** in their examples, matching the description's "Calls are synchronous".
+
 # Larik v0.20.1
 
 _October 28, 2026 · Previous release: v0.20.0._
