@@ -65,6 +65,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "trace" {
 		return runTrace(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "schedule" {
+		return runSchedule(os.Args[2:])
+	}
 	var (
 		print   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")

@@ -352,6 +352,12 @@ func configDir() string {
 	return filepath.Join(home, ".config", "larik")
 }
 
+// ScheduleFile holds the scheduled prompts (larik schedule).
+func ScheduleFile() string { return filepath.Join(configDir(), "schedules.json") }
+
+// ScheduleLogDir holds the logs of scheduled runs, one folder per entry.
+func ScheduleLogDir() string { return filepath.Join(dataDir(), "schedules") }
+
 func dataDir() string {
 	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
 		return filepath.Join(d, "larik")

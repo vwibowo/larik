@@ -623,6 +623,20 @@ Use `/sandbox-config` or **Bash sandbox** in `/config` to manage the enabled/def
 
 Loosening the sandbox (enabling network, allowing domains, adding writable paths, disabling it) is honored only from personal files: `~/.config/larik/config.json` and private project settings under `~/.config/larik/projects/`. A shared `.larik/settings.json` can only switch the sandbox on. `/sandbox` shows the current settings.
 
+## Scheduled runs
+
+`larik schedule` runs a prompt on a cron schedule, headlessly, in the directory you add it from:
+
+```bash
+larik schedule add "0 9 * * 1-5" "summarize yesterday's commits into NOTES.md"   # weekdays at 9:00
+larik schedule add --mode accept-edits --timeout 10m "@daily" "update the changelog"
+larik schedule list
+larik schedule rm 3f9a2c
+larik schedule run      # runs due schedules until stopped
+```
+
+Cron takes the usual five fields (minute, hour, day of month, month, weekday; local time) with `*`, ranges, steps and lists, or `@hourly`, `@daily`, `@weekly`, `@monthly`. Schedules run only while `larik schedule run` is running. Keep it in a terminal or tmux, or start it at login with launchd or systemd. Each run is `larik -p` with the schedule's `--model`, `--mode` and `--timeout` (30 minutes unless set). Its output goes to a log under `~/.local/share/larik/schedules/<id>/`, and `list` shows the last result. In the default mode anything that would ask permission is denied, so pass `--mode` for runs that change files. A run still going when its next time comes isn't started twice, and a time missed while no daemon was running is made up once when one starts. Schedules are kept in `~/.config/larik/schedules.json`.
+
 ## Server mode
 
 `larik serve` exposes the current directory's agent over a local HTTP API. Each session streams its events over Server-Sent Events (SSE), so editors, web UIs and scripts can drive Larik. One server can run several sessions at once. They share MCP connections, language servers and the sandbox.
