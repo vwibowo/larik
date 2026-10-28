@@ -177,6 +177,10 @@ func urlHost(raw string) string {
 // approval; elsewhere it has nothing to do and is allowed.
 const ExitPlanTool = "exit_plan_mode"
 
+// AskUserTool puts a question to the user. It always asks, in every mode,
+// since the prompt is the question; only a deny rule turns it off.
+const AskUserTool = "ask_user"
+
 // MemoryTool manages notes in Larik's own directories. Project notes and
 // reads need no approval, including in plan mode. User-scoped mutations
 // affect every project and ask unless explicitly allowed or in yolo mode.
@@ -228,6 +232,9 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 			return Deny, fmt.Sprintf("denied by rule %q", r)
 		}
 	}
+	if call.Tool == AskUserTool {
+		return Ask, ""
+	}
 	if call.Tool == ExitPlanTool {
 		if c.mode == ModePlan {
 			return Ask, ""
@@ -276,8 +283,8 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 // SuggestRule proposes an "always allow" rule for a call: the command's
 // first word(s) for bash, the tool name for everything else.
 func SuggestRule(tool string, input json.RawMessage) string {
-	if tool == ExitPlanTool {
-		return "" // approving a plan is never standing permission
+	if tool == ExitPlanTool || tool == AskUserTool {
+		return "" // approving a plan or answering a question is never standing permission
 	}
 	if domainTools[tool] {
 		if host := Subject(tool, input); host != "" {

@@ -79,7 +79,7 @@ var codeMemoryLimit uint64 = 256 << 20
 var unbound = map[string]bool{
 	CodeToolName: true, WriteFilesToolName: true, ToolSearchName: true, CallToolName: true,
 	"todo_write": true, "task": true, "task_stop": true, "task_wait": true,
-	"exit_plan_mode": true, "skill": true, "memory": true,
+	"exit_plan_mode": true, "ask_user": true, "skill": true, "memory": true,
 }
 
 // Caller runs one delegated tool call, with the same
@@ -271,7 +271,7 @@ func (r *Registry) ScriptName(name string) (string, bool) {
 }
 
 // directInCode are the tools the model calls directly under ExecCode.
-var directInCode = []string{"write", WriteFilesToolName, "task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode"}
+var directInCode = []string{"write", WriteFilesToolName, "task", "task_wait", "task_stop", TodoToolName, "skill", "memory", "exit_plan_mode", "ask_user"}
 
 // bindable lists the specs of the tools scripts may call, sorted by name.
 func (r *Registry) bindable() []llm.ToolSpec {

@@ -155,6 +155,10 @@ func (p *printer) handle(e agent.Event) {
 			fmt.Fprintf(p.stderr, "%s✗ %s: %s\n", nest(e), e.ToolName, textutil.FirstLine(strings.TrimSpace(e.Output)))
 		}
 	case agent.EvPermission:
+		if e.ToolName == permission.AskUserTool {
+			fmt.Fprintf(p.stderr, "%s? %s (no one to answer in non-interactive mode; the model decides)\n", nest(e), agent.QuestionOf(e.Input))
+			break
+		}
 		fmt.Fprintf(p.stderr, "%s✗ %s needs approval (denied in non-interactive mode; add an allow rule or use --mode)\n", nest(e), e.ToolName)
 	case agent.EvTaskDone:
 		fmt.Fprintf(p.stderr, "◆ background %s (%s) %s\n", e.ToolID, e.Agent, e.StopReason)
@@ -215,6 +219,9 @@ func indent(s, prefix string) string {
 func deny(e agent.Event) agent.PermissionReply {
 	if e.ToolName == permission.ExitPlanTool {
 		return agent.PermissionReply{Reason: "this is a non-interactive run, so plan mode can't end here; give the plan as your final answer"}
+	}
+	if e.ToolName == permission.AskUserTool {
+		return agent.PermissionReply{Reason: "this is a non-interactive run, so no one can answer"}
 	}
 	return agent.PermissionReply{Reason: denyReason}
 }

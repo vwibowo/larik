@@ -329,3 +329,18 @@ func TestMemoryCanBeDenied(t *testing.T) {
 		t.Errorf("a deny rule should block the memory tool: %v", got)
 	}
 }
+
+func TestAskUserAlwaysAsks(t *testing.T) {
+	in := `{"question":"Which format?"}`
+	for _, mode := range []Mode{ModePlan, ModeDefault, ModeAcceptEdits, ModeAuto, ModeYolo} {
+		if got, _ := NewChecker(mode, Rules{Allow: []string{AskUserTool}}, "/w").Decide(call(AskUserTool, true, in)); got != Ask {
+			t.Errorf("%s: got %v, want Ask", mode, got)
+		}
+	}
+	if got, _ := NewChecker(ModeDefault, Rules{Deny: []string{AskUserTool}}, "/w").Decide(call(AskUserTool, true, in)); got != Deny {
+		t.Errorf("a deny rule should turn questions off: %v", got)
+	}
+	if r := SuggestRule(AskUserTool, json.RawMessage(in)); r != "" {
+		t.Errorf("no rule should be suggested for a question, got %q", r)
+	}
+}

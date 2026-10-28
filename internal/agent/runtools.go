@@ -430,11 +430,15 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	if exitPlan && PlanOf(input) == "" {
 		return false, "exit_plan_mode needs the plan: pass it as plan, in Markdown.", input, false
 	}
+	question := use.Name == permission.AskUserTool
+	if question && QuestionOf(input) == "" {
+		return false, "ask_user needs the question: pass it as question.", input, false
+	}
 	// Auto mode: a model judges the call first, and only what it doesn't
 	// approve reaches the user. A hook that said "ask" wants the user, and
 	// a plan is always the user's to approve.
 	autoReason := ""
-	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan && !permission.UserMemoryMutation(use.Name, input) {
+	if perms.Mode() == permission.ModeAuto && pre.Permission != "ask" && !exitPlan && !question && !permission.UserMemoryMutation(use.Name, input) {
 		started := time.Now()
 		// A script must not spend its execution budget waiting for the
 		// classifier, including a verdict prefetched for this call. Resume
@@ -458,7 +462,11 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 	defer tools.WaitingForUser(ctx)()
 	reply := make(chan PermissionReply, 1)
 	rule := permission.SuggestRule(use.Name, input)
-	a.notify("Larik needs your permission to use " + use.Name)
+	if question {
+		a.notify("Larik has a question")
+	} else {
+		a.notify("Larik needs your permission to use " + use.Name)
+	}
 	asked := time.Now()
 	emit(Event{Kind: EvPermission, ToolID: use.ID, ToolName: use.Name, Input: input, SuggestedRule: rule, Cwd: a.opts.Cwd, AutoReason: autoReason, RequestedAt: asked, Reply: reply})
 	select {
@@ -467,6 +475,10 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 		return false, "interrupted by user", input, false
 	case r := <-reply:
 		switch {
+		case question && r.Allow:
+			record("answered", r.Answer, asked)
+		case question:
+			record("dismissed", r.Reason, asked)
 		case exitPlan && r.Allow:
 			record("plan approved", "continue in "+string(r.Mode), asked)
 		case exitPlan:
@@ -477,6 +489,16 @@ func (a *Agent) authorize(ctx context.Context, use llm.Block, tool tools.Tool, a
 			record("always allow", "", asked)
 		default:
 			record("allow", "", asked)
+		}
+		if question {
+			if !r.Allow {
+				msg := "The user dismissed the question. Proceed with your best judgment and say what you assumed."
+				if r.Reason != "" {
+					msg += " Their note: " + r.Reason
+				}
+				return false, msg, input, false
+			}
+			return true, "", withAnswer(input, r.Answer), true
 		}
 		if exitPlan {
 			if !r.Allow {

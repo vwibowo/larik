@@ -472,7 +472,7 @@ func childTools(parent *tools.Registry, def Definition, inWorktree bool) *tools.
 		// The task list is the main agent's, shown to the user; a child
 		// reports back in its final message instead. Memory is the main
 		// agent's too: a child has no memory section in its prompt.
-		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || spec.Name == permission.MemoryTool || spec.Name == permission.ExitPlanTool || !def.toolAllowed(spec.Name) {
+		if spec.Name == ToolName || spec.Name == WaitToolName || spec.Name == StopToolName || spec.Name == tools.TodoToolName || spec.Name == permission.MemoryTool || spec.Name == permission.ExitPlanTool || spec.Name == permission.AskUserTool || !def.toolAllowed(spec.Name) {
 			continue
 		}
 		if inWorktree && (spec.Name == "lsp" || spec.Name == "apply_code_action") {

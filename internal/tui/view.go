@@ -1005,6 +1005,9 @@ func elapsed(d time.Duration) string {
 // queued behind another prompt. Legacy requests have no misleading zero date.
 func (m *model) permissionWaitLabel() string {
 	label := "Waiting for your approval"
+	if m.asking() {
+		label = "Waiting for your answer"
+	}
 	if m.perm != nil && !m.perm.RequestedAt.IsZero() {
 		label += " · " + elapsed(max(time.Since(m.perm.RequestedAt), 0))
 	}
@@ -1015,6 +1018,9 @@ func (m *model) permissionWaitLabel() string {
 // action, where the request came from, what exactly will happen, and the
 // three answers with their keys.
 func (m *model) permissionView() string {
+	if m.asking() {
+		return m.askView()
+	}
 	e := m.perm
 	w := max(m.width-6, 20)
 	meta := []string{permToolName(e)}
@@ -1139,6 +1145,8 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Manage memory?"
 	case permission.ExitPlanTool:
 		return "Ready to start on this plan?"
+	case permission.AskUserTool:
+		return "Larik has a question"
 	}
 	if server := mcp.ServerOf(e.ToolName); server != "" {
 		return "Use " + permToolName(e) + "?"
@@ -1804,6 +1812,9 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		}
 	case "task_stop":
 		arg = str(in["id"])
+	case permission.AskUserTool:
+		name = "ask"
+		arg = agent.QuestionOf(input)
 	case permission.ExitPlanTool:
 		name = "plan"
 		arg = strings.TrimLeft(textutil.FirstLine(agent.PlanOf(input)), "# ")

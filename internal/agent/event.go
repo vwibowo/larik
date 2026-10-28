@@ -108,6 +108,9 @@ type PermissionReply struct {
 	// Mode, for an approved exit_plan_mode, is the permission mode to
 	// continue in (default when empty).
 	Mode permission.Mode
+	// Answer, for ask_user, is the user's reply: an option's label or
+	// their own words. Allow false means they dismissed the question.
+	Answer string
 }
 
 // CompactionInfo reports the provider-grounded size reduction from one

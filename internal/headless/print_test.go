@@ -62,3 +62,10 @@ func TestHeadlessKeepsPlanMode(t *testing.T) {
 		t.Fatalf("got %+v", r)
 	}
 }
+
+func TestDenyQuestion(t *testing.T) {
+	r := deny(agent.Event{ToolName: permission.AskUserTool})
+	if r.Allow || !strings.Contains(r.Reason, "no one can answer") {
+		t.Fatalf("got %+v", r)
+	}
+}

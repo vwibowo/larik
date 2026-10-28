@@ -144,7 +144,7 @@ func (a *Agent) prefetchAuto(ctx context.Context, uses []llm.Block, registry *to
 			}
 			tool, name, input = inner, inner.Spec().Name, args
 		}
-		if name == tools.CodeToolName || name == tools.WriteFilesToolName || name == permission.ExitPlanTool {
+		if name == tools.CodeToolName || name == tools.WriteFilesToolName || name == permission.ExitPlanTool || name == permission.AskUserTool {
 			continue // authorized call by call, or always the user's
 		}
 		if permission.UserMemoryMutation(name, input) {

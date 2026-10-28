@@ -1524,6 +1524,9 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 		if e.ToolName == permission.ExitPlanTool {
 			what = "has a plan for you to review"
 		}
+		if e.ToolName == permission.AskUserTool {
+			what = "has a question for you"
+		}
 		alert := tea.Sequence(plan, m.alert(what))
 		if idleBefore {
 			return tea.Batch(alert, m.spin.Tick)
@@ -1597,6 +1600,11 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 
 func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.permFeedback != nil {
+		if m.asking() {
+			if cmd, done := m.handleAskFeedbackKey(msg); done {
+				return cmd
+			}
+		}
 		switch msg.String() {
 		case "enter":
 			return m.replyPermission(agent.PermissionReply{Allow: false, Reason: strings.TrimSpace(m.permFeedback.Value())})
@@ -1609,6 +1617,9 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 		var cmd tea.Cmd
 		*m.permFeedback, cmd = m.permFeedback.Update(msg)
 		return cmd
+	}
+	if m.asking() {
+		return m.handleAskKey(msg)
 	}
 	const options = 3
 	var reply *agent.PermissionReply
@@ -1658,6 +1669,9 @@ func (m *model) startPermissionFeedback() {
 	if m.perm != nil && m.perm.ToolName == permission.ExitPlanTool {
 		ta.Placeholder = "What should change in the plan?"
 	}
+	if m.asking() {
+		ta.Placeholder = "Your answer"
+	}
 	ta.ShowLineNumbers = false
 	ta.Prompt = "› "
 	ta.DynamicHeight = true
@@ -1679,6 +1693,12 @@ func (m *model) replyPermission(reply agent.PermissionReply) tea.Cmd {
 		m.perm, m.permIdx = &next, 0
 	}
 	ev.Reply <- reply
+	if ev.ToolName == permission.AskUserTool {
+		if !reply.Allow {
+			return m.println(m.st.dim.Render("  ⎿ dismissed the question"))
+		}
+		return m.println(m.st.dim.Render("  ⎿ answered: " + reply.Answer))
+	}
 	if ev.ToolName == permission.ExitPlanTool {
 		if !reply.Allow {
 			return m.println(m.st.dim.Render("  ⎿ kept planning"))
