@@ -187,7 +187,7 @@ func (d Definition) toolAllowed(name string) bool {
 		switch {
 		case t == "*", flat(t) == flat(name):
 			return true
-		case name == tools.MultiEditToolName && strings.EqualFold(t, "edit"):
+		case (name == tools.MultiEditToolName || name == tools.NotebookEditToolName) && strings.EqualFold(t, "edit"):
 			return true
 		case strings.HasPrefix(t, "mcp__") && !strings.Contains(t[len("mcp__"):], "__") && strings.HasPrefix(name, t+"__"):
 			return true

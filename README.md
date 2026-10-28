@@ -378,7 +378,7 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 
 `/undo` puts files back as they were before the last turn that changed any, and tells the model to re-read them.
 
-- **File tools:** every file `write`, `edit` and `multi_edit` touched.
+- **File tools:** every file `write`, `edit`, `multi_edit` and `notebook_edit` touched.
 - **Shell commands, in a git repository:** files a `bash` command modified, deleted or created, whether tracked or untracked. A file you had already changed goes back to how you had it, not to the last commit. Larik compares git's view of the working tree before and after each command; it doesn't commit, stash or stage anything.
 - **Not covered:** files git ignores (build output, `node_modules`), changes a command makes by moving `HEAD` (`git checkout`, `reset`, `pull`; undo those with git), files over 2 MB, anything outside a repository, and what MCP tools change. For an ignored file the model can name it in the command's `checkpoint_paths`.
 - Edits you make yourself in an editor while a command runs count as that command's, so an `/undo` right after would revert them too.
@@ -415,7 +415,9 @@ While a permission request is open, the prompt and live status explicitly show *
 
 Answering "always allow" writes the rule to private project settings under `~/.config/larik/projects/` (or `$XDG_CONFIG_HOME/larik/projects/`). If saving fails, Larik reports the error and the rule applies only for the current session.
 
-`write`, `edit` and `multi_edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
+`write`, `edit`, `multi_edit` and `notebook_edit` operate only inside the working directory. They reject symlink paths and protected project files (`.git` itself and the parts of it that decide what code git runs, such as `hooks`, `config` and `commondir`, plus `.larik`, `.claude`, and `.mcp.json`) in every mode. If a checkpoint cannot be saved, the write stops.
+
+**Notebooks.** `read` shows a Jupyter notebook (`.ipynb`) as its cells, each with its index, id, type, source and text outputs, and names image outputs rather than sending them; `offset` picks the first cell. `notebook_edit` replaces, inserts or deletes one cell by index or id. It keeps the rest of the file as it was and clears a code cell's outputs when its source changes. Permissions treat it as `edit`: accept-edits allows it in the project, and `edit` rules cover it.
 
 For several independent files, `write_files` creates them in one model turn. Each file still goes through `write`'s permission check, hooks, checkpoint and diagnostics. If one file fails, the tool stops and reports which earlier files were already written.
 

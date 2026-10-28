@@ -26,7 +26,7 @@ func (Read) ReadOnly() bool { return true }
 func (Read) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "read",
-		Description: "Read a text file, returning numbered lines; use offset/limit for large files. Images (png, jpg, gif, webp) and PDFs are returned whole for you to see.",
+		Description: "Read a text file, returning numbered lines; use offset/limit for large files. Images (png, jpg, gif, webp) and PDFs are returned whole for you to see; notebooks as cells (offset is the first cell).",
 		Schema: schema(`{"type":"object","properties":{
 			"path":{"type":"string","description":"File path, absolute or relative to the working directory"},
 			"offset":{"type":"integer","description":"1-based line to start from"},
@@ -60,6 +60,14 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if fi != nil {
 		if res, ok := env.readMedia(path, fi.Size()); ok {
 			return res
+		}
+	}
+	if strings.EqualFold(filepath.Ext(path), ".ipynb") {
+		if data, err := os.ReadFile(path); err == nil {
+			if nb, err := parseNotebook(data); err == nil {
+				env.markRead(path)
+				return Result{Content: renderNotebook(nb, max(in.Offset, 0), readOutputBytes)}
+			}
 		}
 	}
 	if in.Offset < 1 {

@@ -187,7 +187,7 @@ const AskUserTool = "ask_user"
 const MemoryTool = "memory"
 
 // fileWriteTools write one file named by their path argument.
-var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "apply_code_action": true, "browser_screenshot": true}
+var fileWriteTools = map[string]bool{"write": true, "edit": true, "multi_edit": true, "notebook_edit": true, "apply_code_action": true, "browser_screenshot": true}
 
 // optionalWritePath names the write tools whose path argument may be absent,
 // in which case the call writes nothing: browser_screenshot only saves a file
@@ -272,7 +272,7 @@ func (c *Checker) Decide(call Call) (Decision, string) {
 		if safeCommand(subject) {
 			return Allow, ""
 		}
-	case "write", "edit", "multi_edit", "apply_code_action", "browser_screenshot":
+	case "write", "edit", "multi_edit", "notebook_edit", "apply_code_action", "browser_screenshot":
 		if (c.mode == ModeAcceptEdits || c.mode == ModeAuto) && c.insideCwd(subject) {
 			return Allow, ""
 		}
@@ -292,7 +292,7 @@ func SuggestRule(tool string, input json.RawMessage) string {
 		}
 	}
 	if tool != "bash" {
-		if tool == "multi_edit" {
+		if tool == "multi_edit" || tool == "notebook_edit" {
 			return "edit"
 		}
 		return tool
@@ -352,7 +352,7 @@ func (c *Checker) matches(rule, tool, subject string) bool {
 	if m[1] != tool {
 		// Documented editing aliases inherit the underlying tool rules.
 		// Explicit alias rules remain valid and can distinguish that tool.
-		editAlias := (tool == "multi_edit" || tool == "apply_code_action") && m[1] == "edit"
+		editAlias := (tool == "multi_edit" || tool == "notebook_edit" || tool == "apply_code_action") && m[1] == "edit"
 		writeAlias := tool == "browser_screenshot" && subject != "" && m[1] == "write"
 		if !editAlias && !writeAlias {
 			// `mcp__server` covers all of that server's tools.

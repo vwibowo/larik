@@ -1615,7 +1615,7 @@ func (m *model) compactToolSummary() string {
 	for _, e := range m.compactTools {
 		name := e.ToolName
 		switch name {
-		case "multi_edit":
+		case "multi_edit", tools.NotebookEditToolName:
 			name = "edit"
 		case tools.CodeToolName:
 			name = "script"
@@ -1767,6 +1767,9 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 	case "apply_code_action":
 		name = "lsp › apply"
 		arg = str(in["title"])
+	case tools.NotebookEditToolName:
+		name = "notebook"
+		arg = str(in["path"]) + ", " + str(in["action"])
 	case tools.MultiEditToolName:
 		arg = str(in["path"])
 		if edits, ok := in["edits"].([]any); ok {

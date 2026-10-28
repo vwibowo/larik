@@ -23,7 +23,7 @@ func TestToolDefinitionBudget(t *testing.T) {
 	}
 	defer a.Close()
 
-	const limit = 11000 // 9807 on 2026-10-10; 10558 on 2026-10-28 with ask_user and background bash
+	const limit = 11500 // 9807 on 2026-10-10; 11119 on 2026-10-28 with ask_user, background bash, media reads and notebook_edit
 	total := 0
 	for _, sp := range tools.NewRegistry(a.tools...).Specs() {
 		if sp.Name == "lsp" || sp.Name == "apply_code_action" {

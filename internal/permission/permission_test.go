@@ -344,3 +344,16 @@ func TestAskUserAlwaysAsks(t *testing.T) {
 		t.Errorf("no rule should be suggested for a question, got %q", r)
 	}
 }
+
+func TestNotebookEditIsAnEdit(t *testing.T) {
+	in := `{"path":"/w/a.ipynb","action":"delete","cell":0}`
+	if got, _ := NewChecker(ModeAcceptEdits, Rules{}, "/w").Decide(call("notebook_edit", false, in)); got != Allow {
+		t.Errorf("accept-edits should allow notebook edits in the project: %v", got)
+	}
+	if got, _ := NewChecker(ModeDefault, Rules{Deny: []string{"edit"}}, "/w").Decide(call("notebook_edit", false, in)); got != Deny {
+		t.Errorf("an edit deny rule should cover notebook_edit: %v", got)
+	}
+	if r := SuggestRule("notebook_edit", json.RawMessage(in)); r != "edit" {
+		t.Errorf("suggested rule %q", r)
+	}
+}
