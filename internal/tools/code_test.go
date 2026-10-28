@@ -495,6 +495,16 @@ func TestRunCodeNodeHint(t *testing.T) {
 			t.Errorf("%q should get the script environment hint:\n%s", code, res.Content)
 		}
 	}
+	for _, code := range []string{
+		`new TextEncoder().encode("abc").length`,
+		`crypto.subtle.digest("SHA-256", "abc")`,
+		`setTimeout(() => {}, 10)`,
+	} {
+		res := runCode(t, &fakeCaller{}, code, 0)
+		if !res.IsError || !strings.Contains(res.Content, "no browser APIs") {
+			t.Errorf("%q should get the browser API hint:\n%s", code, res.Content)
+		}
+	}
 	res := runCode(t, &fakeCaller{}, `tools.echo({text: "a"}).then(r => console.log(r))`, 0)
 	if !res.IsError || !strings.Contains(res.Content, "not a promise") {
 		t.Errorf(".then should get the hint:\n%s", res.Content)

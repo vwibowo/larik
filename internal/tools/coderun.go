@@ -844,12 +844,17 @@ const backtickHint = "If a template literal (`...`) in the script holds text tha
 // module system; scriptEnvHint says what a script has instead.
 var (
 	nodeGlobal = regexp.MustCompile(`ReferenceError: (require|process|module|exports|__dirname|__filename|fs|os|path|subprocess|Deno|Bun) is not defined`)
+	// webGlobal are browser APIs models reach for to hash or count bytes.
+	webGlobal = regexp.MustCompile(`ReferenceError: (TextEncoder|TextDecoder|crypto|fetch|Blob|Buffer|atob|btoa|setTimeout|setInterval|URL|performance) is not defined`)
 	importUse  = regexp.MustCompile(`(^|[^\w.])import\s*[({"'\w*]`)
 )
 
 const envHint = "Scripts are plain JavaScript, not Node.js or Python: there is no require, import, process, fs or os. " +
 	"Read files and run commands through tools, such as tools.read({path}) or tools.bash({command}), " +
 	"and print what you need with console.log."
+
+const webHint = "Scripts have no browser APIs: no TextEncoder, crypto, fetch, Blob, Buffer or timers. " +
+	"Use tools.bash for that work, such as shasum -a 256 for hashes, wc -c for byte sizes and curl for downloads."
 
 // thenHint follows a script that calls .then on a tool's result.
 const thenHint = "A tools.* call returns its result directly, not a promise: use the value, as in const r = tools.bash({command}); console.log(r.output)."
@@ -859,6 +864,8 @@ func scriptEnvHint(msg, code string) string {
 	case nodeGlobal.MatchString(msg),
 		strings.Contains(msg, "Unexpected reserved word") && importUse.MatchString(code):
 		return envHint
+	case webGlobal.MatchString(msg):
+		return webHint
 	case strings.Contains(msg, "has no member 'then'"):
 		return thenHint
 	}

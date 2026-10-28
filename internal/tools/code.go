@@ -315,6 +315,7 @@ func (c codeTool) Spec() llm.ToolSpec {
 		"store(key, value) and load(key) keep small JSON values across successful scripts in this session; store(key, undefined) deletes. Changes commit only when the script succeeds. "+
 		"tools.search(query, limit?) ranks the tools by keywords and returns [{name, signature, description}]; tools.describe(name) returns a tool's schema, tools.list() the names. console.log prints, and the last expression's value is printed too. "+
 		"Calls are synchronous (no await). There is no file, network or process access except through tools, and every call is permission-checked. "+
+		"There are no browser APIs either (TextEncoder, crypto, fetch, Blob, setTimeout): hash, measure bytes or download with tools.bash (shasum, wc -c, curl). "+
 		"Print summaries, not raw dumps. Limits per script: %d tool calls, %d MB of memory, and %s (timeout_seconds, up to %d).",
 		codeMaxCalls, codeMemoryLimit>>20, codeTimeoutDefault, int(codeTimeoutMax.Seconds()))
 	switch {
