@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.21.0
+
+<p class="release-meta"><time datetime="2026-10-29">October 29, 2026</time></p>
+
+### Added
+
+- **The model can ask you a question.** With `ask_user` it stops mid-turn and asks, offering up to four answers with its recommendation first. Pick one by number, or type your own. Esc dismisses the question, and the model carries on with its best judgment and says what it assumed. A question waits for you in every mode, including `yolo` and `auto`; a deny rule for `ask_user` turns it off. Subagents can't ask, and in `larik -p` the model decides for itself. The server's permission answer takes an `answer` field.
+- **Background commands.** `bash` with `run_in_background` starts a dev server, watcher or long build and returns a task id at once. The model reads the output so far with `raw_output`. When the command exits, the end of its output and its exit code reach the model, and an idle session starts a turn for it. `task_wait` and `task_stop` work on it as on background subagents. In `larik -p`, commands still running when the model finishes are stopped, so a server can't hang a CI run.
+- **`read` returns images and PDFs whole.** PNG, JPEG, GIF and WebP files (up to 5 MB) come back as images. PDFs (up to 32 MB) come back as documents on Anthropic, OpenAI and Gemini; on other providers `read` suggests extracting the text instead. `run_code` scripts now pass up to eight images or documents from their calls on to the model instead of dropping them.
+- **`--output-schema` for a checked JSON answer.** `larik -p --output-schema schema.json` tells the model the JSON Schema its final answer must match and checks the answer. On a mismatch the model sees the error and gets two more tries; after that Larik exits non-zero. Stdout carries only the value, ready for `jq`, and `--output json` ends with a `structured_output` event. It works with every provider.
+- **Scheduled runs.** `larik schedule add "<cron>" <prompt>` saves a prompt with its directory, model, permission mode and timeout. `larik schedule run` runs each one as `larik -p` when it falls due, with its output logged under `~/.local/share/larik/schedules/`. `list` shows the next and last runs, and `rm` deletes one. Cron takes the usual five fields or `@daily` and the like.
+- **Jupyter notebooks.** `read` shows a `.ipynb` as its cells, with each cell's index, id, type, source and text outputs, instead of raw JSON. `notebook_edit` replaces, inserts or deletes one cell by index or id, keeps the rest of the file as it was, and clears a code cell's stale outputs. Permissions treat it as `edit`.
+
+### Compatibility notes
+
+- The new `ask_user` and `notebook_edit` tools and the longer `bash` and `read` definitions add about 1.2 KB to every request. Provider prompt caches warm again once after upgrading.
+- `notebook_edit` is an `edit` alias: existing `edit` allow and deny rules, accept-edits mode, and subagent definitions that list `edit` cover it.
+
 ## v0.20.3
 
 <p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>
