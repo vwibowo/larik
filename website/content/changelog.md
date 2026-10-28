@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.20.3
+
+<p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>
+
+### Changed
+
+- **The browser tools work with any Chromium-based browser.** Larik now finds Microsoft Edge, Brave and Vivaldi as well as Chrome and Chromium, on macOS, Linux and Windows, so Google Chrome is no longer required. Chrome is still preferred when several are installed, and whichever browser runs uses Larik's own profile, never yours.
+
+### Fixed
+
+- **Windows finds Chrome in Program Files.** The startup check looked only on PATH, so it warned that no Chrome was installed when it was.
+
 ## v0.20.2
 
 <p class="release-meta"><time datetime="2026-10-28">October 28, 2026</time></p>
