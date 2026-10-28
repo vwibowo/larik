@@ -94,3 +94,28 @@ func compile(raw json.RawMessage) *jsonschema.Resolved {
 	}
 	return r
 }
+
+// CheckSchema reports whether raw is a JSON Schema the validator can use.
+func CheckSchema(raw json.RawMessage) error {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return fmt.Errorf("not a JSON object")
+	}
+	if resolveSchema(raw) == nil {
+		return fmt.Errorf("not a usable JSON Schema")
+	}
+	return nil
+}
+
+// ValidateJSON checks value, a JSON document, against schema.
+func ValidateJSON(schema, value json.RawMessage) error {
+	r := resolveSchema(schema)
+	if r == nil {
+		return fmt.Errorf("not a usable JSON Schema")
+	}
+	var v any
+	if err := json.Unmarshal(value, &v); err != nil {
+		return fmt.Errorf("not valid JSON: %w", err)
+	}
+	return r.Validate(v)
+}

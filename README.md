@@ -56,12 +56,15 @@ With no `--model` and no saved default, Larik picks the default model of the fir
 ./larik -p "summarize this repo"                  # headless, text output
 ./larik -p --output json --mode yolo "run tests"  # one JSON event per line
 ./larik -p --timeout 10m "refactor the parser"    # stop an unattended run after 10 minutes
+./larik -p --output-schema schema.json "list the open TODOs"  # final answer as JSON matching the schema
 ./larik -c                                        # continue the last session here
 ./larik --resume 20260926-2358                    # resume by id prefix
 ./larik -c --fork                                 # branch the last session instead of appending
 ./larik serve                                     # HTTP + SSE API (see Server mode)
 ./larik bench --models worker,anthropic/claude-haiku-4-5  # compare models on self-checking tasks (see Mixing cheap and strong models)
 ```
+
+`--output-schema` takes a JSON Schema, inline or as a file path. The model is told the schema, and its final answer must be a JSON value that matches it. If it doesn't, the model is shown the validation error and gets two more tries; after that Larik exits with an error. Stdout then carries only the value, on one line, so it can be piped into `jq`. With `--output json`, the events stream as usual and end with `{"type":"structured_output","output":…}`. It works with every provider.
 
 ### ChatGPT plan (Codex models)
 

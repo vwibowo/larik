@@ -30,7 +30,7 @@ func TestCanceledRunReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out, errOut bytes.Buffer
-	if err := Run(ctx, a, "hello", FormatText, &out, &errOut); !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, a, "hello", Options{Format: FormatText}, &out, &errOut); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled run returned %v", err)
 	}
 }

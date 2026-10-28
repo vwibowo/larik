@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -76,6 +77,7 @@ func run() error {
 		list    = flag.Bool("sessions", false, "list sessions for this directory and exit")
 		showVer = flag.Bool("version", false, "print version and exit")
 		timeout = flag.Duration("timeout", 0, "with -p: stop the run after this long, e.g. 10m (0 means no limit)")
+		schema  = flag.String("output-schema", "", "with -p: a JSON Schema (inline, or a file path) the final answer must match; stdout gets only the value")
 		debug   = flag.Bool("debug", false, "record this session's requests, responses and tool calls for `larik trace` (also $LARIK_DEBUG=1)")
 	)
 	flag.Usage = func() {
@@ -92,6 +94,10 @@ func run() error {
 	}
 	if *output != "text" && *output != "json" {
 		return fmt.Errorf("--output must be text or json, not %q", *output)
+	}
+	outputSchema, err := readOutputSchema(*schema, *print)
+	if err != nil {
+		return err
 	}
 
 	cwd, err := os.Getwd()
@@ -216,7 +222,7 @@ func run() error {
 			ctx, cancel = context.WithTimeout(ctx, *timeout)
 			defer cancel()
 		}
-		err := headless.Run(ctx, s.Agent, prompt, headless.Format(*output), os.Stdout, os.Stderr)
+		err := headless.Run(ctx, s.Agent, prompt, headless.Options{Format: headless.Format(*output), Schema: outputSchema}, os.Stdout, os.Stderr)
 		if *timeout > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			err = fmt.Errorf("stopped: --timeout %s reached", *timeout)
 		}
@@ -229,4 +235,26 @@ func run() error {
 	return tui.Run(tui.Options{App: a, Session: s, Config: a.Cfg, InitialPrompt: prompt, SessionDir: a.SessionDir, MCP: a.MCP,
 		Skills: a.Skills, Memory: a.Memory, Agents: a.AgentDefs, LSP: a.LSP, Sandbox: a.Sandbox, SandboxNote: a.SandboxNote,
 		SearchNote: a.SearchNote, BrowserNote: a.BrowserNote, Audio: a.Audio, Version: version})
+}
+
+// readOutputSchema reads --output-schema: inline JSON, or the path of a
+// file holding it.
+func readOutputSchema(value string, print bool) (json.RawMessage, error) {
+	if value == "" {
+		return nil, nil
+	}
+	if !print {
+		return nil, errors.New("--output-schema needs -p")
+	}
+	raw := []byte(strings.TrimSpace(value))
+	if !strings.HasPrefix(string(raw), "{") {
+		var err error
+		if raw, err = os.ReadFile(value); err != nil {
+			return nil, fmt.Errorf("--output-schema: %w", err)
+		}
+	}
+	if err := tools.CheckSchema(raw); err != nil {
+		return nil, fmt.Errorf("--output-schema: %w", err)
+	}
+	return raw, nil
 }

@@ -31,8 +31,16 @@ const denyReason = "running non-interactively; permission prompts are auto-denie
 // If the model starts background tasks, Run keeps going until they have
 // all finished and their results have been delivered to the model.
 // It returns a non-nil error when the run ended in an error.
-func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdout, stderr io.Writer) error {
-	p := &printer{format: format, stdout: stdout, stderr: stderr, enc: json.NewEncoder(stdout), atLineStart: true}
+//
+// With opts.Schema, the final answer must be a JSON value matching it: the
+// model is told the schema, gets up to two retries with the validation
+// error, and stdout carries only the validated value (in JSON format, a
+// closing structured_output event).
+func Run(ctx context.Context, a *agent.Agent, prompt string, opts Options, stdout, stderr io.Writer) error {
+	p := &printer{format: opts.Format, stdout: stdout, stderr: stderr, enc: json.NewEncoder(stdout), atLineStart: true, structured: len(opts.Schema) > 0}
+	if p.structured {
+		prompt += schemaNote(opts.Schema)
+	}
 
 	// Background-task events arrive on their own channel for the agent's
 	// whole lifetime; drain it concurrently.
@@ -59,6 +67,22 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 		}
 	}()
 
+	failure := p.run(ctx, a, prompt, taskDone)
+	if failure == "" && ctx.Err() == nil && p.structured {
+		return p.finishStructured(ctx, a, opts.Schema, taskDone)
+	}
+	if failure != "" {
+		return ErrReported{failure}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// run sends prompt, then hands the model background results until the
+// tasks are done, and returns the last error text.
+func (p *printer) run(ctx context.Context, a *agent.Agent, prompt string, taskDone <-chan struct{}) string {
 	failure := p.consume(a.Run(ctx, prompt))
 	for ctx.Err() == nil {
 		if ch, ok := a.RunNotifications(ctx); ok {
@@ -85,13 +109,7 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 		case <-ctx.Done():
 		}
 	}
-	if failure != "" {
-		return ErrReported{failure}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nil
+	return failure
 }
 
 // ErrReported is returned when a run failed and the error was already
@@ -107,6 +125,10 @@ type printer struct {
 
 	mu          sync.Mutex // foreground and background events interleave
 	atLineStart bool
+	// structured: the answer must match a schema, so text format keeps
+	// the model's prose off stdout, which gets only the final value.
+	structured bool
+	last       string // the main agent's latest assistant text
 }
 
 // consume handles a turn's events and returns the last error text.
@@ -127,6 +149,12 @@ func (p *printer) consume(ch <-chan agent.Event) string {
 func (p *printer) handle(e agent.Event) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if e.Kind == agent.EvAssistant && e.Agent == "" && e.Message != nil {
+		p.last = e.Message.Text()
+	}
+	if p.structured && p.format != FormatJSON && (e.Kind == agent.EvTextDelta || e.Kind == agent.EvAssistant) {
+		return
+	}
 	if p.format == FormatJSON {
 		if e.Kind == agent.EvTextDelta || e.Kind == agent.EvThinkingDelta || e.Kind == agent.EvToolProgress {
 			return // the assistant_message and tool_end events carry the full text
