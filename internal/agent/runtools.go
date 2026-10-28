@@ -318,6 +318,9 @@ func (a *Agent) executeData(ctx context.Context, job approved, emit func(Event))
 	}
 	emit(Event{Kind: EvToolStart, ToolID: use.ID, ToolName: use.Name, Input: use.Input})
 	runCtx := tools.WithOwner(tools.WithCallID(withRun(ctx, a, emit), use.ID), a.owner)
+	if a.parent == nil {
+		runCtx = tools.WithBackground(runCtx, a.startToolBackground)
+	}
 	runCtx = tools.WithProgress(runCtx, func(tail string) {
 		emit(Event{Kind: EvToolProgress, ToolID: use.ID, ToolName: use.Name, Output: tail})
 	})

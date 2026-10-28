@@ -454,6 +454,10 @@ The right setting depends on the model: a strong model writes reliable scripts, 
 
 Keys are `provider/model` or a bare model id, and `provider/model` wins. `/execution code` saves a setting for the model you're using, `/execution default` removes it, and `/execution` alone opens a picker for the model you're using, with its saved setting marked. The default is "Default execution" in `/config`. Switching models (`/model`) switches to that model's setting, and subagents use their own model's. Measure before choosing: `larik bench --models <model> --execution tools,hybrid,code --runs 3`. Bench runs with Larik's base system prompt and the fixture's project instructions, but not your personal instructions, skills or memory, so results are reproducible and prompt changes are actually measured.
 
+### Background commands
+
+`bash` with `run_in_background` starts a command, such as a dev server, a watcher or a long build, and returns a task id at once so the model can keep working. The output goes to the command's log, which the model reads with `raw_output` while it runs. When the command exits, the end of its output and its exit code reach the model in its next turn; if Larik is idle, a turn starts by itself. `task_wait` blocks until it exits, `task_stop` kills it, and quitting the session stops it. It shares the limit of eight background tasks with background subagents. A background command runs without a time limit unless the call sets `timeout` (up to 24 hours). Its file changes aren't recorded for `/undo`. Subagents can't start one. In `larik -p` the run ends when the model is done, even if background commands are still running; they are stopped then.
+
 ## Sampling
 
 How a model decodes — its temperature, `top_p` and `top_k` — can change whether it emits usable tool calls at all. Larik sends nothing of its own, so each server's defaults stand until you set something.

@@ -27,7 +27,7 @@ func (WaitTool) ReadOnly() bool { return true }
 func (WaitTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: WaitToolName,
-		Description: "Wait for background tasks started with task(run_in_background: true) and return their results. " +
+		Description: "Wait for background tasks (task or bash with run_in_background) and return their results. " +
 			"With no ids it waits for every unfinished task. Only wait when you can't make progress without the result; otherwise keep working and results arrive on their own.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"ids":{"type":"array","items":{"type":"string"},"description":"Task ids such as bg-1; omit to wait for all"},

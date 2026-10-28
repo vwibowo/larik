@@ -69,7 +69,15 @@ func Run(ctx context.Context, a *agent.Agent, prompt string, format Format, stdo
 		}
 		// A task that finished just after RunNotifications looked has a
 		// result waiting; go round again to deliver it.
-		if a.RunningBackground() == 0 && a.PendingNotifications() == 0 {
+		if a.PendingNotifications() == 0 && onlyCommandsRunning(a) {
+			// The model is done, and what's left are commands it started,
+			// such as a server, which may never exit; nobody is left to
+			// use them.
+			for _, t := range a.BackgroundTasks() {
+				if t.Status == agent.BgRunning {
+					_ = a.StopBackground(t.ID)
+				}
+			}
 			break
 		}
 		select {
@@ -224,4 +232,15 @@ func deny(e agent.Event) agent.PermissionReply {
 		return agent.PermissionReply{Reason: "this is a non-interactive run, so no one can answer"}
 	}
 	return agent.PermissionReply{Reason: denyReason}
+}
+
+// onlyCommandsRunning reports whether every running background task is a
+// shell command, including when none is running.
+func onlyCommandsRunning(a *agent.Agent) bool {
+	for _, t := range a.BackgroundTasks() {
+		if t.Status == agent.BgRunning && !t.Command {
+			return false
+		}
+	}
+	return true
 }

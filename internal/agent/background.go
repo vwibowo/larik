@@ -30,6 +30,9 @@ type BgTask struct {
 	Result   string
 	Started  time.Time
 	Finished time.Time
+	// Command marks a shell command (bash run_in_background) rather than
+	// a subagent: it may never finish on its own, as a server doesn't.
+	Command bool
 }
 
 type bgTask struct {
@@ -76,6 +79,10 @@ func (h *background) emit(e Event) {
 // fn receives a context that is cancelled by StopBackground or shutdown,
 // and an emit func for forwarding progress events.
 func (a *Agent) StartBackground(label string, fn func(ctx context.Context, emit func(Event)) (result string, failed bool)) (string, error) {
+	return a.startBackground(label, false, fn)
+}
+
+func (a *Agent) startBackground(label string, command bool, fn func(ctx context.Context, emit func(Event)) (result string, failed bool)) (string, error) {
 	h := a.hub()
 	h.mu.Lock()
 	running := 0
@@ -91,7 +98,7 @@ func (a *Agent) StartBackground(label string, fn func(ctx context.Context, emit 
 	h.seq++
 	id := fmt.Sprintf("bg-%d", h.seq)
 	ctx, cancel := context.WithCancel(h.ctx)
-	t := &bgTask{BgTask: BgTask{ID: id, Label: label, Status: BgRunning, Started: time.Now()}, cancel: cancel, done: make(chan struct{})}
+	t := &bgTask{BgTask: BgTask{ID: id, Label: label, Status: BgRunning, Started: time.Now(), Command: command}, cancel: cancel, done: make(chan struct{})}
 	h.tasks[id] = t
 	h.mu.Unlock()
 
@@ -318,4 +325,10 @@ func (a *Agent) RunNotifications(ctx context.Context) (<-chan Event, bool) {
 		ch <- Event{Kind: EvDone, StopReason: reason}
 	}()
 	return ch, true
+}
+
+// startToolBackground lets a tool, such as bash with run_in_background,
+// run work as a background task of this agent.
+func (a *Agent) startToolBackground(label string, fn func(ctx context.Context) (string, bool)) (string, error) {
+	return a.startBackground(label, true, func(ctx context.Context, _ func(Event)) (string, bool) { return fn(ctx) })
 }

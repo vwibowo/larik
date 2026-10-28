@@ -45,7 +45,8 @@ func (Bash) Spec() llm.ToolSpec {
 			"timeout":{"type":"integer","description":"Timeout in seconds (max 600)"},
 			"checkpoint_paths":{"type":"array","items":{"type":"string"},"description":"Project files to snapshot before running the command for /undo"},
 			"sandbox":{"type":"boolean","description":"Set false to run outside the sandbox; requires user approval"},
-			"raw_output":{"type":"boolean","description":"Bypass token-saver filtering for this call"}},
+			"raw_output":{"type":"boolean","description":"Bypass token-saver filtering for this call"},
+			"run_in_background":{"type":"boolean","description":"Return a task id at once (servers, long builds); you're told when it exits"}},
 			"required":["command"]}`),
 	}
 }
@@ -88,6 +89,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		Sandbox         *bool    `json:"sandbox"`
 		CheckpointPaths []string `json:"checkpoint_paths"`
 		RawOutput       bool     `json:"raw_output"`
+		Background      bool     `json:"run_in_background"`
 	}](input)
 	if err != nil {
 		return errorf("%v", err)
@@ -107,6 +109,13 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		if err := env.beforeWrite(path); err != nil {
 			return errorf("checkpoint %q: %v", path, err)
 		}
+	}
+	if in.Background {
+		var timeout time.Duration
+		if in.Timeout > 0 {
+			timeout = min(time.Duration(in.Timeout)*time.Second, maxBackgroundTimeout)
+		}
+		return env.runBackground(ctx, in.Command, timeout, env.Sandbox != nil && (in.Sandbox == nil || *in.Sandbox))
 	}
 	timeout := defaultBashTimeout
 	if in.Timeout > 0 {
