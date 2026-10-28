@@ -189,8 +189,14 @@ func (c codeTool) Run(ctx context.Context, env *Env, input json.RawMessage) Resu
 	if lost := lostEscapes(in.Code); len(lost) > 0 {
 		out += "\n" + escapeNote(lost)
 	}
+	if len(r.media) > 0 {
+		out += fmt.Sprintf("\n[%d image(s) or document(s) from the script's calls are attached]", len(r.media))
+	}
+	if r.dropped > 0 {
+		out += fmt.Sprintf("\n[%d more left out: a script passes on at most %d; read them in another call]", r.dropped, maxScriptMedia)
+	}
 	out += fmt.Sprintf("\n[%s: %d tool call%s]", CodeToolName, r.calls, plural(r.calls))
-	return Result{Content: out, IsError: msg != ""}
+	return Result{Content: out, IsError: msg != "", Images: r.media}
 }
 
 var errScriptTimeout = errors.New("the script timed out")
@@ -284,6 +290,24 @@ type codeRun struct {
 	file       *os.File
 	fileFailed bool
 	state      map[string]json.RawMessage
+	// media are the images and documents the script's calls returned;
+	// they reach the model with the run_code result, up to maxScriptMedia.
+	media   []llm.Block
+	dropped int
+}
+
+// maxScriptMedia bounds the images and documents one script passes on.
+const maxScriptMedia = 8
+
+// keep notes the images and documents of a call's result for the model.
+func (r *codeRun) keep(res Result) {
+	for _, b := range res.Images {
+		if len(r.media) == maxScriptMedia {
+			r.dropped++
+			continue
+		}
+		r.media = append(r.media, b)
+	}
 }
 
 // print adds what the script printed to the output, up to codeMaxOutput.
@@ -383,7 +407,9 @@ func (r *codeRun) call(name string, input json.RawMessage) Result {
 		return callLimitResult()
 	}
 	r.calls++
-	return r.caller.CallTool(r.ctx, name, input)
+	res := r.caller.CallTool(r.ctx, name, input)
+	r.keep(res)
+	return res
 }
 
 // callMany runs a tools.parallel batch, concurrently when the caller can.
@@ -412,6 +438,7 @@ func (r *codeRun) callMany(calls []Call) []codeMsg {
 		if k < len(results) {
 			res = results[k]
 		}
+		r.keep(res)
 		out[i] = resultMsg(res)
 	}
 	return out
@@ -1052,7 +1079,7 @@ func (s *script) value(name string, res codeMsg) (goja.Value, string) {
 	}
 	content := res.Text
 	if res.Images > 0 {
-		content += fmt.Sprintf("\n[%d image(s) omitted: scripts get text only]", res.Images)
+		content += fmt.Sprintf("\n[%d image(s) or document(s): attached for the model with the run_code result; scripts get text only]", res.Images)
 	}
 	if res.IsError {
 		return nil, name + ": " + content

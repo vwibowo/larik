@@ -238,3 +238,15 @@ func FunctionTools(specs []ToolSpec) []map[string]any {
 	}
 	return tools
 }
+
+// ImageBlocks returns the image blocks of a tool result's attachments,
+// leaving out documents, for APIs that take only images there.
+func ImageBlocks(blocks []Block) []Block {
+	var out []Block
+	for _, b := range blocks {
+		if b.Type != BlockDocument {
+			out = append(out, b)
+		}
+	}
+	return out
+}

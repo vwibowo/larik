@@ -252,6 +252,10 @@ func inputItems(req llm.Request, name string) []any {
 					if len(b.Images) > 0 {
 						parts := []map[string]any{{"type": "input_text", "text": b.Content}}
 						for _, img := range b.Images {
+							if img.Type == llm.BlockDocument {
+								parts = append(parts, map[string]any{"type": "input_file", "filename": filepath.Base(img.Attachment), "file_data": "data:" + img.MediaType + ";base64," + img.Data})
+								continue
+							}
 							parts = append(parts, map[string]any{"type": "input_image", "image_url": "data:" + img.MediaType + ";base64," + img.Data})
 						}
 						output = parts

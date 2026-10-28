@@ -314,9 +314,9 @@ func (p *Provider) messages(req llm.Request) []map[string]any {
 				case llm.BlockToolResult:
 					out = append(out, map[string]any{"role": "tool", "tool_call_id": b.ID, "content": b.Content})
 					// Tool messages are text only; images follow in the user message.
-					if len(b.Images) > 0 {
+					if imgs := llm.ImageBlocks(b.Images); len(imgs) > 0 {
 						parts = append(parts, map[string]any{"type": "text", "text": llm.ToolImagesNote(b)})
-						for _, img := range b.Images {
+						for _, img := range imgs {
 							parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + img.MediaType + ";base64," + img.Data}})
 						}
 					}

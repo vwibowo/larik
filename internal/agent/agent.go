@@ -248,6 +248,7 @@ func New(opts Options) *Agent {
 	a.trace.Store(opts.Trace)
 	a.cacheKey = conversationKey(opts.Session)
 	a.env.TokenSaver = a.tokenSaver
+	a.env.AcceptsDocument = func(mediaType string) bool { return llm.AcceptsDocuments(a.Provider(), mediaType) }
 	if opts.Session != nil {
 		a.env.RawOutputDir = session.RawDir(opts.Session.Path)
 	}

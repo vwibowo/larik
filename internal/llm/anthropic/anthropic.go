@@ -309,9 +309,11 @@ func toParam(b llm.Block) (sdk.ContentBlockParamUnion, bool) {
 		}
 		res := sdk.NewToolResultBlock(b.ID, content, b.IsError)
 		for _, img := range b.Images {
-			res.OfToolResult.Content = append(res.OfToolResult.Content, sdk.ToolResultBlockParamContentUnion{
-				OfImage: sdk.NewImageBlockBase64(img.MediaType, img.Data).OfImage,
-			})
+			part := sdk.ToolResultBlockParamContentUnion{OfImage: sdk.NewImageBlockBase64(img.MediaType, img.Data).OfImage}
+			if img.Type == llm.BlockDocument {
+				part = sdk.ToolResultBlockParamContentUnion{OfDocument: sdk.NewDocumentBlock(sdk.Base64PDFSourceParam{Data: img.Data}).OfDocument}
+			}
+			res.OfToolResult.Content = append(res.OfToolResult.Content, part)
 		}
 		return res, true
 	case llm.BlockImage:

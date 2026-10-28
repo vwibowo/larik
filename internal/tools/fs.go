@@ -26,7 +26,7 @@ func (Read) ReadOnly() bool { return true }
 func (Read) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "read",
-		Description: "Read a text file. Returns lines prefixed with line numbers. Use offset/limit for large files.",
+		Description: "Read a text file, returning numbered lines; use offset/limit for large files. Images (png, jpg, gif, webp) and PDFs are returned whole for you to see.",
 		Schema: schema(`{"type":"object","properties":{
 			"path":{"type":"string","description":"File path, absolute or relative to the working directory"},
 			"offset":{"type":"integer","description":"1-based line to start from"},
@@ -53,8 +53,14 @@ func (Read) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 		return errorf("%v", err)
 	}
 	defer f.Close()
-	if fi, _ := f.Stat(); fi != nil && fi.IsDir() {
+	fi, _ := f.Stat()
+	if fi != nil && fi.IsDir() {
 		return errorf("%s is a directory; use glob or bash ls", path)
+	}
+	if fi != nil {
+		if res, ok := env.readMedia(path, fi.Size()); ok {
+			return res
+		}
 	}
 	if in.Offset < 1 {
 		in.Offset = 1

@@ -333,3 +333,17 @@ func TestProviderDeclaresPDFSupport(t *testing.T) {
 		t.Error("only PDF should be claimed as a document")
 	}
 }
+
+func TestToolResultDocument(t *testing.T) {
+	p, _ := toParam(llm.Block{Type: llm.BlockToolResult, ID: "toolu_1", Content: "<document/>",
+		Images: []llm.Block{{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "JVBERi0="}}})
+	got, _ := json.Marshal(p)
+	for _, want := range []string{`"type":"document"`, `"media_type":"application/pdf"`, `"data":"JVBERi0="`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("tool_result lacks %s: %s", want, got)
+		}
+	}
+	if strings.Contains(string(got), `"type":"image"`) {
+		t.Errorf("a document must not be sent as an image: %s", got)
+	}
+}

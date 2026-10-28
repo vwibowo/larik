@@ -244,3 +244,15 @@ func TestRunawayToolArgumentsStop(t *testing.T) {
 		t.Fatalf("want a RunawayError just past the limit, got %v", err)
 	}
 }
+
+func TestToolResultDocument(t *testing.T) {
+	items := inputItems(llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "call_1", Name: "read", Input: json.RawMessage(`{}`)}}},
+		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "call_1", Content: "<document/>",
+			Images: []llm.Block{{Type: llm.BlockDocument, MediaType: "application/pdf", Data: "JVBERi0=", Attachment: "/w/docs/spec.pdf"}}}}},
+	}}, "openai")
+	got, _ := json.Marshal(items)
+	if want := `{"file_data":"data:application/pdf;base64,JVBERi0=","filename":"spec.pdf","type":"input_file"}`; !strings.Contains(string(got), want) {
+		t.Errorf("got %s, want it to contain %s", got, want)
+	}
+}

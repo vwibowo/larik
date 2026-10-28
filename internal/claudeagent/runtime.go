@@ -521,7 +521,7 @@ func encodeInput(messages []llm.Message) (string, inputMessage, error) {
 			case llm.BlockImage:
 				images = append(images, cliImage(block))
 			}
-			for _, image := range block.Images {
+			for _, image := range llm.ImageBlocks(block.Images) {
 				images = append(images, cliImage(image))
 			}
 		}

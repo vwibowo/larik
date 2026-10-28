@@ -27,7 +27,8 @@ type Result struct {
 	Content string
 	IsError bool
 	Display string
-	// Images go to the model with Content (image blocks, base64).
+	// Images go to the model with Content: image blocks, base64, and the
+	// document blocks of a PDF read whole (see llm.ImageBlocks).
 	Images []llm.Block
 	// Data, when set, is what a run_code script gets in place of Content:
 	// a JSON value. Scripts get it even when IsError is set, because the
@@ -68,6 +69,9 @@ type Env struct {
 	Diagnostics func(ctx context.Context, path string) string
 	// Touch, if set, is told about files the agent reads (to warm up LSP).
 	Touch func(path string)
+	// AcceptsDocument, if set, reports whether the model's provider can be
+	// sent a document of mediaType, so read can return a PDF whole.
+	AcceptsDocument func(mediaType string) bool
 
 	// Sandbox, if set, confines bash commands (unless a call opts out).
 	Sandbox Sandbox

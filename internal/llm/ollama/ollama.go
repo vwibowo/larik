@@ -336,9 +336,9 @@ func (p *Provider) messages(req llm.Request) []map[string]any {
 				switch b.Type {
 				case llm.BlockToolResult:
 					out = append(out, map[string]any{"role": "tool", "tool_name": toolNames[b.ID], "content": b.Content})
-					if len(b.Images) > 0 {
+					if imgs := llm.ImageBlocks(b.Images); len(imgs) > 0 {
 						text = append(text, llm.ToolImagesNote(b))
-						for _, img := range b.Images {
+						for _, img := range imgs {
 							images = append(images, img.Data)
 						}
 					}

@@ -57,7 +57,13 @@ func estimateMessages(msgs []llm.Message) int {
 			}
 			chars += len(b.Text) + len(b.Signature) + len(b.Content) +
 				len(b.Name) + len(b.Input) + len(b.Raw)
-			tokens += imageTokens * len(b.Images) // images a tool returned
+			for _, img := range b.Images { // images and documents a tool returned
+				if img.Type == llm.BlockDocument {
+					tokens += documentTokensPerPage * max(img.Pages, 1)
+				} else {
+					tokens += imageTokens
+				}
+			}
 		}
 	}
 	return tokens + chars/charsPerToken
