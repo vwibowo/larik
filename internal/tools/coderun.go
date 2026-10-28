@@ -848,11 +848,11 @@ var (
 )
 
 const envHint = "Scripts are plain JavaScript, not Node.js or Python: there is no require, import, process, fs or os. " +
-	"Read files and run commands through tools, such as await tools.read({path}) or await tools.bash({command}), " +
+	"Read files and run commands through tools, such as tools.read({path}) or tools.bash({command}), " +
 	"and print what you need with console.log."
 
 // thenHint follows a script that calls .then on a tool's result.
-const thenHint = "A tools.* call returns its result directly, not a promise: use the value, as in const r = await tools.bash({command}); console.log(r.output)."
+const thenHint = "A tools.* call returns its result directly, not a promise: use the value, as in const r = tools.bash({command}); console.log(r.output)."
 
 func scriptEnvHint(msg, code string) string {
 	switch {

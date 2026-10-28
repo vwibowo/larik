@@ -99,6 +99,12 @@ func TestForExecution(t *testing.T) {
 	if strings.Contains(hdesc, "echo(") || !strings.Contains(hdesc, "Every tool you have works this way") {
 		t.Fatalf("hybrid should not index declared tools:\n%s", hdesc)
 	}
+	// Told only "JavaScript", models with a bash tool write for Node.js.
+	for _, d := range []string{desc, hdesc} {
+		if !strings.Contains(d, "not Node.js") {
+			t.Fatalf("description should say scripts aren't Node.js:\n%s", d)
+		}
+	}
 	h, c := specOf(t, Default().ForExecution(ExecHybrid), CodeToolName), specOf(t, Default().ForExecution(ExecCode), CodeToolName)
 	if len(h.Description)*3 > len(c.Description)*2 {
 		t.Fatalf("with the built-in tools, hybrid's description (%d) should be well under code's (%d)", len(h.Description), len(c.Description))

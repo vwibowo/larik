@@ -300,11 +300,11 @@ func (codeTool) ReadOnly() bool { return false }
 func (c codeTool) Spec() llm.ToolSpec {
 	var d strings.Builder
 	if c.hybrid {
-		d.WriteString("Run a JavaScript script that calls your tools, and get back only what it prints. " +
+		d.WriteString("Run a plain JavaScript script (not Node.js: no require, import, process or fs) that calls your tools, and get back only what it prints. " +
 			"Use it when a task has many steps or a lot of data (loops over files, chained lookups, counting or filtering large output); " +
 			"call a tool directly for a single action or an edit you need to look at first.\n\n")
 	} else {
-		d.WriteString("Run a JavaScript script that calls tools, and get back only what it prints. " +
+		d.WriteString("Run a plain JavaScript script (not Node.js: no require, import, process or fs) that calls tools, and get back only what it prints. " +
 			"This is how you use tools: each one below is a function in the script. Do several steps in one script when you can.\n\n")
 	}
 	fmt.Fprintf(&d, "tools.<name>(args) runs a tool with the arguments of its schema and returns its result, or throws an Error with the tool's message; tools.call(name, args) is the same. "+
