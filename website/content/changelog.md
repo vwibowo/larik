@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## v0.22.0
+
+<p class="release-meta"><time datetime="2026-10-31">October 31, 2026</time></p>
+
+### Added
+
+- **Review a session's changes with `/diff`.** It lists the files changed turn by turn, with lines added and removed, and opens each as a diff. It reads `/undo`'s snapshots, so it shows only what the agent did, includes files `bash` commands changed in a git repository, and still works after resuming a session.
+- **Reject one hunk.** In a file opened from `/diff`, `n` and `p` move between hunks, and pressing `r` twice puts the selected hunk back as it was before the turn. The model is told to re-read the file. Larik refuses during a turn, while a subagent runs, for anything but a file's newest change, or if the file changed after you opened it.
+- **A full-screen diff.** Press `d` in an edit's approval prompt to read the whole change, with long lines wrapped. `F4` pages through this session's edits at any time; rebind it as `view_diff`.
+
+### Changed
+
+- **Edits show a real line diff.** Approval prompts and tool cards used to list every old line as removed and every new line as added. They now show only what changed, with a few lines of context, and mark the changed words.
+- **Overwrites are compared with the file they replace,** in the approval prompt, the tool card and `F4`, instead of showing the new content as all added.
+- **Approval prompts warn when a preview is cut off,** by too many lines or by a clipped long line.
+
+### Compatibility notes
+
+- `/undo` still restores a whole turn, including any hunks you rejected from it. A rejected hunk has no separate undo.
+- `/diff` compares file versions up to 2 MB, and lists larger and binary files without a diff.
+
 ## v0.21.0
 
 <p class="release-meta"><time datetime="2026-10-29">October 29, 2026</time></p>
