@@ -513,6 +513,29 @@ func (a *Agent) Undo() ([]string, error) {
 	return paths, nil
 }
 
+// Changes lists the file changes kept for undo, newest turn first.
+func (a *Agent) Changes() []checkpoint.ChangeSet {
+	if a.opts.Checkpoints == nil {
+		return nil
+	}
+	return a.opts.Checkpoints.Changes()
+}
+
+// RejectChange replaces c's file with content, or removes it, and tells the
+// model on the next message.
+func (a *Agent) RejectChange(c checkpoint.Change, content []byte, remove bool) error {
+	if a.opts.Checkpoints == nil {
+		return errors.New("checkpoints are disabled")
+	}
+	if err := a.opts.Checkpoints.Replace(c, content, remove); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.notes = append(a.notes, "The user rejected part of your changes to "+c.Path+". Re-read it before editing it, and don't make the rejected change again unless asked.")
+	a.mu.Unlock()
+	return nil
+}
+
 // FilesSince lists the files whose changes UndoSince(since) would revert.
 func (a *Agent) FilesSince(since time.Time) []string {
 	if a.opts.Checkpoints == nil {

@@ -223,6 +223,9 @@ func (m *model) command(line string) tea.Cmd {
 		}
 		return m.askReload("Reload app services and start a fresh model context? (The session transcript stays saved)", m.reloadApp)
 
+	case "/diff":
+		return m.openChanges()
+
 	case "/undo":
 		paths, err := m.agent.Undo()
 		if err != nil {

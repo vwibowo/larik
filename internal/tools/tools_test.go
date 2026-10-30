@@ -63,6 +63,20 @@ func TestWriteCreatesAndCaptures(t *testing.T) {
 	}
 }
 
+func TestWriteShowsWhatChangedInAnExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	env := NewEnv(dir)
+	r := run(t, Write{}, env, `{"path":"a.txt","content":"one\ntwo\n"}`)
+	if r.IsError || r.Display != "" {
+		t.Fatalf("a new file has nothing to compare: %+v", r)
+	}
+	env.markRead(filepath.Join(dir, "a.txt"))
+	r = run(t, Write{}, env, `{"path":"a.txt","content":"one\n2\n"}`)
+	if r.IsError || r.Display != "  one\n- two\n+ 2" {
+		t.Fatalf("overwrite: %+v", r)
+	}
+}
+
 // Env.WriteFile is what tools whose content isn't text (a screenshot) write
 // through: the same boundary, checkpoint and freshness rules as write.
 func TestEnvWriteFile(t *testing.T) {

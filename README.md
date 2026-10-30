@@ -326,6 +326,7 @@ fi
 | `/mode [default\|accept-edits\|plan\|auto\|yolo]` | Pick and save the default permission mode from a list (`1`–`5`), or set it directly                                                                                                                                                                                     |
 | `/execution [tools\|hybrid\|code\|default]`      | How the model you are using acts: `tools` (a tool call per step), `hybrid` (also `run_code` scripts) or `code` (scripts for ordinary tools), saved for that model; `default` removes it. See [Execution](#execution) |
 | `/sampling [temp=.. top_p=.. top_k=..\|default\|none]` | Show or set the decoding parameters for the model you are using, saved for that model; `default` removes it, `none` sends none. See [Sampling](#sampling) |
+| `/diff`                                          | Review this session's file changes turn by turn, and reject hunks (see [Reviewing changes](#reviewing-changes)) |
 | `/undo`                                          | Revert the file changes of the last turn that made any: edits by the file tools, and in a git repository what `bash` commands changed (files git ignores aren't covered, nor are MCP side effects). See [Undo](#undo)                                                  |
 | `/compact`                                       | Summarize the conversation to free context                                                                                                                                                                                                                               |
 | `/clear`                                         | Fresh context in the same session; also clears the transcript view and `run_code` state, and reloads `AGENTS.md`/`CLAUDE.md`, skills and newly approved MCP servers                                                                                                      |
@@ -384,9 +385,17 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 - Edits you make yourself in an editor while a command runs count as that command's, so an `/undo` right after would revert them too.
 - Snapshots are kept for 7 days by default (`checkpoint_retention_days`), so `/undo` still works after resuming a session.
 
+### Reviewing changes
+
+`/diff` lists the files changed in this session, turn by turn, newest first, with the lines added and removed. It works from `/undo`'s snapshots, so it counts only what the agent did, includes files `bash` commands changed in a git repository, and still works after resuming a session. Your own edits aren't listed, except ones you make to a file while a command is changing it. Open a file to see its diff one hunk at a time: `n` and `p` move between hunks, and pressing `r` twice puts the selected hunk back as it was before the turn. The model is told, so it re-reads the file.
+
+- Only a file's newest change can be rejected, and not during a turn or while a subagent is running. Larik refuses if the file has changed since you opened it.
+- A rejected hunk can't be brought back, but `/undo` still restores the whole file to how it was before that turn.
+- Binary files and versions over 2 MB are listed but not compared.
+
 ## Permissions
 
-An edit's approval prompt and its card in the conversation show a line diff: unchanged lines near the change stay dimmed, and within a changed line the words that differ are marked. Previews are short, and the prompt warns you when one is cut off. Press `d` in the prompt to read the whole change, or `F4` at any time to page through this session's edits (`←`/`→` move between them; subagents' edits are included, up to the last 100).
+An edit's approval prompt and its card in the conversation show a line diff: unchanged lines near the change stay dimmed, and within a changed line the words that differ are marked. Previews are short, and the prompt warns you when one is cut off. Press `d` in the prompt to read the whole change, or `F4` at any time to page through this session's edits (`←`/`→` move between them; subagents' edits are included, up to the last 100). An overwrite is compared with the file it replaces.
 
 | Mode           | Behavior                                                                                                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

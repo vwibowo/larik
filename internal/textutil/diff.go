@@ -25,21 +25,9 @@ func Diff(old, new string) string {
 	if strings.HasSuffix(old, "\n") && strings.HasSuffix(new, "\n") {
 		old, new = old[:len(old)-1], new[:len(new)-1]
 	}
-	a, b := diffLines(old), diffLines(new)
-	keptA, keptB := common(a, b)
 	var rows []string
-	for i, j := 0, 0; i < len(a) || j < len(b); {
-		switch {
-		case i < len(a) && !keptA[i]:
-			rows = append(rows, "- "+a[i])
-			i++
-		case j < len(b) && !keptB[j]:
-			rows = append(rows, "+ "+b[j])
-			j++
-		default:
-			rows = append(rows, "  "+a[i])
-			i, j = i+1, j+1
-		}
+	for _, o := range diffOps(diffLines(old), diffLines(new)) {
+		rows = append(rows, o.text)
 	}
 	return strings.Join(trimContext(rows), "\n")
 }
@@ -49,6 +37,102 @@ func diffLines(s string) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// diffOp is one row of a diff. oldAt and newAt are the line indexes reached
+// when the row starts.
+type diffOp struct {
+	text         string
+	oldAt, newAt int
+}
+
+func (o diffOp) changed() bool { return !strings.HasPrefix(o.text, "  ") }
+
+func diffOps(a, b []string) []diffOp {
+	keptA, keptB := common(a, b)
+	var ops []diffOp
+	for i, j := 0, 0; i < len(a) || j < len(b); {
+		switch {
+		case i < len(a) && !keptA[i]:
+			ops = append(ops, diffOp{"- " + a[i], i, j})
+			i++
+		case j < len(b) && !keptB[j]:
+			ops = append(ops, diffOp{"+ " + b[j], i, j})
+			j++
+		default:
+			ops = append(ops, diffOp{"  " + a[i], i, j})
+			i, j = i+1, j+1
+		}
+	}
+	return ops
+}
+
+// Hunk is one separately revertible change between two texts. Text is its
+// rows in Diff's form, with context. Lines old[OldStart:OldEnd] became
+// new[NewStart:NewEnd].
+type Hunk struct {
+	Text             string
+	OldStart, OldEnd int
+	NewStart, NewEnd int
+	Added, Removed   int
+}
+
+// Hunks splits the changes from old to new. Changes closer together than
+// the context around them would keep apart stay in one hunk.
+func Hunks(old, new string) []Hunk {
+	ops := diffOps(diffLines(old), diffLines(new))
+	var out []Hunk
+	for i := 0; i < len(ops); {
+		if !ops[i].changed() {
+			i++
+			continue
+		}
+		first, last := i, i
+		for j := i + 1; j < len(ops) && j <= last+2*diffContext+1; j++ {
+			if ops[j].changed() {
+				last = j
+			}
+		}
+		out = append(out, makeHunk(ops, first, last))
+		i = last + 1
+	}
+	return out
+}
+
+func makeHunk(ops []diffOp, first, last int) Hunk {
+	f, l := ops[first], ops[last]
+	h := Hunk{OldStart: f.oldAt, OldEnd: l.oldAt, NewStart: f.newAt, NewEnd: l.newAt}
+	if strings.HasPrefix(l.text, "- ") {
+		h.OldEnd++
+	} else {
+		h.NewEnd++
+	}
+	var rows []string
+	for i := max(first-diffContext, 0); i <= min(last+diffContext, len(ops)-1); i++ {
+		switch {
+		case strings.HasPrefix(ops[i].text, "- "):
+			h.Removed++
+		case strings.HasPrefix(ops[i].text, "+ "):
+			h.Added++
+		}
+		rows = append(rows, strings.TrimSuffix(ops[i].text, "\r"))
+	}
+	// A text's final newline shows up as an empty last line.
+	if n := len(rows); n > 1 && rows[n-1] == "  " && last < len(ops)-1 && min(last+diffContext, len(ops)-1) == len(ops)-1 {
+		rows = rows[:n-1]
+	}
+	h.Text = strings.Join(rows, "\n")
+	return h
+}
+
+// RevertHunk returns new with h, a hunk of Hunks(old, new), undone.
+func RevertHunk(old, new string, h Hunk) string {
+	a, b := diffLines(old), diffLines(new)
+	out := make([]string, 0, len(b))
+	out = append(out, b[:h.NewStart]...)
+	out = append(out, a[h.OldStart:h.OldEnd]...)
+	out = append(out, b[h.NewEnd:]...)
+	return strings.Join(out, "\n")
 }
 
 // trimContext keeps the changed rows and the unchanged ones near them.

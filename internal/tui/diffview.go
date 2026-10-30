@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"larik/internal/agent"
+	"larik/internal/checkpoint"
 	"larik/internal/textutil"
 	"larik/internal/tools"
 )
@@ -17,11 +20,16 @@ import (
 // maxFileDiffs is how many of the session's edits the diff view keeps.
 const maxFileDiffs = 100
 
+// maxComparedFile is the largest existing file a write's approval compares
+// with the new content.
+const maxComparedFile = 2 << 20
+
 // fileDiff is one change to a file, in the "+ " / "- " form of textutil.Diff.
 type fileDiff struct{ path, diff, agent string }
 
 // diffView is the full-screen view of one change: an edit the model is asking
-// to make (perm is set), or one from this session's list (at is its index).
+// to make (perm is set), one from this session's list (at is its index), or
+// a file from the /diff panel, shown hunk by hunk (change is set).
 type diffView struct {
 	fileDiff
 	perm    *agent.Event
@@ -30,6 +38,13 @@ type diffView struct {
 	visible int
 	width   int // the width rows was wrapped to
 	rows    []string
+
+	change  *checkpoint.Change
+	group   int
+	hunks   []textutil.Hunk
+	hunkRow []int // where each hunk starts in rows
+	sel     int   // the selected hunk
+	armed   bool  // r was pressed once
 }
 
 // recordDiff keeps a finished edit for the diff view.
@@ -42,7 +57,9 @@ func (m *model) recordDiff(e agent.Event) {
 	diff := e.Display
 	switch e.ToolName {
 	case "write":
-		diff = prefixLines(strings.TrimSuffix(in.Content, "\n"), "+ ")
+		if diff == "" {
+			diff = prefixLines(strings.TrimSuffix(in.Content, "\n"), "+ ")
+		}
 	case "edit", tools.MultiEditToolName:
 	default:
 		return
@@ -90,20 +107,26 @@ func (m *model) showDiffAt(i int) {
 
 // openPermDiff shows the whole change the open approval asks about.
 func (m *model) openPermDiff() {
-	if path, diff, _, ok := permDiff(m.perm); ok {
+	if path, diff, _, ok := m.permDiff(m.perm); ok {
 		m.diffView = &diffView{fileDiff: fileDiff{path: path, diff: diff, agent: m.perm.Agent}, perm: m.perm}
 	}
 }
 
 // permDiff is the change an approval asks about and how many of its lines the
 // prompt shows. ok is false for tools that don't change a file's text.
-func permDiff(e *agent.Event) (path, diff string, limit int, ok bool) {
+func (m *model) permDiff(e *agent.Event) (path, diff string, limit int, ok bool) {
 	var in map[string]any
 	_ = json.Unmarshal(e.Input, &in)
 	path = str(in["path"])
 	switch e.ToolName {
 	case "write":
-		return path, prefixLines(strings.TrimSuffix(str(in["content"]), "\n"), "+ "), 12, true
+		content := str(in["content"])
+		if fi, err := os.Stat(m.permPath(e, path)); err == nil && fi.Size() <= maxComparedFile {
+			if old, err := os.ReadFile(m.permPath(e, path)); err == nil && !bytes.Contains(old, []byte{0}) {
+				return path, textutil.Diff(string(old), content), 12, true
+			}
+		}
+		return path, prefixLines(strings.TrimSuffix(content, "\n"), "+ "), 12, true
 	case "edit":
 		return path, textutil.Diff(str(in["old_string"]), str(in["new_string"])), 16, true
 	case tools.MultiEditToolName:
@@ -138,6 +161,29 @@ func (m *model) handleDiffKey(d *diffView, msg tea.KeyPressMsg) tea.Cmd {
 	if m.keys.is(k, actViewDiff) {
 		k = "esc"
 	}
+	if d.change != nil {
+		armed := d.armed
+		d.armed = false
+		switch k {
+		case "n", "tab":
+			d.selectHunk(d.sel + 1)
+			return nil
+		case "p", "shift+tab":
+			d.selectHunk(d.sel - 1)
+			return nil
+		case "r":
+			switch {
+			case len(d.hunks) == 0:
+			case !d.change.Latest:
+				return m.showToast("A later turn changed this file; reject that change first")
+			case armed:
+				return m.rejectHunk(d)
+			default:
+				d.armed = true
+			}
+			return nil
+		}
+	}
 	switch k {
 	case "esc", "q", "d":
 		m.diffView = nil
@@ -163,11 +209,11 @@ func (m *model) handleDiffKey(d *diffView, msg tea.KeyPressMsg) tea.Cmd {
 	case "end", "G":
 		d.scroll(len(d.rows))
 	case "left", "h":
-		if d.perm == nil && d.at > 0 {
+		if d.perm == nil && d.change == nil && d.at > 0 {
 			m.showDiffAt(d.at - 1)
 		}
 	case "right", "l":
-		if d.perm == nil && d.at < len(m.diffs)-1 {
+		if d.perm == nil && d.change == nil && d.at < len(m.diffs)-1 {
 			m.showDiffAt(d.at + 1)
 		}
 	}
@@ -183,8 +229,13 @@ func (d *diffView) scroll(by int) {
 func (m *model) diffViewPanel(d *diffView) string {
 	w := max(m.width-6, 20)
 	if d.width != w {
-		rendered := m.highlightLines(d.path, strings.Split(d.diff, "\n"))
-		d.rows, d.width = strings.Split(lipgloss.Wrap(rendered, w, ""), "\n"), w
+		d.width = w
+		if d.change != nil {
+			d.rows = m.changeRowsText(d, w)
+		} else {
+			rendered := m.highlightLines(d.path, strings.Split(d.diff, "\n"))
+			d.rows = strings.Split(lipgloss.Wrap(rendered, w, ""), "\n")
+		}
 	}
 	d.visible = max(m.availablePanelRows()-4, 1) // the border and two fixed rows
 	d.scroll(0)
@@ -192,7 +243,16 @@ func (m *model) diffViewPanel(d *diffView) string {
 
 	where := fmt.Sprintf("%d-%d of %s", d.top+1, end, textutil.Plural(len(d.rows), "row"))
 	hint := "↑/↓ scroll · pgup/pgdn page · esc back"
-	if d.perm == nil {
+	switch {
+	case d.change != nil:
+		hint = "↑/↓ scroll · esc back"
+		if len(d.hunks) > 0 {
+			hint = "↑/↓ scroll · n/p hunks · r reject hunk · esc back"
+		}
+		if d.armed {
+			hint = m.st.warn.Render("press r again to put this hunk back as it was · any other key cancels")
+		}
+	case d.perm == nil:
 		where = fmt.Sprintf("edit %d of %d · %s", d.at+1, len(m.diffs), where)
 		hint = "↑/↓ scroll · ←/→ other edits · esc close"
 	}

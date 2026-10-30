@@ -59,6 +59,77 @@ func TestDiffPastTheCellCapStaysCorrect(t *testing.T) {
 	}
 }
 
+func numbered(n int) []string {
+	var lines []string
+	for i := range n {
+		lines = append(lines, fmt.Sprint(i))
+	}
+	return lines
+}
+
+func TestHunksRevertOneChangeAtATime(t *testing.T) {
+	lines := numbered(30)
+	old := strings.Join(lines, "\n") + "\n"
+	lines[2] = "two"
+	lines[20] = "twenty"
+	new := strings.Join(lines, "\n") + "\n"
+	hunks := Hunks(old, new)
+	if len(hunks) != 2 {
+		t.Fatalf("hunks = %+v", hunks)
+	}
+	if h := hunks[0]; h.Added != 1 || h.Removed != 1 || !strings.Contains(h.Text, "- 2\n+ two") {
+		t.Fatalf("first hunk = %+v", h)
+	}
+	got := RevertHunk(old, new, hunks[1])
+	if strings.Contains(got, "twenty") || !strings.Contains(got, "two") {
+		t.Fatalf("reverted %q", got)
+	}
+	if rest := Hunks(old, got); len(rest) != 1 {
+		t.Fatalf("left = %+v", rest)
+	}
+	if got := RevertHunk(old, got, Hunks(old, got)[0]); got != old {
+		t.Fatalf("back to %q", got)
+	}
+}
+
+func TestHunksMergeNearbyChanges(t *testing.T) {
+	lines := numbered(20)
+	old := strings.Join(lines, "\n")
+	lines[5], lines[10] = "five", "ten"
+	if h := Hunks(old, strings.Join(lines, "\n")); len(h) != 1 {
+		t.Fatalf("hunks = %+v", h)
+	}
+}
+
+func TestRevertHunkEdges(t *testing.T) {
+	for _, c := range [][2]string{
+		{"", "a\nb\n"},
+		{"a\nb\n", ""},
+		{"a\nb", "a\nb\n"},
+		{"a\r\nb\r\n", "a\r\nc\r\n"},
+		{"a\n", "x\na\ny\n"},
+	} {
+		next := c[1]
+		for range 5 {
+			hunks := Hunks(c[0], next)
+			if len(hunks) == 0 {
+				break
+			}
+			next = RevertHunk(c[0], next, hunks[len(hunks)-1])
+		}
+		if next != c[0] {
+			t.Errorf("reverting %q to %q left %q", c[1], c[0], next)
+		}
+	}
+}
+
+func TestHunkHidesTheFinalNewline(t *testing.T) {
+	h := Hunks("a\n", "b\n")
+	if len(h) != 1 || h[0].Text != "- a\n+ b" {
+		t.Fatalf("hunks = %+v", h)
+	}
+}
+
 func TestWordDiff(t *testing.T) {
 	a, b := WordDiff("var count = 1 + 2", "var total = 1 + 23")
 	if want := []Span{{4, 9}, {16, 17}}; !reflect.DeepEqual(a, want) {

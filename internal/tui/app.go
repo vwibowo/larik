@@ -249,6 +249,7 @@ type model struct {
 	panelView     viewport.Model
 	diffs         []fileDiff // this session's edits, for the diff view
 	diffView      *diffView
+	changesPick   *changesPicker
 	panelKind     string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
@@ -965,6 +966,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleDiffKey(m.diffShown(), msg)
 		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
+		case m.changesPick != nil:
+			return m, m.handleChangesKey(msg)
 		case m.showKeys:
 			m.showKeys = false // any key closes it
 			return m, nil
@@ -1120,7 +1123,7 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 
 // composerFocused reports whether typing and pasting go to the composer.
 func (m *model) composerFocused() bool {
-	return m.perm == nil && m.diffShown() == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
+	return m.perm == nil && m.diffShown() == nil && m.changesPick == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
 		m.settings == nil && m.provs == nil && m.mpick == nil && m.modePick == nil &&
 		m.execPick == nil && m.sessionPick == nil && m.rewindOffer == nil && m.promptMenu == nil && m.histPick == nil && !m.showKeys
 }

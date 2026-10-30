@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,8 @@ const (
 	defaultReadLines = 2000
 	maxLineLen       = 2000
 	readOutputBytes  = MaxOutputBytes * 2
+	// maxDiffedFile is the largest file write compares with its new content.
+	maxDiffedFile = 2 << 20
 )
 
 // Read returns a file with line numbers.
@@ -214,8 +217,14 @@ func (Write) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if err := env.checkFresh(path); err != nil {
 		return errorf("%v", err)
 	}
-	_, statErr := root.Stat(rel)
+	fi, statErr := root.Stat(rel)
 	existed := statErr == nil
+	display := ""
+	if existed && fi.Size() <= maxDiffedFile {
+		if old, err := root.ReadFile(rel); err == nil && !bytes.Contains(old, []byte{0}) {
+			display = textutil.Diff(string(old), in.Content)
+		}
+	}
 	if err := env.beforeWrite(path); err != nil {
 		return errorf("cannot checkpoint %s: %v", path, err)
 	}
@@ -237,7 +246,7 @@ func (Write) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	if lines == 1 {
 		noun = "line"
 	}
-	return env.afterWrite(ctx, path, Result{Content: fmt.Sprintf("%s %s (%d %s)", verb, path, lines, noun)})
+	return env.afterWrite(ctx, path, Result{Content: fmt.Sprintf("%s %s (%d %s)", verb, path, lines, noun), Display: display})
 }
 
 // Edit replaces an exact string in a file.

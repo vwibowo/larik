@@ -51,7 +51,7 @@ func (m *model) View() tea.View {
 	if height <= 0 {
 		height = 24 // before the first size event
 	}
-	modal := m.perm != nil || m.showKeys || m.diffShown() != nil // these take the composer's place
+	modal := m.perm != nil || m.showKeys || m.diffShown() != nil || m.changesPick != nil // these take the composer's place
 	bottom := m.statusLine()
 	if !modal {
 		bottom = m.composerView() + "\n" + bottom
@@ -206,6 +206,8 @@ func (m *model) panel() (kind, text string) {
 		return "diff", m.diffViewPanel(d)
 	case m.perm != nil:
 		return "permission", m.permissionView()
+	case m.changesPick != nil:
+		return "changes", m.changesView()
 	case m.showKeys:
 		return "shortcuts", m.shortcutsView()
 	case m.showInfo && m.width < 100:
@@ -1048,7 +1050,7 @@ func (m *model) permissionView() string {
 		prefixLines(m.permDetail(e), "  "),
 		"",
 	}
-	_, diff, limit, hasDiff := permDiff(e)
+	_, diff, limit, hasDiff := m.permDiff(e)
 	if hasDiff && m.previewCut(diff, limit) {
 		lines = append(lines, m.st.warn.Render("! this preview is cut off · press d to see the whole change"), "")
 	}
@@ -1097,6 +1099,18 @@ func (m *model) permissionView() string {
 	return m.st.modal.Width(max(m.width-2, 10)).Render(strings.Join(lines, "\n"))
 }
 
+// permPath resolves a path in a tool call as the call will.
+func (m *model) permPath(e *agent.Event, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	base := e.Cwd // a worktree subagent's own directory
+	if base == "" && m.opts.Config != nil {
+		base = m.opts.Config.Cwd
+	}
+	return filepath.Join(base, path)
+}
+
 // permQuestion names what the call will do.
 func (m *model) permQuestion(e *agent.Event) string {
 	var in map[string]any
@@ -1105,15 +1119,7 @@ func (m *model) permQuestion(e *agent.Event) string {
 	case "bash":
 		return "Run this command?"
 	case "write":
-		path := str(in["path"])
-		if !filepath.IsAbs(path) {
-			base := e.Cwd // a worktree subagent's own directory
-			if base == "" && m.opts.Config != nil {
-				base = m.opts.Config.Cwd
-			}
-			path = filepath.Join(base, path)
-		}
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Stat(m.permPath(e, str(in["path"]))); err == nil {
 			return "Overwrite this file?"
 		}
 		return "Create this file?"
@@ -1195,8 +1201,8 @@ func (m *model) permDetail(e *agent.Event) string {
 		}
 		return cmd
 	case "write":
-		path, diff, limit, _ := permDiff(e)
-		return bold.Render(m.shortPaths(path)) + m.st.dim.Render("  "+textutil.Plural(strings.Count(diff, "\n")+1, "line")) + "\n" +
+		path, diff, limit, _ := m.permDiff(e)
+		return bold.Render(m.shortPaths(path)) + m.st.dim.Render("  "+textutil.Plural(strings.Count(strings.TrimSuffix(str(in["content"]), "\n"), "\n")+1, "line")) + "\n" +
 			m.highlightDiff(path, diff, limit)
 	case "web_fetch":
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
@@ -1229,10 +1235,10 @@ func (m *model) permDetail(e *agent.Event) string {
 		plan := agent.PlanOf(e.Input)
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", textutil.Plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
-		path, diff, limit, _ := permDiff(e)
+		path, diff, limit, _ := m.permDiff(e)
 		return bold.Render(m.shortPaths(path)) + "\n" + m.highlightDiff(path, diff, limit)
 	case tools.MultiEditToolName:
-		path, diff, limit, _ := permDiff(e)
+		path, diff, limit, _ := m.permDiff(e)
 		edits, _ := in["edits"].([]any)
 		return bold.Render(m.shortPaths(path)) + m.st.dim.Render("  "+textutil.Plural(len(edits), "edit")) + "\n" +
 			m.highlightDiff(path, diff, limit)
@@ -1690,7 +1696,9 @@ func (m *model) toolBody(e agent.Event) string {
 	case e.ToolName == "write":
 		var in struct{ Path, Content string }
 		_ = json.Unmarshal(e.Input, &in)
-		if in.Content == "" {
+		if e.Display != "" {
+			body = m.highlightDiff(in.Path, e.Display, m.lines(20))
+		} else if in.Content == "" {
 			body = m.st.dim.Render("(empty file)")
 		} else {
 			body = m.highlightDiff(in.Path, prefixLines(strings.TrimSuffix(in.Content, "\n"), "+ "), m.lines(12))
