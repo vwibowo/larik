@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"larik/internal/agent"
+
+	"charm.land/lipgloss/v2"
 )
 
 func TestCodeHighlightAndFallback(t *testing.T) {
@@ -22,6 +24,51 @@ func TestCodeHighlightAndFallback(t *testing.T) {
 	fallback, ok := m.colorCode("file.unknown-extension", code)
 	if ok || fallback != code {
 		t.Fatalf("unknown extension should stay plain: %q", fallback)
+	}
+}
+
+func TestHighlightDiffMarksChangedWords(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	diff := "  ctx\n- var count = 1\n+ var count = 2\n- gone\n+ a completely different line"
+	for _, path := range []string{"main.go", "notes.unknown"} {
+		out := m.highlightDiff(path, diff, 10)
+		if got := plain(out); got != diff {
+			t.Fatalf("%s: text changed: %q", path, got)
+		}
+		lines := strings.Split(out, "\n")
+		for _, c := range []struct {
+			line   int
+			strong lipgloss.Style
+			word   string
+		}{{1, m.st.diffDelWord, "1"}, {2, m.st.diffAddWord, "2"}} {
+			if !strings.Contains(lines[c.line], backgroundOf(c.strong)) {
+				t.Errorf("%s: %q has no %q marked", path, lines[c.line], c.word)
+			}
+		}
+		for _, i := range []int{3, 4} {
+			for _, strong := range []lipgloss.Style{m.st.diffDelWord, m.st.diffAddWord} {
+				if strings.Contains(lines[i], backgroundOf(strong)) {
+					t.Errorf("%s: unrelated line %q is marked", path, lines[i])
+				}
+			}
+		}
+	}
+}
+
+// backgroundOf returns the SGR parameters that set st's background, which a
+// styled run may share one escape sequence with its foreground.
+func backgroundOf(st lipgloss.Style) string {
+	styled := st.Render("x")
+	return strings.TrimSuffix(strings.TrimPrefix(styled[:strings.Index(styled, "x")], "\x1b["), "m")
+}
+
+func TestEditApprovalShowsOnlyWhatChanged(t *testing.T) {
+	m := testModel(t)
+	m.setWidth(80)
+	edit := agent.Event{ToolName: "edit", Input: []byte(`{"path":"main.go","old_string":"a\nb\nc","new_string":"a\nx\nc"}`)}
+	if got := plain(m.permDetail(&edit)); !strings.Contains(got, "  a\n- b\n+ x\n  c") {
+		t.Fatalf("approval preview: %q", got)
 	}
 }
 

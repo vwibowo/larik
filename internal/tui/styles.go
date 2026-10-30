@@ -18,7 +18,7 @@ import (
 type styles struct {
 	accent, dim, user, err, warn, ok, diffAdd, diffDel, thinking, box, modal, statusMode lipgloss.Style
 	// Faint backgrounds behind highlighted added and removed code.
-	diffAddBg, diffDelBg lipgloss.Style
+	diffAddBg, diffDelBg, diffAddWord, diffDelWord lipgloss.Style
 	// Footer chips: colored text only, so the terminal background shows through.
 	chip, chipWarn, chipPlain lipgloss.Style
 	// One color per permission mode (default stays plain) and a ramp from
@@ -139,6 +139,8 @@ func newStylesWithPalette(isDark bool, p *config.ThemePalette) styles {
 		diffDel:     lipgloss.NewStyle().Foreground(err),
 		diffAddBg:   lipgloss.NewStyle().Background(pick(lipgloss.Color("#E6F4EA"), tone.Spinach)),
 		diffDelBg:   lipgloss.NewStyle().Background(pick(lipgloss.Color("#FBE9E7"), tone.Toast)),
+		diffAddWord: lipgloss.NewStyle().Background(pick(lipgloss.Color("#B7E4C4"), lipgloss.Lighten(tone.Spinach, 0.18))),
+		diffDelWord: lipgloss.NewStyle().Background(pick(lipgloss.Color("#F6C6BE"), lipgloss.Lighten(tone.Toast, 0.18))),
 		thinking:    lipgloss.NewStyle().Foreground(dim).Italic(true),
 		box:         lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(dim).Padding(0, 1),
 		modal:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(accent, spark, accent).Padding(0, 1),

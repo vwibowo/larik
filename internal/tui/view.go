@@ -1219,13 +1219,13 @@ func (m *model) permDetail(e *agent.Event) string {
 		plan := agent.PlanOf(e.Input)
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", textutil.Plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
-		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), prefixLines(str(in["old_string"]), "- ")+"\n"+prefixLines(str(in["new_string"]), "+ "), 16)
+		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), textutil.Diff(str(in["old_string"]), str(in["new_string"])), 16)
 	case tools.MultiEditToolName:
 		edits, _ := in["edits"].([]any)
 		var parts []string
 		for _, e := range edits {
 			ed, _ := e.(map[string]any)
-			parts = append(parts, prefixLines(str(ed["old_string"]), "- ")+"\n"+prefixLines(str(ed["new_string"]), "+ "))
+			parts = append(parts, textutil.Diff(str(ed["old_string"]), str(ed["new_string"])))
 		}
 		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+textutil.Plural(len(edits), "edit")) + "\n" +
 			m.highlightDiff(str(in["path"]), strings.Join(parts, "\n  ⋯\n"), 24)

@@ -386,6 +386,8 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 
 ## Permissions
 
+An edit's approval prompt and its card in the conversation show a line diff: unchanged lines near the change stay dimmed, and within a changed line the words that differ are marked.
+
 | Mode           | Behavior                                                                                                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default`      | Read-only tools and sandboxed `bash` commands run freely. Edits, and commands run outside the sandbox, ask first (except a few side-effect-free commands like `git status` and `ls`). |

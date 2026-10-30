@@ -11,6 +11,7 @@ import (
 
 	"larik/internal/llm"
 	"larik/internal/pathpolicy"
+	"larik/internal/textutil"
 )
 
 const (
@@ -295,7 +296,7 @@ func (Edit) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	env.markRead(path)
 	return env.afterWrite(ctx, path, Result{
 		Content: fmt.Sprintf("Edited %s (%d replacement(s))", path, n),
-		Display: miniDiff(in.Old, in.New),
+		Display: textutil.Diff(in.Old, in.New),
 	})
 }
 
@@ -387,7 +388,7 @@ func (MultiEdit) Run(ctx context.Context, env *Env, input json.RawMessage) Resul
 			return errorf("edit %d of %d: %v in %s (earlier edits count; nothing was changed)", i+1, len(in.Edits), err, path)
 		}
 		total += n
-		diffs = append(diffs, miniDiff(e.Old, e.New))
+		diffs = append(diffs, textutil.Diff(e.Old, e.New))
 	}
 	if err := env.beforeWrite(path); err != nil {
 		return errorf("cannot checkpoint %s: %v", path, err)
@@ -403,16 +404,4 @@ func (MultiEdit) Run(ctx context.Context, env *Env, input json.RawMessage) Resul
 		Content: fmt.Sprintf("Edited %s (%d edits, %d replacement(s))", path, len(in.Edits), total),
 		Display: strings.Join(diffs, "\n  ⋯\n"),
 	})
-}
-
-// miniDiff renders removed/added lines for the UI.
-func miniDiff(old, new string) string {
-	var b strings.Builder
-	for _, l := range strings.Split(old, "\n") {
-		b.WriteString("- " + l + "\n")
-	}
-	for _, l := range strings.Split(new, "\n") {
-		b.WriteString("+ " + l + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
