@@ -247,6 +247,8 @@ type model struct {
 	toastID       int
 	view          viewport.Model // the conversation, pre-wrapped to width
 	panelView     viewport.Model
+	diffs         []fileDiff // this session's edits, for the diff view
+	diffView      *diffView
 	panelKind     string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
@@ -700,7 +702,14 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseWheelMsg:
-		if m.hasPickerPanel() && msg.Y >= m.panelTop && msg.Y < m.panelTop+m.panelRows {
+		if d := m.diffShown(); d != nil {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				d.scroll(-3)
+			case tea.MouseWheelDown:
+				d.scroll(3)
+			}
+		} else if m.hasPickerPanel() && msg.Y >= m.panelTop && msg.Y < m.panelTop+m.panelRows {
 			m.panelView, _ = m.panelView.Update(msg)
 		} else if msg.Button != tea.MouseWheelLeft && msg.Button != tea.MouseWheelRight && !msg.Mod.Contains(tea.ModShift) {
 			// Conversation output is already wrapped; horizontal wheel events
@@ -952,6 +961,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.reload != nil:
 			return m, m.handleReloadKey(msg)
+		case m.diffShown() != nil:
+			return m, m.handleDiffKey(m.diffShown(), msg)
 		case m.perm != nil:
 			return m, m.handlePermissionKey(msg)
 		case m.showKeys:
@@ -1046,6 +1057,8 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 		p.home()
 	}
 	switch {
+	case m.diffShown() != nil:
+		return nil, true
 	case m.perm != nil:
 		return nil, m.permFeedback == nil
 	case m.showKeys:
@@ -1107,7 +1120,7 @@ func (m *model) pasteToPanel(msg tea.PasteMsg) (tea.Cmd, bool) {
 
 // composerFocused reports whether typing and pasting go to the composer.
 func (m *model) composerFocused() bool {
-	return m.perm == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
+	return m.perm == nil && m.diffShown() == nil && m.wizard == nil && m.routing == nil && m.permFeedback == nil &&
 		m.settings == nil && m.provs == nil && m.mpick == nil && m.modePick == nil &&
 		m.execPick == nil && m.sessionPick == nil && m.rewindOffer == nil && m.promptMenu == nil && m.histPick == nil && !m.showKeys
 }
@@ -1190,6 +1203,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.cycleMode()
 	case actToggleThinking:
 		return m, m.toggleThinking()
+	case actViewDiff:
+		return m, m.openLastDiff()
 	case actShortcuts:
 		if m.input.Value() == "" {
 			m.showKeys = true
@@ -1449,6 +1464,7 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 		}
 	case agent.EvToolEnd:
 		m.dropCallPerms(e)
+		m.recordDiff(e)
 		for i, t := range m.tools {
 			if t.id == e.ToolID && t.agent == e.Agent {
 				m.tools = append(m.tools[:i], m.tools[i+1:]...)
@@ -1620,6 +1636,10 @@ func (m *model) handlePermissionKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.asking() {
 		return m.handleAskKey(msg)
+	}
+	if k := msg.String(); k == "d" || m.keys.is(k, actViewDiff) {
+		m.openPermDiff()
+		return nil
 	}
 	const options = 3
 	var reply *agent.PermissionReply

@@ -121,10 +121,19 @@ func renderMarked(seg string, col int, spans []textutil.Span, st, strong lipglos
 // highlighted together.
 func (m *model) highlightDiff(path, diff string, maxLines int) string {
 	lines := strings.Split(truncateLines(diff, maxLines), "\n")
-	width := max(min(m.width-10, 160), 10)
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], m.diffWidth(), "…")
 	}
+	return m.highlightLines(path, lines)
+}
+
+// diffWidth is how much of each line a diff preview shows.
+func (m *model) diffWidth() int {
+	return max(min(m.width-10, 160), 10)
+}
+
+// highlightLines is highlightDiff without any clipping.
+func (m *model) highlightLines(path string, lines []string) string {
 	marks := wordMarks(lines)
 	out := make([]string, len(lines))
 	for i := 0; i < len(lines); {

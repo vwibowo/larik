@@ -29,6 +29,7 @@ var shortcutGroups = []shortcutGroup{
 		{"esc", "interrupt"},
 		{"enter", "queue a follow-up"},
 		{"ctrl+o", "show or hide thinking"},
+		{"f4", "full diff of this session's edits"},
 	}},
 	{"scrolling", [][2]string{
 		{"pgup", "page up"},
@@ -50,6 +51,7 @@ var shortcutGroups = []shortcutGroup{
 	{"permission prompt", [][2]string{
 		{"y  a  n", "yes · always · no"},
 		{"1 2 3  ↑/↓", "select"},
+		{"d", "full diff of an edit"},
 		{"esc", "deny"},
 	}},
 	{"vim mode (/vim)", [][2]string{

@@ -51,7 +51,7 @@ func (m *model) View() tea.View {
 	if height <= 0 {
 		height = 24 // before the first size event
 	}
-	modal := m.perm != nil || m.showKeys // these take the composer's place
+	modal := m.perm != nil || m.showKeys || m.diffShown() != nil // these take the composer's place
 	bottom := m.statusLine()
 	if !modal {
 		bottom = m.composerView() + "\n" + bottom
@@ -198,9 +198,12 @@ func (m *model) View() tea.View {
 // panel renders the open panel, if any, and names it so its scroll
 // position resets when a different one opens.
 func (m *model) panel() (kind, text string) {
+	d := m.diffShown()
 	switch {
 	case m.reload != nil:
 		return "reload", m.reloadView()
+	case d != nil:
+		return "diff", m.diffViewPanel(d)
 	case m.perm != nil:
 		return "permission", m.permissionView()
 	case m.showKeys:
@@ -1045,6 +1048,10 @@ func (m *model) permissionView() string {
 		prefixLines(m.permDetail(e), "  "),
 		"",
 	}
+	_, diff, limit, hasDiff := permDiff(e)
+	if hasDiff && m.previewCut(diff, limit) {
+		lines = append(lines, m.st.warn.Render("! this preview is cut off · press d to see the whole change"), "")
+	}
 	if e.AutoReason != "" {
 		// Auto mode didn't approve this one; say why it's being asked.
 		lines = append(lines, m.st.warn.Render(wrap("✦ auto mode asks: "+e.AutoReason, w)), "")
@@ -1080,6 +1087,9 @@ func (m *model) permissionView() string {
 		}
 	}
 	hint := "↑/↓ select · enter confirm · esc deny · ctrl+c deny and stop"
+	if hasDiff {
+		hint = "↑/↓ select · d full diff · enter confirm · esc deny · ctrl+c deny and stop"
+	}
 	if e.ToolName == permission.ExitPlanTool {
 		hint = "↑/↓ select · enter confirm · esc keep planning · ctrl+c stop"
 	}
@@ -1185,9 +1195,9 @@ func (m *model) permDetail(e *agent.Event) string {
 		}
 		return cmd
 	case "write":
-		content := strings.TrimSuffix(str(in["content"]), "\n")
-		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+textutil.Plural(strings.Count(content, "\n")+1, "line")) + "\n" +
-			m.highlightDiff(str(in["path"]), prefixLines(content, "+ "), 12)
+		path, diff, limit, _ := permDiff(e)
+		return bold.Render(m.shortPaths(path)) + m.st.dim.Render("  "+textutil.Plural(strings.Count(diff, "\n")+1, "line")) + "\n" +
+			m.highlightDiff(path, diff, limit)
 	case "web_fetch":
 		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("fetched by larik over the network, outside the sandbox")
 	case "web_search":
@@ -1219,16 +1229,13 @@ func (m *model) permDetail(e *agent.Event) string {
 		plan := agent.PlanOf(e.Input)
 		return m.st.dim.Render(fmt.Sprintf("The plan (%s) is shown above; scroll up to read it all.", textutil.Plural(strings.Count(plan, "\n")+1, "line")))
 	case "edit":
-		return bold.Render(m.shortPaths(str(in["path"]))) + "\n" + m.highlightDiff(str(in["path"]), textutil.Diff(str(in["old_string"]), str(in["new_string"])), 16)
+		path, diff, limit, _ := permDiff(e)
+		return bold.Render(m.shortPaths(path)) + "\n" + m.highlightDiff(path, diff, limit)
 	case tools.MultiEditToolName:
+		path, diff, limit, _ := permDiff(e)
 		edits, _ := in["edits"].([]any)
-		var parts []string
-		for _, e := range edits {
-			ed, _ := e.(map[string]any)
-			parts = append(parts, textutil.Diff(str(ed["old_string"]), str(ed["new_string"])))
-		}
-		return bold.Render(m.shortPaths(str(in["path"]))) + m.st.dim.Render("  "+textutil.Plural(len(edits), "edit")) + "\n" +
-			m.highlightDiff(str(in["path"]), strings.Join(parts, "\n  ⋯\n"), 24)
+		return bold.Render(m.shortPaths(path)) + m.st.dim.Render("  "+textutil.Plural(len(edits), "edit")) + "\n" +
+			m.highlightDiff(path, diff, limit)
 	}
 	if len(in) == 0 {
 		return m.st.dim.Render("no arguments")
