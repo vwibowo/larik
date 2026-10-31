@@ -125,7 +125,7 @@ func wrap(cmd tea.Cmd) tea.Cmd {
 				out[i] = wrap(c)
 			}
 			return out
-		case tea.RawMsg, PanelClosedMsg, PanelMsg:
+		case tea.RawMsg, PanelClosedMsg, PanelPickMsg, PanelMsg:
 			return m
 		default:
 			// Bubble Tea's own messages (setting the clipboard, say) are

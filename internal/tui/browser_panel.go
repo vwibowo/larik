@@ -2,12 +2,16 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"larik/internal/agent"
+	"larik/internal/clipboard"
 	"larik/internal/termbrowser"
 )
 
@@ -33,6 +37,11 @@ type (
 	// browserMovedMsg says View put the panel somewhere new (a resize, the
 	// composer growing, a picker opening).
 	browserMovedMsg struct{}
+	// browserPickedMsg is a selection saved to files (or why it wasn't).
+	browserPickedMsg struct {
+		image, details string
+		err            error
+	}
 )
 
 // browserPanelWidth is the panel's width at the current window size, or 0
@@ -168,6 +177,10 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 		return m.browser.Update(msg), true
 	case termbrowser.PanelClosedMsg:
 		return m.closeBrowser(), true
+	case termbrowser.PanelPickMsg:
+		return m.savePick(msg), true
+	case browserPickedMsg:
+		return m.browserPicked(msg), true
 	case uv.KittyGraphicsEvent:
 		if m.browser != nil {
 			return m.browser.Update(msg), true
@@ -232,6 +245,40 @@ func (m *model) browserUpdate(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 		}
 	}
 	return nil, false
+}
+
+// savePick saves what the user pointed at beside pasted images, for
+// browserPicked to mention in the prompt.
+func (m *model) savePick(msg termbrowser.PanelPickMsg) tea.Cmd {
+	if m.opts.Config == nil || m.opts.Config.DataDir == "" {
+		return m.println(m.st.err.Render("can't attach the selection: no data directory"))
+	}
+	dir := filepath.Join(m.opts.Config.DataDir, "pastes")
+	keep := func(fi os.FileInfo) bool { return time.Since(fi.ModTime()) < pastedImageAge }
+	return func() tea.Msg {
+		data, ext, err := clipboard.Fit(msg.Image, agent.MaxImageBytes)
+		if err != nil {
+			return browserPickedMsg{err: err}
+		}
+		image, err := clipboard.Save(dir, data, ext, keep)
+		if err != nil {
+			return browserPickedMsg{err: err}
+		}
+		details, err := clipboard.Save(dir, []byte(msg.Details), ".md", keep)
+		return browserPickedMsg{image: image, details: details, err: err}
+	}
+}
+
+// browserPicked mentions the saved selection in the prompt and gives the
+// composer the keyboard, for the user to say what they want done with it.
+func (m *model) browserPicked(msg browserPickedMsg) tea.Cmd {
+	if msg.err != nil {
+		return m.println(m.st.err.Render("couldn't attach the selection: " + msg.err.Error()))
+	}
+	m.pasteMention(tildePath(msg.image))
+	m.pasteMention(tildePath(msg.details))
+	m.browserFocused = false
+	return m.syncComposer()
 }
 
 // browserLook is what of the panel the rest of the screen shows: whether

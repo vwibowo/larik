@@ -154,6 +154,10 @@ type viewer struct {
 	hoverGen int
 	// choosing is a <select> the user is picking an option of (choose.go).
 	choosing *choice
+	// pick is a selection of part of the page, and outlined says its
+	// outline is on screen (pick.go).
+	pick     *picking
+	outlined bool
 	// focused and focusHint are the host's: as a panel, whether it has the
 	// keyboard, and the key that moves the keyboard (as "f3").
 	focused   bool
@@ -288,7 +292,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.session, v.tab = msg.session, msg.tab
 		v.diff = frameDiff{} // the next frame is a full one
 		v.editing, v.loading, v.hist, v.prompts = false, false, history{}, nil
-		v.hover, v.choosing = "", nil
+		v.hover, v.choosing, v.pick = "", nil, nil
 		return v, tea.Batch(v.clearImages(), v.startScreencast(), v.fetchHistory(), v.installHooks())
 	case pageMsg:
 		// A tab's main frame has the tab's own id.
@@ -390,10 +394,16 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		v.editing, v.choosing = false, nil // clicking the page leaves the address field or a choice
 		v.touched = time.Now()
+		if v.pick != nil {
+			return v, v.pickPress(tea.Mouse(msg))
+		}
 		v.pressed, v.pressedAt = true, v.touched
 		return v, v.mouse("mousePressed", tea.Mouse(msg), v.countClick(tea.Mouse(msg), v.touched))
 	case tea.MouseReleaseMsg:
 		m := v.local(tea.Mouse(msg))
+		if v.pick != nil && v.pick.down {
+			return v, v.pickDone(m)
+		}
 		if v.pressed {
 			// The press was on the page, so the release goes there too,
 			// even off its edge: else the button stays down in the page.
@@ -403,6 +413,9 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, v.mouse("mouseReleased", m, v.clicks)
 	case tea.MouseMotionMsg:
 		m := v.local(tea.Mouse(msg))
+		if v.pick != nil && v.pick.down {
+			return v, v.pickMove(m)
+		}
 		if v.pressed {
 			m = v.clampToPage(m)
 		}
@@ -486,6 +499,8 @@ func (v *viewer) header() [2]string {
 	switch {
 	case v.editing:
 		second, hints = " type an address", "enter go · esc cancel"
+	case v.pick != nil:
+		second, hints = " esc cancels · drag or click", ""
 	case os.Getenv("LARIK_BROWSER_DEBUG") != "":
 		w, h := v.pagePixels()
 		guess := ""
@@ -887,6 +902,7 @@ func (v *viewer) deleteOwn(k kitty) {
 	for _, id := range v.patches {
 		k.Delete(id)
 	}
+	v.deleteOutline(k)
 }
 
 // key handles the viewer's own shortcuts and sends every other key to the
@@ -910,6 +926,12 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 			return v.decide(false)
 		}
 		return nil // an open question keeps the keyboard
+	}
+	if v.pick != nil {
+		if k.Code == tea.KeyEscape {
+			return v.cancelPick()
+		}
+		return nil
 	}
 	if v.editing {
 		switch {
@@ -936,6 +958,8 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 		return v.cycleTab(-1)
 	case "alt+p":
 		return v.togglePin()
+	case "alt+s":
+		return v.startPick()
 	case "ctrl+-", "ctrl+=", "ctrl++", "ctrl+0":
 		return v.zoomBy(msg.String())
 	case "ctrl+shift+c", "alt+c":

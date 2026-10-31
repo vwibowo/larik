@@ -1,12 +1,16 @@
 package tui
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"os"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/config"
 	"larik/internal/termbrowser"
 )
 
@@ -156,5 +160,32 @@ func TestBrowserPanelDividerResizes(t *testing.T) {
 	m.Update(tea.MouseReleaseMsg{X: 2, Y: 6})
 	if m.browserResizing {
 		t.Error("the release ends the resize")
+	}
+}
+
+// A selection lands in the prompt as mentions, and the user types next.
+func TestBrowserPickFillsThePrompt(t *testing.T) {
+	m := panelModel(t)
+	m.opts.Config = &config.Config{DataDir: t.TempDir()}
+	var pic bytes.Buffer
+	if err := png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 4, 4))); err != nil {
+		t.Fatal(err)
+	}
+	cmd := m.savePick(termbrowser.PanelPickMsg{Image: pic.Bytes(), Details: "the page says hi"})
+	picked, ok := cmd().(browserPickedMsg)
+	if !ok || picked.err != nil {
+		t.Fatalf("saved: %#v", picked)
+	}
+	m.Update(picked)
+	if m.browserFocused {
+		t.Error("the composer takes the keyboard")
+	}
+	val := m.input.Value()
+	if strings.Count(val, "@") != 2 || !strings.Contains(val, ".png") || !strings.Contains(val, ".md") {
+		t.Fatalf("prompt = %q", val)
+	}
+	got, err := os.ReadFile(picked.details)
+	if err != nil || string(got) != "the page says hi" {
+		t.Fatalf("details = %q, %v", got, err)
 	}
 }
