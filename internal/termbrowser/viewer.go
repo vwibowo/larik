@@ -158,6 +158,10 @@ type viewer struct {
 	// outline is on screen (pick.go).
 	pick     *picking
 	outlined bool
+	// baseline is the last selection, and compare the before and after
+	// picture covering the page (compare.go).
+	baseline *pickBaseline
+	compare  *comparison
 	// focused and focusHint are the host's: as a panel, whether it has the
 	// keyboard, and the key that moves the keyboard (as "f3").
 	focused   bool
@@ -354,6 +358,12 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, nil
 	case copiedMsg:
 		return v, v.copyOut(msg)
+	case pickedMsg:
+		v.baseline = msg.base
+		pick := msg.pick
+		return v, func() tea.Msg { return pick }
+	case compareMsg:
+		return v, v.showCompare(msg)
 	case tea.WindowSizeMsg:
 		return v, v.layout(0, 0, msg.Width, msg.Height)
 	case resizedMsg:
@@ -397,12 +407,18 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.pick != nil {
 			return v, v.pickPress(tea.Mouse(msg))
 		}
+		if v.compare != nil {
+			return v, nil // the page is covered
+		}
 		v.pressed, v.pressedAt = true, v.touched
 		return v, v.mouse("mousePressed", tea.Mouse(msg), v.countClick(tea.Mouse(msg), v.touched))
 	case tea.MouseReleaseMsg:
 		m := v.local(tea.Mouse(msg))
 		if v.pick != nil && v.pick.down {
 			return v, v.pickDone(m)
+		}
+		if v.compare != nil && !v.pressed {
+			return v, nil
 		}
 		if v.pressed {
 			// The press was on the page, so the release goes there too,
@@ -422,6 +438,9 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, v.mouse("mouseMoved", m, 0)
 	case tea.MouseWheelMsg:
 		v.touched = time.Now()
+		if v.compare != nil {
+			return v, nil
+		}
 		return v, v.wheel(v.local(tea.Mouse(msg)))
 	}
 	return v, nil
@@ -499,6 +518,8 @@ func (v *viewer) header() [2]string {
 	switch {
 	case v.editing:
 		second, hints = " type an address", "enter go · esc cancel"
+	case v.compare != nil:
+		second, hints = fmt.Sprintf(" %.0f%% changed · enter add to prompt · esc close", v.compare.share*100), ""
 	case v.pick != nil:
 		second, hints = " esc cancels · drag or click", ""
 	case os.Getenv("LARIK_BROWSER_DEBUG") != "":
@@ -903,6 +924,7 @@ func (v *viewer) deleteOwn(k kitty) {
 		k.Delete(id)
 	}
 	v.deleteOutline(k)
+	v.deleteCompare(k)
 }
 
 // key handles the viewer's own shortcuts and sends every other key to the
@@ -933,6 +955,9 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if v.compare != nil {
+		return v.compareKey(msg)
+	}
 	if v.editing {
 		switch {
 		case k.Code == tea.KeyEnter:
@@ -960,6 +985,8 @@ func (v *viewer) key(msg tea.KeyPressMsg) tea.Cmd {
 		return v.togglePin()
 	case "alt+s":
 		return v.startPick()
+	case "alt+d":
+		return v.startCompare()
 	case "ctrl+-", "ctrl+=", "ctrl++", "ctrl+0":
 		return v.zoomBy(msg.String())
 	case "ctrl+shift+c", "alt+c":

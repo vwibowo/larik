@@ -159,10 +159,11 @@ func TestPickCapturesAnElement(t *testing.T) {
 	}
 	cx, cy := int(r.X+r.W/2), int(r.Y+r.H/2)
 	msg := l.v.capturePick(image.Rect(cx, cy, cx+1, cy+1), true)()
-	pick, ok := msg.(PanelPickMsg)
+	picked, ok := msg.(pickedMsg)
 	if !ok {
 		t.Fatalf("got %#v", msg)
 	}
+	pick := picked.pick
 	if !strings.Contains(pick.Details, "`#name`") || !strings.Contains(pick.Details, "<input>") {
 		t.Errorf("details:\n%s", pick.Details)
 	}
@@ -175,5 +176,96 @@ func TestPickCapturesAnElement(t *testing.T) {
 	}
 	if b := img.Bounds(); b.Dx() < pickMinW || b.Dy() < pickMinH {
 		t.Errorf("image is %v", b)
+	}
+
+	// Change the element: the comparison finds it and sees the difference.
+	_, _ = l.v.Update(picked)
+	if l.v.baseline == nil || l.v.baseline.selector != "#name" {
+		t.Fatalf("baseline %+v", l.v.baseline)
+	}
+	if _, err := s.Eval(ctx, `document.getElementById('name').style.background = 'rgb(255, 0, 0)'`); err != nil {
+		t.Fatal(err)
+	}
+	var cmp compareMsg
+	for _, c := range l.v.startCompare()().(tea.BatchMsg) {
+		if m, ok := c().(compareMsg); ok {
+			cmp = m
+		}
+	}
+	if cmp.compare == nil || cmp.compare.share <= 0 || cmp.compare.share > 0.5 {
+		t.Fatalf("comparison %+v", cmp.compare)
+	}
+	if want := 2*l.v.baseline.before.Rect.Dx() + compareGap; cmp.frame.w != want {
+		t.Errorf("picture is %d wide, want %d", cmp.frame.w, want)
+	}
+}
+
+func TestCompareShots(t *testing.T) {
+	a := image.NewRGBA(image.Rect(0, 0, 80, 40))
+	b := image.NewRGBA(image.Rect(0, 0, 80, 40))
+	b.Set(4, 4, color.RGBA{255, 255, 255, 255})
+	b.Set(5, 5, color.RGBA{compareTolerance, 0, 0, 255}) // same tile; alone it wouldn't count
+	both, share := compareShots(a, b)
+	if want := 1.0 / 50; share != want {
+		t.Errorf("share = %v, want %v", share, want)
+	}
+	if got := both.Bounds(); got.Dx() != 168 || got.Dy() != 40 {
+		t.Errorf("picture is %v", got)
+	}
+	if c := both.RGBAAt(80+compareGap+7, 7); c.R == 0 {
+		t.Errorf("the changed tile is tinted: %v", c)
+	}
+	if c := both.RGBAAt(7, 7); c.R != 0 {
+		t.Errorf("the before side is left alone: %v", c)
+	}
+	if _, share := compareShots(a, a); share != 0 {
+		t.Errorf("no change: %v", share)
+	}
+}
+
+func TestCompareOverlayTakesInput(t *testing.T) {
+	v := pickViewer(t)
+	_, cmd := v.Update(compareMsg{frame: solidFrame(16, 8, pickColor), compare: &comparison{png: []byte("p"), details: "d", share: 0.25}})
+	if v.compare == nil {
+		t.Fatal("the picture shows")
+	}
+	_ = cmd
+	if h := v.header(); !strings.Contains(h[1], "25% changed") {
+		t.Errorf("header %q", h[1])
+	}
+	v.Update(tea.MouseClickMsg{X: 50, Y: 8, Button: tea.MouseLeft})
+	v.Update(tea.MouseReleaseMsg{X: 50, Y: 8, Button: tea.MouseLeft})
+	if len(v.inputs.items) != 0 || v.pressed {
+		t.Fatalf("a covered page takes no clicks: %d", len(v.inputs.items))
+	}
+	_, cmd = v.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	var got PanelPickMsg
+	for _, c := range cmd().(tea.BatchMsg) {
+		if m, ok := c().(PanelPickMsg); ok {
+			got = m
+		}
+	}
+	if string(got.Image) != "p" || got.Details != "d" || v.compare != nil {
+		t.Fatalf("enter attaches and closes: %+v, %v", got, v.compare)
+	}
+}
+
+func TestCompareNeedsABaseline(t *testing.T) {
+	v := pickViewer(t)
+	v.Update(tea.KeyPressMsg(tea.Key{Code: 'd', Mod: tea.ModAlt}))
+	if !strings.Contains(v.note, "alt+s") {
+		t.Fatalf("note %q", v.note)
+	}
+	v.baseline = &pickBaseline{tab: "other", ratio: 1}
+	v.Update(tea.KeyPressMsg(tea.Key{Code: 'd', Mod: tea.ModAlt}))
+	if !strings.Contains(v.note, "another tab") {
+		t.Fatalf("note %q", v.note)
+	}
+}
+
+func TestSlideInto(t *testing.T) {
+	b := image.Rect(0, 0, 100, 100)
+	if got := slideInto(image.Rect(90, -5, 120, 25), b); got != image.Rect(70, 0, 100, 30) {
+		t.Errorf("got %v", got)
 	}
 }

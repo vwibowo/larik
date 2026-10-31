@@ -3,7 +3,6 @@ package termbrowser
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -229,7 +228,7 @@ func solidFrame(w, h int, c color.RGBA) rgbFrame {
 // capturePick asks the page about the selection and takes its picture. A
 // click's box becomes the element's own.
 func (v *viewer) capturePick(box image.Rectangle, click bool) tea.Cmd {
-	conn, session, ratio, url := v.conn, v.session, v.ratio(), v.targets[v.tab].URL
+	conn, session, ratio, tab, url := v.conn, v.session, v.ratio(), v.tab, v.targets[v.tab].URL
 	if conn == nil || session == "" {
 		return nil
 	}
@@ -253,17 +252,7 @@ func (v *viewer) capturePick(box image.Rectangle, click bool) tea.Cmd {
 		if click && info.W > 0 && info.H > 0 {
 			box = image.Rect(int(info.X*ratio), int(info.Y*ratio), int((info.X+info.W)*ratio), int((info.Y+info.H)*ratio))
 		}
-		var shot struct {
-			Data string `json:"data"`
-		}
-		if err := conn.call(ctx, session, "Page.captureScreenshot", map[string]any{"format": "png"}, &shot); err != nil {
-			return noteMsg("can't capture the page: " + err.Error())
-		}
-		raw, err := base64.StdEncoding.DecodeString(shot.Data)
-		if err != nil {
-			return noteMsg("can't capture the page: " + err.Error())
-		}
-		img, err := png.Decode(bytes.NewReader(raw))
+		img, err := viewportShot(ctx, conn, session)
 		if err != nil {
 			return noteMsg("can't capture the page: " + err.Error())
 		}
@@ -271,17 +260,22 @@ func (v *viewer) capturePick(box image.Rectangle, click bool) tea.Cmd {
 		if err := png.Encode(&out, cropPick(img, box)); err != nil {
 			return noteMsg("can't capture the page: " + err.Error())
 		}
-		return PanelPickMsg{Image: out.Bytes(), Details: pickDetails(url, info)}
+		crop := pickCrop(img.Bounds(), box)
+		before := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+		draw.Draw(before, before.Bounds(), img, crop.Min, draw.Src)
+		return pickedMsg{
+			PanelPickMsg{Image: out.Bytes(), Details: pickDetails(url, info)},
+			&pickBaseline{tab, info.Selector, ratio, before, crop, image.Pt(int(info.X*ratio), int(info.Y*ratio))},
+		}
 	}
 }
 
-// cropPick cuts box out of the page with at least pickMinW by pickMinH of
-// what is around it, and outlines it.
-func cropPick(page image.Image, box image.Rectangle) image.Image {
-	b := page.Bounds()
+// pickCrop is the part of the page a capture of box shows: box with at
+// least pickMinW by pickMinH of what is around it.
+func pickCrop(b, box image.Rectangle) image.Rectangle {
 	box = box.Add(b.Min).Intersect(b)
 	if box.Empty() {
-		return page
+		return b
 	}
 	grow := func(lo, hi, least, limLo, limHi int) (int, int) {
 		extra := max(least-(hi-lo), 0)
@@ -292,6 +286,17 @@ func cropPick(page image.Image, box image.Rectangle) image.Image {
 	var crop image.Rectangle
 	crop.Min.X, crop.Max.X = grow(box.Min.X, box.Max.X, pickMinW, b.Min.X, b.Max.X)
 	crop.Min.Y, crop.Max.Y = grow(box.Min.Y, box.Max.Y, pickMinH, b.Min.Y, b.Max.Y)
+	return crop
+}
+
+// cropPick cuts box out of the page with what is around it, and outlines it.
+func cropPick(page image.Image, box image.Rectangle) image.Image {
+	b := page.Bounds()
+	box = box.Add(b.Min).Intersect(b)
+	if box.Empty() {
+		return page
+	}
+	crop := pickCrop(b, box.Sub(b.Min))
 	out := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
 	draw.Draw(out, out.Bounds(), page, crop.Min, draw.Src)
 	for _, bar := range outlineBars(box.Sub(crop.Min)) {
