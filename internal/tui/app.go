@@ -38,7 +38,7 @@ import (
 
 type Options struct {
 	// App and Session enable switching sessions from the TUI; the TUI
-	// then owns the session and closes whichever is current on exit.
+	// closes the current app and session on exit.
 	App     *app.App
 	Session *app.Session
 
@@ -108,12 +108,21 @@ func cleanupModel(m *model) {
 	if m.sess != nil {
 		m.sess.Close("prompt_input_exit")
 	}
+	// Close the current app after the session so session-end hooks can still
+	// use shared services. This owns the browser and its Chrome process.
+	if m.opts.App != nil {
+		m.opts.App.Close()
+	}
 	for _, a := range m.ownedApps {
-		a.Close()
+		if a != m.opts.App {
+			a.Close()
+		}
 	}
 	// The alt screen takes the conversation with it; say how to get back.
-	if id := m.agent.SessionID(); id != "" && m.prompted {
-		fmt.Printf("session %s · resume with: larik --resume %s\n", id, id)
+	if m.agent != nil {
+		if id := m.agent.SessionID(); id != "" && m.prompted {
+			fmt.Printf("session %s · resume with: larik --resume %s\n", id, id)
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
+	"larik/internal/procgroup"
 	"larik/internal/textutil"
 	"larik/internal/tools"
 	"larik/internal/web"
@@ -62,8 +63,7 @@ type Options struct {
 
 const (
 	actionTimeout = 30 * time.Second
-	// closeTimeout bounds waiting for Chrome to quit cleanly before it is
-	// killed.
+	// closeTimeout bounds each graceful and forced Chrome shutdown wait.
 	closeTimeout          = 5 * time.Second
 	browserStartupTimeout = 12 * time.Second
 	maxConsole            = 200
@@ -78,7 +78,8 @@ type Session struct {
 
 	mu          sync.Mutex
 	cancelAlloc context.CancelFunc
-	root        context.Context // the browser's first tab; parent of the others
+	chromeCmd   atomic.Pointer[exec.Cmd] // chromedp's process, for process-group cleanup
+	root        context.Context          // the browser's first tab; parent of the others
 	cancelRoot  context.CancelFunc
 	tabs        []*tab
 	active      map[string]*tab // owner -> its active tab
@@ -283,9 +284,7 @@ func (s *Session) Close() {
 
 func (s *Session) shutdown() {
 	if s.cancelRoot != nil {
-		// Ask Chrome to quit and wait for it, rather than killing it:
-		// cookies and localStorage are written out on the way down, and a
-		// killed Chrome loses whatever it hadn't saved yet.
+		// Give Chrome a chance to flush cookies and storage before escalating.
 		if s.root.Err() == nil {
 			ctx, cancel := context.WithTimeout(s.root, closeTimeout)
 			_ = chromedp.Cancel(ctx)
@@ -293,8 +292,17 @@ func (s *Session) shutdown() {
 		}
 		s.cancelRoot()
 		s.cancelAlloc()
+
+		// Chrome spawns renderer, GPU and utility processes. chromedp owns the
+		// browser command; kill only its dedicated process group if descendants
+		// remain after allocator cancellation.
+		if cmd := s.chromeCmd.Load(); cmd != nil && chromeProcessGroupAlive(cmd) {
+			_ = procgroup.Kill(cmd)
+			waitForChromeProcessGroupExit(cmd, closeTimeout)
+		}
 	}
 	s.root, s.cancelRoot, s.cancelAlloc, s.wsURL = nil, nil, nil, ""
+	s.chromeCmd.Store(nil)
 	s.tabs, s.active = nil, nil
 	if s.tempProfile != "" {
 		_ = os.RemoveAll(s.tempProfile)
@@ -409,7 +417,10 @@ func (s *Session) launchExec(profile string, startupTimeout time.Duration) error
 	if path := firstNonEmpty(s.opts.ChromePath, chromeBinary()); path != "" {
 		opts = append(opts, chromedp.ExecPath(path))
 	}
-	opts = append(opts, chromedp.UserDataDir(profile))
+	opts = append(opts, chromedp.UserDataDir(profile), chromedp.ModifyCmdFunc(func(cmd *exec.Cmd) {
+		configureChromeCmd(cmd)
+		s.chromeCmd.Store(cmd)
+	}))
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	logf := s.logger()
 	root, cancelRoot := chromedp.NewContext(allocCtx, chromedp.WithLogf(logf), chromedp.WithErrorf(logf))

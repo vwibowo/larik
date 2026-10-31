@@ -706,6 +706,34 @@ func TestWaiting(t *testing.T) {
 	}
 }
 
+func TestCloseStopsChromeProcess(t *testing.T) {
+	path := chrome(t)
+	profile := t.TempDir()
+	s := New(Options{ChromePath: path, ProfileDir: profile})
+	s.startupTimeout = testStartupTimeout
+	if _, err := s.Tab(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pid := profileLockPID(profile)
+	if pid == 0 {
+		t.Fatal("Chrome did not create its profile lock")
+	}
+	cmd := s.chromeCmd.Load()
+	s.Close()
+	if cmd == nil {
+		t.Fatal("chromedp did not expose the launched Chrome command")
+	}
+	if chromeProcessGroupAlive(cmd) {
+		t.Errorf("Chrome process group %d is still running after Session.Close", cmd.Process.Pid)
+	}
+	if processAlive(pid) {
+		t.Errorf("Chrome process %d is still running after Session.Close", pid)
+	}
+	if got := profileLockPID(profile); got != 0 {
+		t.Errorf("profile still has a Chrome lock for pid %d", got)
+	}
+}
+
 func TestProfileInUse(t *testing.T) {
 	dir := t.TempDir()
 	host, _ := os.Hostname()

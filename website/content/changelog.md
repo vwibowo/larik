@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Chrome shuts down with Larik.** Exiting Larik now closes Chrome and its renderer and helper processes; hiding the browser pane still leaves it running.
+
 ## v0.22.0
 
 <p class="release-meta"><time datetime="2026-10-31">October 31, 2026</time></p>
