@@ -37,6 +37,8 @@ type State struct {
 	// Location is what "Allow" shares when a page asks where the user is
 	// (browser.location); nil when none is set.
 	Location *Location `json:"location,omitempty"`
+	// Compare is the id of a browser_compare waiting for a panel's answer.
+	Compare int `json:"compare,omitempty"`
 }
 
 // Location is a position to report to pages, in degrees and meters.
@@ -48,12 +50,18 @@ type Location struct {
 
 // ViewerMessage is something the viewer sends the session.
 type ViewerMessage struct {
-	Op string `json:"op"` // "auth"
+	Op string `json:"op"` // "auth", "compare"
 	ID int    `json:"id,omitempty"`
 	// For "auth": the credentials, or Cancel. Never logged or stored.
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
 	Cancel   bool   `json:"cancel,omitempty"`
+	// For "compare": the picture (nil if nothing changed) and what it
+	// shows, or why there is none.
+	Picture []byte  `json:"picture,omitempty"`
+	Details string  `json:"details,omitempty"`
+	Share   float64 `json:"share,omitempty"`
+	Error   string  `json:"error,omitempty"`
 }
 
 // StateTab is one tab the session knows, and the agent it belongs to.
@@ -81,6 +89,9 @@ type viewState struct {
 
 	auths    []*pendingAuth // sign-ins waiting for the user, oldest first
 	nextAuth int
+
+	compares    map[int]chan ViewerMessage // browser_compare calls waiting for a panel
+	nextCompare int
 }
 
 // focusOn records that owner is using t. The caller holds s.mu.
@@ -135,6 +146,9 @@ func (s *Session) state() State {
 		a := v.auths[0].prompt
 		st.Auth = &a
 	}
+	for id := range v.compares {
+		st.Compare = max(st.Compare, id)
+	}
 	v.mu.Unlock()
 	return st
 }
@@ -162,7 +176,7 @@ func (s *Session) Serve(dir string) (string, error) {
 		return "", err
 	}
 	_ = os.Chmod(path, 0o600)
-	v.ln, v.path, v.subs = ln, path, map[chan struct{}]net.Conn{}
+	v.ln, v.path, v.subs, v.compares = ln, path, map[chan struct{}]net.Conn{}, map[int]chan ViewerMessage{}
 	go s.accept(ln)
 	return path, nil
 }
@@ -228,8 +242,11 @@ func (s *Session) stream(conn net.Conn) {
 			if dec.Decode(&m) != nil {
 				return
 			}
-			if m.Op == "auth" {
+			switch {
+			case m.Op == "auth":
 				_ = s.answerAuth(m)
+			case m.Op == "compare":
+				s.answerCompare(m)
 			}
 		}
 	}()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -51,6 +52,26 @@ type comparison struct {
 	share   float64 // of the area that changed
 }
 
+// located is where the page says the baseline's element is now.
+type located struct {
+	Found bool    `json:"found"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+}
+
+// against compares the baseline with now, a picture of the window, and
+// returns the two side by side and the share of the area that changed.
+func (b *pickBaseline) against(now image.Image, at located) (*image.RGBA, float64) {
+	crop := b.crop
+	if at.Found {
+		corner := image.Pt(int(at.X*b.ratio), int(at.Y*b.ratio))
+		crop = slideInto(crop.Add(corner.Sub(b.elem)), now.Bounds())
+	}
+	after := image.NewRGBA(image.Rect(0, 0, b.before.Rect.Dx(), b.before.Rect.Dy()))
+	draw.Draw(after, after.Bounds(), now, crop.Min, draw.Src)
+	return compareShots(b.before, after)
+}
+
 type (
 	// pickedMsg is a finished capture: the host's message, and the baseline.
 	pickedMsg struct {
@@ -66,7 +87,7 @@ type (
 
 // compareJS finds an element again, bringing it into view if it left.
 const compareJS = `((sel) => {
-	const e = document.querySelector(sel);
+	const e = sel ? document.querySelector(sel) : null;
 	if (!e) return {found: false};
 	let r = e.getBoundingClientRect();
 	if (r.bottom < 0 || r.top > innerHeight) {
@@ -76,55 +97,62 @@ const compareJS = `((sel) => {
 	return {found: true, x: r.left, y: r.top};
 })(%s)`
 
+// comparable says why the baseline can't be compared here, if it can't.
+func (v *viewer) comparable() error {
+	switch base := v.baseline; {
+	case base == nil:
+		return errNoBaseline
+	case base.tab != v.tab:
+		return errors.New("that selection was on another tab")
+	case base.ratio != v.ratio():
+		return errors.New("the zoom changed since that selection")
+	case v.conn == nil || v.session == "":
+		return errors.New("no page to compare")
+	}
+	return nil
+}
+
+// compareNow captures the page as it is and compares it with base. It
+// runs on the viewer's own connection for the same reason both pictures
+// have to: only there does the tab render at the viewer's scale.
+func compareNow(ctx context.Context, conn *cdpConn, session target.SessionID, base *pickBaseline) (*image.RGBA, located, float64, error) {
+	var found struct {
+		Result struct {
+			Value located `json:"value"`
+		} `json:"result"`
+	}
+	_ = conn.call(ctx, session, "Runtime.evaluate", map[string]any{
+		"expression": locateJS(base.selector), "returnByValue": true,
+	}, &found)
+	now, err := viewportShot(ctx, conn, session)
+	if err != nil {
+		return nil, located{}, 0, err
+	}
+	at := found.Result.Value
+	both, share := base.against(now, at)
+	return both, at, share, nil
+}
+
+// locateJS is compareJS for selector.
+func locateJS(selector string) string {
+	sel, _ := json.Marshal(selector)
+	return fmt.Sprintf(compareJS, sel)
+}
+
 // startCompare is alt+d.
 func (v *viewer) startCompare() tea.Cmd {
-	base := v.baseline
-	switch {
-	case base == nil:
-		return v.setNote("nothing to compare: point at something first (alt+s)")
-	case base.tab != v.tab:
-		return v.setNote("that selection was on another tab")
-	case base.ratio != v.ratio():
-		return v.setNote("the zoom changed since that selection")
+	if err := v.comparable(); err != nil {
+		return v.setNote(err.Error())
 	}
-	conn, session, tab := v.conn, v.session, v.tab
-	if conn == nil || session == "" {
-		return nil
-	}
+	conn, session, tab, base := v.conn, v.session, v.tab, v.baseline
 	note := v.setNote("comparing…")
 	return tea.Batch(note, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		var found struct {
-			Result struct {
-				Value struct {
-					Found bool    `json:"found"`
-					X     float64 `json:"x"`
-					Y     float64 `json:"y"`
-				} `json:"value"`
-			} `json:"result"`
-		}
-		ok := false
-		if base.selector != "" {
-			sel, _ := json.Marshal(base.selector)
-			if conn.call(ctx, session, "Runtime.evaluate", map[string]any{
-				"expression": fmt.Sprintf(compareJS, sel), "returnByValue": true,
-			}, &found) == nil {
-				ok = found.Result.Value.Found
-			}
-		}
-		now, err := viewportShot(ctx, conn, session)
+		both, at, share, err := compareNow(ctx, conn, session, base)
 		if err != nil {
 			return noteMsg("can't capture the page: " + err.Error())
 		}
-		crop := base.crop
-		if ok {
-			at := image.Pt(int(found.Result.Value.X*base.ratio), int(found.Result.Value.Y*base.ratio))
-			crop = slideInto(crop.Add(at.Sub(base.elem)), now.Bounds())
-		}
-		after := image.NewRGBA(image.Rect(0, 0, base.before.Rect.Dx(), base.before.Rect.Dy()))
-		draw.Draw(after, after.Bounds(), now, crop.Min, draw.Src)
-		both, share := compareShots(base.before, after)
 		if share == 0 {
 			return noteMsg("no visible change since that selection")
 		}
@@ -132,8 +160,43 @@ func (v *viewer) startCompare() tea.Cmd {
 		if err := png.Encode(&out, both); err != nil {
 			return noteMsg("can't compare: " + err.Error())
 		}
-		return compareMsg{tab, toRGB(both), &comparison{out.Bytes(), compareDetails(base.selector, ok, share), share}}
+		return compareMsg{tab, toRGB(both), &comparison{out.Bytes(), compareDetails(base.selector, at.Found, share), share}}
 	})
+}
+
+// answerCompare does what the session asked for in the state, once: only
+// a panel can have a selection, so only a panel answers.
+func (v *viewer) answerCompare() tea.Cmd {
+	id, ctl := v.state.Compare, v.control
+	if id == 0 || id == v.compareID || !v.embedded || ctl == nil {
+		return nil
+	}
+	v.compareID = id
+	reply := func(m ViewerMessage) tea.Msg {
+		m.Op, m.ID = "compare", id
+		_ = ctl.Send(m)
+		return nil
+	}
+	if err := v.comparable(); err != nil {
+		return func() tea.Msg { return reply(ViewerMessage{Error: err.Error()}) }
+	}
+	conn, session, base := v.conn, v.session, v.baseline
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		both, at, share, err := compareNow(ctx, conn, session, base)
+		if err != nil {
+			return reply(ViewerMessage{Error: err.Error()})
+		}
+		if share == 0 {
+			return reply(ViewerMessage{})
+		}
+		var out bytes.Buffer
+		if err := png.Encode(&out, both); err != nil {
+			return reply(ViewerMessage{Error: err.Error()})
+		}
+		return reply(ViewerMessage{Picture: out.Bytes(), Details: compareDetails(base.selector, at.Found, share), Share: share})
+	}
 }
 
 // showCompare covers the page with the picture, shrunk to fit it.
@@ -268,4 +331,62 @@ func viewportShot(ctx context.Context, conn *cdpConn, session target.SessionID) 
 		return nil, err
 	}
 	return png.Decode(bytes.NewReader(raw))
+}
+
+// errNoBaseline says what is missing, to the user and to the model.
+var errNoBaseline = errors.New("nothing to compare: point at something first (alt+s in the browser panel)")
+
+// compareWait is how long the session waits for a panel to compare.
+const compareWait = 15 * time.Second
+
+// Compare asks the panel to look at the page again where the user last
+// pointed; ViewerMessage says what it found. Picture is nil when nothing
+// visible changed.
+func (s *Session) Compare(ctx context.Context) (ViewerMessage, error) {
+	closed := errors.New("the browser panel isn't open: call browser_show, and ask the user to point at the part of the page with alt+s")
+	if s.viewers() == 0 {
+		return ViewerMessage{}, closed
+	}
+	if _, err := s.Tab(ctx); err != nil { // the panel follows the tab in use
+		return ViewerMessage{}, err
+	}
+	s.settle(ctx)
+	answer := make(chan ViewerMessage, 1)
+	v := &s.view
+	v.mu.Lock()
+	v.nextCompare++
+	id := v.nextCompare
+	v.compares[id] = answer
+	v.mu.Unlock()
+	s.changed()
+	defer func() {
+		v.mu.Lock()
+		delete(v.compares, id)
+		v.mu.Unlock()
+		s.changed()
+	}()
+	select {
+	case m := <-answer:
+		if m.Error != "" {
+			return m, errors.New(m.Error)
+		}
+		return m, nil
+	case <-time.After(compareWait):
+		return ViewerMessage{}, closed
+	case <-ctx.Done():
+		return ViewerMessage{}, ctx.Err()
+	}
+}
+
+// answerCompare delivers a panel's answer to the request it names.
+func (s *Session) answerCompare(m ViewerMessage) {
+	v := &s.view
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ch := v.compares[m.ID]; ch != nil {
+		select {
+		case ch <- m:
+		default: // already answered
+		}
+	}
 }

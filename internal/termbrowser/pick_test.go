@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"larik/internal/tools"
 )
 
 // pickViewer is a panel's viewer on a page, with no browser behind it.
@@ -146,6 +148,32 @@ func TestPickCapturesAnElement(t *testing.T) {
 	l.msgs <- tea.WindowSizeMsg{Width: 100, Height: 40}
 	l.until("a full frame", func() bool { return strings.Contains(l.output(), "a=T,q=2,f=24,s=1000,v=760,i=1,") })
 
+	ctl, err := DialControl(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	go ctl.Run(func(State) {})
+	l.v.embedded, l.v.control = true, ctl
+	compare := func() tools.Result {
+		t.Helper()
+		done := make(chan tools.Result, 1)
+		go func() { done <- (CompareTool{s}).Run(ctx, nil, nil) }()
+		var res tools.Result
+		l.until("the comparison", func() bool {
+			select {
+			case res = <-done:
+				return true
+			default:
+				return false
+			}
+		})
+		return res
+	}
+	if r := compare(); !r.IsError || !strings.Contains(r.Content, "alt+s") {
+		t.Fatalf("no selection: %+v", r)
+	}
+
 	if _, err := s.Eval(ctx, "document.getElementById('name').setAttribute('value', 'hunter2')"); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +207,10 @@ func TestPickCapturesAnElement(t *testing.T) {
 	}
 
 	// Change the element: the comparison finds it and sees the difference.
-	_, _ = l.v.Update(picked)
+	_, cmd := l.v.Update(picked)
+	if _, ok := cmd().(PanelPickMsg); !ok {
+		t.Fatal("the host still gets the pick")
+	}
 	if l.v.baseline == nil || l.v.baseline.selector != "#name" {
 		t.Fatalf("baseline %+v", l.v.baseline)
 	}
@@ -197,6 +228,18 @@ func TestPickCapturesAnElement(t *testing.T) {
 	}
 	if want := 2*l.v.baseline.before.Rect.Dx() + compareGap; cmp.frame.w != want {
 		t.Errorf("picture is %d wide, want %d", cmp.frame.w, want)
+	}
+
+	// The agent gets the same comparison through the panel.
+	res := compare()
+	if res.IsError || len(res.Images) != 1 || !strings.Contains(res.Content, "`#name`") {
+		t.Fatalf("compare: %+v", res.Content)
+	}
+	if _, err := s.Eval(ctx, `document.getElementById('name').style.background = ''`); err != nil {
+		t.Fatal(err)
+	}
+	if res := compare(); res.IsError || len(res.Images) != 0 {
+		t.Errorf("after undoing the change: %s", res.Content)
 	}
 }
 

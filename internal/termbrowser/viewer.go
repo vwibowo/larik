@@ -162,6 +162,8 @@ type viewer struct {
 	// picture covering the page (compare.go).
 	baseline *pickBaseline
 	compare  *comparison
+	// compareID is the session's last request to compare.
+	compareID int
 	// focused and focusHint are the host's: as a panel, whether it has the
 	// keyboard, and the key that moves the keyboard (as "f3").
 	focused   bool
@@ -263,7 +265,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stateMsg:
 		v.state = State(msg)
 		v.syncAuth()
-		return v, v.follow()
+		return v, tea.Batch(v.follow(), v.answerCompare())
 	case bindingMsg:
 		return v, v.onBinding(msg)
 	case hooksMsg:

@@ -575,6 +575,7 @@ The model gets these tools:
 | `browser_history` | Back and forward |
 | `browser_tabs` | Lists, opens, selects and closes tabs; tabs a page opens become active |
 | `browser_eval` | Runs a JavaScript expression in the page |
+| `browser_compare` | The part of the page you last pointed at with `alt+s`, before and after, with what changed tinted, so the model can check its own change |
 | `browser_console` | Console messages, exceptions and dialogs since the last call |
 | `browser_network` | The requests the page made: method, URL, status and time, with failures marked; and a response's body |
 | `browser_show` | Opens the in-terminal browser pane for you, following the agent's tab |

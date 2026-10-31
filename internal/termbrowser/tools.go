@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"larik/internal/clipboard"
 	"larik/internal/llm"
 	"larik/internal/tools"
 )
@@ -24,7 +25,7 @@ func Tools(s *Session) []tools.Tool {
 	for _, t := range []tools.Tool{
 		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ScreenshotTool{s}, ClickTool{s}, TypeTool{s},
 		SelectTool{s}, PressKeyTool{s}, UploadTool{s}, WaitForTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s}, NetworkTool{s},
-		ShowTool{s},
+		ShowTool{s}, CompareTool{s},
 	} {
 		out = append(out, noted{t, s})
 	}
@@ -393,6 +394,42 @@ func (t ScreenshotTool) Run(ctx context.Context, env *tools.Env, input json.RawM
 		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(shot.JPEG)}},
 	}
 }
+
+// CompareTool is browser_compare.
+type CompareTool struct{ S *Session }
+
+func (CompareTool) ReadOnly() bool { return true }
+func (CompareTool) Spec() llm.ToolSpec {
+	return spec("browser_compare",
+		"Compare the part of the page the user last pointed at (with alt+s in the browser panel) with how it looked then: see it before and after, side by side, with what changed tinted. "+
+			"Use it after changing what they pointed at, to check the result yourself before reporting back. It finds the element again if it moved. Only call it if you can see images. "+untrusted,
+		`{"type":"object","properties":{}}`)
+}
+func (t CompareTool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
+	found, err := t.S.Compare(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	if found.Picture == nil {
+		return tools.Result{Content: "No visible change where the user pointed.", Display: "no visible change"}
+	}
+	data, ext, err := clipboard.Fit(found.Picture, maxCompareBytes)
+	if err != nil {
+		return fail(err)
+	}
+	media := "image/png"
+	if ext != ".png" {
+		media = "image/jpeg"
+	}
+	return tools.Result{
+		Content: found.Details,
+		Display: fmt.Sprintf("%.0f%% changed", found.Share*100),
+		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: media, Data: base64.StdEncoding.EncodeToString(data)}},
+	}
+}
+
+// maxCompareBytes is the largest picture browser_compare returns.
+const maxCompareBytes = 5 << 20
 
 // UploadTool is browser_upload.
 type UploadTool struct{ S *Session }
