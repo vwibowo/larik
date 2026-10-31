@@ -11,6 +11,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"larik/internal/termgfx"
 )
 
 // loop plays the Bubble Tea runtime for a viewer: it runs commands, feeds
@@ -93,7 +95,7 @@ func TestViewerDrawsAndTakesInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	defer l.v.close()
 	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
@@ -157,7 +159,7 @@ func TestViewerHiDPIFramesAreFullResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	defer l.v.close()
 	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
@@ -187,7 +189,7 @@ func TestViewerToolbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	defer l.v.close()
 	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
@@ -242,7 +244,7 @@ func TestViewerChoosesFromASelect(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	defer l.v.close()
 	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })

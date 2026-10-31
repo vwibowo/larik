@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 
 	"larik/internal/clipboard"
+	"larik/internal/termgfx"
 )
 
 // The viewer is `larik browser view`, run in a pane beside Larik's. It
@@ -55,7 +56,7 @@ const (
 // RunViewer runs the viewer for the session listening at socket until the
 // user quits it or the session ends.
 func RunViewer(socket string) error {
-	ok, tmux := kittyTerminal(os.Getenv)
+	ok, tmux := termgfx.Terminal(os.Getenv)
 	if !ok && os.Getenv("LARIK_FORCE_KITTY") == "" {
 		return errors.New("this terminal does not show kitty graphics (kitty, Ghostty, WezTerm, cmux or Konsole); set LARIK_FORCE_KITTY=1 to try anyway")
 	}
@@ -64,7 +65,7 @@ func RunViewer(socket string) error {
 		return err
 	}
 	defer ctl.Close()
-	v := newViewer(kitty{tmux: tmux})
+	v := newViewer(termgfx.Kitty{Tmux: tmux})
 	v.socket, v.out, v.control = socket, os.Stdout, ctl
 	p := tea.NewProgram(v)
 	v.send = p.Send
@@ -82,7 +83,7 @@ type viewer struct {
 	control *Control    // the session's socket, for answers only the user gives
 	inputs  *inputQueue // the user's input to the page, in order
 	send    func(tea.Msg)
-	kitty   kitty
+	kitty   termgfx.Kitty
 	out     io.Writer // the terminal, for the last clean-up after Bubble Tea exits
 
 	state   State
@@ -190,7 +191,7 @@ type (
 	}
 	frameMsg struct {
 		session target.SessionID
-		frame   rgbFrame
+		frame   termgfx.Frame
 	}
 	targetMsg struct {
 		id   string
@@ -219,7 +220,7 @@ type (
 	followMsg struct{}
 )
 
-func newViewer(k kitty) *viewer {
+func newViewer(k termgfx.Kitty) *viewer {
 	v := &viewer{kitty: k, targets: map[string]targetInfo{}, frames: make(chan encodedFrame, 1), done: make(chan struct{})}
 	v.inputs = newInputQueue(func(msg string) {
 		if v.send != nil {
@@ -233,8 +234,8 @@ func newViewer(k kitty) *viewer {
 		for {
 			select {
 			case <-t.C:
-				if v.kitty.files {
-					sweepFrameFiles()
+				if v.kitty.Files {
+					termgfx.SweepFrameFiles()
 				}
 			case <-v.done:
 				return
@@ -252,8 +253,8 @@ func (v *viewer) Init() tea.Cmd {
 	// back as a KittyGraphicsEvent, and until then they go inline.
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
-	if k.probeFiles() != nil {
+	k.W = &out
+	if k.ProbeFiles() != nil {
 		return nil
 	}
 	v.probed = true
@@ -320,14 +321,14 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case frameMsg:
 		// draw copies what it sends, so the pixels go back for the next
 		// frame at once.
-		defer releaseFrame(msg.frame)
+		defer termgfx.Release(msg.frame)
 		if msg.session != v.session {
 			return v, nil
 		}
 		return v, v.draw(msg.frame)
 	case uv.KittyGraphicsEvent:
-		if msg.Options.ID == probeID && v.probed {
-			v.kitty.files = string(msg.Payload) == "OK"
+		if msg.Options.ID == termgfx.ProbeID && v.probed {
+			v.kitty.Files = string(msg.Payload) == "OK"
 		}
 		return v, nil
 	case targetMsg:
@@ -531,7 +532,7 @@ func (v *viewer) header() [2]string {
 			guess = " (guessed: the terminal didn't report pixels)"
 		}
 		transfer := "inline"
-		if v.kitty.files {
+		if v.kitty.Files {
 			transfer = "file"
 		}
 		second, hints = fmt.Sprintf(" cell %dx%d px%s · %dx scale · pane %dx%d px · frame %dx%d · %s · %d fps", v.cellW, v.cellH, guess, v.scale, w, h, v.frame.X, v.frame.Y, transfer, v.fps()), ""
@@ -766,7 +767,7 @@ func (v *viewer) decode() {
 		if err != nil {
 			continue
 		}
-		v.send(frameMsg{f.session, toRGB(img)})
+		v.send(frameMsg{f.session, termgfx.ToRGB(img)})
 	}
 }
 
@@ -839,16 +840,16 @@ func (v *viewer) startScreencast() tea.Cmd {
 
 // draw puts a frame on screen: the parts that changed as patches over the
 // last full frame, or the whole frame.
-func (v *viewer) draw(img rgbFrame) tea.Cmd {
+func (v *viewer) draw(img termgfx.Frame) tea.Cmd {
 	if v.cols == 0 || v.rows <= headerRows {
 		return nil
 	}
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	w, h := v.pagePixels()
-	v.frame = image.Pt(img.w, img.h)
-	fits := img.w <= w && img.h <= h
+	v.frame = image.Pt(img.W, img.H)
+	fits := img.W <= w && img.H <= h
 	rects, full := v.diff.update(img)
 	if v.base == 0 || !fits || len(v.patches)+len(rects) > maxPatches {
 		full = true
@@ -862,9 +863,9 @@ func (v *viewer) draw(img rgbFrame) tea.Cmd {
 			id = 2
 		}
 		v.z++
-		p := placement{id: id, z: v.z, col: v.x0, row: v.y0 + headerRows}
+		p := termgfx.Placement{ID: id, Z: v.z, Col: v.x0, Row: v.y0 + headerRows}
 		if !fits {
-			p.cols, p.rows = v.cols, v.rows-headerRows // too big: let the terminal shrink it
+			p.Cols, p.Rows = v.cols, v.rows-headerRows // too big: let the terminal shrink it
 		}
 		k.Show(img, p)
 		if v.base != 0 {
@@ -879,10 +880,10 @@ func (v *viewer) draw(img rgbFrame) tea.Cmd {
 			id := firstPatchID + len(v.patches)
 			v.patches = append(v.patches, id)
 			v.z++
-			k.Show(img.sub(r), placement{
-				id: id, z: v.z,
-				col: v.x0 + r.Min.X/v.cellW, row: v.y0 + headerRows + r.Min.Y/v.cellH,
-				x: r.Min.X % v.cellW, y: r.Min.Y % v.cellH,
+			k.Show(img.Sub(r), termgfx.Placement{
+				ID: id, Z: v.z,
+				Col: v.x0 + r.Min.X/v.cellW, Row: v.y0 + headerRows + r.Min.Y/v.cellH,
+				X: r.Min.X % v.cellW, Y: r.Min.Y % v.cellH,
 			})
 		}
 	default:
@@ -911,14 +912,14 @@ func (v *viewer) fps() int {
 func (v *viewer) clearImages() tea.Cmd {
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	v.deleteOwn(k)
 	v.base, v.patches, v.z, v.diff = 0, nil, 0, frameDiff{}
 	return tea.Raw(out.String())
 }
 
 // deleteOwn deletes the viewer's own images and nothing else on screen.
-func (v *viewer) deleteOwn(k kitty) {
+func (v *viewer) deleteOwn(k termgfx.Kitty) {
 	if v.base != 0 {
 		k.Delete(v.base)
 	}
@@ -1154,7 +1155,7 @@ func (v *viewer) close() {
 	v.conn.Close()
 	if v.out != nil {
 		k := v.kitty
-		k.w = v.out
+		k.W = v.out
 		v.deleteOwn(k)
 	}
 }

@@ -13,13 +13,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"larik/internal/termgfx"
 	"larik/internal/tools"
 )
 
 // pickViewer is a panel's viewer on a page, with no browser behind it.
 func pickViewer(t *testing.T) *viewer {
 	t.Helper()
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	t.Cleanup(v.close)
 	v.inputs.close()
 	v.inputs = &inputQueue{kick: make(chan struct{}, 1), done: make(chan struct{})} // nothing sends
@@ -141,7 +142,7 @@ func TestPickCapturesAnElement(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	defer l.v.close()
 	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
@@ -226,8 +227,8 @@ func TestPickCapturesAnElement(t *testing.T) {
 	if cmp.compare == nil || cmp.compare.share <= 0 || cmp.compare.share > 0.5 {
 		t.Fatalf("comparison %+v", cmp.compare)
 	}
-	if want := 2*l.v.baseline.before.Rect.Dx() + compareGap; cmp.frame.w != want {
-		t.Errorf("picture is %d wide, want %d", cmp.frame.w, want)
+	if want := 2*l.v.baseline.before.Rect.Dx() + compareGap; cmp.frame.W != want {
+		t.Errorf("picture is %d wide, want %d", cmp.frame.W, want)
 	}
 
 	// The agent gets the same comparison through the panel.

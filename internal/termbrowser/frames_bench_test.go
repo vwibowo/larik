@@ -6,6 +6,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	"testing"
+
+	"larik/internal/termgfx"
 )
 
 // benchJPEG is a Retina-sized page frame, as Chrome sends it.
@@ -38,13 +40,13 @@ func BenchmarkToRGB(b *testing.B) {
 	img, _ := jpeg.Decode(bytes.NewReader(benchJPEG(b)))
 	b.ResetTimer()
 	for b.Loop() {
-		releaseFrame(toRGB(img))
+		termgfx.Release(termgfx.ToRGB(img))
 	}
 }
 
 func BenchmarkFrameDiff(b *testing.B) {
 	img, _ := jpeg.Decode(bytes.NewReader(benchJPEG(b)))
-	f := toRGB(img)
+	f := termgfx.ToRGB(img)
 	var d frameDiff
 	d.update(f)
 	b.ResetTimer()

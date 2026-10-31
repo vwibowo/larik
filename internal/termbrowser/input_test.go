@@ -11,6 +11,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"larik/internal/termgfx"
 )
 
 // inputSession is a viewer on a page wider and taller than the pane, with
@@ -44,7 +46,7 @@ func inputSession(t *testing.T) (*Session, *loop) {
 		t.Fatal(err)
 	}
 	l := &loop{t: t, msgs: make(chan tea.Msg, 512)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	t.Cleanup(l.v.close)
 	go Subscribe(sock, func(st State) { l.msgs <- stateMsg(st) })

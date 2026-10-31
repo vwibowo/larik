@@ -13,6 +13,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 
 	"larik/internal/osc"
+	"larik/internal/termgfx"
 )
 
 // Headless Chrome has no permission prompts: it denies notifications and
@@ -165,8 +166,8 @@ func (v *viewer) onBinding(msg bindingMsg) tea.Cmd {
 		cmds := []tea.Cmd{tea.Tick(8*time.Second, func(time.Time) tea.Msg { return toastMsg{gen} })}
 		if osc.SupportsNotify() {
 			seq := osc.Notify(hostOf(origin) + ": " + text)
-			if v.kitty.tmux {
-				seq = string(tmuxWrap([]byte(seq)))
+			if v.kitty.Tmux {
+				seq = string(termgfx.TmuxWrap([]byte(seq)))
 			}
 			cmds = append(cmds, tea.Raw(seq))
 		}

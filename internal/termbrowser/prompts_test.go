@@ -10,6 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"larik/internal/termgfx"
 )
 
 // promptSession is a browser with a viewer attached, on a server that
@@ -58,7 +60,7 @@ func promptSession(t *testing.T, opts Options) (*Session, *httptest.Server, *loo
 	}
 	t.Cleanup(func() { ctl.Close() })
 	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
-	l.v = newViewer(kitty{})
+	l.v = newViewer(termgfx.Kitty{})
 	l.v.control = ctl
 	l.v.send = func(m tea.Msg) { l.msgs <- m }
 	t.Cleanup(l.v.close)

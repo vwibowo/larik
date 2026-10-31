@@ -6,6 +6,8 @@ import (
 	"reflect"
 
 	tea "charm.land/bubbletea/v2"
+
+	"larik/internal/termgfx"
 )
 
 // A Panel is the viewer as a part of another Bubble Tea program: Larik
@@ -24,7 +26,7 @@ type PanelClosedMsg struct{}
 
 // GraphicsTerminal reports whether this terminal can show the browser.
 func GraphicsTerminal() bool {
-	ok, _ := kittyTerminal(os.Getenv)
+	ok, _ := termgfx.Terminal(os.Getenv)
 	return ok || os.Getenv("LARIK_FORCE_KITTY") != ""
 }
 
@@ -45,8 +47,8 @@ func NewPanel(socket string, send func(tea.Msg)) (*Panel, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, tmux := kittyTerminal(os.Getenv)
-	v := newViewer(kitty{tmux: tmux})
+	_, tmux := termgfx.Terminal(os.Getenv)
+	v := newViewer(termgfx.Kitty{Tmux: tmux})
 	v.embedded, v.socket, v.control = true, socket, ctl
 	v.send = func(m tea.Msg) { send(PanelMsg{m}) }
 	go func() {

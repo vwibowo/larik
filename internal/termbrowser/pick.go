@@ -13,6 +13,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"larik/internal/termgfx"
 )
 
 // alt+s lets the user point at a part of the page instead of describing it:
@@ -173,13 +175,13 @@ func (v *viewer) pickRect() image.Rectangle {
 func (v *viewer) drawOutline(r image.Rectangle) tea.Cmd {
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	for i, bar := range outlineBars(r) {
 		x, y := bar.Min.X, bar.Min.Y
-		k.Show(solidFrame(bar.Dx(), bar.Dy(), pickColor), placement{
-			id: pickFirstID + i, z: pickZ,
-			col: v.x0 + x/v.cellW, row: v.y0 + headerRows + y/v.cellH,
-			x: x % v.cellW, y: y % v.cellH,
+		k.Show(solidFrame(bar.Dx(), bar.Dy(), pickColor), termgfx.Placement{
+			ID: pickFirstID + i, Z: pickZ,
+			Col: v.x0 + x/v.cellW, Row: v.y0 + headerRows + y/v.cellH,
+			X: x % v.cellW, Y: y % v.cellH,
 		})
 	}
 	v.outlined = true
@@ -193,12 +195,12 @@ func (v *viewer) clearOutline() tea.Cmd {
 	}
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	v.deleteOutline(k)
 	return tea.Raw(out.String())
 }
 
-func (v *viewer) deleteOutline(k kitty) {
+func (v *viewer) deleteOutline(k termgfx.Kitty) {
 	if v.outlined {
 		for i := range 4 {
 			k.Delete(pickFirstID + i)
@@ -217,10 +219,10 @@ func outlineBars(r image.Rectangle) [4]image.Rectangle {
 	}
 }
 
-func solidFrame(w, h int, c color.RGBA) rgbFrame {
-	f := rgbFrame{w: w, h: h, pix: make([]byte, w*h*3)}
-	for i := 0; i < len(f.pix); i += 3 {
-		f.pix[i], f.pix[i+1], f.pix[i+2] = c.R, c.G, c.B
+func solidFrame(w, h int, c color.RGBA) termgfx.Frame {
+	f := termgfx.Frame{W: w, H: h, Pix: make([]byte, w*h*3)}
+	for i := 0; i < len(f.Pix); i += 3 {
+		f.Pix[i], f.Pix[i+1], f.Pix[i+2] = c.R, c.G, c.B
 	}
 	return f
 }

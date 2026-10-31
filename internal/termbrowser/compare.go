@@ -15,6 +15,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/chromedp/cdproto/target"
+
+	"larik/internal/termgfx"
 )
 
 // alt+d answers "did that work?": it finds what the user last pointed at
@@ -80,7 +82,7 @@ type (
 	}
 	compareMsg struct {
 		tab     string
-		frame   rgbFrame
+		frame   termgfx.Frame
 		compare *comparison
 	}
 )
@@ -160,7 +162,7 @@ func (v *viewer) startCompare() tea.Cmd {
 		if err := png.Encode(&out, both); err != nil {
 			return noteMsg("can't compare: " + err.Error())
 		}
-		return compareMsg{tab, toRGB(both), &comparison{out.Bytes(), compareDetails(base.selector, at.Found, share), share}}
+		return compareMsg{tab, termgfx.ToRGB(both), &comparison{out.Bytes(), compareDetails(base.selector, at.Found, share), share}}
 	})
 }
 
@@ -201,16 +203,16 @@ func (v *viewer) answerCompare() tea.Cmd {
 
 // showCompare covers the page with the picture, shrunk to fit it.
 func (v *viewer) showCompare(msg compareMsg) tea.Cmd {
-	defer releaseFrame(msg.frame)
+	defer termgfx.Release(msg.frame)
 	if msg.tab != v.tab || v.cols == 0 || v.rows <= headerRows {
 		return nil
 	}
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	v.deleteCompare(k)
-	cols, rows := fitCells(msg.frame.w, msg.frame.h, v.cols, v.rows-headerRows, v.cellW, v.cellH)
-	k.Show(msg.frame, placement{id: compareID, z: pickZ, col: v.x0, row: v.y0 + headerRows, cols: cols, rows: rows})
+	cols, rows := fitCells(msg.frame.W, msg.frame.H, v.cols, v.rows-headerRows, v.cellW, v.cellH)
+	k.Show(msg.frame, termgfx.Placement{ID: compareID, Z: pickZ, Col: v.x0, Row: v.y0 + headerRows, Cols: cols, Rows: rows})
 	v.compare = msg.compare
 	return tea.Batch(tea.Raw(out.String()), v.setNote(""))
 }
@@ -219,12 +221,12 @@ func (v *viewer) showCompare(msg compareMsg) tea.Cmd {
 func (v *viewer) closeCompare() tea.Cmd {
 	var out bytes.Buffer
 	k := v.kitty
-	k.w = &out
+	k.W = &out
 	v.deleteCompare(k)
 	return tea.Raw(out.String())
 }
 
-func (v *viewer) deleteCompare(k kitty) {
+func (v *viewer) deleteCompare(k termgfx.Kitty) {
 	if v.compare != nil {
 		k.Delete(compareID)
 		v.compare = nil

@@ -1,15 +1,12 @@
 package termbrowser
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
-	"io"
 	"math/rand/v2"
 	"net"
 	"os"
@@ -22,93 +19,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/chromedp/chromedp"
+
+	"larik/internal/termgfx"
 )
-
-func TestKittyShowChunksAndPlaces(t *testing.T) {
-	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
-	img.Set(0, 0, color.RGBA{1, 2, 3, 255})
-	img.Set(1, 0, color.RGBA{4, 5, 6, 255})
-	var out bytes.Buffer
-	if err := (kitty{w: &out}).Show(toRGB(img), placement{id: 7, z: 2, col: 3, row: 4, x: 5, y: 6}); err != nil {
-		t.Fatal(err)
-	}
-	s := out.String()
-	if !strings.HasPrefix(s, "\x1b7\x1b[5;4H\x1b_Ga=T,q=2,f=24,s=2,v=1,i=7,p=1,X=5,Y=6,z=2,C=1,o=z,m=0;") || !strings.HasSuffix(s, "\x1b\\\x1b8") {
-		t.Fatalf("escape = %q", s)
-	}
-	apc := s[strings.Index(s, "\x1b_G"):]
-	payload := apc[strings.Index(apc, ";")+1 : strings.Index(apc, "\x1b\\")]
-	raw, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	zr, err := zlib.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pix, _ := io.ReadAll(zr)
-	if !bytes.Equal(pix, []byte{1, 2, 3, 4, 5, 6}) {
-		t.Fatalf("pixels = %v", pix)
-	}
-
-	// A large image goes in 4096-byte chunks, the key list only on the first.
-	big := image.NewRGBA(image.Rect(0, 0, 300, 300))
-	rng := rand.New(rand.NewPCG(1, 2)) // noise, so zlib can't shrink it to one chunk
-	for i := range big.Pix {
-		big.Pix[i] = byte(rng.Uint32())
-	}
-	out.Reset()
-	(kitty{w: &out}).Show(toRGB(big), placement{id: 1, cols: 30, rows: 10})
-	chunks := strings.Split(out.String(), "\x1b_G")[1:]
-	if len(chunks) < 2 || !strings.Contains(chunks[0], ",c=30,r=10,o=z,m=1;") || !strings.HasPrefix(chunks[len(chunks)-1], "m=0;") {
-		t.Fatalf("%d chunks; first %.80q last %.20q", len(chunks), chunks[0], chunks[len(chunks)-1])
-	}
-	for _, c := range chunks[1 : len(chunks)-1] {
-		if !strings.HasPrefix(c, "m=1;") || len(c[4:strings.Index(c, "\x1b\\")]) != kittyChunk {
-			t.Fatalf("middle chunk %.20q", c)
-		}
-	}
-}
-
-func TestKittyDeleteAndTmux(t *testing.T) {
-	var out bytes.Buffer
-	(kitty{w: &out}).Delete(0)
-	(kitty{w: &out}).Delete(3)
-	if got := out.String(); got != "\x1b_Ga=d,d=A,q=2\x1b\\\x1b_Ga=d,d=I,i=3,q=2\x1b\\" {
-		t.Fatalf("delete = %q", got)
-	}
-	out.Reset()
-	(kitty{w: &out, tmux: true}).Delete(0)
-	if got := out.String(); got != "\x1bPtmux;\x1b\x1b_Ga=d,d=A,q=2\x1b\x1b\\\x1b\\" {
-		t.Fatalf("tmux passthrough = %q", got)
-	}
-}
-
-func TestKittyTerminal(t *testing.T) {
-	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
-	for _, tc := range []struct {
-		vars     map[string]string
-		ok, tmux bool
-	}{
-		{map[string]string{"TERM": "xterm-kitty"}, true, false},
-		{map[string]string{"TERM_PROGRAM": "ghostty"}, true, false},
-		{map[string]string{"WEZTERM_PANE": "3", "TMUX": "/tmp/t"}, true, true},
-		{map[string]string{"TERM": "xterm-256color", "TERM_PROGRAM": "Apple_Terminal"}, false, false},
-	} {
-		ok, tmux := kittyTerminal(env(tc.vars))
-		if ok != tc.ok || tmux != tc.tmux {
-			t.Errorf("%v: ok=%v tmux=%v", tc.vars, ok, tmux)
-		}
-	}
-}
 
 func TestFrameDiff(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 512, 384)) // 8x6 tiles
 	var d frameDiff
-	if _, full := d.update(toRGB(img)); !full {
+	if _, full := d.update(termgfx.ToRGB(img)); !full {
 		t.Fatal("the first frame is a full one")
 	}
-	if rects, full := d.update(toRGB(img)); full || len(rects) != 0 {
+	if rects, full := d.update(termgfx.ToRGB(img)); full || len(rects) != 0 {
 		t.Fatalf("an unchanged frame needs nothing: %v %v", rects, full)
 	}
 	// Two neighbouring tiles in row 0 and the same pair in row 1 make one
@@ -116,7 +37,7 @@ func TestFrameDiff(t *testing.T) {
 	for _, p := range []image.Point{{70, 10}, {140, 10}, {70, 70}, {140, 70}, {10, 150}} {
 		img.Set(p.X, p.Y, color.RGBA{255, 0, 0, 255})
 	}
-	rects, full := d.update(toRGB(img))
+	rects, full := d.update(termgfx.ToRGB(img))
 	want := []image.Rectangle{image.Rect(64, 0, 192, 128), image.Rect(0, 128, 64, 192)}
 	if full || !reflect.DeepEqual(rects, want) {
 		t.Fatalf("rects = %v (full %v), want %v", rects, full, want)
@@ -125,10 +46,10 @@ func TestFrameDiff(t *testing.T) {
 	for i := range img.Pix {
 		img.Pix[i] ^= 0xff
 	}
-	if _, full := d.update(toRGB(img)); !full {
+	if _, full := d.update(termgfx.ToRGB(img)); !full {
 		t.Fatal("a mostly changed frame should be sent whole")
 	}
-	if _, full := d.update(toRGB(image.NewRGBA(image.Rect(0, 0, 100, 100)))); !full {
+	if _, full := d.update(termgfx.ToRGB(image.NewRGBA(image.Rect(0, 0, 100, 100)))); !full {
 		t.Fatal("a new size is a full frame")
 	}
 }
@@ -393,10 +314,10 @@ func TestViewerAttachesAndStreams(t *testing.T) {
 // A new full frame is placed before the old one is deleted, so the pane
 // never shows nothing in between.
 func TestDrawReplacesFullFramesWithoutBlanking(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	v.cols, v.rows, v.cellW, v.cellH, v.scale = 10, 12, 10, 20, 1 // 100x200 px
 	run := func(img *image.RGBA) string {
-		cmd := v.draw(toRGB(img))
+		cmd := v.draw(termgfx.ToRGB(img))
 		if cmd == nil {
 			return ""
 		}
@@ -422,28 +343,6 @@ func TestDrawReplacesFullFramesWithoutBlanking(t *testing.T) {
 	}
 }
 
-func TestKittyShowThroughFile(t *testing.T) {
-	var out bytes.Buffer
-	f := rgbFrame{w: 2, h: 1, pix: []byte{1, 2, 3, 4, 5, 6}}
-	if err := (kitty{w: &out, files: true}).Show(f, placement{id: 1}); err != nil {
-		t.Fatal(err)
-	}
-	s := out.String()
-	if !strings.Contains(s, ",t=t,m=0;") || strings.Contains(s, "o=z") {
-		t.Fatalf("escape = %q", s)
-	}
-	apc := s[strings.Index(s, "\x1b_G"):]
-	name, err := base64.StdEncoding.DecodeString(apc[strings.Index(apc, ";")+1 : strings.Index(apc, "\x1b\\")])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(string(name))
-	data, err := os.ReadFile(string(name))
-	if err != nil || !bytes.Equal(data, f.pix) || !strings.Contains(filepath.Base(string(name)), "tty-graphics-protocol") {
-		t.Fatalf("frame file %s: %v %v", name, data, err)
-	}
-}
-
 func TestYCbCrConversionMatchesStdlib(t *testing.T) {
 	img := image.NewYCbCr(image.Rect(0, 0, 130, 70), image.YCbCrSubsampleRatio420)
 	rng := rand.New(rand.NewPCG(3, 4))
@@ -453,12 +352,12 @@ func TestYCbCrConversionMatchesStdlib(t *testing.T) {
 	for i := range img.Cb {
 		img.Cb[i], img.Cr[i] = byte(rng.Uint32()), byte(rng.Uint32())
 	}
-	f := toRGB(img)
+	f := termgfx.ToRGB(img)
 	for _, p := range []image.Point{{0, 0}, {129, 69}, {64, 33}, {7, 50}} {
 		r, g, b, _ := img.At(p.X, p.Y).RGBA()
-		o := (p.Y*f.w + p.X) * 3
-		if f.pix[o] != byte(r>>8) || f.pix[o+1] != byte(g>>8) || f.pix[o+2] != byte(b>>8) {
-			t.Errorf("%v: got %v, want %d %d %d", p, f.pix[o:o+3], r>>8, g>>8, b>>8)
+		o := (p.Y*f.W + p.X) * 3
+		if f.Pix[o] != byte(r>>8) || f.Pix[o+1] != byte(g>>8) || f.Pix[o+2] != byte(b>>8) {
+			t.Errorf("%v: got %v, want %d %d %d", p, f.Pix[o:o+3], r>>8, g>>8, b>>8)
 		}
 	}
 }
@@ -540,7 +439,7 @@ func TestAddressBarEditing(t *testing.T) {
 }
 
 func TestToolbarLayout(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.cols, v.tab = 80, "T"
 	v.targets["T"] = targetInfo{URL: "https://example.com/a/very/long/path/that/goes/on/and/on/and/on/forever/and/ever"}
@@ -621,26 +520,26 @@ func TestWheelAxisLock(t *testing.T) {
 // As a panel the viewer draws at its place on screen, and deletes only its
 // own images: the host may have others.
 func TestEmbeddedViewerDrawsAtItsOrigin(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.embedded = true
 	v.layout(40, 3, 30, 12)
 	v.cellW, v.cellH, v.scale = 10, 20, 1 // 300x200 px of page
-	run := func(f rgbFrame) string {
+	run := func(f termgfx.Frame) string {
 		cmd := v.draw(f)
 		if cmd == nil {
 			return ""
 		}
 		return cmd().(tea.RawMsg).Msg.(string)
 	}
-	full := run(rgbFrame{w: 300, h: 200, pix: make([]byte, 300*200*3)})
+	full := run(termgfx.Frame{W: 300, H: 200, Pix: make([]byte, 300*200*3)})
 	// Row 3 + 2 header rows, column 40: 1-based "6;41".
 	if !strings.Contains(full, "\x1b[6;41H") {
 		t.Fatalf("full frame not at the origin: %.60q", full)
 	}
-	changed := rgbFrame{w: 300, h: 200, pix: make([]byte, 300*200*3)}
+	changed := termgfx.Frame{W: 300, H: 200, Pix: make([]byte, 300*200*3)}
 	o := (150*300 + 250) * 3 // pixel (250,150): cell (25,7) of the page
-	changed.pix[o] = 255
+	changed.Pix[o] = 255
 	patch := run(changed)
 	if !strings.Contains(patch, "\x1b[") || strings.Contains(patch, "\x1b[6;41H") {
 		t.Fatalf("patch: %.60q", patch)
@@ -683,7 +582,7 @@ func TestWrapMarksPanelMessages(t *testing.T) {
 // A quick second or third click on the same spot is a double or triple
 // click; anywhere else, or later, starts over.
 func TestCountClick(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	now := time.Now()
 	at := func(x, y int, after time.Duration) int {
@@ -713,7 +612,7 @@ func TestCountClick(t *testing.T) {
 // A drag that starts on the page and lets go outside it still releases
 // the button in the page, at its edge.
 func TestReleaseOffThePageEndsTheDrag(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.inputs.close()
 	v.inputs = &inputQueue{kick: make(chan struct{}, 1), done: make(chan struct{})} // nothing sends
@@ -742,7 +641,7 @@ func TestReleaseOffThePageEndsTheDrag(t *testing.T) {
 }
 
 func TestNotesExpire(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	_, cmd := v.Update(noteMsg("can't reach it"))
 	if cmd == nil || v.note == "" {
@@ -763,7 +662,7 @@ func TestNotesExpire(t *testing.T) {
 // While the user works in a tab, an agent using another doesn't pull the
 // view away.
 func TestUserHoldsTheTab(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	if v.holding() != 0 {
 		t.Fatal("no tab, nothing to hold")
@@ -783,7 +682,7 @@ func TestUserHoldsTheTab(t *testing.T) {
 }
 
 func TestPanelHeaderShowsFocus(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.embedded, v.cols, v.focusHint = true, 100, "f3"
 	h := v.header()
@@ -810,7 +709,7 @@ func TestAddressFieldWideCharacters(t *testing.T) {
 	if i := a.at(3, 20); i != 1 {
 		t.Errorf("cell 3 is in the second rune: %d", i)
 	}
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.editing, v.address = true, a
 	if got := ansi.StringWidth(v.addressField(10)); got != 10 {
@@ -819,7 +718,7 @@ func TestAddressFieldWideCharacters(t *testing.T) {
 }
 
 func TestZoomSteps(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.scale = 2
 	v.zoomBy("ctrl+-")
@@ -855,7 +754,7 @@ func TestZoomSteps(t *testing.T) {
 }
 
 func TestCopyOut(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.copyOut(copiedMsg{"", "the selection"})
 	if v.note != "nothing to copy" {
@@ -872,7 +771,7 @@ func TestCopyOut(t *testing.T) {
 // The user can step through the session's tabs; the one they pick stays
 // shown (pinned) until they unpin it or it closes.
 func TestTabsCycleAndPin(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.cols, v.tab = 100, "A"
 	v.state = State{Focus: "A", Tabs: []StateTab{{ID: "A"}, {ID: "B", Owner: "explore"}, {ID: "C"}}}
@@ -932,7 +831,7 @@ func TestAddressBarWords(t *testing.T) {
 // Only the user's own click on a <select> offers its options; an agent's
 // click, which the page script reports the same way, does not.
 func TestChoiceOnlyForTheUsersClick(t *testing.T) {
-	v := newViewer(kitty{})
+	v := newViewer(termgfx.Kitty{})
 	defer v.close()
 	v.session = "s"
 	ask := bindingMsg{session: "s", context: 1, payload: `{"type":"select","index":0,"options":[{"label":"A"},{"label":"B"}]}`}
