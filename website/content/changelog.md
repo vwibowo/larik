@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.24.0
+
+<p class="release-meta"><time datetime="2026-11-01">November 1, 2026</time></p>
+
+### Added
+
+- **See what fills the context with `/context`.** A map shows how much goes to your prompts, replies, each tool, images and attachments, and lists the largest tool results, so you know what to drop before compaction. The total is the provider's own number; the shares are estimates and show only as percentages.
+- **See where the time went with `/timeline`.** A chart shows when the model, tools and each subagent ran, with the slowest calls and what the session cost. It needs no debug mode, and long pauses are cut short.
+- **See a click before it lands.** With the browser panel open, a marker shows where an agent is about to click for 400 ms. Press `esc` in the conversation to stop the turn, and the click never happens. If the element moves in that time, the click follows it.
+
+### Compatibility notes
+
+- Agent clicks take 400 ms longer while the browser panel is open. With the panel closed they don't wait.
+- `/timeline` covers the current conversation since Larik started: session files don't keep timings, so earlier runs of a resumed session aren't included. Its cost line covers the whole session.
+- `/context` and `/timeline` are in the TUI only.
+
 ## v0.23.0
 
 <p class="release-meta"><time datetime="2026-11-01">November 1, 2026</time></p>
