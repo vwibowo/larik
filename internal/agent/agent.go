@@ -54,6 +54,7 @@ type Options struct {
 	Perms       *permission.Checker
 	Session     *session.Session        // optional
 	Checkpoints *checkpoint.Store       // optional
+	WillWrite   func()                  // optional; see tools.Env
 	OnAllowRule func(rule string) error // persists "always allow" answers
 	// AutoApprove judges calls in auto mode; nil sends them all to the user.
 	AutoApprove AutoApprover
@@ -257,6 +258,7 @@ func New(opts Options) *Agent {
 		a.env.BeforeWrite = opts.Checkpoints.Capture
 		a.env.RecordOriginal = opts.Checkpoints.Record
 	}
+	a.env.WillWrite = opts.WillWrite
 	a.env.Sandbox = opts.Sandbox
 	a.env.SecretPaths = append([]string(nil), opts.SecretPaths...)
 	a.env.SecretEnv = append([]string(nil), opts.SecretEnv...)

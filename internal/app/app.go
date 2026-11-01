@@ -543,6 +543,7 @@ func (a *App) Open(o Options) (*Session, error) {
 		Perms:       perms,
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(a.Cfg.DataDir, "checkpoints", sess.ID), cwd),
+		WillWrite:   a.Browser.MarkBefore,
 		OnAllowRule: func(rule string) error { return config.PersistAllowRule(cwd, rule) },
 		LoadTools:   a.loadTools,
 		Hooks:       hookRunner,

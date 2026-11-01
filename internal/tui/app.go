@@ -654,6 +654,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inlineSendMsg:
 		return m, m.inline.send()
 
+	case pageComparedMsg:
+		return m, tea.Sequence(m.println(m.st.dim.Render(msg.note)), m.showImages(agent.Event{Images: []llm.Block{msg.image}}))
+
 	case outputMsg:
 		m.appendOutput(string(msg))
 		return m, nil

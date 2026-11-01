@@ -43,6 +43,7 @@ var commands = []command{
 	{"/cost", "", "token usage and cost for this session", "conversation", ""},
 	{"/context", "", "map of what is filling the context window", "conversation", ""},
 	{"/timeline", "", "when the model, tools and subagents ran, and the slowest calls", "conversation", ""},
+	{"/compare", "", "see the browser page before an agent's edits beside how it is now", "tools", ""},
 	{"/replay", "[gif [file]]", "step through what an agent did in the browser, or export a GIF", "tools", ""},
 	{"/sessions", "[id]", "choose a session from this directory, or switch by ID (also /resume)", "sessions", ""},
 	{"/new", "", "start a new session", "sessions", ""},

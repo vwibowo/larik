@@ -309,6 +309,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/replay":
 		return m.replayCommand(arg)
 
+	case "/compare":
+		return m.compareCommand()
+
 	case "/cost":
 		s := m.agent.Stats()
 		cost := "unknown (model not in price catalog)"

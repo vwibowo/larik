@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -277,25 +278,61 @@ func slideInto(r, bounds image.Rectangle) image.Rectangle {
 // after that differ, and returns the share of squares that did. Both are
 // the same size.
 func compareShots(before, after *image.RGBA) (*image.RGBA, float64) {
+	out, share, _ := compareSteady(before, after)
+	return out, share
+}
+
+// compareSteady is compareShots with more pictures of after, if there are
+// any: squares that differ among them are moving by themselves, so they are
+// grayed and counted apart, as the share that was moving.
+func compareSteady(before, after *image.RGBA, again ...*image.RGBA) (*image.RGBA, float64, float64) {
 	w, h := before.Rect.Dx(), before.Rect.Dy()
 	out := image.NewRGBA(image.Rect(0, 0, w*2+compareGap, h))
 	draw.Draw(out, image.Rect(w, 0, w+compareGap, h), image.NewUniform(compareGapColor), image.Point{}, draw.Src)
 	draw.Draw(out, image.Rect(0, 0, w, h), before, before.Rect.Min, draw.Src)
 	right := image.Rect(w+compareGap, 0, w*2+compareGap, h)
 	draw.Draw(out, right, after, after.Rect.Min, draw.Src)
-	changed, tiles := 0, 0
+	changed, moving, tiles := 0, 0, 0
 	tint := image.NewUniform(color.RGBA{pickColor.R / 3, pickColor.G / 3, pickColor.B / 3, 85}) // premultiplied, a third
-	for y := 0; y < h; y += compareTile {
-		for x := 0; x < w; x += compareTile {
+	gray := image.NewUniform(color.RGBA{compareGapColor.R / 2, compareGapColor.G / 2, compareGapColor.B / 2, 128})
+	cols, rows := (w+compareTile-1)/compareTile, (h+compareTile-1)/compareTile
+	tile := func(c, r int) image.Rectangle {
+		return image.Rect(c*compareTile, r*compareTile, min((c+1)*compareTile, w), min((r+1)*compareTile, h))
+	}
+	moves := make([]bool, cols*rows)
+	for r := range rows {
+		for c := range cols {
+			moves[r*cols+c] = slices.ContainsFunc(again, func(a *image.RGBA) bool { return tileDiffers(after, a, tile(c, r)) })
+		}
+	}
+	// A square beside one that moves can look still by chance, so if it
+	// changed, that is taken for the same movement.
+	nearMove := func(c, r int) bool {
+		for y := max(r-1, 0); y <= min(r+1, rows-1); y++ {
+			for x := max(c-1, 0); x <= min(c+1, cols-1); x++ {
+				if moves[y*cols+x] {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for r := range rows {
+		for c := range cols {
 			tiles++
-			r := image.Rect(x, y, min(x+compareTile, w), min(y+compareTile, h))
-			if tileDiffers(before, after, r) {
+			t := tile(c, r)
+			switch differs := tileDiffers(before, after, t); {
+			case moves[r*cols+c], differs && nearMove(c, r):
+				moving++
+				draw.Draw(out, t.Add(right.Min), gray, image.Point{}, draw.Over)
+			case differs:
 				changed++
-				draw.Draw(out, r.Add(right.Min), tint, image.Point{}, draw.Over)
+				draw.Draw(out, t.Add(right.Min), tint, image.Point{}, draw.Over)
 			}
 		}
 	}
-	return out, float64(changed) / float64(max(tiles, 1))
+	n := float64(max(tiles, 1))
+	return out, float64(changed) / n, float64(moving) / n
 }
 
 func tileDiffers(a, b *image.RGBA, r image.Rectangle) bool {

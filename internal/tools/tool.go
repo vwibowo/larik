@@ -60,6 +60,9 @@ type Env struct {
 	// BeforeWrite is called with the absolute path before a file is modified,
 	// so checkpoints can snapshot it.
 	BeforeWrite func(path string) error
+	// WillWrite, if set, is told a file is about to change, so the browser
+	// can keep the pages it has open.
+	WillWrite func()
 	// RecordOriginal, if set, keeps a file's original state for undo when a
 	// change is found only afterwards (a shell command's; see shelltrack.go).
 	RecordOriginal func(path string, existed bool, data []byte, mode os.FileMode) error
@@ -304,6 +307,9 @@ func (e *Env) checkFresh(path string) error {
 }
 
 func (e *Env) beforeWrite(path string) error {
+	if e.WillWrite != nil {
+		e.WillWrite()
+	}
 	if e.BeforeWrite != nil {
 		return e.BeforeWrite(path)
 	}

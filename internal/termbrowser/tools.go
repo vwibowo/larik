@@ -463,10 +463,22 @@ func (CompareTool) ReadOnly() bool { return true }
 func (CompareTool) Spec() llm.ToolSpec {
 	return spec("browser_compare",
 		"Compare the part of the page the user last pointed at (with alt+s in the browser panel) with how it looked then: see it before and after, side by side, with what changed tinted. "+
-			"Use it after changing what they pointed at, to check the result yourself before reporting back. It finds the element again if it moved. Only call it if you can see images. "+untrusted,
-		`{"type":"object","properties":{}}`)
+			"Use it after changing what they pointed at, to check the result yourself before reporting back. It finds the element again if it moved. "+
+			"With page: true, compare the whole window of your page with how it looked before your file edits instead: nobody needs to point at anything and the panel can stay closed, but the page must have been open before the edits, and any dev server must have reloaded it. Anything animating is left out. Only call it if you can see images. "+untrusted,
+		`{"type":"object","properties":{"page":{"type":"boolean","description":"Compare the whole window with how it looked before your file edits."}}}`)
 }
 func (t CompareTool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		Page bool `json:"page"`
+	}
+	if len(input) > 0 {
+		if r := parse(input, &in, `{"page"?: boolean}`); r != nil {
+			return *r
+		}
+	}
+	if in.Page {
+		return comparedPage(ctx, t.S)
+	}
 	found, err := t.S.Compare(ctx)
 	if err != nil {
 		return fail(err)
@@ -474,7 +486,22 @@ func (t CompareTool) Run(ctx context.Context, env *tools.Env, input json.RawMess
 	if found.Picture == nil {
 		return tools.Result{Content: "No visible change where the user pointed.", Display: "no visible change"}
 	}
-	data, ext, err := clipboard.Fit(found.Picture, maxCompareBytes)
+	return comparedPicture(found.Picture, found.Details, found.Share)
+}
+
+func comparedPage(ctx context.Context, s *Session) tools.Result {
+	found, err := s.ComparePage(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	if found.PNG == nil {
+		return tools.Result{Content: found.Details, Display: "no visible change"}
+	}
+	return comparedPicture(found.PNG, found.Details, found.Share)
+}
+
+func comparedPicture(picture []byte, details string, share float64) tools.Result {
+	data, ext, err := clipboard.Fit(picture, maxCompareBytes)
 	if err != nil {
 		return fail(err)
 	}
@@ -483,8 +510,8 @@ func (t CompareTool) Run(ctx context.Context, env *tools.Env, input json.RawMess
 		media = "image/jpeg"
 	}
 	return tools.Result{
-		Content: found.Details,
-		Display: fmt.Sprintf("%.0f%% changed", found.Share*100),
+		Content: details,
+		Display: fmt.Sprintf("%.0f%% changed", share*100),
 		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: media, Data: base64.StdEncoding.EncodeToString(data)}},
 	}
 }

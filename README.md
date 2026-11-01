@@ -345,6 +345,7 @@ fi
 | `/cost`                                          | Usage, cost, and estimated context freed by compaction; split by model when more than one was used                                                                                                                                                                        |
 | `/context`                                       | Map of what is filling the context window, by prompts, replies, tools, images and attachments, with the largest tool results. Shares are estimates; the total is the provider's |
 | `/timeline`                                      | When the model, tools and each subagent ran in this conversation since Larik started, with the slowest calls and what the session cost. Long pauses are cut short. Earlier runs of a resumed session aren't included |
+| `/compare`                                       | Show the browser page from before the agent's file edits beside how it is now, with what changed tinted and animation left out. Covers the visible window, and edits made through `edit`, `write` and similar tools; kept in memory |
 | `/replay [gif [file]]`                           | Step through what agents did in the browser in the panel, with a picture after each action (arrow keys, space to play), or export a GIF. Kept in memory for this run, up to 200 steps |
 | `/sessions`                                      | Choose a session from a searchable, scrolling list (`✓ current`, `⑂` branch)                                                                                                                                                                                             |
 | `/resume [id]`                                   | Open the session picker, or switch by ID (a unique prefix is enough)                                                                                                                                                                                                     |
@@ -578,7 +579,7 @@ The model gets these tools:
 | `browser_history` | Back and forward |
 | `browser_tabs` | Lists, opens, selects and closes tabs; tabs a page opens become active |
 | `browser_eval` | Runs a JavaScript expression in the page |
-| `browser_compare` | The part of the page you last pointed at with `alt+s`, before and after, with what changed tinted, so the model can check its own change |
+| `browser_compare` | The part of the page you last pointed at with `alt+s`, or with `page: true` the whole window from before the agent's edits, before and after, with what changed tinted, so the model can check its own change |
 | `browser_render` | Draws a Mermaid diagram, SVG or HTML as a picture in the conversation, in a sealed page that reaches no network and shares nothing with the browser. Only Mermaid runs scripts. Where pictures can't show, the model is told to explain in text |
 | `browser_console` | Console messages, exceptions and dialogs since the last call |
 | `browser_network` | The requests the page made: method, URL, status and time, with failures marked; and a response's body |

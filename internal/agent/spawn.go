@@ -103,6 +103,7 @@ func (a *Agent) Spawn(o SpawnOptions) *Agent {
 		Perms:                a.opts.Perms,
 		Session:              o.Session,
 		Checkpoints:          a.opts.Checkpoints,
+		WillWrite:            a.opts.WillWrite,
 		OnAllowRule:          a.opts.OnAllowRule,
 		AutoApprove:          a.autoApprover(),
 		Hooks:                a.opts.Hooks,
