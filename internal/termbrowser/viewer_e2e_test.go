@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"larik/internal/termgfx"
+	"larik/internal/tools"
 )
 
 // loop plays the Bubble Tea runtime for a viewer: it runs commands, feeds
@@ -321,4 +322,62 @@ func TestViewerShowsAPictureOpenedInItsTab(t *testing.T) {
 	if l.v.note != "" {
 		t.Fatalf("input to the picture's tab failed: %s", l.v.note)
 	}
+}
+
+func TestPanelKeepsPaintingWhenAnotherTabIsCaptured(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	open(t, s, srv, "/")
+	other := tools.WithOwner(ctx, "other")
+	if err := s.OpenURL(ctx, "other", srv.URL+"/other"); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp("", "ltb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path, err := s.Serve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, err := s.Tab(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
+	l.v = newViewer(termgfx.Kitty{})
+	l.v.pinned = string(mine.id)
+	l.v.send = func(m tea.Msg) { l.msgs <- m }
+	defer l.v.close()
+	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
+	l.msgs <- tea.WindowSizeMsg{Width: 100, Height: 40}
+	frames := func() int { return strings.Count(l.output(), "a=T,q=2,f=24,") }
+	l.until("the pinned page", func() bool { return l.v.tab == string(mine.id) && frames() > 0 })
+
+	// Another agent's capture takes the front.
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Screenshot(other, ShotOptions{})
+		done <- err
+	}()
+	l.until("the capture", func() bool {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			return true
+		default:
+			return false
+		}
+	})
+	settled := time.Now().Add(time.Second)
+	l.until("things to settle", func() bool { return time.Now().After(settled) })
+
+	before := frames()
+	if _, err := s.Eval(ctx, `document.body.style.background = '#c03'; document.body.innerHTML = '<h1>changed</h1>'; 1`); err != nil {
+		t.Fatal(err)
+	}
+	l.until("the pinned tab to paint again", func() bool { return frames() > before })
 }

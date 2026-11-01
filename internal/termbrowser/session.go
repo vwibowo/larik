@@ -979,7 +979,9 @@ func (s *Session) SelectTab(ctx context.Context, i int) error {
 	s.active[owner] = t
 	rctx, cancel := runCtx(ctx, t.ctx, 5*time.Second)
 	defer cancel()
-	return chromedp.Run(rctx, page.BringToFront())
+	err = chromedp.Run(rctx, page.BringToFront())
+	s.tookFront()
+	return err
 }
 
 // CloseTab closes the calling agent's tab i.

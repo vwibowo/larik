@@ -640,6 +640,7 @@ func (s *Session) Screenshot(ctx context.Context, o ShotOptions) (Shot, error) {
 			Do(ctx)
 		return err
 	}))
+	s.tookFront()
 	shot.Width, shot.Height = int(clip.Width), int(clip.Height)
 	return shot, err
 }

@@ -41,6 +41,9 @@ type State struct {
 	Compare int `json:"compare,omitempty"`
 	// Cursor is where an agent is about to click (ghost.go).
 	Cursor *Cursor `json:"cursor,omitempty"`
+	// Fronted counts the times a capture took the front, which stops the
+	// tab that had it painting. A viewer takes the front back.
+	Fronted int `json:"fronted,omitempty"`
 }
 
 // Location is a position to report to pages, in degrees and meters.
@@ -94,6 +97,7 @@ type viewState struct {
 
 	compares    map[int]chan ViewerMessage // browser_compare calls waiting for a panel
 	cursor      *Cursor                    // where an agent is about to click
+	fronted     int                        // see State.Fronted
 	nextCompare int
 }
 
@@ -110,6 +114,15 @@ func (s *Session) focusOn(t *tab) {
 		// Say when the agent has stopped, so the viewer drops its badge.
 		time.AfterFunc(drivingFor+100*time.Millisecond, s.changed)
 	}
+}
+
+// tookFront tells viewers a capture brought its tab forward.
+func (s *Session) tookFront() {
+	v := &s.view
+	v.mu.Lock()
+	v.fronted++
+	v.mu.Unlock()
+	s.changed()
 }
 
 // changed wakes every viewer to send it the current state.
@@ -153,6 +166,7 @@ func (s *Session) state() State {
 		st.Compare = max(st.Compare, id)
 	}
 	st.Cursor = v.cursor
+	st.Fronted = v.fronted
 	v.mu.Unlock()
 	return st
 }

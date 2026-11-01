@@ -157,6 +157,8 @@ type viewer struct {
 	choosing *choice
 	// ghost says an agent's click marker is on screen (ghost.go).
 	ghost bool
+	// fronted is the last State.Fronted acted on.
+	fronted int
 	// pick is a selection of part of the page, and outlined says its
 	// outline is on screen (pick.go).
 	pick     *picking
@@ -268,7 +270,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stateMsg:
 		v.state = State(msg)
 		v.syncAuth()
-		return v, tea.Batch(v.follow(), v.answerCompare(), v.syncGhost())
+		return v, tea.Batch(v.follow(), v.answerCompare(), v.syncGhost(), v.takeFront())
 	case bindingMsg:
 		return v, v.onBinding(msg)
 	case hooksMsg:
@@ -580,6 +582,24 @@ func padRight(s string, w int) string {
 		return s + strings.Repeat(" ", w-n)
 	}
 	return s
+}
+
+// takeFront brings the shown tab back after a capture took the front.
+func (v *viewer) takeFront() tea.Cmd {
+	if v.state.Fronted == v.fronted {
+		return nil
+	}
+	v.fronted = v.state.Fronted
+	conn, session := v.conn, v.session
+	if conn == nil || session == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = conn.call(ctx, session, "Page.bringToFront", nil, nil)
+		return nil
+	}
 }
 
 // follow connects to the browser and attaches to the tab the session
