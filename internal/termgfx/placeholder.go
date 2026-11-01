@@ -25,10 +25,10 @@ const MaxRows = len(rowColumn)
 // InlineTerminal reports whether the environment names a terminal shown
 // to draw placeholders correctly. It is narrower than Terminal on purpose:
 // the rest speak the protocol, but a wrong guess here leaves boxes in the
-// text, so each joins once it has been tried. cmux comes first because it
-// looks like Ghostty from inside.
+// text, so each joins once it has been tried. cmux counts as the Ghostty it
+// is built on.
 func InlineTerminal(env func(string) string) bool {
-	if env("TMUX") != "" || env("CMUX_SOCKET_PATH") != "" {
+	if env("TMUX") != "" {
 		return false
 	}
 	term, program := env("TERM"), strings.ToLower(env("TERM_PROGRAM"))

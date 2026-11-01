@@ -81,7 +81,7 @@ func TestInlineTerminal(t *testing.T) {
 		{map[string]string{"GHOSTTY_RESOURCES_DIR": "/x"}, true},
 		{map[string]string{"KITTY_WINDOW_ID": "1"}, true},
 		{map[string]string{"TERM_PROGRAM": "ghostty", "TMUX": "/s"}, false},
-		{map[string]string{"GHOSTTY_RESOURCES_DIR": "/x", "CMUX_SOCKET_PATH": "/s"}, false},
+		{map[string]string{"GHOSTTY_RESOURCES_DIR": "/x", "CMUX_SOCKET_PATH": "/s"}, true},
 		{map[string]string{"WEZTERM_PANE": "1"}, false},
 		{map[string]string{"KONSOLE_VERSION": "1"}, false},
 		{map[string]string{}, false},
