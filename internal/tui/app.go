@@ -293,6 +293,7 @@ type model struct {
 	tools        []toolRun
 	scripts      map[string]*scriptRun // running run_code calls, by scriptKey
 	grouped      []agent.Event         // read-only calls not yet printed (group.go)
+	timeline     timeline              // what ran, for /timeline
 	taskCalls    map[string]int        // completed calls by active subagent label
 	taskModels   map[string]string     // model each active subagent runs on, by label
 	perm         *agent.Event          // permission prompt being shown
@@ -1409,6 +1410,7 @@ func (m *model) handleEvent(e agent.Event) tea.Cmd {
 }
 
 func (m *model) applyEvent(e agent.Event) tea.Cmd {
+	m.timeline.note(e, time.Now())
 	// Remember which model a subagent runs on, so the live rows and the
 	// sidebar can show which tier is doing the work.
 	if e.Agent != "" && e.Model != "" {

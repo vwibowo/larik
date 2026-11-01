@@ -303,6 +303,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/context":
 		return m.contextMapCommand()
 
+	case "/timeline":
+		return m.timelineCommand()
+
 	case "/cost":
 		s := m.agent.Stats()
 		cost := "unknown (model not in price catalog)"
