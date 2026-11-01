@@ -613,6 +613,11 @@ func (v *viewer) follow() tea.Cmd {
 			if err == nil {
 				err = conn.call(ctx, session, "Page.enable", nil, nil)
 			}
+			if err == nil {
+				// A tab that isn't the visible one may never paint, which
+				// leaves no frames to show and input hanging.
+				err = conn.call(ctx, session, "Page.bringToFront", nil, nil)
+			}
 			return attachedMsg{focus, session, err}
 		}
 	}

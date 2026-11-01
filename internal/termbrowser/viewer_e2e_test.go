@@ -1,8 +1,11 @@
 package termbrowser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"reflect"
 	"strings"
@@ -275,4 +278,47 @@ func TestViewerChoosesFromASelect(t *testing.T) {
 	}
 	l.msgs <- tea.MouseMotionMsg(tea.Mouse{X: 5, Y: 0}) // onto the toolbar
 	l.until("the link to go", func() bool { return l.v.hover == "" })
+}
+
+func TestViewerShowsAPictureOpenedInItsTab(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	open(t, s, srv, "/")
+	dir, err := os.MkdirTemp("", "ltb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path, err := s.Serve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &loop{t: t, msgs: make(chan tea.Msg, 256)}
+	l.v = newViewer(termgfx.Kitty{})
+	l.v.send = func(m tea.Msg) { l.msgs <- m }
+	defer l.v.close()
+	go Subscribe(path, func(st State) { l.msgs <- stateMsg(st) })
+	l.msgs <- tea.WindowSizeMsg{Width: 100, Height: 40}
+	full := "a=T,q=2,f=24,s=1000,v=760,"
+	l.until("the first page", func() bool { return strings.Contains(l.output(), full) })
+	first := l.v.tab
+
+	var pic bytes.Buffer
+	if err := png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 300, 200))); err != nil {
+		t.Fatal(err)
+	}
+	seen := strings.Count(l.output(), full)
+	errs := make(chan error, 1)
+	go func() { errs <- s.ShowImage(ctx, "image/png", pic.Bytes()) }()
+	l.until("the picture's tab", func() bool { return l.v.tab != first && l.v.tab != "" })
+	l.until("a frame of it", func() bool { return strings.Count(l.output(), full) > seen })
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	l.msgs <- tea.MouseWheelMsg(tea.Mouse{X: 20, Y: 10, Button: tea.MouseWheelDown})
+	settled := time.Now().Add(6 * time.Second) // past an input call's timeout
+	l.until("input to settle", func() bool { return time.Now().After(settled) })
+	if l.v.note != "" {
+		t.Fatalf("input to the picture's tab failed: %s", l.v.note)
+	}
 }
