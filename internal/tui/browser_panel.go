@@ -156,6 +156,7 @@ func (m *model) registerShower() {
 		return
 	}
 	send := m.send
+	m.opts.App.Browser.SetImagesShow(func() bool { return m.inlineOn() })
 	m.panelOK.Store(m.panelAllowed())
 	m.opts.App.Browser.SetShower(func() (string, bool) {
 		if !m.panelOK.Load() {

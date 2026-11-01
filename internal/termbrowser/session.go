@@ -103,6 +103,11 @@ type Session struct {
 	downloadDir string
 	downloads   map[string]string // download GUID -> suggested file name
 
+	imagesShow atomic.Pointer[func() bool]
+
+	// renderContext is the browser context renders run in (render.go).
+	renderContext cdp.BrowserContextID
+
 	// view is what the viewer shows and the control socket reports.
 	view viewState
 
@@ -114,6 +119,16 @@ type Session struct {
 	// hosts caches web.CheckHost per host for the request guard.
 	hostsMu sync.Mutex
 	hosts   map[string]error
+}
+
+// SetImagesShow tells the session how to ask whether the front end shows
+// images a tool returns; with none set, it doesn't.
+func (s *Session) SetImagesShow(f func() bool) { s.imagesShow.Store(&f) }
+
+// ImagesShow reports whether the user will see an image a tool returns.
+func (s *Session) ImagesShow() bool {
+	f := s.imagesShow.Load()
+	return f != nil && (*f)()
 }
 
 func (s *Session) note(format string, args ...any) {
@@ -303,7 +318,7 @@ func (s *Session) shutdown() {
 	}
 	s.root, s.cancelRoot, s.cancelAlloc, s.wsURL = nil, nil, nil, ""
 	s.chromeCmd.Store(nil)
-	s.tabs, s.active = nil, nil
+	s.tabs, s.active, s.renderContext = nil, nil, ""
 	if s.tempProfile != "" {
 		_ = os.RemoveAll(s.tempProfile)
 		s.tempProfile = ""
@@ -865,6 +880,9 @@ func (s *Session) syncTabs() {
 	for _, info := range infos {
 		if _, known := owners[info.TargetID]; known || info.Type != "page" || strings.HasPrefix(info.URL, "devtools://") {
 			continue
+		}
+		if s.renderContext != "" && info.BrowserContextID == s.renderContext {
+			continue // a render's tab is nobody's
 		}
 		tabCtx, cancel := chromedp.NewContext(s.root, chromedp.WithTargetID(info.TargetID))
 		t := &tab{id: info.TargetID, ctx: tabCtx, cancel: cancel, owner: resolved[info.TargetID]}

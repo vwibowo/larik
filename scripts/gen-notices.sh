@@ -36,6 +36,8 @@ trap 'rm -f "$tmp"' EXIT
 {
   printf 'Larik is built from the third-party software listed below. Each entry\n'
   printf 'reproduces that software'\''s license and, where it has one, its NOTICE file.\n'
+  printf '\n================ Mermaid (mermaid.js.org), embedded in the browser tools ================\n\n'
+  cat "$root/internal/termbrowser/mermaid.LICENSE"
   printf '\n================ Go %s (golang.org) ================\n\n' "$(go env GOVERSION)"
   cat "$go_license"
   while read -r path version dir; do

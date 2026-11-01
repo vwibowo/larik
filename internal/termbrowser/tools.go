@@ -25,7 +25,7 @@ func Tools(s *Session) []tools.Tool {
 	for _, t := range []tools.Tool{
 		NavigateTool{s}, HistoryTool{s}, SnapshotTool{s}, ScreenshotTool{s}, ClickTool{s}, TypeTool{s},
 		SelectTool{s}, PressKeyTool{s}, UploadTool{s}, WaitForTool{s}, EvalTool{s}, TabsTool{s}, ConsoleTool{s}, NetworkTool{s},
-		ShowTool{s}, CompareTool{s},
+		ShowTool{s}, CompareTool{s}, RenderTool{s},
 	} {
 		out = append(out, noted{t, s})
 	}
@@ -392,6 +392,64 @@ func (t ScreenshotTool) Run(ctx context.Context, env *tools.Env, input json.RawM
 		Content: content,
 		Display: fmt.Sprintf("%s · %d×%d · %d KB", what, shot.Width, shot.Height, (len(shot.JPEG)+512)/1024),
 		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(shot.JPEG)}},
+	}
+}
+
+// RenderTool is browser_render.
+type RenderTool struct{ S *Session }
+
+func (RenderTool) ReadOnly() bool { return true }
+func (RenderTool) Spec() llm.ToolSpec {
+	return spec("browser_render",
+		"Draw a diagram or figure as a picture for the user: Mermaid source, an SVG, or a static HTML fragment (no scripts run). Use it when a picture explains something better than prose, such as an architecture, a flow or a chart, instead of ASCII art. "+
+			"It renders offline and loads nothing, so inline any image as a data: URL. A Mermaid mistake comes back as an error to fix. The result says whether the user could see the picture: if not, give the same information in text.",
+		`{"type":"object","properties":{
+			"kind":{"type":"string","enum":["mermaid","svg","html"]},
+			"source":{"type":"string","description":"The Mermaid source, or the SVG or HTML markup"},
+			"width":{"type":"integer","description":"Page width in CSS pixels (200 to 1600, default 900)"}},"required":["kind","source"]}`)
+}
+func (t RenderTool) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
+	var in RenderOptions
+	if r := parse(input, &in, `{"kind", "source", "width"?}`); r != nil {
+		return *r
+	}
+	out, err := t.S.Render(ctx, in)
+	if err != nil {
+		return fail(err)
+	}
+	data, ext, err := clipboard.Fit(out.PNG, maxCompareBytes)
+	if err != nil {
+		return fail(err)
+	}
+	media := "image/png"
+	if ext != ".png" {
+		media = "image/jpeg"
+	}
+	content := fmt.Sprintf("Rendered the %s (%d×%d).", in.Kind, out.Width, out.Height)
+	display := fmt.Sprintf("%s · %d×%d", in.Kind, out.Width, out.Height)
+	if out.Cut {
+		content += fmt.Sprintf(" It is taller than %dpx, so the rest is cut off.", renderMaxHeight)
+	}
+	if out.Started {
+		content += " This started Chrome."
+		display = "started Chrome · " + display
+	}
+	if t.S.ImagesShow() {
+		content += " The user can see it in the conversation."
+	} else {
+		content += " The user can't see images here: give the same information in text."
+		if f, err := os.CreateTemp("", "larik-render-*"+ext); err == nil {
+			_, werr := f.Write(data)
+			f.Close()
+			if werr == nil {
+				content += " It is saved at " + f.Name() + "."
+			}
+		}
+	}
+	return tools.Result{
+		Content: content,
+		Display: display,
+		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: media, Data: base64.StdEncoding.EncodeToString(data)}},
 	}
 }
 
