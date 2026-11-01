@@ -71,9 +71,10 @@ func (m *model) inlineOn() bool {
 	return termgfx.InlineTerminal(os.Getenv)
 }
 
-// showImages adds the pictures an event carries to the conversation.
+// showImages adds the pictures an event carries to the conversation. A
+// subagent's are captioned, since it may run beside others.
 func (m *model) showImages(e agent.Event) tea.Cmd {
-	if len(e.Images) == 0 || e.Agent != "" || !m.inlineOn() {
+	if len(e.Images) == 0 || !m.inlineOn() {
 		return nil
 	}
 	m.inline.notify = m.send
@@ -84,7 +85,11 @@ func (m *model) showImages(e agent.Event) tea.Cmd {
 			continue
 		}
 		cmds = append(cmds, m.printlnRendered(64, func(m *model, width int) string {
-			return m.inline.lines(img, width, m.height, m.st.dim.Render)
+			out := m.inline.lines(img, width, m.height, m.st.dim.Render)
+			if e.Agent != "" {
+				out = m.agentLine(e, m.st.dim.Render("image")) + "\n" + out
+			}
+			return out
 		}))
 	}
 	return tea.Sequence(cmds...)

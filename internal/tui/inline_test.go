@@ -122,10 +122,6 @@ func TestToolImagesNeedATestedTerminal(t *testing.T) {
 	if m.showImages(agent.Event{Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
 		t.Error("the setting turns it off")
 	}
-	m.opts.Config.InlineImages = nil
-	if m.showImages(agent.Event{Agent: "explore", Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
-		t.Error("a subagent's images stay out")
-	}
 }
 
 func TestInlineDropsOldImages(t *testing.T) {
@@ -238,5 +234,19 @@ func TestResumedImagesNeedATestedTerminal(t *testing.T) {
 	m.Update(m.printHistory("resumed")())
 	if shown, gone := imagesInOutputs(m); shown != 0 || gone != 0 || len(m.inline.images) != 0 {
 		t.Fatalf("shown %d, gone %d, held %d", shown, gone, len(m.inline.images))
+	}
+}
+
+func TestSubagentImagesShowUnderTheirName(t *testing.T) {
+	m := inlineModel(t)
+	cmd := m.handleEvent(agent.Event{Kind: agent.EvToolEnd, ToolName: "browser_render", Agent: "explore", Images: []llm.Block{pngBlock(t, 40, 20)}})
+	for _, msg := range drain(cmd) {
+		m.Update(msg)
+	}
+	if shown, _ := imagesInOutputs(m); shown != 1 {
+		t.Fatalf("%d images shown, want 1", shown)
+	}
+	if got := plain(strings.Join(m.convLines, "\n")); !strings.Contains(got, "image  (explore)") {
+		t.Fatalf("no caption naming the subagent: %q", got)
 	}
 }
