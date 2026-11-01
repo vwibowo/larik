@@ -112,6 +112,7 @@ func (s *Session) MarkBefore() {
 		}
 	}
 	s.mu.Unlock()
+	s.markThumb(tabs)
 	s.before.mu.Lock()
 	defer s.before.mu.Unlock()
 	for owner, t := range tabs {

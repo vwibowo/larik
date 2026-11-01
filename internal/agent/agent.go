@@ -55,6 +55,7 @@ type Options struct {
 	Session     *session.Session        // optional
 	Checkpoints *checkpoint.Store       // optional
 	WillWrite   func()                  // optional; see tools.Env
+	NewTurn     func()                  // optional; told of each prompt of the main agent
 	OnAllowRule func(rule string) error // persists "always allow" answers
 	// AutoApprove judges calls in auto mode; nil sends them all to the user.
 	AutoApprove AutoApprover
@@ -654,6 +655,9 @@ func (a *Agent) runTurn(ctx context.Context, prompt string, system bool, emit fu
 
 	if a.opts.Checkpoints != nil && !sub { // subagents write to their own checkpoint unit (undo.go)
 		a.opts.Checkpoints.BeginTurn()
+	}
+	if a.opts.NewTurn != nil && !sub {
+		a.opts.NewTurn()
 	}
 	// Size the request that is about to be sent, not only the transcript
 	// already retained from earlier turns. Compact the old conversation before

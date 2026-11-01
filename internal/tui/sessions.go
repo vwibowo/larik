@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +17,9 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/app"
+	"larik/internal/llm"
 	"larik/internal/session"
+	"larik/internal/termbrowser"
 	"larik/internal/textutil"
 	"larik/internal/tools"
 	"larik/internal/worktree"
@@ -72,6 +76,9 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 			b.WriteString("/rewind <n> branches off just before prompt n and puts it back in the input to edit.\n" +
 				"The current session stays as it is. If files changed since that prompt you are asked whether to restore them too;\n" +
 				"/rewind <n> files restores without asking, /rewind <n> keep leaves the files alone.")
+			if sheet := m.rewindSheet(st, prompts, first); sheet != nil {
+				return tea.Sequence(info(b.String()), sheet)
+			}
 			return info(b.String())
 		}
 		n, err := strconv.Atoi(args[0])
@@ -87,6 +94,62 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 		return m.rewindTo(st, prompts, n, files, info, fail)
 	}
 	return nil
+}
+
+// rewindSheetMax is how many pictures /rewind shows at most, the latest.
+const rewindSheetMax = 9
+
+// rewindSheet shows the browser page as each listed prompt would leave it,
+// numbered like the list.
+func (m *model) rewindSheet(st *session.State, prompts []int, first int) tea.Cmd {
+	if m.opts.App == nil || m.opts.App.Browser == nil || !m.inlineOn() {
+		return nil
+	}
+	times := make([]time.Time, len(prompts))
+	for i, at := range prompts {
+		if at >= len(st.AllTimes) {
+			return nil
+		}
+		times[i] = st.AllTimes[at]
+	}
+	entries := rewindEntries(m.opts.App.Browser.Thumbs(), times, first)
+	entries = entries[max(0, len(entries)-rewindSheetMax):]
+	data := termbrowser.ContactSheet(entries)
+	if data == nil {
+		return nil
+	}
+	return m.showImages(agent.Event{Images: []llm.Block{{Type: llm.BlockImage, MediaType: "image/png", Data: base64.StdEncoding.EncodeToString(data)}}})
+}
+
+// rewindEntries pairs prompts, from index first, with the pictures that show
+// them. Files don't change between a prompt and the next edit, so a prompt's
+// picture is the first taken after it; prompts that share one share a label.
+func rewindEntries(thumbs []termbrowser.Thumb, times []time.Time, first int) []termbrowser.SheetEntry {
+	var out []termbrowser.SheetEntry
+	last, from, to := -1, 0, 0
+	flush := func() {
+		if last < 0 {
+			return
+		}
+		label := strconv.Itoa(from)
+		if to != from {
+			label += "-" + strconv.Itoa(to)
+		}
+		out = append(out, termbrowser.SheetEntry{Label: label, JPEG: thumbs[last].JPEG})
+	}
+	for i := first; i < len(times); i++ {
+		at := slices.IndexFunc(thumbs, func(t termbrowser.Thumb) bool { return !t.At.Before(times[i]) })
+		if at < 0 {
+			break
+		}
+		if at != last {
+			flush()
+			last, from = at, i+1
+		}
+		to = i + 1
+	}
+	flush()
+	return out
 }
 
 // sessionOptions carries the current effort and mode over to a session

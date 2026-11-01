@@ -106,6 +106,7 @@ type Session struct {
 	imagesShow atomic.Pointer[func() bool]
 	film       filmstrip
 	before     befores
+	thumbs     thumbs
 
 	// renderContext is the browser context renders run in (render.go).
 	renderContext cdp.BrowserContextID
