@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -213,6 +214,9 @@ func (s *Session) Render(ctx context.Context, o RenderOptions) (Rendered, error)
 	if box.W < 1 || box.H < 1 {
 		return out, errors.New("it drew nothing")
 	}
+	// Text measures in fractions of a pixel; whole pixels keep the picture
+	// and its reported size in step.
+	box.W, box.H = math.Ceil(box.W), math.Ceil(box.H)
 	out.Width, out.Height = int(box.W), int(box.H)
 	if box.H > renderMaxHeight {
 		box.H, out.Cut = renderMaxHeight, true
