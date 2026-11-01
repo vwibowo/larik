@@ -68,6 +68,30 @@ func (s *Session) showClick(ctx context.Context, x, y float64) (func(), error) {
 	}
 }
 
+// reaim finds the element with ref again after showClick waited, moving the
+// marker with it. With no viewer there was no wait, so x, y still hold.
+func (s *Session) reaim(ctx context.Context, ref string, x, y float64) (float64, float64, error) {
+	if s.viewers() == 0 {
+		return x, y, nil
+	}
+	nx, ny, err := s.point(ctx, ref)
+	if err != nil {
+		return 0, 0, err
+	}
+	if nx != x || ny != y {
+		v := &s.view
+		v.mu.Lock()
+		if v.cursor != nil {
+			c := *v.cursor
+			c.X, c.Y = nx, ny
+			v.cursor = &c
+		}
+		v.mu.Unlock()
+		s.changed()
+	}
+	return nx, ny, nil
+}
+
 // syncGhost shows or removes the marker to match the session's state.
 func (v *viewer) syncGhost() tea.Cmd {
 	c := v.state.Cursor

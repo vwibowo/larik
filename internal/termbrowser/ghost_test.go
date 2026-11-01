@@ -2,6 +2,7 @@ package termbrowser
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"net"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/chromedp/chromedp"
 )
 
 func TestGhostIDsFollowTheOutline(t *testing.T) {
@@ -66,6 +68,46 @@ func TestGhostMarksTheCellAClickThereWouldHit(t *testing.T) {
 	}
 }
 
+// watch makes s count one viewer until the test ends.
+func watch(t *testing.T, s *Session) {
+	t.Helper()
+	ch := make(chan struct{}, 1)
+	s.view.mu.Lock()
+	if s.view.subs == nil {
+		s.view.subs = map[chan struct{}]net.Conn{}
+	}
+	s.view.subs[ch] = nil
+	s.view.mu.Unlock()
+	t.Cleanup(func() {
+		s.view.mu.Lock()
+		delete(s.view.subs, ch)
+		s.view.mu.Unlock()
+	})
+}
+
+func TestClickFollowsAnElementThatMovesDuringThePause(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	snap := open(t, s, srv, "/shifting")
+	watch(t, s)
+	time.AfterFunc(ghostDelay/4, func() {
+		var moved bool
+		if err := s.run(ctx, chromedp.Evaluate(`target.style.top = '200px'; decoy.style.top = '20px'; true`, &moved)); err != nil {
+			t.Error(err)
+		}
+	})
+	if r := (ClickTool{s}).Run(ctx, nil, json.RawMessage(`{"ref":"`+refOf(t, snap, `button "Target"`)+`"}`)); r.IsError {
+		t.Fatal(r.Content)
+	}
+	var title string
+	if err := s.run(ctx, chromedp.Title(&title)); err != nil {
+		t.Fatal(err)
+	}
+	if title != "right" {
+		t.Fatalf("the click landed on %q", title)
+	}
+}
+
 func TestClickWaitsWithAViewerAndCanBeStopped(t *testing.T) {
 	s, _ := newSession(t)
 	ctx := context.Background()
@@ -78,18 +120,7 @@ func TestClickWaitsWithAViewerAndCanBeStopped(t *testing.T) {
 		t.Fatal("no viewer: nothing is announced")
 	}
 
-	ch := make(chan struct{}, 1)
-	s.view.mu.Lock()
-	if s.view.subs == nil {
-		s.view.subs = map[chan struct{}]net.Conn{}
-	}
-	s.view.subs[ch] = nil
-	s.view.mu.Unlock()
-	defer func() {
-		s.view.mu.Lock()
-		delete(s.view.subs, ch)
-		s.view.mu.Unlock()
-	}()
+	watch(t, s)
 
 	start := time.Now()
 	done, err = s.showClick(ctx, 5, 6)

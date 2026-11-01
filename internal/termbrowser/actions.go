@@ -268,6 +268,10 @@ func (s *Session) Click(ctx context.Context, ref string, double bool) error {
 		return err
 	}
 	defer shown()
+	// The page had time to move while the click waited.
+	if x, y, err = s.reaim(ctx, ref, x, y); err != nil {
+		return err
+	}
 	opts := []chromedp.MouseOption{}
 	if double {
 		opts = append(opts, chromedp.ClickCount(2))

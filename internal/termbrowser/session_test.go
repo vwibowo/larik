@@ -286,6 +286,10 @@ func newSession(t *testing.T) (*Session, *httptest.Server) {
 			_, _ = w.Write([]byte(testPage))
 		case "/done":
 			_, _ = w.Write([]byte("<title>Done</title><p>Thanks, " + r.URL.Query().Get("name") + " (" + r.URL.Query().Get("plan") + ")</p>"))
+		case "/shifting":
+			_, _ = w.Write([]byte(`<style>button{position:absolute;left:20px}</style>
+<button id=target style="top:20px" onclick="document.title='right'">Target</button>
+<button id=decoy style="top:200px" onclick="document.title='wrong'">Decoy</button>`))
 		case "/visual":
 			_, _ = w.Write([]byte(visualPage))
 		case "/never":
