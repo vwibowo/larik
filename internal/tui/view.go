@@ -2039,9 +2039,11 @@ func (m *model) printHistory(label string) tea.Cmd {
 	for _, c := range chunks {
 		if c.image != nil {
 			if img := m.historyImage(*c.image, &older); img != nil {
-				out = append(out, m.renderOutput(64, func(m *model, width int) string {
+				o := m.renderOutput(64, func(m *model, width int) string {
 					return m.inline.lines(img, width, m.height, m.st.dim.Render)
-				}, nil))
+				}, nil)
+				o.image = img
+				out = append(out, o)
 			}
 			continue
 		}

@@ -253,16 +253,18 @@ type model struct {
 	// traceNavigate is an optional navigation seam for command-path tests.
 	// Nil uses the current App browser session's OpenURL.
 	traceNavigate func(context.Context, string, string) error
-	spin          spinner.Model
-	motion        motion
-	toast         string // the confirmation in the corner, if any
-	toastID       int
-	view          viewport.Model // the conversation, pre-wrapped to width
-	panelView     viewport.Model
-	diffs         []fileDiff // this session's edits, for the diff view
-	diffView      *diffView
-	changesPick   *changesPicker
-	panelKind     string
+	// imageOpen is the same seam for opening a picture.
+	imageOpen   func(context.Context, string, []byte) error
+	spin        spinner.Model
+	motion      motion
+	toast       string // the confirmation in the corner, if any
+	toastID     int
+	view        viewport.Model // the conversation, pre-wrapped to width
+	panelView   viewport.Model
+	diffs       []fileDiff // this session's edits, for the diff view
+	diffView    *diffView
+	changesPick *changesPicker
+	panelKind   string
 	// outputs is everything printed, oldest first, kept to re-wrap on
 	// resize; convLines is outputs wrapped to convWidth.
 	outputs                   []conversationOutput
@@ -433,6 +435,7 @@ type (
 		size   int
 		render conversationRenderer
 		prompt *promptRef
+		image  *inlineImage // set when the output shows a picture
 	}
 	// historyOutputMsg prints a resumed conversation, one output per
 	// prompt so each can be clicked.
@@ -657,11 +660,13 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case renderedOutputMsg:
 		m.appendRenderedOutput(msg.text, msg.width, msg.size, msg.render, msg.prompt)
+		m.outputs[len(m.outputs)-1].image = msg.image
 		return m, nil
 
 	case historyOutputMsg:
 		for _, o := range msg {
 			m.appendRenderedOutput(o.text, o.width, o.size, o.render, o.prompt)
+			m.outputs[len(m.outputs)-1].image = o.image
 		}
 		return m, nil
 

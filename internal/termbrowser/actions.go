@@ -3,6 +3,7 @@ package termbrowser
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -169,6 +170,32 @@ func (s *Session) Navigate(ctx context.Context, rawURL string) (loading bool, er
 func (s *Session) OpenURL(ctx context.Context, owner, rawURL string) error {
 	_, err := s.Navigate(tools.WithOwner(ctx, owner), rawURL)
 	return err
+}
+
+// imageTabOwner is the tab pictures open in, apart from every agent's.
+const imageTabOwner = "image"
+
+// imagePage shows one picture and can load nothing else.
+const imagePage = `<!doctype html><meta charset=utf-8><title>Image</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+<style>html,body{margin:0;min-height:100%%;background:#1c1c1e}img{display:block;margin:auto;max-width:100%%}</style>
+<img alt="" src="data:%s;base64,%s">`
+
+// ShowImage opens a picture in its own tab, without a file or a server, for
+// the user to zoom and scroll.
+func (s *Session) ShowImage(ctx context.Context, mediaType string, data []byte) error {
+	ctx = tools.WithOwner(ctx, imageTabOwner)
+	if _, err := s.Tab(ctx); err != nil {
+		return err
+	}
+	html := fmt.Sprintf(imagePage, mediaType, base64.StdEncoding.EncodeToString(data))
+	return s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		tree, err := page.GetFrameTree().Do(ctx)
+		if err != nil {
+			return err
+		}
+		return page.SetDocumentContent(tree.Frame.ID, html).Do(ctx)
+	}))
 }
 
 // History goes back or forward in the active tab.

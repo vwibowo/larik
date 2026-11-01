@@ -9,6 +9,15 @@
 - **See what fills the context with `/context`.** A map shows how much goes to your prompts, replies, each tool, images and attachments, and lists the largest tool results, so you know what to drop before compaction. The total is the provider's own number; the shares are estimates and show only as percentages.
 - **See where the time went with `/timeline`.** A chart shows when the model, tools and each subagent ran, with the slowest calls and what the session cost. It needs no debug mode, and long pauses are cut short.
 - **See a click before it lands.** With the browser panel open, a marker shows where an agent is about to click for 400 ms. Press `esc` in the conversation to stop the turn, and the click never happens. If the element moves in that time, the click follows it.
+- **Open an image full size.** Click a picture in the conversation to open it in the browser panel, where you can zoom and scroll, or in your system's viewer when the panel isn't available.
+
+### Changed
+
+- **Images in cmux.** Pictures now appear in the conversation in cmux too.
+
+### Fixed
+
+- **The browser panel shows every tab.** Switching to a tab that wasn't the visible one could leave the panel empty with input timing out, because Chrome doesn't paint a background tab.
 
 ### Compatibility notes
 

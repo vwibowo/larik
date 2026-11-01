@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
+
+	"larik/internal/tools"
 )
 
 func renderedSize(t *testing.T, data []byte) (int, int) {
@@ -161,5 +165,39 @@ func TestRenderToolSaysWhetherTheUserSawIt(t *testing.T) {
 	r = (RenderTool{s}).Run(context.Background(), nil, input)
 	if !strings.Contains(r.Content, "can see it") {
 		t.Errorf("%q", r.Content)
+	}
+}
+
+func TestShowImageLoadsThePictureInItsOwnTab(t *testing.T) {
+	s, srv := newSession(t)
+	ctx := context.Background()
+	open(t, s, srv, "/")
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 30, 20))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ShowImage(ctx, "image/png", b.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	var width int
+	owned := tools.WithOwner(ctx, imageTabOwner)
+	for range 100 { // the data URL decodes on its own time
+		if err := s.run(owned, chromedp.Evaluate(`document.images[0] ? document.images[0].naturalWidth : 0`, &width)); err != nil {
+			t.Fatal(err)
+		}
+		if width != 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if width != 30 {
+		t.Fatalf("picture %d wide", width)
+	}
+	var title string
+	if err := s.run(ctx, chromedp.Title(&title)); err != nil {
+		t.Fatal(err)
+	}
+	if title == "Image" {
+		t.Fatal("the agent's tab was taken over")
 	}
 }

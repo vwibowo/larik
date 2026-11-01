@@ -89,6 +89,10 @@ func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	}
 	line := m.view.YOffset() + msg.Y
 	o := m.outputAt(line)
+	if o != nil && o.image != nil && o.image.data != nil {
+		m.closePromptMenu()
+		return m.openImage(o.image)
+	}
 	if o == nil || o.prompt == nil || strings.TrimSpace(ansi.Strip(m.convLines[line])) == "" {
 		m.closePromptMenu() // a click elsewhere in the conversation
 		return nil

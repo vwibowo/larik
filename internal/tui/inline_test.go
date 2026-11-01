@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"image"
 	"image/png"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -248,5 +249,36 @@ func TestSubagentImagesShowUnderTheirName(t *testing.T) {
 	}
 	if got := plain(strings.Join(m.convLines, "\n")); !strings.Contains(got, "image  (explore)") {
 		t.Fatalf("no caption naming the subagent: %q", got)
+	}
+}
+
+func TestClickingAnImageOpensIt(t *testing.T) {
+	m := inlineModel(t)
+	for _, msg := range drain(m.showImages(agent.Event{Kind: agent.EvToolEnd, Images: []llm.Block{pngBlock(t, 80, 40)}})) {
+		m.Update(msg)
+	}
+	o := &m.outputs[0]
+	if o.image == nil {
+		t.Fatal("the output doesn't know its picture")
+	}
+	var path string
+	before := openBrowser
+	openBrowser = func(p string) { path = p }
+	defer func() { openBrowser = before }()
+	m.viewRows, m.viewWidth = 40, 100
+	m.handleClick(tea.MouseClickMsg{X: 4, Y: o.firstLine + o.lines - 1 - m.view.YOffset(), Button: tea.MouseLeft})
+	if !strings.HasSuffix(path, ".png") {
+		t.Fatalf("no panel here, so the system viewer gets a file: %q", path)
+	}
+	defer os.Remove(path)
+	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, o.image.data) {
+		t.Fatalf("the file isn't the picture: %v", err)
+	}
+
+	path = ""
+	o.image.data = nil
+	m.handleClick(tea.MouseClickMsg{X: 4, Y: o.firstLine + o.lines - 1 - m.view.YOffset(), Button: tea.MouseLeft})
+	if path != "" {
+		t.Fatal("an image no longer held can't open")
 	}
 }

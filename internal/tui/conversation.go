@@ -25,6 +25,8 @@ type conversationOutput struct {
 	// prompt is set when the output shows one of your prompts, so a click
 	// on it can open the prompt menu.
 	prompt *promptRef
+	// image is set when the output shows a picture, so a click can open it.
+	image *inlineImage
 	// firstLine and lines place the output in convLines.
 	firstLine, lines int
 }

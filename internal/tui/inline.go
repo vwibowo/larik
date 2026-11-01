@@ -2,11 +2,13 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -84,15 +86,65 @@ func (m *model) showImages(e agent.Event) tea.Cmd {
 		if img == nil {
 			continue
 		}
-		cmds = append(cmds, m.printlnRendered(64, func(m *model, width int) string {
+		out := m.renderOutput(64, func(m *model, width int) string {
 			out := m.inline.lines(img, width, m.height, m.st.dim.Render)
 			if e.Agent != "" {
 				out = m.agentLine(e, m.st.dim.Render("image")) + "\n" + out
 			}
 			return out
-		}))
+		}, nil)
+		out.image = img
+		cmds = append(cmds, func() tea.Msg { return out })
 	}
 	return tea.Sequence(cmds...)
+}
+
+// openImage shows a picture full size in the browser panel, where it can be
+// zoomed, or in the system's viewer when the panel isn't available.
+func (m *model) openImage(img *inlineImage) tea.Cmd {
+	mediaType := "image/jpeg"
+	if termgfx.IsPNG(img.data) {
+		mediaType = "image/png"
+	}
+	external := func() tea.Cmd {
+		path, err := saveImage(img.data, mediaType)
+		if err != nil {
+			return m.println(m.st.err.Render("image: " + err.Error()))
+		}
+		openBrowser(path)
+		return nil
+	}
+	if m.opts.App == nil || m.opts.App.Browser == nil || !m.panelAllowed() {
+		return external()
+	}
+	init, err := m.prepareBrowserPanel()
+	if err != nil {
+		return external()
+	}
+	open, data := m.imageOpen, img.data
+	if open == nil {
+		open = m.opts.App.Browser.ShowImage
+	}
+	show := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := open(ctx, mediaType, data); err != nil {
+			return outputMsg(m.st.err.Render("image: " + err.Error()))
+		}
+		return nil
+	}
+	return tea.Batch(init, show)
+}
+
+// saveImage writes a picture to a temporary file for another program.
+func saveImage(data []byte, mediaType string) (string, error) {
+	f, err := os.CreateTemp("", "larik-image-*."+strings.TrimPrefix(mediaType, "image/"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	return f.Name(), err
 }
 
 // add keeps a picture block, or returns nil for what can't be drawn.
