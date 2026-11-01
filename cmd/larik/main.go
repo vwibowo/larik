@@ -26,7 +26,7 @@ import (
 	"larik/internal/tui"
 )
 
-var version = "0.24.1"
+var version = "0.25.0"
 
 func main() {
 	// A run_code script runner, started by Larik itself; see tools.ServeCodeIfChild.

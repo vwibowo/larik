@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.25.0
+
+<p class="release-meta"><time datetime="2026-11-02">November 2, 2026</time></p>
+
+### Added
+
+- **Compare a whole page with `/compare`.** The first file edit keeps a picture of the browser page, and `/compare` shows it beside the page now with what changed tinted. Nobody has to point at anything, and the panel can stay closed. Agents can do the same with `browser_compare` and `page: true`, to check their own work. Anything animating is left out.
+- **See the page at each prompt in `/rewind`.** The list of prompts now comes with numbered pictures of the browser page, so you can tell which version looked right before you go back.
+- **See the page after each browser action in `/trace`.** Select a browser call in the trace to see what the page looked like once it finished.
+
+### Compatibility notes
+
+- With a browser page open, the first edit of a turn and the first edit after a comparison can take up to 0.8 seconds longer per open tab.
+- `/compare` covers the visible window. Slow or large animation can still show as a change, and edits made through shell commands don't keep a picture.
+- These pictures stay in memory for this run. Prompts and traces from earlier runs have none, and they never reach trace files or exports.
+- `/compare` and the `/rewind` pictures need inline images. `browser_compare` with `page: true` needs the browser tools on, and new tool options apply from a fresh context.
+
 ## v0.24.1
 
 <p class="release-meta"><time datetime="2026-11-01">November 1, 2026</time></p>
