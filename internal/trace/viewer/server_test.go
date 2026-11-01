@@ -93,3 +93,44 @@ func TestExport(t *testing.T) {
 		t.Fatal("trace text must not be able to end the script")
 	}
 }
+
+func TestFramesStayOutOfExports(t *testing.T) {
+	dir := sample(t)
+	frame := func(call string) []byte {
+		if call == "call 1" {
+			return []byte("jpeg bytes")
+		}
+		return nil
+	}
+	s, err := Start(Options{Dir: dir, Title: "s", Frame: frame}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	base := strings.TrimSuffix(s.URL(), "/?t="+s.token)
+	get := func(path string) (int, string) {
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := get("/api/frame/call%201?t=" + s.token); code != http.StatusOK || body != "jpeg bytes" {
+		t.Fatalf("%d %q", code, body)
+	}
+	if code, _ := get("/api/frame/other?t=" + s.token); code != http.StatusNotFound {
+		t.Fatalf("no frame: %d", code)
+	}
+	if code, _ := get("/api/frame/call%201"); code != http.StatusForbidden {
+		t.Fatalf("no token: %d", code)
+	}
+	var out bytes.Buffer
+	if err := Export(Options{Dir: dir, Title: "s", Frame: frame}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "jpeg bytes") {
+		t.Fatal("a picture reached the export")
+	}
+}

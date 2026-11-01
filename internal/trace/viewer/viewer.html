@@ -94,6 +94,7 @@ details > summary { cursor: pointer; color: var(--dim); font-size: 12px; margin:
 .pill.ok { background: var(--tool-soft); color: var(--tool); }
 .pill.new { background: var(--accent-soft); color: var(--accent); }
 .x { border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; padding: 6px 10px; }
+img.frame { max-width: 100%; max-height: 360px; border: 1px solid var(--line); border-radius: 4px; display: block; }
 img.att { max-width: 320px; max-height: 240px; border: 1px solid var(--line); border-radius: 4px; }
 a { color: var(--accent); cursor: pointer; }
 @media (max-width: 760px) {
@@ -675,6 +676,7 @@ function toolView(t) {
     ["permission", t.perm ? esc(t.perm.data.decision) + (t.perm.data.wait_ms > 0 ? " after " + fmtMS(t.perm.data.wait_ms) : "") : ""]]);
   const sub = S.M.lanes.find((l) => l.parent === t.id);
   if (sub) html += `<div style="margin:6px 0">Subagent: ${goLink({ type: "rec", seq: firstSeqOf(sub.key) }, sub.key)}</div>`;
+  if (BOOT?.mode !== "static" && e) html += `<div class="blk"><div class="lbl">Page after this call</div><a href="/api/frame/${esc(encodeURIComponent(t.id))}?t=${esc(encodeURIComponent(TOKEN))}" target="_blank"><img class="frame" alt="" src="/api/frame/${esc(encodeURIComponent(t.id))}?t=${esc(encodeURIComponent(TOKEN))}" onerror="this.closest('.blk').remove()"></a></div>`;
   html += codeBlock(pretty(s.input ?? {}), "Input");
   if (e) html += codeBlock(e.output || "", e.is_error ? "Error" : "Output");
   return html;

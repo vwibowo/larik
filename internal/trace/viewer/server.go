@@ -33,6 +33,9 @@ var page string
 type Options struct {
 	Dir   string // the trace directory
 	Title string // the session, for the page header
+	// Frame, if set, returns the JPEG of the page after a tool call, or nil.
+	// Those pictures stay out of the trace and of exports.
+	Frame func(call string) []byte
 }
 
 // liveWindow is how recently the trace must have changed to count as live.
@@ -106,6 +109,18 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		http.ServeFile(w, r, filepath.Join(s.opts.Dir, "http", name))
+	})
+	mux.HandleFunc("/api/frame/", func(w http.ResponseWriter, r *http.Request) {
+		var data []byte
+		if s.opts.Frame != nil {
+			data = s.opts.Frame(strings.TrimPrefix(r.URL.Path, "/api/frame/"))
+		}
+		if data == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(data)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.Host)

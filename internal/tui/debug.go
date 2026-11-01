@@ -113,7 +113,11 @@ func (m *model) openTrace(arg string) tea.Cmd {
 		if m.traceView != nil {
 			m.traceView.Close()
 		}
-		srv, err := viewer.Start(viewer.Options{Dir: dir, Title: m.agent.SessionID()}, 0)
+		opts := viewer.Options{Dir: dir, Title: m.agent.SessionID()}
+		if m.opts.App != nil && m.opts.App.Browser != nil {
+			opts.Frame = m.opts.App.Browser.FrameOf
+		}
+		srv, err := viewer.Start(opts, 0)
 		if err != nil {
 			return m.println(m.st.err.Render("trace viewer: " + err.Error()))
 		}

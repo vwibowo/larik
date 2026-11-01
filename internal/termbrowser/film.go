@@ -19,6 +19,8 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+
+	"larik/internal/tools"
 )
 
 // The filmstrip keeps a picture of the page after each action that changed
@@ -55,6 +57,7 @@ type Frame struct {
 	URL   string
 	Agent string
 	At    time.Time
+	Call  string // the tool call that led to it
 }
 
 type filmstrip struct {
@@ -82,6 +85,22 @@ func (s *Session) Film() []Frame {
 	return append([]Frame(nil), s.film.frames...)
 }
 
+// FrameOf returns the picture after a tool call, or nil if it has none,
+// which /trace shows beside the call.
+func (s *Session) FrameOf(call string) []byte {
+	if s == nil || call == "" {
+		return nil
+	}
+	s.film.mu.Lock()
+	defer s.film.mu.Unlock()
+	for i := len(s.film.frames) - 1; i >= 0; i-- {
+		if s.film.frames[i].Call == call {
+			return s.film.frames[i].JPEG
+		}
+	}
+	return nil
+}
+
 // recordStep adds the page as it is now, after a tool's action. It never
 // fails the action: a frame that can't be had is left out.
 func (s *Session) recordStep(ctx context.Context, label, agent string) {
@@ -101,7 +120,7 @@ func (s *Session) recordStep(ctx context.Context, label, agent string) {
 	if s.run(cctx, actions...) != nil || len(data) == 0 {
 		return
 	}
-	s.film.add(Frame{JPEG: data, Label: stepLabel(label), URL: url, Agent: agent, At: time.Now()})
+	s.film.add(Frame{JPEG: data, Label: stepLabel(label), URL: url, Agent: agent, At: time.Now(), Call: tools.CallID(ctx)})
 }
 
 // filmLabel names a step. A script's result can hold anything the page
