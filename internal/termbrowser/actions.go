@@ -263,6 +263,11 @@ func (s *Session) Click(ctx context.Context, ref string, double bool) error {
 	if err != nil {
 		return err
 	}
+	shown, err := s.showClick(ctx, x, y)
+	if err != nil {
+		return err
+	}
+	defer shown()
 	opts := []chromedp.MouseOption{}
 	if double {
 		opts = append(opts, chromedp.ClickCount(2))

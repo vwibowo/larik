@@ -155,6 +155,8 @@ type viewer struct {
 	hoverGen int
 	// choosing is a <select> the user is picking an option of (choose.go).
 	choosing *choice
+	// ghost says an agent's click marker is on screen (ghost.go).
+	ghost bool
 	// pick is a selection of part of the page, and outlined says its
 	// outline is on screen (pick.go).
 	pick     *picking
@@ -266,7 +268,7 @@ func (v *viewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stateMsg:
 		v.state = State(msg)
 		v.syncAuth()
-		return v, tea.Batch(v.follow(), v.answerCompare())
+		return v, tea.Batch(v.follow(), v.answerCompare(), v.syncGhost())
 	case bindingMsg:
 		return v, v.onBinding(msg)
 	case hooksMsg:
@@ -920,6 +922,7 @@ func (v *viewer) clearImages() tea.Cmd {
 
 // deleteOwn deletes the viewer's own images and nothing else on screen.
 func (v *viewer) deleteOwn(k termgfx.Kitty) {
+	v.deleteGhost(k)
 	if v.base != 0 {
 		k.Delete(v.base)
 	}

@@ -39,6 +39,8 @@ type State struct {
 	Location *Location `json:"location,omitempty"`
 	// Compare is the id of a browser_compare waiting for a panel's answer.
 	Compare int `json:"compare,omitempty"`
+	// Cursor is where an agent is about to click (ghost.go).
+	Cursor *Cursor `json:"cursor,omitempty"`
 }
 
 // Location is a position to report to pages, in degrees and meters.
@@ -91,6 +93,7 @@ type viewState struct {
 	nextAuth int
 
 	compares    map[int]chan ViewerMessage // browser_compare calls waiting for a panel
+	cursor      *Cursor                    // where an agent is about to click
 	nextCompare int
 }
 
@@ -149,6 +152,7 @@ func (s *Session) state() State {
 	for id := range v.compares {
 		st.Compare = max(st.Compare, id)
 	}
+	st.Cursor = v.cursor
 	v.mu.Unlock()
 	return st
 }

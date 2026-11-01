@@ -568,7 +568,7 @@ The model gets these tools:
 | `browser_navigate` | Opens a URL and returns a snapshot of the page |
 | `browser_snapshot` | The page's text, plus its links, buttons and fields, each with a ref such as `e12`. A long page comes in parts (`start`), and `ref` reads just one form, table or frame |
 | `browser_screenshot` | An image of the viewport, the full page or one element; `labels` draws each ref on it, and `save_path` saves a JPEG in the project |
-| `browser_click` | Clicks (or hovers) an element by ref with a real mouse event |
+| `browser_click` | Clicks (or hovers) an element by ref with a real mouse event. With the panel open, a marker shows the spot for 400 ms first, so you can press `esc` to stop the turn before the click lands |
 | `browser_type` | Types into a field by ref, key by key; optionally presses Enter |
 | `browser_select` | Picks options in a `<select>` |
 | `browser_press_key` | Presses Enter, Escape, Tab, arrow keys, PageDown… |

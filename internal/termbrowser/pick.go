@@ -177,15 +177,20 @@ func (v *viewer) drawOutline(r image.Rectangle) tea.Cmd {
 	k := v.kitty
 	k.W = &out
 	for i, bar := range outlineBars(r) {
-		x, y := bar.Min.X, bar.Min.Y
-		k.Show(solidFrame(bar.Dx(), bar.Dy(), pickColor), termgfx.Placement{
-			ID: pickFirstID + i, Z: pickZ,
-			Col: v.x0 + x/v.cellW, Row: v.y0 + headerRows + y/v.cellH,
-			X: x % v.cellW, Y: y % v.cellH,
-		})
+		v.place(k, bar, pickFirstID+i)
 	}
 	v.outlined = true
 	return tea.Raw(out.String())
+}
+
+// place shows bar, in the page's device pixels, as one color above the page.
+func (v *viewer) place(k termgfx.Kitty, bar image.Rectangle, id int) {
+	x, y := bar.Min.X, bar.Min.Y
+	k.Show(solidFrame(bar.Dx(), bar.Dy(), pickColor), termgfx.Placement{
+		ID: id, Z: pickZ,
+		Col: v.x0 + x/v.cellW, Row: v.y0 + headerRows + y/v.cellH,
+		X: x % v.cellW, Y: y % v.cellH,
+	})
 }
 
 // clearOutline removes the outline, if one is showing.
