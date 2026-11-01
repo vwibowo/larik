@@ -1,3 +1,14 @@
+# Larik v0.24.1
+
+_November 1, 2026 · Previous release: v0.24.0._
+
+This release fixes a browser panel freeze when an agent works in several tabs.
+
+### Fixed
+
+- **The browser panel keeps painting when an agent uses another tab.** A screenshot or tab switch in another tab could stop the panel's tab from updating, with input timing out, until you reattached. The panel now brings its tab back.
+- **Rendered pictures report their true size.** `browser_render` could report a size one pixel smaller than the PNG it returned.
+
 # Larik v0.24.0
 
 _November 1, 2026 · Previous release: v0.23.0._
