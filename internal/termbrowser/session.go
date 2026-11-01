@@ -104,6 +104,7 @@ type Session struct {
 	downloads   map[string]string // download GUID -> suggested file name
 
 	imagesShow atomic.Pointer[func() bool]
+	film       filmstrip
 
 	// renderContext is the browser context renders run in (render.go).
 	renderContext cdp.BrowserContextID

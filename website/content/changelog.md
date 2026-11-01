@@ -10,6 +10,7 @@
 - **See where the time went with `/timeline`.** A chart shows when the model, tools and each subagent ran, with the slowest calls and what the session cost. It needs no debug mode, and long pauses are cut short.
 - **See a click before it lands.** With the browser panel open, a marker shows where an agent is about to click for 400 ms. Press `esc` in the conversation to stop the turn, and the click never happens. If the element moves in that time, the click follows it.
 - **Open an image full size.** Click a picture in the conversation to open it in the browser panel, where you can zoom and scroll, or in your system's viewer when the panel isn't available.
+- **Replay what an agent did in the browser.** `/replay` opens a filmstrip in the panel, with a picture after each action: drag the slider, use the arrow keys, or press space to play. `/replay gif` exports it for a PR. It stays in memory for this run, up to 200 steps.
 
 ### Changed
 
@@ -21,6 +22,7 @@
 
 ### Compatibility notes
 
+- Browser actions take a little longer, because each one saves a picture for `/replay`. Those pictures can show anything on the page, and a GIF you export carries them with it.
 - Agent clicks take 400 ms longer while the browser panel is open. With the panel closed they don't wait.
 - `/timeline` covers the current conversation since Larik started: session files don't keep timings, so earlier runs of a resumed session aren't included. Its cost line covers the whole session.
 - `/context` and `/timeline` are in the TUI only.

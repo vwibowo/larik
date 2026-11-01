@@ -44,6 +44,9 @@ type noted struct {
 
 func (n noted) Run(ctx context.Context, env *tools.Env, input json.RawMessage) tools.Result {
 	res := n.Tool.Run(ctx, env, input)
+	if !res.IsError && filmTools[n.Spec().Name] {
+		n.s.recordStep(ctx, filmLabel(n.Spec().Name, res.Content), tools.Owner(ctx))
+	}
 	if notes := n.s.takeNotes(); len(notes) > 0 {
 		res.Content += "\n\n<browser-notes>\n" + strings.Join(notes, "\n") + "\n</browser-notes>"
 	}

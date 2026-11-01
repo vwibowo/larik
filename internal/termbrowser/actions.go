@@ -184,11 +184,15 @@ const imagePage = `<!doctype html><meta charset=utf-8><title>Image</title>
 // ShowImage opens a picture in its own tab, without a file or a server, for
 // the user to zoom and scroll.
 func (s *Session) ShowImage(ctx context.Context, mediaType string, data []byte) error {
+	return s.showPage(ctx, fmt.Sprintf(imagePage, mediaType, base64.StdEncoding.EncodeToString(data)))
+}
+
+// showPage puts html in the picture tab, without a file or a server.
+func (s *Session) showPage(ctx context.Context, html string) error {
 	ctx = tools.WithOwner(ctx, imageTabOwner)
 	if _, err := s.Tab(ctx); err != nil {
 		return err
 	}
-	html := fmt.Sprintf(imagePage, mediaType, base64.StdEncoding.EncodeToString(data))
 	return s.run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		tree, err := page.GetFrameTree().Do(ctx)
 		if err != nil {
