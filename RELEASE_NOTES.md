@@ -1,3 +1,26 @@
+# Larik v0.23.0
+
+_November 1, 2026 · Previous release: v0.22.1._
+
+You can now point at part of a page instead of describing it, compare before and after, and see screenshots and diagrams right in the conversation.
+
+### Added
+
+- **Point at part of a page.** Press `alt+s` in the browser panel and drag over what you mean. A cropped picture and the element's details are attached to your next prompt, so "make this bigger" needs no explaining.
+- **See what changed.** Press `alt+d` after a change to compare your selection with how it looked when you pointed at it, with the differences tinted.
+- **The model can check its own work.** `browser_compare` gives it the same before and after, so it can see whether its change did what you asked.
+- **Draw diagrams in the conversation.** `browser_render` turns Mermaid, SVG or HTML into a picture. It runs in a sealed page that reaches no network and shares nothing with the browser, and only Mermaid runs scripts. Where pictures can't show, the model is told to explain in text.
+- **Images in the conversation.** Screenshots, comparisons, diagrams and images you attach with `@` or `ctrl+v` appear inline in Ghostty and kitty, outside tmux and cmux. Other terminals keep the text line. Turn it off with `inline_images`.
+- **Subagents' images** appear under the subagent's name.
+- **Resuming a session** shows its newest 32 images again.
+
+### Compatibility notes
+
+- `browser_render` and `browser_compare` need the browser tools on, and new tools apply from a fresh context.
+- A subagent's images aren't saved with your session, so they don't come back on resume.
+- `browser_render` draws HTML without running its scripts, so animated or interactive pages won't work.
+- The binary is about 1 MB larger, for the embedded Mermaid. Mermaid's dependencies are listed in `THIRD_PARTY_NOTICES.txt`.
+
 # Larik v0.22.0
 
 _October 31, 2026 · Previous release: v0.21.0._
