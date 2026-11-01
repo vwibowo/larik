@@ -735,9 +735,9 @@ func (v *viewer) closeCmd() tea.Cmd {
 	return tea.Quit
 }
 
-// cellPixels is the terminal's cell size in pixels (cells_*.go); tests
+// cellPixels is the terminal's cell size in pixels (termgfx); tests
 // replace it.
-var cellPixels = terminalCellPixels
+var cellPixels = termgfx.CellPixels
 
 // queueFrame hands a frame to the decoder, dropping one still waiting:
 // only the page as it is now matters.

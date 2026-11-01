@@ -110,6 +110,9 @@ type Config struct {
 	// Verbose is the deprecated switch for full tool output and thinking.
 	// Load turns it into Appearance when no appearance is set.
 	Verbose *bool `json:"verbose,omitempty"`
+	// InlineImages shows images tools return in the conversation, in
+	// terminals known to draw them. Nil means on.
+	InlineImages *bool `json:"inline_images,omitempty"`
 	// Notifications alerts an unfocused terminal when larik needs you:
 	// "off" (the default), "bell" or "desktop".
 	Notifications string `json:"notifications,omitempty"`
@@ -672,7 +675,7 @@ func (c *Config) merge(path string, trusted bool) error {
 			return fmt.Errorf("%s: appearance must be compact, default, or verbose", path)
 		}
 	}
-	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
+	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.InlineImages, &o.InlineImages}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
 		if *b.src != nil {
 			*b.dst = *b.src
 		}
@@ -1136,6 +1139,9 @@ func (c *Config) AnimationLevel() string {
 func (c *Config) PromptSuggestionsOn() bool { return on(c.PromptSuggestions, true) }
 
 func (c *Config) MouseOn() bool { return on(c.Mouse, true) }
+
+// InlineImagesOn reports whether images show in the conversation.
+func (c *Config) InlineImagesOn() bool { return on(c.InlineImages, true) }
 
 // SetUserSetting writes a top-level setting to the user config, or removes
 // it when value is nil or "", so the built-in default applies again. It

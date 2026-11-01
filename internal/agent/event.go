@@ -56,6 +56,10 @@ type Event struct {
 	Output   string          `json:"output,omitempty"`
 	Display  string          `json:"display,omitempty"`
 	IsError  bool            `json:"is_error,omitempty"`
+	// Images are what a tool returned as pictures, on EvToolEnd, for a front
+	// end that can show them. They stay out of the JSON stream, which they
+	// would swamp.
+	Images []llm.Block `json:"-"`
 	// Fault, on EvToolEnd, says the call was rejected before the tool ran
 	// because the model did not form it usably, as opposed to the tool
 	// running and failing. Empty whenever the tool actually ran, including

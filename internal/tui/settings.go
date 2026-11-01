@@ -215,6 +215,11 @@ var settingSpecs = []settingSpec{
 				m.clearSuggestion()
 			}
 		}),
+	toggle("inline_images", "Images in the conversation", "appearance",
+		(*config.Config).InlineImagesOn,
+		func(m *model, on bool) {
+			m.opts.Config.InlineImages = &on
+		}),
 	toggle("mouse", "Mouse scrolling", "appearance",
 		(*config.Config).MouseOn,
 		func(m *model, on bool) {

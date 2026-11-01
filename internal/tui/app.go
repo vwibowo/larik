@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -93,6 +94,7 @@ func RunWithStartup(start func(context.Context) (Options, error)) error {
 }
 
 func cleanupModel(m *model) {
+	m.inline.forget(os.Stdout)
 	if m.browser != nil {
 		m.browser.Close()
 	}
@@ -231,6 +233,7 @@ type model struct {
 	themePalette      *config.ThemePalette
 	isDark            bool
 	markdownRenderers markdownRendererCache
+	inline            inlineImages
 	// termDark is what the terminal reported; the theme setting may
 	// override it.
 	termDark bool
@@ -643,6 +646,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case traceOpenedMsg:
 		return m, m.traceOpened(msg)
+
+	case inlineSendMsg:
+		return m, m.inline.send()
 
 	case outputMsg:
 		m.appendOutput(string(msg))
@@ -1528,7 +1534,7 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 		}
 
 		if m.appearance != "compact" || e.IsError || e.ToolName == permission.ExitPlanTool {
-			return m.println(card)
+			return tea.Sequence(m.println(card), m.showToolImages(e))
 		}
 		return nil
 	case agent.EvPermission:

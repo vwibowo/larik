@@ -1,7 +1,11 @@
 package termgfx
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"strings"
 )
 
@@ -17,6 +21,20 @@ const placeholder = '\U0010EEEE'
 
 // MaxRows is how many rows of cells Placeholders can number.
 const MaxRows = len(rowColumn)
+
+// InlineTerminal reports whether the environment names a terminal shown
+// to draw placeholders correctly. It is narrower than Terminal on purpose:
+// the rest speak the protocol, but a wrong guess here leaves boxes in the
+// text, so each joins once it has been tried. cmux comes first because it
+// looks like Ghostty from inside.
+func InlineTerminal(env func(string) string) bool {
+	if env("TMUX") != "" || env("CMUX_SOCKET_PATH") != "" {
+		return false
+	}
+	term, program := env("TERM"), strings.ToLower(env("TERM_PROGRAM"))
+	return env("KITTY_WINDOW_ID") != "" || strings.Contains(term, "kitty") ||
+		env("GHOSTTY_RESOURCES_DIR") != "" || program == "ghostty" || strings.Contains(term, "ghostty")
+}
 
 // ShowVirtual transmits f under id, to fill cols by rows cells wherever
 // Placeholders for id are printed. Nothing shows until they are.
@@ -34,6 +52,15 @@ func Placeholders(id, cols, rows int) []string {
 		lines[r] = color + string(placeholder) + string(rowColumn[r]) + string(rowColumn[0]) + rest + "\x1b[39m"
 	}
 	return lines
+}
+
+// Decode reads a PNG or JPEG into a frame.
+func Decode(data []byte) (Frame, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return Frame{}, err
+	}
+	return ToRGB(img), nil
 }
 
 // rowColumn holds the diacritics that number rows and columns, from the

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package termbrowser
+package termgfx
 
 import (
 	"os"
@@ -8,9 +8,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// terminalCellPixels reads the cell size from the window size the kernel
+// CellPixels reads the cell size from the window size the kernel
 // keeps for the terminal.
-func terminalCellPixels() (w, h int, ok bool) {
+func CellPixels() (w, h int, ok bool) {
 	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
 	if err != nil || ws.Col == 0 || ws.Row == 0 || ws.Xpixel == 0 || ws.Ypixel == 0 {
 		return 0, 0, false
