@@ -4,10 +4,11 @@ import "larik/internal/llm"
 
 // Larik never shows an estimated token count. Every number a user sees —
 // the footer, /cost, the compaction savings — comes from a provider's own
-// usage report. The estimates here exist for exactly one decision: whether
+// usage report. The estimates here exist for two things: deciding whether
 // to compact before sending a request whose size the last measurement
 // cannot account for, such as a huge pasted prompt, a long tool result, or
-// a resumed transcript that has never been measured at all.
+// a resumed transcript that has never been measured at all; and the shares
+// of the context that /context shows, which are percentages only.
 const (
 	// charsPerToken is the usual English approximation. It errs low on
 	// code, and that direction is deliberate: an estimate that is too

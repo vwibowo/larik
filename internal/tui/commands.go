@@ -300,6 +300,9 @@ func (m *model) command(line string) tea.Cmd {
 		m.showInfo = !m.showInfo
 		return nil
 
+	case "/context":
+		return m.contextMapCommand()
+
 	case "/cost":
 		s := m.agent.Stats()
 		cost := "unknown (model not in price catalog)"

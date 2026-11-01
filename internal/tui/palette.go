@@ -41,6 +41,7 @@ var commands = []command{
 	{"/init", "[focus]", "study the project and write AGENTS.md, or improve the existing one", "conversation", ""},
 	{"/export", "[file]", "save this session as Markdown (default: larik-<session>.md here)", "sessions", ""},
 	{"/cost", "", "token usage and cost for this session", "conversation", ""},
+	{"/context", "", "map of what is filling the context window", "conversation", ""},
 	{"/sessions", "[id]", "choose a session from this directory, or switch by ID (also /resume)", "sessions", ""},
 	{"/new", "", "start a new session", "sessions", ""},
 	{"/fork", "", "branch the conversation into a new session and continue there", "sessions", ""},
