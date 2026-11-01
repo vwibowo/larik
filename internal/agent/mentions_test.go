@@ -252,3 +252,14 @@ func TestMentionsRefuseAnOversizedPDF(t *testing.T) {
 		t.Errorf("notices: %s", n)
 	}
 }
+
+func TestMentionedImageReachesTheFrontEnd(t *testing.T) {
+	a, _, dir := setup(t, permission.ModeYolo, assistant(llm.TextBlock("ok")))
+	os.WriteFile(filepath.Join(dir, "shot.png"), []byte("not really a png"), 0o644)
+	for _, e := range drain(a.Run(context.Background(), "see @shot.png"), PermissionReply{}) {
+		if e.Kind == EvNotice && len(e.Images) == 1 && e.Images[0].MediaType == "image/png" {
+			return
+		}
+	}
+	t.Fatal("no notice carried the image")
+}

@@ -15,7 +15,7 @@ import (
 	"larik/internal/termgfx"
 )
 
-// Images tools return show in the conversation as lines of placeholder
+// Images tools return and prompts attach show in the conversation as lines of placeholder
 // text (termgfx), so they scroll and clip with it. Larik draws the
 // conversation itself in the alternate screen, so the terminal's scrollback
 // never holds one. The conversation re-renders on a resize, so an image is
@@ -71,8 +71,8 @@ func (m *model) inlineOn() bool {
 	return termgfx.InlineTerminal(os.Getenv)
 }
 
-// showToolImages adds what a finished call returned to the conversation.
-func (m *model) showToolImages(e agent.Event) tea.Cmd {
+// showImages adds the pictures an event carries to the conversation.
+func (m *model) showImages(e agent.Event) tea.Cmd {
 	if len(e.Images) == 0 || e.Agent != "" || !m.inlineOn() {
 		return nil
 	}
@@ -193,6 +193,10 @@ func (s *inlineImages) send() tea.Cmd {
 			k.Delete(id)
 		}
 		for _, p := range pending {
+			if termgfx.IsPNG(p.data) {
+				k.ShowVirtualPNG(p.data, p.id, p.size.cols, p.size.rows)
+				continue
+			}
 			f, err := termgfx.Decode(p.data)
 			if err != nil {
 				continue

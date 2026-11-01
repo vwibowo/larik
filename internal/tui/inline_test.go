@@ -85,7 +85,7 @@ func TestInlineFit(t *testing.T) {
 // once for each size, and the wrapping leaves it whole.
 func TestToolImagesShowInTheConversation(t *testing.T) {
 	m := inlineModel(t)
-	for _, msg := range drain(m.showToolImages(agent.Event{Kind: agent.EvToolEnd, Images: []llm.Block{pngBlock(t, 1600, 800)}})) {
+	for _, msg := range drain(m.showImages(agent.Event{Kind: agent.EvToolEnd, Images: []llm.Block{pngBlock(t, 1600, 800)}})) {
 		m.Update(msg)
 	}
 	if len(m.outputs) != 1 {
@@ -96,8 +96,8 @@ func TestToolImagesShowInTheConversation(t *testing.T) {
 		t.Fatalf("%d lines: %q", o.lines, m.convLines)
 	}
 	sent := runRaw(m.inline.send())
-	if strings.Count(sent, "a=T,U=1") != 1 {
-		t.Fatalf("sent %.120q", sent)
+	if strings.Count(sent, "a=T,U=1,q=2,f=100,") != 1 {
+		t.Fatalf("a PNG goes as a PNG, for its transparency: %.120q", sent)
 	}
 	before := len(m.inline.images[0].ids)
 	m.rewrapConversationWidth(m.convWidth)
@@ -113,17 +113,17 @@ func TestToolImagesShowInTheConversation(t *testing.T) {
 func TestToolImagesNeedATestedTerminal(t *testing.T) {
 	m := inlineModel(t)
 	t.Setenv("TMUX", "/tmp/tmux,1,0")
-	if m.showToolImages(agent.Event{Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
+	if m.showImages(agent.Event{Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
 		t.Error("tmux keeps the text line")
 	}
 	t.Setenv("TMUX", "")
 	off := false
 	m.opts.Config.InlineImages = &off
-	if m.showToolImages(agent.Event{Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
+	if m.showImages(agent.Event{Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
 		t.Error("the setting turns it off")
 	}
 	m.opts.Config.InlineImages = nil
-	if m.showToolImages(agent.Event{Agent: "explore", Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
+	if m.showImages(agent.Event{Agent: "explore", Images: []llm.Block{pngBlock(t, 10, 10)}}) != nil {
 		t.Error("a subagent's images stay out")
 	}
 }
@@ -157,5 +157,17 @@ func TestInlineResetDeletesFromTheTerminal(t *testing.T) {
 	}
 	if s.add(llm.Block{Type: llm.BlockImage, MediaType: "image/gif", Data: "x"}) != nil {
 		t.Error("a format the terminal path can't decode is skipped")
+	}
+}
+
+func TestAttachedImagesShowInTheConversation(t *testing.T) {
+	m := inlineModel(t)
+	cmd := m.handleEvent(agent.Event{Kind: agent.EvNotice, Text: "attached @shot.png (image, 1 KB)", Images: []llm.Block{pngBlock(t, 800, 400)}})
+	for _, msg := range drain(cmd) {
+		m.Update(msg)
+	}
+	text := strings.Join(m.convLines, "\n")
+	if !strings.Contains(text, "attached @shot.png") || !strings.Contains(text, "\U0010EEEE") {
+		t.Fatalf("%q", text)
 	}
 }

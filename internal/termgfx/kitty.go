@@ -91,10 +91,13 @@ func (k Kitty) Show(f Frame, p Placement) error {
 }
 
 // transmit sends f's pixels after the control keys in head.
-func (k Kitty) transmit(f Frame, head string) error {
+func (k Kitty) transmit(f Frame, head string) error { return k.transmitBytes(f.Pix, head) }
+
+// transmitBytes sends data, in the format head names, after head's keys.
+func (k Kitty) transmitBytes(data []byte, head string) error {
 	var payload string
 	if k.Files {
-		name, err := writeFrameFile(f.Pix)
+		name, err := writeFrameFile(data)
 		if err != nil {
 			return err
 		}
@@ -103,7 +106,7 @@ func (k Kitty) transmit(f Frame, head string) error {
 	} else {
 		var z bytes.Buffer
 		zw, _ := zlib.NewWriterLevel(&z, zlib.BestSpeed)
-		zw.Write(f.Pix)
+		zw.Write(data)
 		zw.Close()
 		head += ",o=z"
 		payload = base64.StdEncoding.EncodeToString(z.Bytes())

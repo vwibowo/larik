@@ -1534,7 +1534,7 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 		}
 
 		if m.appearance != "compact" || e.IsError || e.ToolName == permission.ExitPlanTool {
-			return tea.Sequence(m.println(card), m.showToolImages(e))
+			return tea.Sequence(m.println(card), m.showImages(e))
 		}
 		return nil
 	case agent.EvPermission:
@@ -1607,7 +1607,7 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 				m.usedSkills[name] = true
 			}
 		}
-		return m.println(m.agentLine(e, m.st.warn.Render("! "+e.Text)))
+		return tea.Sequence(m.println(m.agentLine(e, m.st.warn.Render("! "+e.Text))), m.showImages(e))
 	case agent.EvError:
 		return m.println(m.agentLine(e, m.st.err.Render("✗ "+e.Text)))
 	case agent.EvDone:

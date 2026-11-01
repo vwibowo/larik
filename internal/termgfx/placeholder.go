@@ -42,6 +42,15 @@ func (k Kitty) ShowVirtual(f Frame, id, cols, rows int) error {
 	return k.transmit(f, fmt.Sprintf("a=T,U=1,q=2,f=24,s=%d,v=%d,i=%d,c=%d,r=%d", f.W, f.H, id, cols, rows))
 }
 
+// ShowVirtualPNG is ShowVirtual for a PNG file's bytes, which the terminal
+// decodes itself, so its transparency survives: a Frame has none.
+func (k Kitty) ShowVirtualPNG(data []byte, id, cols, rows int) error {
+	return k.transmitBytes(data, fmt.Sprintf("a=T,U=1,q=2,f=100,i=%d,c=%d,r=%d", id, cols, rows))
+}
+
+// IsPNG reports whether data starts like a PNG file.
+func IsPNG(data []byte) bool { return bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) }
+
 // Placeholders is the text that shows image id, one line per row. Ids
 // carry 24 bits, in the foreground color. rows must be at most MaxRows.
 func Placeholders(id, cols, rows int) []string {

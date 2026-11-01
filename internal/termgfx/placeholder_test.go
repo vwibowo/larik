@@ -91,3 +91,17 @@ func TestInlineTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestShowVirtualPNGKeepsTheFile(t *testing.T) {
+	var out bytes.Buffer
+	data := []byte("\x89PNG\r\n\x1a\nrest")
+	if !IsPNG(data) || IsPNG([]byte{0xff, 0xd8, 0xff}) {
+		t.Fatal("IsPNG")
+	}
+	if err := (Kitty{W: &out}).ShowVirtualPNG(data, 7, 4, 2); err != nil {
+		t.Fatal(err)
+	}
+	if s := out.String(); !strings.Contains(s, "a=T,U=1,q=2,f=100,i=7,c=4,r=2,") || strings.Contains(s, "s=") {
+		t.Fatalf("%q", s)
+	}
+}

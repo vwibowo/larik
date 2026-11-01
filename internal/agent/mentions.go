@@ -166,10 +166,9 @@ func (a *Agent) resolveMentions(ctx context.Context, text string, emit func(Even
 				notice("couldn't attach @%s: %v", name, err)
 				continue
 			}
-			blocks = append(blocks,
-				llm.Block{Type: llm.BlockText, Text: fmt.Sprintf("<image path=%q/>", name), Attachment: name},
-				llm.Block{Type: llm.BlockImage, MediaType: imageTypes[strings.ToLower(filepath.Ext(abs))], Data: base64.StdEncoding.EncodeToString(data), Attachment: name})
-			notice("attached @%s (image, %d KB)", name, (len(data)+1023)/1024)
+			img := llm.Block{Type: llm.BlockImage, MediaType: imageTypes[strings.ToLower(filepath.Ext(abs))], Data: base64.StdEncoding.EncodeToString(data), Attachment: name}
+			blocks = append(blocks, llm.Block{Type: llm.BlockText, Text: fmt.Sprintf("<image path=%q/>", name), Attachment: name}, img)
+			emit(Event{Kind: EvNotice, Text: fmt.Sprintf("attached @%s (image, %d KB)", name, (len(data)+1023)/1024), Images: []llm.Block{img}})
 		default:
 			in := map[string]any{"path": abs}
 			attr := ""
