@@ -2033,8 +2033,18 @@ func shortPath(p string) string {
 func (m *model) printHistory(label string) tea.Cmd {
 	chunks, count := historyChunks(m.opts.History, 0)
 	m.promptCount = count
+	m.inline.notify = m.send
+	older := m.olderHistoryImages(chunks)
 	var out historyOutputMsg
 	for _, c := range chunks {
+		if c.image != nil {
+			if img := m.historyImage(*c.image, &older); img != nil {
+				out = append(out, m.renderOutput(64, func(m *model, width int) string {
+					return m.inline.lines(img, width, m.height, m.st.dim.Render)
+				}, nil))
+			}
+			continue
+		}
 		o := m.renderOutput(c.size, func(m *model, width int) string {
 			return m.renderHistoryChunk(c, width)
 		}, c.prompt)
@@ -2049,11 +2059,57 @@ func (m *model) printHistory(label string) tea.Cmd {
 }
 
 // historyChunk is part of an earlier conversation printed as one output:
-// a single prompt, or the messages between two prompts.
+// a single prompt, the messages between two prompts, or a picture.
 type historyChunk struct {
 	msgs   []llm.Message // copies holding only what is shown
 	prompt *promptRef
 	size   int
+	image  *llm.Block
+}
+
+// olderHistoryImages counts the pictures in chunks past the newest
+// inlineKeep, which historyImage doesn't decode.
+func (m *model) olderHistoryImages(chunks []historyChunk) int {
+	n := 0
+	for _, c := range chunks {
+		if c.image != nil && m.historyImageShows(*c.image) {
+			n++
+		}
+	}
+	return max(n-inlineKeep, 0)
+}
+
+// historyImageShows follows what the live conversation would have shown:
+// compact appearance leaves out tools' pictures, not what you attached.
+func (m *model) historyImageShows(b llm.Block) bool {
+	return m.inlineOn() && (m.appearance != "compact" || b.Attachment != "")
+}
+
+// historyImage keeps a saved picture for the conversation, or returns nil
+// when it doesn't show. The first *older show as no longer held.
+func (m *model) historyImage(b llm.Block, older *int) *inlineImage {
+	if !m.historyImageShows(b) {
+		return nil
+	}
+	if *older > 0 {
+		*older--
+		return &inlineImage{}
+	}
+	return m.inline.add(b)
+}
+
+// savedImages lists the pictures a saved message carries, in order.
+func savedImages(msg llm.Message) []llm.Block {
+	var out []llm.Block
+	for _, b := range msg.Blocks {
+		switch b.Type {
+		case llm.BlockImage:
+			out = append(out, b)
+		case llm.BlockToolResult:
+			out = append(out, b.Images...)
+		}
+	}
+	return out
 }
 
 // historyChunks splits saved messages for display, numbering prompts
@@ -2110,10 +2166,17 @@ func historyChunks(source []llm.Message, first int) (chunks []historyChunk, coun
 			flush()
 			count++
 			chunks = append(chunks, historyChunk{msgs: []llm.Message{msg}, prompt: &promptRef{n: count, text: msg.Text()}, size: size})
-			continue
+		} else {
+			cur.msgs = append(cur.msgs, msg)
+			cur.size += size
 		}
-		cur.msgs = append(cur.msgs, msg)
-		cur.size += size
+		images := savedImages(src)
+		if len(images) > 0 {
+			flush()
+		}
+		for i := range images {
+			chunks = append(chunks, historyChunk{image: &images[i]})
+		}
 	}
 	flush()
 	return chunks, count

@@ -171,3 +171,72 @@ func TestAttachedImagesShowInTheConversation(t *testing.T) {
 		t.Fatalf("%q", text)
 	}
 }
+
+func imagesInOutputs(m *model) (shown, gone int) {
+	for _, o := range m.outputs {
+		if strings.Contains(o.text, "\U0010EEEE") {
+			shown++
+		}
+		if strings.Contains(o.text, "(image no longer held)") {
+			gone++
+		}
+	}
+	return shown, gone
+}
+
+func TestResumedImagesShowInTheConversation(t *testing.T) {
+	attached := pngBlock(t, 40, 20)
+	attached.Attachment = "shot.png"
+	m := inlineModel(t)
+	m.opts.History = []llm.Message{
+		{Role: llm.RoleUser, Blocks: []llm.Block{llm.TextBlock("look"), attached}},
+		{Role: llm.RoleAssistant, Blocks: []llm.Block{{Type: llm.BlockToolUse, ID: "1", Name: "browser_render"}}},
+		{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, ID: "1", Name: "browser_render", Images: []llm.Block{pngBlock(t, 40, 20)}}}},
+	}
+	m.Update(m.printHistory("resumed")())
+	if shown, _ := imagesInOutputs(m); shown != 2 {
+		t.Fatalf("%d images shown, want 2", shown)
+	}
+	if len(m.inline.pending) != 2 {
+		t.Fatalf("%d images waiting for the terminal, want 2", len(m.inline.pending))
+	}
+
+	m.resetConversation()
+	m.inline.deletes = nil
+	m.appearance = "compact"
+	m.Update(m.printHistory("resumed")())
+	if shown, _ := imagesInOutputs(m); shown != 1 {
+		t.Fatalf("compact: %d images shown, want only the attached one", shown)
+	}
+}
+
+func TestResumedImagesStopAtWhatIsKept(t *testing.T) {
+	m := inlineModel(t)
+	block := pngBlock(t, 4, 4)
+	var results []llm.Block
+	for range inlineKeep + 3 {
+		results = append(results, llm.Block{Type: llm.BlockToolResult, Images: []llm.Block{block}})
+	}
+	m.opts.History = []llm.Message{{Role: llm.RoleUser, Blocks: results}}
+	m.Update(m.printHistory("resumed")())
+	if shown, gone := imagesInOutputs(m); shown != inlineKeep || gone != 3 {
+		t.Fatalf("%d shown and %d gone, want %d and 3", shown, gone, inlineKeep)
+	}
+	if len(m.inline.images) != inlineKeep {
+		t.Fatalf("%d images held, want %d", len(m.inline.images), inlineKeep)
+	}
+}
+
+func TestResumedImagesNeedATestedTerminal(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
+	m := testModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.opts.History = []llm.Message{{Role: llm.RoleUser, Blocks: []llm.Block{{Type: llm.BlockToolResult, Images: []llm.Block{pngBlock(t, 4, 4)}}}}}
+	m.Update(m.printHistory("resumed")())
+	if shown, gone := imagesInOutputs(m); shown != 0 || gone != 0 || len(m.inline.images) != 0 {
+		t.Fatalf("shown %d, gone %d, held %d", shown, gone, len(m.inline.images))
+	}
+}
