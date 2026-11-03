@@ -256,12 +256,14 @@ type tab struct {
 	// download its last download (see browser.go).
 	asking   *siteAsk
 	download *pageDownload
+	// found is how its find bar's search of its page went.
+	found mygo.FindResult
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
 // bar the keyboard again.
 func (a *App) openFind() {
-	if t := a.focused(); t != nil && t.term != nil {
+	if t := a.focused(); t != nil && (t.term != nil || t.browser) {
 		t.finding, t.focusFind = true, true
 	}
 }
@@ -270,7 +272,11 @@ func (a *App) openFind() {
 // keyboard back to its terminal.
 func (a *App) closeFind(t *tab) {
 	t.finding, t.find = false, ""
-	t.term.EndSearch()
+	if t.browser {
+		a.endPageFind(t)
+	} else {
+		t.term.EndSearch()
+	}
 	a.focusNext = t
 }
 

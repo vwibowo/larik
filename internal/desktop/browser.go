@@ -323,6 +323,67 @@ func (a *App) pageMenu(m *ui.Menu, tb *tab) {
 	}
 }
 
+// findPage finds what t's find bar says in its page, from the first
+// match, or with next the one after (before, with back), off the main
+// thread, as the page answers.
+func (a *App) findPage(t *tab, next, back bool) {
+	text := t.find
+	if t.web == nil {
+		return
+	}
+	if text == "" {
+		a.endPageFind(t)
+		return
+	}
+	p := t.web.Page()
+	go func() {
+		res, err := p.FindInPage(text, mygo.FindOptions{FindNext: next, Backward: back})
+		a.update(func() {
+			if err == nil && t.find == text {
+				t.found = res
+			}
+		})
+	}()
+}
+
+// endPageFind takes the find bar's highlights off t's page.
+func (a *App) endPageFind(t *tab) {
+	t.found = mygo.FindResult{}
+	if t.web != nil {
+		t.web.Page().StopFindInPage()
+	}
+}
+
+// pageFindBar finds text in a browser tab's page, as findBar does in a
+// terminal: Enter goes to the next match, Shift+Enter back, and Escape
+// clears the text, then closes the bar.
+func (a *App) pageFindBar(c *ui.Context, t *ui.Theme, tb *tab) {
+	ui.Row(c.Key("find")).Gap(6).Padding(6, 10, 6, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		field := ui.SearchField(c.Key("field"), &tb.find).Placeholder("Find").Label("Find in the page").Grow(1).MaxWidth(320).
+			OnChange(func() { a.findPage(tb, false, false) }).
+			OnSubmit(func() { a.findPage(tb, true, false) }).
+			OnShortcut(ui.Shift, ui.KeyEnter, func() { a.findPage(tb, true, true) }).
+			OnShortcut(0, ui.KeyEscape, func() { a.closeFind(tb) })
+		if tb.focusFind {
+			field.Focus()
+			tb.focusFind = false
+		}
+		var count string
+		switch {
+		case tb.find == "":
+		case tb.found.Matches == 0:
+			count = "No matches"
+		default:
+			count = fmt.Sprintf("%d of %d", tb.found.Active, tb.found.Matches)
+		}
+		ui.Text(c, count).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		ui.Spacer(c)
+		a.iconButton(c, t, "previous", iconUp, "Previous match (Shift+Enter)", false, func() { a.findPage(tb, true, true) })
+		a.iconButton(c, t, "next", iconDown, "Next match (Enter)", false, func() { a.findPage(tb, true, false) })
+		a.closeButton(c, t, "Close find", func() { a.closeFind(tb) })
+	})
+}
+
 // navButton is a borderless icon button, dimmed and doing nothing while
 // it's off.
 func (a *App) navButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, label string, on bool, fn func()) {

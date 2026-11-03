@@ -248,3 +248,27 @@ func TestDownloadBar(t *testing.T) {
 		t.Fatalf("showed %q", shown)
 	}
 }
+
+func TestFindInPageBar(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("example.com")
+	b := a.focused()
+	a.openFind()
+	if !b.finding || !b.focusFind {
+		t.Fatal("Cmd+F opens a browser tab's find bar")
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if _, ok := tt.Find("Find in the page"); !ok {
+		t.Fatalf("no find bar in %q", tt.Texts())
+	}
+	b.find, b.found = "domain", mygo.FindResult{Matches: 3, Active: 2}
+	tt.Frame()
+	if !tt.HasText("2 of 3") {
+		t.Fatalf("no count in %q", tt.Texts())
+	}
+	a.closeFind(b)
+	if b.finding || b.find != "" || b.found.Matches != 0 || a.focusNext != b {
+		t.Fatal("closing the bar clears it")
+	}
+}

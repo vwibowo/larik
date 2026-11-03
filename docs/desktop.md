@@ -373,11 +373,12 @@ Checking a dev server, the docs or a pull request meant leaving the window. Rex 
 - **A session's ports open here**: a port under a session's row opens in a browser tab beside the session's pane, or shows the browser tab already on it; `cmd`-click opens it in your browser.
 - **The page is someone else's**: it runs untrusted (MyGo's `PageOptions.Untrusted`), so it calls none of the window's Go, and gets nothing it asks for on its own. Its cookies and storage are a session of their own, `larik-browser`, kept from one run to the next, so what you sign in to stays signed in.
 - **Permissions, asked**: a page asking for the camera, the microphone, your location or to notify you gets nothing at first, and a bar over it asks: **Allow** lets that site have it from then on and reloads the page, **Don't Allow** stops it asking. The answers are kept with the window's state. macOS ends an app that asks for the camera, microphone or location without saying why, so the Larik app now says why; one installed before needs `larik desktop --install` again, and says so.
+- **Find in page**: `cmd+f` in a browser tab opens a find bar over its page that highlights the matches and counts them; Enter goes to the next, Shift+Enter back, and Escape clears it, then closes it.
 - **Downloads** go to the Downloads folder, numbered when the name is taken, with a bar while they go and **Show in Finder** once done; the bell keeps them too.
 - **It lives in the window**, not the host, so it ends as the window closes, and comes back from its page's address, in its pane, when the window opens again.
 - **From scripts**: `larik desktop open --url localhost:3000` opens one (with `--split`, `--below` or `--background`), `list` names it `browser` with its `url`, and `send` and `read` say it has no terminal.
 
-Not yet: driving the page from larik's browser tools, and find in page.
+Not yet: driving the page from larik's browser tools.
 
 ## Phase 21: What's next
 
