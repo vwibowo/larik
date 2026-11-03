@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -29,23 +30,28 @@ func svg(body string) *ui.SVG {
 }
 
 var (
-	iconChat   = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
-	iconTerm   = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
-	iconBranch = svg(`<circle cx="6" cy="3" r="2"/><path d="M6 5v12a4 4 0 0 0 4 4h4"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M18 8v5a4 4 0 0 1-4 4H8"/>`)
-	iconPlus   = svg(`<path d="M12 5v14M5 12h14"/>`)
-	iconClose  = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
-	iconPause  = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
-	iconCheck  = svg(`<path d="M20 6 9 17l-5-5"/>`)
-	iconError  = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
-	iconDiff   = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
-	iconSplit  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
-	iconPanel  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
-	iconUp     = svg(`<path d="m18 15-6-6-6 6"/>`)
-	iconDown   = svg(`<path d="m6 9 6 6 6-6"/>`)
-	iconRight  = svg(`<path d="m9 18 6-6-6-6"/>`)
-	iconZoom   = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
-	iconShrink = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
-	iconBell   = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
+	iconChat     = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
+	iconTerm     = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
+	iconBranch   = svg(`<circle cx="6" cy="3" r="2"/><path d="M6 5v12a4 4 0 0 0 4 4h4"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M18 8v5a4 4 0 0 1-4 4H8"/>`)
+	iconPlus     = svg(`<path d="M12 5v14M5 12h14"/>`)
+	iconClose    = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
+	iconPause    = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
+	iconCheck    = svg(`<path d="M20 6 9 17l-5-5"/>`)
+	iconError    = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
+	iconDiff     = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
+	iconSplit    = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
+	iconPanel    = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
+	iconUp       = svg(`<path d="m18 15-6-6-6 6"/>`)
+	iconDown     = svg(`<path d="m6 9 6 6 6-6"/>`)
+	iconRight    = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconZoom     = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
+	iconShrink   = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
+	iconGlobe    = svg(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>`)
+	iconBack     = svg(`<path d="m15 18-6-6 6-6"/>`)
+	iconForward  = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconReload   = svg(`<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>`)
+	iconExternal = svg(`<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
+	iconBell     = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -366,6 +372,12 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.latestUnread()
 	case c.Shortcut(mod|ui.Shift, ui.KeyN):
 		a.openShell()
+	case c.Shortcut(mod|ui.Alt, ui.KeyN):
+		a.openBrowser("")
+	case c.Shortcut(mod, ui.KeyL):
+		a.focusAddress()
+	case c.Shortcut(mod, ui.KeyR):
+		a.browse((*mygo.Page).Reload)
 	case c.Shortcut(mod, ui.KeyK):
 		a.focusSearch, a.noSidebar = true, false
 	case c.Shortcut(mod, ui.KeyF):
@@ -381,6 +393,14 @@ func (a *App) shortcuts(c *ui.Context) {
 	// reopens a tab.
 	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super|ui.Shift, ui.KeyT) {
 		a.reopenClosed()
+	}
+	// And a browser tab's back and forward, which differ from showing
+	// the next tab by Shift alone.
+	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super, ui.KeyBracketLeft) {
+		a.browse((*mygo.Page).GoBack)
+	}
+	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super, ui.KeyBracketRight) {
+		a.browse((*mygo.Page).GoForward)
 	}
 	for i, k := range []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7, ui.Key8, ui.Key9} {
 		if c.Shortcut(mod, k) && len(a.tabs) > 0 {
@@ -481,7 +501,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 	})
 }
 
-// creationMenu offers the three kinds of tab in the focused pane, or in
+// creationMenu offers the four kinds of tab in the focused pane, or in
 // p when opened from a pane header. The old tab stays open.
 func (a *App) creationMenu(m *ui.Menu, p *pane) {
 	inPane := func() {
@@ -501,11 +521,21 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 		inPane()
 		a.openShell()
 	}
+	if m.Item("New Browser Tab").Chosen() {
+		inPane()
+		a.openBrowser("")
+	}
 }
 
 // where says where a tab's session is and what it's doing: its project
 // and folder, its status, and its model.
 func (a *App) where(tb *tab) string {
+	if tb.browser {
+		if tb.loading {
+			return pageHost(tb.url) + " — loading"
+		}
+		return pageHost(tb.url)
+	}
 	st := a.tabStatus(tb)
 	s, p, ok := a.find(tb.path)
 	where := filepath.Base(tb.dir)
@@ -599,6 +629,9 @@ func (a *App) visibleTabs() []*tab {
 }
 
 func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
+	if tb.browser {
+		return "Browser", iconGlobe
+	}
 	if tb.shell() {
 		return "Terminal", iconTerm
 	}
@@ -1222,6 +1255,9 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 					if ui.Button(c.Key("worktree"), "New worktree session").Clicked() {
 						a.newWorktreeSession(a.currentDir())
 					}
+					if ui.Button(c.Key("browser"), "New browser tab").Clicked() {
+						a.openBrowser("")
+					}
 				})
 			})
 			if d, ok := ui.Drop[sessionDrag](empty); ok {
@@ -1300,6 +1336,15 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	body := ui.Column(c).Grow(1).Children(func() {
 		a.header(c, t, p)
 		a.exitBar(c, t, tb)
+		if tb.browser {
+			a.addressBar(c, t, tb)
+			if tb.web != nil {
+				term = ui.WebView(c.Key(tb.id), tb.web).Grow(1)
+			} else {
+				term = ui.Box(c.Key(tb.id)).Grow(1)
+			}
+			return
+		}
 		if tb.finding {
 			a.findBar(c, t, tb)
 		}
@@ -1316,7 +1361,11 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
 	// the focused one.
 	if a.focusNext == tb {
-		term.Focus()
+		if tb.web != nil {
+			tb.web.Focus()
+		} else {
+			term.Focus()
+		}
 		a.focusNext = nil
 	} else if body.FocusWithin() && a.focus != p {
 		a.focus = p

@@ -194,6 +194,8 @@ type App struct {
 	menuSaid     string
 	openExternal func(url string)
 	showSettings func()
+	// newWebView makes a browser tab's web view, loading url (see Run).
+	newWebView func(url string) (*mygo.WebView, error)
 	// post posts a notification a command asked for, and raise brings
 	// the window forward (see Run).
 	post  func(title, body string)
@@ -236,6 +238,18 @@ type tab struct {
 	find      string
 	search    terminal.SearchStatus
 	focusFind bool
+
+	// A browser tab's (see browser.go): its web view, nil without a
+	// window; the address of its page, and what its address bar says;
+	// that the bar takes the keyboard next frame; whether its page loads,
+	// and can go back and forward; and what stops following its page.
+	browser   bool
+	web       *mygo.WebView
+	url, addr string
+	focusAddr bool
+	loading   bool
+	back, fwd bool
+	off       []func()
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
@@ -990,6 +1004,9 @@ func (t *tab) close() {
 	if t.term != nil {
 		t.term.Close()
 	}
+	if t.browser {
+		t.closeBrowser()
+	}
 }
 
 func newTabID() string {
@@ -1214,6 +1231,10 @@ func (a *App) tabTitle(t *tab) string {
 		return t.title
 	}
 	switch {
+	case t.browser && t.url != blankPage:
+		return pageHost(t.url)
+	case t.browser:
+		return "New browser tab"
 	case t.run != "":
 		return t.run
 	case t.shell():

@@ -41,6 +41,8 @@ type Request struct {
 	// in, on the branch larik/<Branch>, or one named for it.
 	Worktree bool   `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
+	// URL opens a browser tab on the page, as a web address is typed.
+	URL string `json:"url,omitempty"`
 	// Background opens a tab without showing it, leaving the panes as
 	// they are.
 	Background bool   `json:"background,omitempty"`
@@ -69,8 +71,9 @@ type Response struct {
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
 	ID      string `json:"id"`
-	Kind    string `json:"kind"`              // larik, or terminal
+	Kind    string `json:"kind"`              // larik, terminal, or browser
 	Run     string `json:"run,omitempty"`     // a terminal tab's program
+	URL     string `json:"url,omitempty"`     // a browser tab's page
 	Session string `json:"session,omitempty"` // its session's id, once it has one
 	Path    string `json:"path,omitempty"`    // its session's transcript
 	Dir     string `json:"dir"`
@@ -194,6 +197,12 @@ func (a *App) command(req Request) Response {
 		return Response{Error: err}
 	}
 	switch req.Cmd {
+	case "send", "read":
+		if t.browser {
+			return Response{Error: "a browser tab has no terminal"}
+		}
+	}
+	switch req.Cmd {
 	case "send":
 		if t.exited || t.term == nil {
 			return Response{Error: "the tab's larik has exited"}
@@ -252,6 +261,12 @@ func (a *App) controlOpen(req Request) Response {
 				t.term.Send([]byte(req.Prompt + "\r"))
 			}
 		}
+	case req.URL != "":
+		u, ok := normalizeURL(req.URL)
+		if !ok {
+			return Response{Error: fmt.Sprintf("%q isn't a web address", req.URL)}
+		}
+		t = a.startBrowser(u)
 	case req.Shell || req.Run != "":
 		if req.Cwd == "" {
 			return Response{Error: "open needs a directory for the terminal"}
@@ -577,6 +592,9 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	}
 	if t.shell() {
 		info.Kind = "terminal"
+	}
+	if t.browser {
+		info.Kind, info.URL = "browser", t.url
 	}
 	if s, _, ok := a.find(t.path); ok {
 		info.Session = s.ID

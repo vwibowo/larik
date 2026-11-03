@@ -23,7 +23,10 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 15 | [Command palette](#phase-15-command-palette) | Done |
 | 16 | [Panes, any number, both ways](#phase-16-panes-any-number-both-ways) | Done |
 | 17 | [Hunks and lines](#phase-17-hunks-and-lines) | Done |
-| 18 | [What's next](#phase-18-whats-next) | Planned |
+| 18 | [Tabs that outlive the window](#phase-18-tabs-that-outlive-the-window) | Done |
+| 19 | [Names, archiving and the Trash](#phase-19-names-archiving-and-the-trash) | Done |
+| 20 | [Browser tabs](#phase-20-browser-tabs) | Done |
+| 21 | [What's next](#phase-21-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -360,7 +363,19 @@ A session could be hidden and renamed, but only the window knew: the CLI listed 
 - **A session in use isn't moved**: one open in a tab says to close the tab first, and one open in another terminal (its status file names a live process) says so.
 - **From scripts**: `larik desktop archive`, `unarchive` and `trash`, each with `--session` and an id or the start of one; `trash` takes an archived session too. They need the window.
 
-## Phase 20: What's next
+## Phase 20: Browser tabs
+
+Checking a dev server, the docs or a pull request meant leaving the window. Rex and cmux keep a browser beside their terminals, and so does larik desktop now, with the web view the OS already has (WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows), which MyGo shows inside its native UI.
+
+- **A fourth kind of tab**: **New Browser Tab** (`cmd+alt+n`, in the File menu, the palette, **+** and each pane's **+**) opens one, its address bar taking the keyboard. It's a pane like the others: it splits, zooms, moves and closes as they do, and the menus, popovers and dialogs the window shows draw over its page.
+- **The address bar**: back, forward, reload (stop while it loads), the address, and **Open in your browser**. What's typed goes as typed when it has a scheme, over http for this machine and the local network (`localhost:3000`, `127.0.0.1:5173`, `192.168.1.20`), and over https otherwise (`github.com`); words aren't searched, and say so. `cmd+l` gives the bar the keyboard, or opens a browser tab from any other; `cmd+r` reloads and `cmd+[` / `cmd+]` go back and forward. A link opening a window opens a tab instead.
+- **The page is someone else's**: it runs untrusted (MyGo's `PageOptions.Untrusted`), so it calls none of the window's Go, gets no permission (camera, location, notifications) and downloads nothing. Its cookies and storage are a session of their own, `larik-browser`, kept from one run to the next, so what you sign in to stays signed in.
+- **It lives in the window**, not the host, so it ends as the window closes, and comes back from its page's address, in its pane, when the window opens again.
+- **From scripts**: `larik desktop open --url localhost:3000` opens one (with `--split`, `--below` or `--background`), `list` names it `browser` with its `url`, and `send` and `read` say it has no terminal.
+
+Not yet: driving the page from larik's browser tools, find in page, downloads, and permission prompts.
+
+## Phase 21: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 

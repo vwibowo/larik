@@ -104,6 +104,7 @@ func Run(opts Options) error {
 		a.trashItem = mygo.Shell.TrashItem
 		a.openPath = func(path string) { _ = mygo.Shell.OpenPath(path) }
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
+		a.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
 		a.about = mygo.App.ShowAboutPanel
 		a.alert = func(s session.Indexed) { notify(win, s) }
 		a.post = func(title, body string) { post(win, title, body) }

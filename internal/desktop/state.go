@@ -9,9 +9,11 @@ import (
 // savedState is what the window remembers across launches: the sessions
 // open as tabs, in order, how the panes showed them, and the sidebar.
 type savedState struct {
-	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal tab
+	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal or browser tab
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
+	// Browsers are the browser tabs' pages, by their index in Tabs.
+	Browsers map[int]string `json:"browsers,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
 	Hosted map[int]string `json:"hosted,omitempty"`
@@ -79,6 +81,12 @@ func (a *App) state() savedState {
 				st.Terminals = map[int]savedTerminal{}
 			}
 			st.Terminals[len(st.Tabs)] = savedTerminal{Dir: t.dir, Run: t.run}
+			path = ""
+		case t.browser:
+			if st.Browsers == nil {
+				st.Browsers = map[int]string{}
+			}
+			st.Browsers[len(st.Tabs)] = t.url
 			path = ""
 		case path == "":
 			continue
@@ -183,6 +191,13 @@ func (a *App) restore() bool {
 				opened[i] = t
 				continue
 			}
+		}
+		if u, ok := st.Browsers[i]; ok {
+			if t := a.startBrowser(u); t != nil {
+				t.focusAddr = false
+				opened[i] = t
+			}
+			continue
 		}
 		if term, ok := st.Terminals[i]; ok {
 			if t := a.startShell(term.Dir, ""); t != nil {
