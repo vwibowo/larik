@@ -151,3 +151,36 @@ func TestPortOpensBesideItsSession(t *testing.T) {
 		t.Fatalf("the port's tab beside its session: %d panes", len(a.panes()))
 	}
 }
+
+func TestSidebarListsBrowserTabs(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("example.com")
+	a.tabs[0].title = "Example Domain"
+	a.openBrowser("localhost:3000")
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	for _, want := range []string{"Browser", "Example Domain", "example.com", "localhost:3000"} {
+		if !tt.HasText(want) {
+			t.Fatalf("no %q in %q", want, tt.Texts())
+		}
+	}
+	if err := tt.Click("Example Domain"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.focused() != a.tabs[0] {
+		t.Fatal("choosing a browser tab in the sidebar shows it")
+	}
+	var copied string
+	a.copyText = func(s string) { copied = s }
+	if err := tt.RightClick("Example Domain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("Copy Address"); err != nil {
+		t.Fatalf("%v in %q", err, tt.Menu())
+	}
+	tt.Frame()
+	if copied != "https://example.com" {
+		t.Fatalf("copied %q", copied)
+	}
+}

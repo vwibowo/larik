@@ -720,6 +720,9 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if tb.exited && tb.code != 0 && m.Item("Restart").Chosen() {
 		a.restart(tb)
 	}
+	if tb.browser && tb.url != blankPage {
+		a.pageMenu(m, tb)
+	}
 	if m.Item("Close Tab").Chosen() {
 		a.askClose([]*tab{tb}, nil)
 	}
@@ -774,7 +777,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		selected := ""
 		if f := a.focused(); f != nil {
 			selected = f.path
-			if f.shell() && f.path == "" {
+			if (f.shell() || f.browser) && f.path == "" {
 				selected = tabKey(f)
 			}
 		}
@@ -787,6 +790,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				return
 			}
 			a.terminals(c, t)
+			a.browsers(c, t)
 			a.pinnedSection(c, t)
 			for _, p := range a.projects {
 				a.project(c, t, p)

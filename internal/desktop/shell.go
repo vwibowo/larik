@@ -121,7 +121,7 @@ func (a *App) tabByID(id string) *tab {
 	return nil
 }
 
-// tabKey names a terminal tab in the sidebar, where sessions go by
+// tabKey names a terminal or browser tab in the sidebar, where sessions go by
 // their transcripts.
 func tabKey(t *tab) string { return "tab:" + t.id }
 
