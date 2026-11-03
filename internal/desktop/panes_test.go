@@ -116,7 +116,8 @@ func TestChangesPane(t *testing.T) {
 	write("logo.bin", "\x00\x01")
 
 	heads := headCache{}
-	root, reads, more, err := readChanges(filepath.Join(repo, "docs"), heads)
+	r := readChanges(filepath.Join(repo, "docs"), heads, compareCommit)
+	root, reads, more, err := r.root, r.snaps, r.more, r.err
 	if err != nil || more != 0 {
 		t.Fatal(err, more)
 	}
@@ -142,9 +143,9 @@ func TestChangesPane(t *testing.T) {
 
 	a := New(Options{})
 	ch := &changes{dir: repo}
-	ch.apply(root, reads, more, nil)
+	ch.apply(r)
 	first := ch.files[0].diff
-	ch.apply(root, reads, more, nil)
+	ch.apply(r)
 	if ch.files[0].diff != first {
 		t.Error("a file keeps its viewer across reads")
 	}
@@ -185,14 +186,14 @@ func TestChangesPane(t *testing.T) {
 	for key := range heads {
 		heads[key] = "from the cache\n"
 	}
-	_, again, _, _ := readChanges(repo, heads)
+	again := readChanges(repo, heads, compareCommit).snaps
 	for _, r := range again {
 		if r.path == "main.go" && r.old != "from the cache\n" {
 			t.Errorf("main.go read HEAD again: %q", r.old)
 		}
 	}
 	run("commit", "-qam", "next")
-	_, again, _, _ = readChanges(repo, heads)
+	again = readChanges(repo, heads, compareCommit).snaps
 	for _, r := range again {
 		if r.path == "main.go" {
 			t.Errorf("main.go still changed after committing it: %+v", r)
@@ -202,7 +203,7 @@ func TestChangesPane(t *testing.T) {
 		t.Errorf("the cache kept %d texts for %d changes", len(heads), len(again))
 	}
 
-	_, _, _, err = readChanges(t.TempDir(), headCache{})
+	err = readChanges(t.TempDir(), headCache{}, compareCommit).err
 	if err == nil || !strings.Contains(err.Error(), "not in a git repository") {
 		t.Errorf("outside a repository: %v", err)
 	}
@@ -313,6 +314,13 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 		t.Errorf("changes pane: %q", tt.Texts())
 	}
 	snapshot(t, tt, "changes-window-dark.png")
+	// The changes beside a split: both stay.
+	a.showInSplit(right)
+	tt.Frame()
+	if a.right != right || a.changes != ch || !tt.HasText("notes.md") {
+		t.Errorf("a split beside the changes: right %v, changes %v", a.right != nil, a.changes != nil)
+	}
+	snapshot(t, tt, "split-changes-dark.png")
 }
 
 func TestTabsComeBackNextLaunch(t *testing.T) {

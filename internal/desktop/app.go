@@ -75,6 +75,7 @@ type App struct {
 	rightFocused bool
 	changes      *changes // the changes pane, beside the main one when open
 	splitP       float32  // the main pane's share of the width while split, in percent
+	changesP     float32  // the panes' share beside the changes, while split too
 	focusNext    *tab     // the tab whose terminal takes the keyboard next frame
 	saved        string   // the state last saved, as JSON
 	saves        int      // how many times the state was saved
@@ -242,6 +243,7 @@ func New(opts Options) *App {
 		started:    time.Now(),
 		sidebarW:   280,
 		splitP:     50,
+		changesP:   66,
 		host:       host,
 	}
 }
@@ -552,14 +554,12 @@ func (a *App) splitRight() {
 		return
 	}
 	if t := a.startTab(a.currentDir(), "", ""); t != nil {
-		a.closeChanges()
 		a.right, a.rightFocused, a.focusNext = t, true, t
 	}
 }
 
 // unsplit closes the pane beside the main one; its tab stays open.
 func (a *App) unsplit() {
-	a.closeChanges()
 	a.right, a.rightFocused = nil, false
 }
 
@@ -577,7 +577,6 @@ func (a *App) showInSplit(t *tab) {
 		a.activate(t)
 		return
 	}
-	a.closeChanges()
 	a.right, a.rightFocused, a.focusNext = t, true, t
 }
 

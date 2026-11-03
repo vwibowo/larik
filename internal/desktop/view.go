@@ -1081,7 +1081,7 @@ func (a *App) reveal(path string) {
 	a.selectSession(path)
 }
 
-// main is the open tab's card, with the split or the changes beside it,
+// main is the open tab's card, with the split, the changes or both beside it,
 // or a hint when no tab is open.
 func (a *App) main(c *ui.Context, t *ui.Theme) {
 	if a.active == nil {
@@ -1120,15 +1120,22 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 			a.pane(c, t, a.active, false)
 		})
 	}
+	panes := left
+	if a.right != nil {
+		panes = func() {
+			ui.SplitPercent(c, &a.splitP, left, func() {
+				a.card(c, t, func() { a.pane(c, t, a.right, true) })
+			}).Grow(1)
+		}
+	}
 	switch {
+	case a.changes != nil && a.right != nil:
+		// Beside the split, the changes take a third.
+		ui.SplitPercent(c, &a.changesP, panes, func() { a.changesPane(c, t, a.changes) }).Grow(1)
 	case a.changes != nil:
 		ui.SplitPercent(c, &a.splitP, left, func() { a.changesPane(c, t, a.changes) }).Grow(1)
-	case a.right != nil:
-		ui.SplitPercent(c, &a.splitP, left, func() {
-			a.card(c, t, func() { a.pane(c, t, a.right, true) })
-		}).Grow(1)
 	default:
-		ui.Column(c).Grow(1).Children(left)
+		ui.Column(c).Grow(1).Children(panes)
 	}
 }
 

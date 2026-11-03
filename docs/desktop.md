@@ -18,7 +18,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 10 | [Terminal tabs](#phase-10-terminal-tabs) | Done |
 | 11 | [Answering in place](#phase-11-answering-in-place) | Done |
 | 12 | [Worktrees](#phase-12-worktrees) | Done |
-| 13 | [What's next](#phase-13-whats-next) | Planned |
+| 13 | [Changes you can act on](#phase-13-changes-you-can-act-on) | Done |
+| 14 | [What's next](#phase-14-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -272,14 +273,26 @@ Two sessions in one checkout edit the same files. cmux and herdr run agents side
 - **Remove Worktree…** removes it and its branch, after saying what's lost.
 - Neither runs while a session in the worktree is working or waiting for you, or is open in another terminal: the notice bar says which. The git runs off the main thread, as larik's subagents run it: hooks, and repository config that could run a program, are off.
 
-## Phase 13: What's next
+## Phase 13: Changes you can act on
+
+The changes pane showed what an agent did; reviewing it still meant a terminal for git. Now the pane finishes the job, as Xcode's and VS Code's source control do.
+
+- **Staging**: each file has a check box, ticked once all of its change is staged; one partly staged stays clear, and ticking it stages the rest. **Stage All** and **Unstage All** do every file. A file's right-click menu stages or unstages it too.
+- **Discarding**: **Discard Changes…** in a file's menu puts it back as the last commit has it, staged change and all, after asking. A file that's new since the last commit, or not in git at all, is deleted, which the question says. A rename's old name comes back.
+- **Committing**: the message goes in the box over the files, and **Commit** (⌘↩ in the box) commits what's staged. With nothing staged it's **Commit All**, which stages every change first. It's your commit: your identity, your hooks, and what a hook says when it fails shows in the notice bar, as does the commit made.
+- **Since the base**: on a branch with a base to compare with, **Since main** shows all the branch has done, committed or not, against where it left its base (their merge base), as a pull request would. A larik worktree's base is the branch its repository's checkout is on, which it was made from; any other branch's is the remote's default branch, or `main` or `master`. Staging and committing are for **Uncommitted**, so they show there.
+- **Pull Request**, with [gh](https://cli.github.com) installed and a remote: it opens the branch's pull request if it has one. Otherwise it asks, pushes the branch (`git push -u origin HEAD`), and opens a new pull request into the base in the browser (`gh pr create --web`), to title and send there. Only what's committed goes.
+- **Beside a split**: the changes no longer close the split. With both, the changes take the right third.
+- The git runs off the main thread, with `GIT_TERMINAL_PROMPT=0` so a push that wants a password fails rather than waiting, and the pane reads the repository again as soon as it's done.
+
+## Phase 14: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
 - **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
-- **Changes you can act on**: stage, discard and commit per file and hunk, compare with the base branch, open a PR, and the changes beside a split.
+- **Hunks**: staging and discarding part of a file, a hunk or the lines chosen, in the changes pane.
 - **Splits** in both directions and more than two, resized by dragging, moved between by keys.
 - **Cost and context** in the status file, and on screen: cost, context used, model, permission mode.
 - **A command palette**, archiving and deleting sessions, names that `/resume` shows, and settings of the window's own (keys, theme, font).
