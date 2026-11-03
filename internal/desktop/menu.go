@@ -78,6 +78,8 @@ func (a *App) menuBar() []menuGroup {
 			{label: "Search Sessions…", key: "Cmd+K", run: func() { a.focusSearch, a.noSidebar = true, false }},
 		}},
 		{title: "View", items: []command{
+			{label: paletteLabel, key: "Shift+Cmd+P", run: a.openPalette},
+			{},
 			{label: "Toggle Sidebar", key: "Cmd+B", run: func() { a.noSidebar = !a.noSidebar }},
 			{label: "Toggle Changes", key: "Shift+Cmd+G", run: a.toggleChanges},
 			{},

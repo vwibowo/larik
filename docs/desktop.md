@@ -20,7 +20,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 12 | [Worktrees](#phase-12-worktrees) | Done |
 | 13 | [Changes you can act on](#phase-13-changes-you-can-act-on) | Done |
 | 14 | [Cost and context](#phase-14-cost-and-context) | Done |
-| 15 | [What's next](#phase-15-whats-next) | Planned |
+| 15 | [Command palette](#phase-15-command-palette) | Done |
+| 16 | [What's next](#phase-16-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -174,7 +175,7 @@ The browser and trace panes in the first plan are dropped: the TUI's own browser
 
 - **Inbox** of blocked, failed and unread-finished sessions across projects at the bottom of the sidebar (phase 5), and the same count on the Dock icon.
 - **Alerts**: when a session becomes blocked, or a turn that was working finishes or fails, while the window isn't focused, the Dock icon bounces and, where the system allows, a notification says which session; clicking it opens the session. macOS shows notifications only for app bundles, so they come with the launcher below, not with `larik desktop` run from a terminal.
-- **Keyboard**: ⌘T new tab, ⌘O a new session in a folder you choose, ⌘W close, ⌘1–9 and ⇧⌘[ ] switch tabs, ⌘D split, ⇧⌘G changes, ⌘J the next session waiting for you (blocked first, then unread), ⌘K search, ⌘B hide or show the sidebar (also the button beside the host name), ⌘+ ⌘− ⌘0 the terminals' text size, all tabs at once, ⌘F find in the focused terminal. The window's keys reach it even while a terminal has the keyboard; the terminal's own ⌘K (clear screen) gives way to search. Off macOS they take Control+Shift.
+- **Keyboard**: ⌘T new tab, ⌘O a new session in a folder you choose, ⌘W close, ⌘1–9 and ⇧⌘[ ] switch tabs, ⌘D split, ⇧⌘G changes, ⌘J the next session waiting for you (blocked first, then unread), ⌘K search, ⌘B hide or show the sidebar (also the button beside the host name), ⌘+ ⌘− ⌘0 the terminals' text size, all tabs at once, ⌘F find in the focused terminal, ⇧⌘P the command palette (phase 15). The window's keys reach it even while a terminal has the keyboard; the terminal's own ⌘K (clear screen) gives way to search. Off macOS they take Control+Shift.
 - **Search**: the field at the top of the sidebar (⌘K) narrows every project's sessions to those whose title, project, directory or ID has each word typed, up to 50, across projects, and then those where each word was said: in a prompt or a reply, not in tool output or an attached file, with the passage under the session. Prompts and replies are a sliver of a transcript (4 MB of 788 MB across 542 sessions, on one machine), so the window keeps them in memory once a search first asks, reading them in the background (0.3 s for those 542) and then only what each transcript gained (2 ms), and a search takes a few milliseconds. Searching what was said starts at three letters, before which nearly every session would match. ↑ and ↓ choose a match, highlighted, and Enter opens it (the first to start with) and ends the search; Escape clears it, and a second Escape gives the keyboard back to the terminal.
 - **Session menu**: right-clicking a session offers Open, Open in Split, Fork into a New Tab (`larik --resume <id> --fork`, so the original stays as it was), Copy Session ID, and Show Transcript in Finder. Right-clicking a tab in the title bar offers Open in Split, Close Tab, Close Other Tabs, and the last two for its session.
 - **Remembered**: besides the open tabs (phase 5), the window keeps the split's width, the sidebar's width, whether it's hidden, which projects are folded, the text size, and the sessions hidden from it.
@@ -296,7 +297,16 @@ With several agents at work, what each costs and how full its context is meant s
 - **For scripts**: `larik desktop list --json` gives each tab's `model`, `mode`, `cost_usd`, `context` (percent) and `tokens`, and `larik sessions --json` each session's `usage`.
 - Only the TUI writes it: a session run with `-p` or `serve` reports its status without it.
 
-## Phase 15: What's next
+## Phase 15: Command palette
+
+The window does a lot by now, much of it in menus: a session's right-click menu answers its prompt or merges its worktree, the changes pane's buttons stage and compare, and the menu bar has the rest. ⇧⌘P (View › Command Palette…) puts it all in one list you type to narrow, as cmux and VS Code have it.
+
+- **What it lists**, in order: what the focused session can do (Allow, Always Allow and Deny, or Approve, while it waits on a prompt; Merge Worktree into main… and Remove Worktree… in a worktree; Rename Session…, Fork into a New Tab, Copy Session ID; Restart when it failed; Close the Split while split); then what the changes pane can do while it's open (Stage All, Unstage All, Compare Since main or Compare Uncommitted, Pull Request…); then every command of the menu bar with its key (⇧⌘G, ⌥⌘T), the app menu and Help last; then the sessions, to open one, named for their project and folder.
+- **Typing** keeps the lines with every word typed in their name or where they're from, as `docs site` or `stage`, those whose name starts with it first. With nothing typed it shows the commands and the five newest sessions.
+- **Keys**: ↑ and ↓ choose a line, scrolling to it, Enter runs it, and Escape, a click outside or ⇧⌘P again closes the palette. Running a line closes it first, so a sheet it opens has the window, and the keyboard goes back to the focused tab unless what ran gave it to a field of its own (find, rename).
+- AppKit's own items (Undo, Copy, Minimize, full screen) stay in the menus, which run them; the open tabs are in it as their sessions.
+
+## Phase 16: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
@@ -305,7 +315,7 @@ From a review against [Rex](https://www.superlogical.com/updates/public-testing-
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
 - **Hunks**: staging and discarding part of a file, a hunk or the lines chosen, in the changes pane.
 - **Splits** in both directions and more than two, resized by dragging, moved between by keys.
-- **A command palette**, archiving and deleting sessions, names that `/resume` shows, and settings of the window's own (keys, theme, font).
+- **Archiving and deleting sessions**, names that `/resume` shows, and settings of the window's own (keys, theme, font).
 - **Sessions that outlive the window**, as Rex and herdr keep theirs: a background host the window attaches to, then remote windows on another Mac or over SSH.
 
 Still open from phase 7: the headless Linux run.

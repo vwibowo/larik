@@ -128,7 +128,16 @@ type App struct {
 	// tab focused, by transcript path (see attention.go).
 	events     []event
 	showEvents bool
-	looked     map[string]time.Time
+	// paletteOpen shows the command palette, paletteQuery is what's typed
+	// in it, palettePick the line Enter runs, paletteScroll that the list
+	// is to scroll to it, and focusPalette that its field is to take the
+	// keyboard (see palette.go).
+	paletteOpen   bool
+	paletteQuery  string
+	palettePick   int
+	paletteScroll bool
+	focusPalette  bool
+	looked        map[string]time.Time
 	// answered are the sessions answered from the window, by transcript
 	// path, until the session moves on or the window looks whether the
 	// tab took the answer (see answer.go).

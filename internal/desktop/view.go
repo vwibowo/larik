@@ -160,6 +160,7 @@ func (a *App) view(c *ui.Context) {
 		a.confirmClose(c)
 		a.confirmLeave(c)
 		a.confirmAsked(c)
+		a.commandPalette(c, t)
 	})
 	a.saveState()
 	if title := a.windowTitle(); a.setTitle != nil && title != a.titled {
@@ -305,6 +306,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		mod = ui.Super
 	}
 	switch {
+	case c.Shortcut(mod|ui.Shift, ui.KeyP):
+		a.openPalette()
 	case c.Shortcut(mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
 	case c.Shortcut(mod, ui.KeyT):
