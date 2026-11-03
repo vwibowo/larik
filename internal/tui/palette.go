@@ -88,6 +88,19 @@ Keys
 	return b.String()
 }()
 
+// isCommand reports whether line starts with a built-in command's name,
+// so a prompt given on the command line runs it as if typed, while one
+// that starts with a path, as /tmp/x.go, still goes to the agent.
+func isCommand(line string) bool {
+	name, _, _ := strings.Cut(line, " ")
+	for _, c := range commands {
+		if c.name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // paletteQuery returns the typed command name when the input is a bare
 // "/name" being typed, which is when the palette shows.
 func (m *model) paletteQuery() (string, bool) {

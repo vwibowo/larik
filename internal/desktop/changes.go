@@ -276,7 +276,7 @@ func (a *App) changesPane(c *ui.Context, t *ui.Theme, ch *changes) {
 			}
 			a.closeButton(c, t, "Close changes", a.closeChanges)
 		})
-		scroll := ui.Scroll(c).Grow(1).Padding(8, 12).Gap(6)
+		scroll := ui.Scroll(c).Grow(1)
 		scroll.Children(func() {
 			switch {
 			case !ch.loaded:
@@ -297,11 +297,22 @@ func (a *App) changesPane(c *ui.Context, t *ui.Theme, ch *changes) {
 }
 
 func (a *App) fileDiff(c *ui.Context, t *ui.Theme, root string, f *fileChange) {
-	ui.Column(c.Key(f.path)).Radius(8).Border(1, t.Border).Clip().Children(func() {
-		head := ui.Row(c).Gap(8).Padding(6, 10).AlignItems(ui.Center).Background(t.Surface.Alpha(0.6)).Cursor(ui.CursorPointer)
+	// A row per file, as Xcode lists changes: a disclosure arrow that
+	// shows the diff under it, git's status, the path, and the lines
+	// added and removed.
+	ui.Column(c.Key(f.path)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		head := ui.Row(c).Gap(6).Padding(5, 12, 5, 8).AlignItems(ui.Center)
+		if head.Hovered() {
+			head.Background(t.Text.Alpha(0.04))
+		}
 		head.Children(func() {
-			ui.Text(c, strings.TrimSpace(f.code)).Font(mono).FontSize(12).TextColor(codeColor(t, f.code)).Width(18)
-			ui.Text(c, f.path).Font(mono).FontSize(12.5).SingleLine().Shrink(1).Grow(1).Tooltip(f.path)
+			arrow := iconRight
+			if f.open {
+				arrow = iconDown
+			}
+			ui.Icon(c, arrow).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, strings.TrimSpace(f.code)).Font(mono).FontSize(11).TextColor(codeColor(t, f.code)).Width(18)
+			ui.Text(c, f.path).FontSize(12).SingleLine().Shrink(1).Grow(1).Tooltip(f.path)
 			if f.adds > 0 {
 				ui.Text(c, fmt.Sprintf("+%d", f.adds)).Font(mono).FontSize(12).TextColor(t.Success)
 			}

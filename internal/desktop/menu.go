@@ -1,6 +1,9 @@
 package desktop
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/terminal"
 
@@ -9,14 +12,22 @@ import (
 
 // command is an item of the menu bar: what it says, its key as an
 // accelerator, and what it does, or a role of MyGo's; a zero command is a
-// separator.
+// separator. A checked command shows a checkmark.
 type command struct {
 	label, key string
 	run        func()
 	role       mygo.MenuRole
+	checked    bool
 }
 
-// menuGroup is a menu of the menu bar, or a role's whole menu.
+// The guides the Help menu opens.
+const (
+	helpURL  = "https://github.com/vwibowo/larik#readme"
+	guideURL = "https://github.com/vwibowo/larik/blob/main/docs/desktop.md"
+)
+
+// menuGroup is a menu of the menu bar, or a role's whole menu; a role
+// with items is a menu of the role's, as Help, with them in it.
 type menuGroup struct {
 	title string
 	items []command
@@ -30,7 +41,20 @@ type menuGroup struct {
 // meanings, and lists the window's other keys where they can be found.
 func (a *App) menuBar() []menuGroup {
 	return []menuGroup{
-		{role: mygo.RoleAppMenu},
+		// MyGo's app menu, with Settings where Mac apps have it.
+		{role: mygo.RoleAppMenu, items: []command{
+			{label: "About Larik", run: a.showAbout},
+			{},
+			{label: "Settings…", key: "Cmd+,", run: a.openSettings},
+			{},
+			{role: mygo.RoleServices},
+			{},
+			{role: mygo.RoleHide},
+			{role: mygo.RoleHideOthers},
+			{role: mygo.RoleUnhide},
+			{},
+			{role: mygo.RoleQuit},
+		}},
 		{title: "File", items: []command{
 			{label: "New Session", key: "Cmd+T", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Split", key: "Cmd+D", run: a.splitRight},
@@ -61,14 +85,70 @@ func (a *App) menuBar() []menuGroup {
 			{},
 			{role: mygo.RoleToggleFullScreen},
 		}},
-		{title: "Window", items: []command{
+		{title: "Window", items: append([]command{
 			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom}, {},
 			{label: "Next Session Waiting", key: "Cmd+J", run: a.nextWaiting},
 			{label: "Show Next Tab", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
 			{label: "Show Previous Tab", key: "Shift+Cmd+[", run: func() { a.cycle(-1) }},
 			{},
 			{role: mygo.RoleFront},
+		}, a.tabCommands()...)},
+		{title: "Help", role: mygo.RoleHelp, items: []command{
+			{label: "Larik Help", run: func() { a.openURL(helpURL) }},
+			{label: "Desktop App Guide", run: func() { a.openURL(guideURL) }},
 		}},
+	}
+}
+
+// tabCommands list the open tabs at the end of the Window menu, as
+// Safari and Terminal do, the first nine on Command and their number,
+// the focused one checked.
+func (a *App) tabCommands() []command {
+	if len(a.tabs) == 0 {
+		return nil
+	}
+	cmds := []command{{}}
+	for i, tb := range a.tabs {
+		cmd := command{label: a.tabTitle(tb), run: func() { a.activate(tb) }, checked: tb == a.focused()}
+		if i < 9 {
+			cmd.key = fmt.Sprintf("Cmd+%d", i+1)
+		}
+		cmds = append(cmds, cmd)
+	}
+	return cmds
+}
+
+// menuTabs is what the Window menu's tabs say, to set the menu bar again
+// when it changes.
+func (a *App) menuTabs() string {
+	var b strings.Builder
+	for _, tb := range a.tabs {
+		fmt.Fprintf(&b, "%v %s\n", tb == a.focused(), a.tabTitle(tb))
+	}
+	return b.String()
+}
+
+// aboutPanel is what About Larik shows: AppKit's own panel, which run
+// from a plain executable rather than an app bundle has no version to
+// show unless it is told one.
+func (a *App) aboutPanel() mygo.AboutPanelOptions {
+	return mygo.AboutPanelOptions{
+		ApplicationName:    "Larik",
+		ApplicationVersion: a.opts.Version,
+		Credits:            "A coding agent for the terminal, in a window of terminal tabs.",
+		Copyright:          "Copyright © 2026 Vinensius Wibowo. MIT License.",
+	}
+}
+
+func (a *App) showAbout() {
+	if a.about != nil {
+		a.about(a.aboutPanel())
+	}
+}
+
+func (a *App) openURL(url string) {
+	if a.openExternal != nil {
+		a.openExternal(url)
 	}
 }
 
@@ -106,11 +186,11 @@ func (a *App) dockMenu() []command {
 func (a *App) menu(update func(func())) *mygo.Menu {
 	var bar []*mygo.MenuItem
 	for _, g := range a.menuBar() {
-		if g.role != "" {
+		if g.role != "" && g.items == nil {
 			bar = append(bar, &mygo.MenuItem{Role: g.role})
 			continue
 		}
-		bar = append(bar, &mygo.MenuItem{Label: g.title, Submenu: menuItems(g.items, update)})
+		bar = append(bar, &mygo.MenuItem{Label: g.title, Role: g.role, Submenu: menuItems(g.items, update)})
 	}
 	return mygo.NewMenu(bar)
 }
@@ -123,12 +203,16 @@ func menuItems(cmds []command, update func(func()), after ...func()) []*mygo.Men
 		switch {
 		case cmd.run != nil:
 			run := cmd.run
-			items = append(items, &mygo.MenuItem{Label: cmd.label, Accelerator: cmd.key, Click: func(*mygo.MenuItem, *mygo.Window) {
+			item := &mygo.MenuItem{Label: cmd.label, Accelerator: cmd.key, Click: func(*mygo.MenuItem, *mygo.Window) {
 				update(run)
 				for _, fn := range after {
 					fn()
 				}
-			}})
+			}}
+			if cmd.checked {
+				item.Type, item.Checked = mygo.MenuItemCheckbox, true
+			}
+			items = append(items, item)
 		case cmd.role != "":
 			items = append(items, &mygo.MenuItem{Label: cmd.label, Role: cmd.role, Accelerator: cmd.key})
 		default:

@@ -17,7 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -30,6 +32,7 @@ type Options struct {
 	Bin     string // the larik executable each tab runs
 	DataDir string // where sessions live
 	Cwd     string // the directory larik desktop was started in
+	Version string // larik's, for About Larik
 }
 
 // App is the window's state. The view reads it on the main thread;
@@ -57,9 +60,11 @@ type App struct {
 	// search.
 	names   map[string]string
 	prompts map[string]string
-	// renaming is the session the rename dialog names, and newName what
-	// it says.
-	renaming, newName string
+	// renaming is the session renamed in the sidebar, newName what its
+	// field says, focusRename that the field is to take the keyboard, and
+	// renameFocused that it has had it.
+	renaming, newName          string
+	focusRename, renameFocused bool
 	// dragging says a session is being dragged from the sidebar.
 	dragging bool
 	tabs     []*tab
@@ -74,11 +79,20 @@ type App struct {
 	saved        string   // the state last saved, as JSON
 	saves        int      // how many times the state was saved
 	// writeMu orders the writes of the saved state, and written is the
-	// number of the save last written, so an older one never lands last.
-	writeMu     sync.Mutex
-	written     int
-	query       string               // the sidebar's search
-	pick        int                  // the match of the search Enter opens
+	// number of the save last written, so an older one never lands last;
+	// Close waits for writing.
+	writeMu sync.Mutex
+	written int
+	writing sync.WaitGroup
+	query   string // the sidebar's search
+	pick    int    // the match of the search Enter opens
+	// conv finds sessions by what was said in them, off the main thread:
+	// convAsked is the query last asked of it, and convHits what it
+	// found for convQuery, by transcript path, with the passage.
+	conv        convIndex
+	convAsked   string
+	convQuery   string
+	convHits    map[string]string
 	focusSearch bool                 // the search field takes the keyboard next frame
 	restored    bool                 // the last launch's state was read
 	seen        map[string]time.Time // when each session was last looked at
@@ -123,6 +137,18 @@ type App struct {
 	// pickDir asks for a folder, starting in start, and gives it to then
 	// on the window's frame (see Run).
 	pickDir func(start string, then func(dir string))
+	// ask asks a question in a sheet of the window's, as macOS asks: yes
+	// is the button that goes ahead, beside Cancel, and then gets the
+	// answer on the window's frame (see Run). Without it, the window asks
+	// in a dialog of its own drawing; asking is set while it asks.
+	ask    func(title, msg, yes string, then func(yes bool))
+	asking bool
+	// setMenu sets the menu bar again, for the Window menu's tabs as
+	// menuTabs last said them, and openExternal opens a web page (see Run).
+	setMenu      func()
+	about        func(mygo.AboutPanelOptions) // shows the About panel
+	menuSaid     string
+	openExternal func(url string)
 	// setTitle sets the window's title, titled as last set (see Run).
 	setTitle func(title string)
 	titled   string
@@ -209,6 +235,7 @@ func (a *App) Close() {
 	for _, t := range a.tabs {
 		t.close()
 	}
+	a.writing.Wait() // the last state, so quitting doesn't lose it
 }
 
 // indexLoop reads the index again every second or so, or when kicked:
@@ -240,6 +267,7 @@ func (a *App) refreshIndex() {
 
 func (a *App) setProjects(ps []session.Project) {
 	a.projects = ps
+	a.convAsked = "" // a session may have said more
 	a.prompts = map[string]string{}
 	a.applyNames()
 	for _, p := range ps {
@@ -437,6 +465,15 @@ func (a *App) openFolder() {
 	}
 }
 
+// openSettings starts larik with its settings open (`larik /config`) in
+// a new tab, in the focused tab's directory, where the project's settings
+// show beside the user's. Closing them leaves a new session there.
+func (a *App) openSettings() {
+	if t := a.startTab(a.currentDir(), "", "", "/config"); t != nil {
+		a.activate(t)
+	}
+}
+
 // dropDirs starts a session in each folder dropped on the sidebar, or in
 // the folder of a file dropped there, showing the last.
 func (a *App) dropDirs(paths []string) {
@@ -526,11 +563,33 @@ func (a *App) rename(path, name string) {
 	a.applyNames()
 }
 
-// askRename opens the rename dialog for the session at path.
+// askRename renames the session at path in its sidebar row, showing the
+// row: the sidebar, the project's section, and the session among its
+// project's, hidden or not.
 func (a *App) askRename(path string) {
-	if s, _, ok := a.find(path); ok {
-		a.renaming, a.newName = path, s.Title
+	s, p, ok := a.find(path)
+	if !ok {
+		return
 	}
+	a.noSidebar, a.query = false, ""
+	*a.open[p.Root] = true
+	a.showAll[p.Root] = true
+	if a.hidden[path] {
+		a.showHidden[p.Root] = true
+	}
+	a.renaming, a.newName, a.focusRename = path, s.Title, true
+}
+
+// endRename names the session being renamed with what its field says,
+// or leaves it as it was.
+func (a *App) endRename(keep bool) {
+	if a.renaming == "" {
+		return
+	}
+	if keep {
+		a.rename(a.renaming, a.newName)
+	}
+	a.renaming, a.newName, a.renameFocused = "", "", false
 }
 
 // pin pins the session at the top of the sidebar, or unpins it. A
@@ -614,16 +673,61 @@ func (a *App) fork(path string) {
 // first.
 func (a *App) matches() []session.Indexed {
 	words := strings.Fields(strings.ToLower(a.query))
-	var out []session.Indexed
+	var out, said []session.Indexed
 	for _, p := range a.projects {
 		for _, s := range p.Sessions {
 			hay := strings.ToLower(s.Title + " " + a.prompts[s.Path] + " " + p.Name + " " + s.Subdir + " " + s.ID)
-			if !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(hay, w) }) {
+			switch {
+			case !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(hay, w) }):
 				out = append(out, s)
+			case a.saidIn(s.Path) != "":
+				said = append(said, s)
 			}
 		}
 	}
-	return out
+	// Those whose names match first, then those whose conversations do.
+	return append(out, said...)
+}
+
+// saidIn is the passage of the session's conversation the search found,
+// if it found one for the query as it is.
+func (a *App) saidIn(path string) string {
+	if a.convQuery != a.query {
+		return ""
+	}
+	return a.convHits[path]
+}
+
+// searchConversations looks for the query in what was said in every
+// session, once per query and again when the sessions change, off the
+// main thread; matches shows what it found when it has. A word or two
+// of fewer than three letters would find nearly every session.
+func (a *App) searchConversations() {
+	if a.query == a.convAsked || a.update == nil {
+		return
+	}
+	a.convAsked = a.query
+	words := strings.Fields(strings.ToLower(a.query))
+	if utf8.RuneCountInString(strings.Join(words, "")) < 3 {
+		a.convQuery, a.convHits = a.query, nil
+		return
+	}
+	var paths []string
+	for _, p := range a.projects {
+		for _, s := range p.Sessions {
+			paths = append(paths, s.Path)
+		}
+	}
+	query := a.query
+	go func() {
+		a.conv.refresh(paths)
+		hits := a.conv.search(words)
+		a.update(func() {
+			if a.query == query {
+				a.convQuery, a.convHits = query, hits
+			}
+		})
+	}()
 }
 
 // focused is the tab with the keyboard: the main pane's, or the split's.

@@ -90,7 +90,9 @@ func (a *App) saveState() {
 	a.saved = string(data)
 	a.saves++
 	n, path := a.saves, a.statePath()
+	a.writing.Add(1)
 	go func() {
+		defer a.writing.Done()
 		a.writeMu.Lock()
 		defer a.writeMu.Unlock()
 		if n < a.written {

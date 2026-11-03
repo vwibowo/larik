@@ -66,7 +66,7 @@ func Run(opts Options) error {
 			MinHeight:     480,
 			StateKey:      "main",
 			TitleBarStyle: mygo.TitleBarHidden,
-			Vibrancy:      mygo.VibrancyWindow,
+			Vibrancy:      mygo.VibrancySidebar,
 			Content:       ui.View(a.view),
 		})
 		fmt.Fprintf(os.Stderr, "larik desktop: notifications %s\n", map[bool]string{true: "on", false: "off (macOS shows them only for an app bundle: larik desktop --install)"}[mygo.NotificationsSupported()])
@@ -76,7 +76,16 @@ func Run(opts Options) error {
 		a.copyText = func(s string) { _ = mygo.Clipboard.Write(transfer.TextData(s)) }
 		a.showFile = mygo.Shell.ShowItemInFolder
 		a.openPath = func(path string) { _ = mygo.Shell.OpenPath(path) }
+		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
+		a.about = mygo.App.ShowAboutPanel
 		a.alert = func(s session.Indexed) { notify(win, s) }
+		a.ask = func(title, msg, yes string, then func(bool)) {
+			// The sheet waits for the user; the window keeps drawing.
+			go func() {
+				res, err := mygo.Dialog.Message(mygo.MessageOptions{Parent: win, Type: mygo.MessageWarning, Message: title, Detail: msg, Buttons: []string{yes, "Cancel"}, DefaultButton: 0, CancelButton: 1})
+				win.Update(func() { then(err == nil && res.Button == 0) })
+			}()
+		}
 		// Set off the frame, the last title last.
 		var titleMu sync.Mutex
 		var title string
@@ -101,6 +110,7 @@ func Run(opts Options) error {
 		}
 		if runtime.GOOS == "darwin" {
 			mygo.App.SetMenu(a.menu(win.Update))
+			a.setMenu = func() { mygo.App.SetMenu(a.menu(win.Update)) }
 			// Its own icon in the Dock, which otherwise shows a program's
 			// generic one when larik desktop runs from a terminal.
 			if png, err := iconPNG(512); err == nil {

@@ -68,7 +68,7 @@ func runDesktop(args []string) error {
 		return err
 	}
 	if *foreground {
-		return desktop.Run(desktop.Options{Bin: exe, DataDir: config.DataDir(), Cwd: cwd})
+		return desktop.Run(desktop.Options{Bin: exe, DataDir: config.DataDir(), Cwd: cwd, Version: version})
 	}
 
 	logDir := filepath.Join(config.DataDir(), "logs")

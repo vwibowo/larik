@@ -602,7 +602,9 @@ func (m *model) Init() tea.Cmd {
 	if len(m.opts.History) > 0 {
 		cmds = append(cmds, m.printHistory("resumed"))
 	}
-	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
+	if p := strings.TrimSpace(m.opts.InitialPrompt); isCommand(p) {
+		cmds = append(cmds, m.command(p)) // `larik /config` opens the settings
+	} else if p != "" {
 		cmds = append(cmds, m.submit(p))
 	}
 	// The background listener blocks until an event arrives, so it runs

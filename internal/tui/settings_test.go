@@ -412,3 +412,17 @@ func TestBrowserLocationSetting(t *testing.T) {
 		t.Error("a location that isn't two numbers should be refused")
 	}
 }
+
+func TestLaunchPromptRunsACommand(t *testing.T) {
+	m := testModel(t)
+	m.opts.InitialPrompt = "/config"
+	m.Init()
+	if m.settings == nil || m.running {
+		t.Fatalf("`larik /config` should open the settings, not run a turn: settings %v, running %v", m.settings != nil, m.running)
+	}
+	for line, want := range map[string]bool{"/config": true, "/model openai/gpt-5.5": true, "/tmp/x.go explain this": false, "fix the bug": false, "": false} {
+		if isCommand(line) != want {
+			t.Errorf("isCommand(%q) = %v", line, !want)
+		}
+	}
+}

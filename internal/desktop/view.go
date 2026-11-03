@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
@@ -19,68 +20,79 @@ import (
 // mono is the terminal's font family.
 const mono = "SF Mono, Menlo, Consolas, DejaVu Sans Mono, monospace"
 
-// Icons, in Lucide's style: stroked, round, 24×24.
+// Icons, in Lucide's style, drawn thin as SF Symbols are: stroked, round,
+// 24×24.
 func svg(body string) *ui.SVG {
-	return ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`))
+	return ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`))
 }
 
 var (
-	iconChat   = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
-	iconTerm   = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
-	iconPlus   = svg(`<path d="M12 5v14M5 12h14"/>`)
-	iconClose  = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
-	iconPause  = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
-	iconCheck  = svg(`<path d="M20 6 9 17l-5-5"/>`)
-	iconError  = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
-	iconSpark  = svg(`<path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>`)
-	iconDiff   = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
-	iconSplit  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
-	iconPanel  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
-	iconUp     = svg(`<path d="m18 15-6-6-6 6"/>`)
-	iconDown   = svg(`<path d="m6 9 6 6 6-6"/>`)
-	iconFolder = svg(`<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>`)
+	iconChat  = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
+	iconTerm  = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
+	iconPlus  = svg(`<path d="M12 5v14M5 12h14"/>`)
+	iconClose = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
+	iconPause = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
+	iconCheck = svg(`<path d="M20 6 9 17l-5-5"/>`)
+	iconError = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
+	iconDiff  = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
+	iconSplit = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
+	iconPanel = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
+	iconUp    = svg(`<path d="m18 15-6-6-6 6"/>`)
+	iconDown  = svg(`<path d="m6 9 6 6 6-6"/>`)
+	iconRight = svg(`<path d="m9 18 6-6-6-6"/>`)
 )
 
-// palette is the window's theme, after Rex: a warm dark gray with cards a
-// step lighter, or the system's light theme, both with Larik's teal.
-func (a *App) palette(dark bool) *ui.Theme {
+// macOS's colours: the content's background and labels, the sidebar
+// where the window shows no material, the tab bar behind the tabs not
+// shown, and selected text.
+var (
+	contentLight, contentDark   = ui.Hex("#ffffff"), ui.Hex("#1e1e1e")
+	labelLight, labelDark       = ui.Hex("#262626"), ui.Hex("#dfdfdf")
+	sidebarLight, sidebarDark   = ui.Hex("#ebebeb"), ui.Hex("#2a2a2a")
+	tabsLight, tabsDark         = ui.Hex("#e6e6e6"), ui.Hex("#151515")
+	selectedLight, selectedDark = ui.Hex("#b3d7ff"), ui.Hex("#3f638b")
+)
+
+// palette is the window's theme: macOS's colours, on the system's theme,
+// which has the accent colour chosen in System Settings.
+func (a *App) palette(base *ui.Theme) *ui.Theme {
 	i := 0
-	if dark {
+	if base.Dark {
 		i = 1
 	}
-	if a.theme[i] != nil {
-		return a.theme[i]
+	if t := a.theme[i]; t != nil && t.Accent == base.Accent && t.FontSize == base.FontSize {
+		return t
 	}
-	var t ui.Theme
-	if dark {
-		t = *ui.DarkTheme()
-		t.Background = ui.Hex("#1f1b1a")
-		t.Surface = ui.Hex("#2b2624")
-		t.SurfaceHover = ui.Hex("#35302d")
-		t.SurfacePressed = ui.Hex("#3d3734")
-		t.Border = ui.RGBA(255, 255, 255, 0.09)
-		t.Text = ui.Hex("#ece6e2")
-		t.TextMuted = ui.Hex("#a39b96")
-		t.Accent = ui.Hex("#2dd4bf")
-		t.AccentHover = ui.Hex("#5eead4")
-		t.AccentPressed = ui.Hex("#14b8a6")
-		t.AccentText = ui.Hex("#0b1f1c")
-		t.Success = ui.Hex("#4ade80")
-		t.Warning = ui.Hex("#fbbf24")
-		t.Danger = ui.Hex("#f87171")
+	t := *base
+	if t.Dark {
+		t.Background = contentDark
+		t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#323232"), ui.Hex("#3b3b3b"), ui.Hex("#464646")
+		t.Border = ui.RGBA(255, 255, 255, 0.1)
+		t.Text, t.TextMuted = labelDark, ui.Hex("#8d8d8d")
+		t.Success, t.Warning, t.Danger = ui.Hex("#32d74b"), ui.Hex("#ff9f0a"), ui.Hex("#ff453a")
 	} else {
-		t = *ui.LightTheme()
-		t.Accent = ui.Hex("#0d9488")
-		t.AccentHover = ui.Hex("#0f766e")
-		t.AccentPressed = ui.Hex("#115e59")
+		t.Background = contentLight
+		t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#f2f2f2"), ui.Hex("#e8e8e8"), ui.Hex("#dddddd")
+		t.Border = ui.RGBA(0, 0, 0, 0.1)
+		t.Text, t.TextMuted = labelLight, ui.Hex("#808080")
+		t.Success, t.Warning, t.Danger = ui.Hex("#28cd41"), ui.Hex("#ff9500"), ui.Hex("#ff3b30")
 	}
-	t.Radius = 8
+	t.Radius = 6
 	a.theme[i] = &t
 	return &t
 }
 
-// terminalTheme is the terminals' colors: the card's background and text,
-// a teal cursor, and Visual Studio Code's palette.
+// sidebarColor is the sidebar's background where the window shows no
+// material: off macOS, or with Reduce Transparency.
+func sidebarColor(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return sidebarDark
+	}
+	return sidebarLight
+}
+
+// terminalTheme is the terminals' colors: the content's background and
+// text, macOS's selected text, and Visual Studio Code's palette.
 func (a *App) terminalTheme(dark bool) *terminal.Theme {
 	i := 0
 	if dark {
@@ -90,13 +102,12 @@ func (a *App) terminalTheme(dark bool) *terminal.Theme {
 		return a.termTh[i]
 	}
 	th := terminal.LightTheme()
+	th.Background, th.Foreground, th.Selection = contentLight, labelLight, selectedLight
 	if dark {
 		th = terminal.DarkTheme()
+		th.Background, th.Foreground, th.Selection = contentDark, labelDark, selectedDark
 	}
-	t := a.palette(dark)
-	th.Background, th.Foreground = t.Background, t.Text
-	th.Cursor = t.Accent
-	th.Selection = t.Accent.Alpha(0.3)
+	th.Cursor = th.Foreground.Alpha(0.7)
 	a.termTh[i] = th
 	return th
 }
@@ -117,31 +128,43 @@ func stateColor(t *ui.Theme, r status.Report) ui.Color {
 }
 
 func (a *App) view(c *ui.Context) {
-	t := a.palette(c.Theme().Dark)
+	t := a.palette(c.Theme())
 	a.shortcuts(c)
+	// As a macOS window draws it: the sidebar full height, in the
+	// window's material, and beside it the content, opaque, under a
+	// toolbar and the tabs.
 	vib := c.Vibrancy()
 	if vib {
 		c.Root().Background(ui.Transparent)
 	}
 	shell := ui.Themed(c, t).Fill()
 	if vib {
-		shell.Background(t.Background.Alpha(0.72))
+		shell.Background(ui.Transparent) // the material shows through the sidebar
 	}
 	shell.Children(func() {
-		a.titleBar(c, t)
+		content := func() {
+			ui.Column(c).Fill().Background(t.Background).Children(func() {
+				a.toolbar(c, t)
+				a.tabBar(c, t)
+				a.main(c, t)
+			})
+		}
 		if a.noSidebar {
-			ui.Column(c).Grow(1).PaddingStart(6).Children(func() { a.main(c, t) })
+			content()
 		} else {
-			ui.Split(c, &a.sidebarW, func() { a.sidebar(c, t) }, func() { a.main(c, t) }).Grow(1)
+			ui.Split(c, &a.sidebarW, func() { a.sidebar(c, t, vib) }, content).Grow(1)
 		}
 		a.confirmClose(c)
 		a.confirmLeave(c)
-		a.renameDialog(c, t)
 	})
 	a.saveState()
 	if title := a.windowTitle(); a.setTitle != nil && title != a.titled {
 		a.titled = title
 		a.setTitle(title)
+	}
+	if said := a.menuTabs(); a.setMenu != nil && said != a.menuSaid {
+		a.menuSaid = said
+		a.setMenu()
 	}
 }
 
@@ -161,49 +184,25 @@ func (a *App) confirmClose(c *ui.Context) {
 			}
 		}
 	}
+	if a.ask != nil {
+		if a.confirming && !a.asking {
+			a.asking = true
+			a.ask(title, msg, "Close", func(yes bool) {
+				a.asking = false
+				if yes {
+					a.closeNow()
+				} else {
+					a.cancelClose()
+				}
+			})
+		}
+		return
+	}
 	switch ui.AlertDialog(c.Key("confirm-close"), &a.confirming, title, msg, "Cancel", "Close") {
 	case 1:
 		a.closeNow()
 	case 0, ui.AlertDismissed:
 		a.cancelClose()
-	}
-}
-
-// renameDialog names a session: Enter or Rename names it, a blank name
-// gives it its first prompt back, and Escape leaves it as it was.
-func (a *App) renameDialog(c *ui.Context, t *ui.Theme) {
-	open := a.renaming != ""
-	if !open {
-		return
-	}
-	done := func(ok bool) {
-		if ok {
-			a.rename(a.renaming, a.newName)
-		}
-		a.renaming, a.newName = "", ""
-	}
-	ui.Modal(c.Key("rename"), &open, func() {
-		ui.Column(c).Width(380).Padding(18).Gap(10).Children(func() {
-			ui.Text(c, "Rename Session").Bold().FontSize(14)
-			ui.TextInput(c.Key("name"), &a.newName).Label("Session name").AutoFocus().
-				OnSubmit(func() { done(true) })
-			prompt := a.prompts[a.renaming]
-			if len(prompt) > 120 {
-				prompt = prompt[:120] + "…"
-			}
-			ui.Text(c, "Leave it empty for its first prompt: "+prompt).FontSize(11).TextColor(t.TextMuted)
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c.Key("cancel"), "Cancel").Clicked() {
-					done(false)
-				}
-				if ui.PrimaryButton(c.Key("ok"), "Rename").Clicked() {
-					done(true)
-				}
-			})
-		})
-	})
-	if !open && a.renaming != "" {
-		done(false) // dismissed
 	}
 }
 
@@ -222,14 +221,31 @@ func (a *App) confirmLeave(c *ui.Context) {
 			msg = fmt.Sprintf("“%s” is working. Leaving stops its turn; the session stays, and its tab opens again next time.", a.tabTitle(working[0]))
 		}
 	}
-	switch ui.AlertDialog(c.Key("confirm-leave"), &a.confirmingLeave, title, msg, "Cancel", yes) {
-	case 1:
+	leave := func(yes bool) {
+		if !yes {
+			a.quitting = false
+			return
+		}
 		a.leaving = true
 		if a.leave != nil {
 			a.leave(a.quitting)
 		}
+	}
+	if a.ask != nil {
+		if a.confirmingLeave && !a.asking {
+			a.asking = true
+			a.ask(title, msg, yes, func(ok bool) {
+				a.asking, a.confirmingLeave = false, false
+				leave(ok)
+			})
+		}
+		return
+	}
+	switch ui.AlertDialog(c.Key("confirm-leave"), &a.confirmingLeave, title, msg, "Cancel", yes) {
+	case 1:
+		leave(true)
 	case 0, ui.AlertDismissed:
-		a.quitting = false
+		leave(false)
 	}
 }
 
@@ -253,6 +269,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.splitRight()
 	case c.Shortcut(mod, ui.KeyO):
 		a.openFolder()
+	case c.Shortcut(mod, ui.KeyComma):
+		a.openSettings()
 	case c.Shortcut(mod|ui.Shift, ui.KeyG):
 		a.toggleChanges()
 	case c.Shortcut(mod, ui.KeyJ):
@@ -295,74 +313,178 @@ func (a *App) cycle(by int) {
 	a.activate(a.tabs[((i+by)%n+n)%n])
 }
 
-// titleBar is the top row: the host, a tab per open session, and a button
-// for a new one. It moves the window, as a title bar does.
-func (a *App) titleBar(c *ui.Context, t *ui.Theme) {
+// toolbarHeight is the height of macOS's unified toolbar, over the
+// sidebar and the content.
+const toolbarHeight = 52
+
+// toolbar is the content's title bar, as macOS draws a unified toolbar:
+// the focused session's title and where it is, and buttons to split,
+// show the changes, and start a session. It moves the window.
+func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 	bar := c.TitleBar()
-	ui.Row(c).Height(max(bar.Height, 46)).PaddingStart(bar.Left + 14).PaddingEnd(bar.Right + 10).Gap(10).DragWindow().Children(func() {
-		ui.Column(c).Gap(0).Children(func() {
-			ui.Text(c, "larik").Bold().FontSize(13)
-			ui.Text(c, a.host).FontSize(11).TextColor(t.TextMuted).SingleLine().MaxWidth(140)
-		})
-		tip := "Hide the sidebar (" + keyLabel(false, "B") + ")"
+	start := float32(16)
+	if a.noSidebar {
+		start = bar.Left + 10
+	}
+	ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(start).PaddingEnd(bar.Right+10).Gap(4).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).DragWindow().Children(func() {
 		if a.noSidebar {
-			tip = "Show the sidebar (" + keyLabel(false, "B") + ")"
+			a.sidebarButton(c, t)
+			ui.Box(c).Width(6)
 		}
-		a.iconButton(c, t, "sidebar", iconPanel, tip, false, func() { a.noSidebar = !a.noSidebar })
-		ui.Row(c).Gap(4).Padding(3).Radius(999).Background(t.Surface.Alpha(0.6)).Clip().Grow(1).Shrink(1).Children(func() {
-			// A copy: closing a tab from its pill or menu changes a.tabs.
-			for _, tb := range slices.Clone(a.tabs) {
-				a.tab(c, t, tb)
+		title, where := "Larik", a.host
+		f := a.focused()
+		if f != nil {
+			title, where = a.tabTitle(f), a.where(f)
+		}
+		head := ui.Column(c).Gap(1).Shrink(1).MinWidth(0).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				if f != nil {
+					statusDot(c, t, a.tabStatus(f))
+				}
+				ui.Text(c, title).Bold().FontSize(13).SingleLine().Shrink(1)
+			})
+			sub := ui.Text(c, where).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
+			if f != nil {
+				sub.Tooltip(tildePath(f.dir))
 			}
-		}).Hidden(len(a.tabs) == 0)
-		ui.Spacer(c).Hidden(len(a.tabs) > 0)
-		if b := ui.Button(c.Key("new"), "").Label("New session").Tooltip("New session in this project").Children(func() {
-			ui.Icon(c, iconPlus)
-		}); b.Clicked() {
-			a.newTab(a.currentDir(), "", "")
+		})
+		// The title is the focused tab's: its menu is the tab's, which with
+		// one tab has no tab bar to show it.
+		if f != nil {
+			head.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, f) })
+			if len(a.tabs) == 1 {
+				head.Label(title + " tab")
+			}
+		}
+		ui.Spacer(c)
+		if a.active != nil {
+			// A toggle, as the changes button is: pressed in while split.
+			tip, fn := "Split: a new session beside this one ("+keyLabel(false, "D")+"), or drop a session here", a.splitRight
+			if a.right != nil {
+				tip, fn = "Close the split (the tab stays open)", a.unsplit
+			}
+			split := a.iconButton(c, t, "split", iconSplit, tip, a.right != nil, fn)
+			if d, ok := ui.Drop[sessionDrag](split); ok {
+				a.dropSession(string(d), true)
+			}
+			if _, ok := ui.DragOver[sessionDrag](split); ok {
+				split.Background(t.Accent.Alpha(0.25))
+			}
+			a.iconButton(c, t, "changes", iconDiff, "Changes in this project ("+keyLabel(true, "G")+")", a.changes != nil, a.toggleChanges)
+		}
+		a.iconButton(c, t, "new", iconPlus, "New session", false, func() { a.newTab(a.currentDir(), "", "") }).Tooltip("New session (" + keyLabel(false, "T") + ")")
+	})
+}
+
+// where says where a tab's session is and what it's doing: its project
+// and folder, its status, and its model.
+func (a *App) where(tb *tab) string {
+	st := a.tabStatus(tb)
+	s, p, ok := a.find(tb.path)
+	where := filepath.Base(tb.dir)
+	if ok {
+		where = p.Name
+		if s.Subdir != "" {
+			where += "/" + s.Subdir
+		}
+	}
+	what := string(st.State)
+	if st.Msg != "" && (st.State == status.Blocked || st.State == status.Error) {
+		what = st.Msg
+	}
+	where += " — " + what
+	if ok && s.Model != "" {
+		where += " · " + s.Model
+	}
+	return where
+}
+
+// statusDot is a small dot in a status's colour.
+func statusDot(c *ui.Context, t *ui.Theme, st status.Report) {
+	ui.Box(c).Size(7, 7).Radius(4).Background(stateColor(t, st))
+}
+
+// sidebarButton shows or hides the sidebar, beside the window's buttons.
+func (a *App) sidebarButton(c *ui.Context, t *ui.Theme) {
+	tip := "Hide the sidebar (" + keyLabel(false, "B") + ")"
+	if a.noSidebar {
+		tip = "Show the sidebar (" + keyLabel(false, "B") + ")"
+	}
+	a.iconButton(c, t, "sidebar", iconPanel, tip, false, func() { a.noSidebar = !a.noSidebar })
+}
+
+// tabBar has a tab per open session once there are two, as Terminal and
+// Safari draw them: equally wide, the focused one in the content's
+// colour, the others a step darker.
+func (a *App) tabBar(c *ui.Context, t *ui.Theme) {
+	if len(a.tabs) < 2 {
+		return
+	}
+	bg := tabsLight
+	if t.Dark {
+		bg = tabsDark
+	}
+	ui.Row(c).Height(28).AlignItems(ui.Stretch).Background(bg).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		// A copy: closing a tab from its close button or menu changes
+		// a.tabs.
+		for i, tb := range slices.Clone(a.tabs) {
+			a.tab(c, t, tb, i > 0)
 		}
 	})
 }
 
-// tab is a session's pill in the title bar, with a stripe in its status
-// colour.
-func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab) {
+// tab is a session's tab, with a dot in its status colour and a close
+// button that shows over it.
+func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 	active := tb == a.focused()
 	shown := tb == a.active || tb == a.right
-	pill := ui.Row(c.Key(tb.id)).Label(a.tabTitle(tb)+" tab").Gap(8).Padding(5, 8, 5, 10).Radius(999).MinWidth(0).Shrink(1).MaxWidth(260).Cursor(ui.CursorPointer)
+	cell := ui.Row(c.Key(tb.id)).Label(a.tabTitle(tb)+" tab").Grow(1).Basis(0).MinWidth(0).Gap(6).Padding(0, 8).AlignItems(ui.Center)
+	if divider {
+		cell.BorderWidth(0, 0, 0, 1).BorderColor(t.Border)
+	}
+	hover := cell.Hovered()
 	switch {
 	case active:
-		pill.Background(t.Background).Border(1, t.Border)
-	case shown:
-		pill.Border(1, t.Border)
-	case pill.Hovered():
-		pill.Background(t.SurfaceHover)
+		cell.Background(t.Background)
+	case hover:
+		cell.Background(t.Text.Alpha(0.04))
 	}
 	closing := false
-	pill.Children(func() {
-		ui.Box(c).Size(3, 14).Radius(2).Background(stateColor(t, a.tabStatus(tb)))
-		label := ui.Text(c, a.tabTitle(tb)).FontSize(13).SingleLine().Shrink(1)
-		if !active {
-			label.TextColor(t.TextMuted)
-		}
-		if ui.Box(c.Key("close")).Padding(2).Radius(4).Label("Close tab").Children(func() {
+	cell.Children(func() {
+		x := ui.Box(c.Key("close")).Padding(2).Radius(4).Label("Close tab").Tooltip("Close tab").Children(func() {
 			ui.Icon(c, iconClose).FontSize(11).TextColor(t.TextMuted)
-		}).Clicked() {
+		})
+		if !hover {
+			x.Opacity(0)
+		}
+		if x.Hovered() {
+			x.Background(t.Text.Alpha(0.08))
+		}
+		if x.Clicked() {
 			closing = true
 			a.askClose([]*tab{tb}, nil)
 		}
+		ui.Spacer(c)
+		statusDot(c, t, a.tabStatus(tb))
+		label := ui.Text(c, a.tabTitle(tb)).FontSize(12).SingleLine().Shrink(1)
+		if !active && !shown {
+			label.TextColor(t.TextMuted)
+		}
+		ui.Spacer(c)
+		ui.Box(c).Width(19) // as wide as the close button, to center the title
 	})
-	if pill.Clicked() && !closing {
+	if cell.Clicked() && !closing {
 		a.activate(tb)
 	}
-	pill.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
+	cell.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
 	// A tab dragged onto another takes its place.
-	pill.Drag(tb)
-	if from, ok := ui.Drop[*tab](pill); ok {
+	cell.Drag(tb)
+	if from, ok := ui.Drop[*tab](cell); ok {
 		a.moveTab(from, tb)
 	}
-	if from, ok := ui.DragOver[*tab](pill); ok && from != tb {
-		pill.Border(1, t.Accent)
+	if from, ok := ui.DragOver[*tab](cell); ok && from != tb {
+		cell.Background(t.Accent.Alpha(0.15))
 	}
 }
 
@@ -400,13 +522,19 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 
 // sidebar lists every project's sessions, newest project first, and the
 // inbox: what needs you, failed, or finished since you looked.
-func (a *App) sidebar(c *ui.Context, t *ui.Theme) {
+func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 	// A folder dropped from the file manager starts a session there.
-	side := ui.Column(c).Fill().Padding(0, 6, 8, 8).Gap(6).Children(func() {
+	side := ui.Column(c).Fill().Padding(0, 8, 8, 8).Gap(6).Children(func() {
+		// The window's buttons sit over the top, which moves the window.
+		bar := c.TitleBar()
+		ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(bar.Left).AlignItems(ui.Center).DragWindow().Children(func() {
+			ui.Spacer(c)
+			a.sidebarButton(c, t)
+		})
 		// Up and Down choose a match, the first to start with, and Enter
 		// opens it; Escape clears the field, and then gives the keyboard
 		// back to the terminal.
-		search := ui.SearchField(c.Key("search"), &a.query).Placeholder("Search sessions").Label("Search sessions ("+keyLabel(false, "K")+")").Margin(0, 4).
+		search := ui.SearchField(c.Key("search"), &a.query).Placeholder("Search sessions").Label("Search sessions ("+keyLabel(false, "K")+")").
 			OnChange(func() { a.pick = 0 }).
 			OnSubmit(a.openPicked).
 			OnShortcut(0, ui.KeyDown, func() { a.movePick(1) }).
@@ -432,7 +560,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme) {
 			for _, p := range a.projects {
 				a.project(c, t, p)
 			}
-		}).Grow(1)
+		}).Grow(1).Background(ui.Transparent) // the rows on the sidebar's material, as macOS draws them
 		if sb.Changed() && selected != "" && (a.focused() == nil || a.focused().path != selected) {
 			a.selectSession(selected)
 		}
@@ -441,8 +569,11 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme) {
 		}
 		a.inbox(c, t)
 	})
-	if side.FileDragOver() {
-		side.Background(t.Accent.Alpha(0.12)).Radius(8)
+	switch {
+	case side.FileDragOver():
+		side.Background(t.Accent.Alpha(0.12))
+	case !vib:
+		side.Background(sidebarColor(t))
 	}
 	if files := side.DroppedFiles(); files != nil {
 		a.dropDirs(files)
@@ -569,6 +700,7 @@ const resultsShown = 50
 // results lists what the search finds, across every project, each with
 // its project.
 func (a *App) results(c *ui.Context, t *ui.Theme) {
+	a.searchConversations()
 	found := a.matches()
 	title := fmt.Sprintf("%d found", len(found))
 	if len(found) == 0 {
@@ -578,6 +710,9 @@ func (a *App) results(c *ui.Context, t *ui.Theme) {
 		for _, s := range found[:min(len(found), resultsShown)] {
 			_, p, _ := a.find(s.Path)
 			a.sessionItem(c, t, s, p.Name)
+			if said := a.saidIn(s.Path); said != "" {
+				ui.Text(c, said).FontSize(11).TextColor(t.TextMuted).MaxLines(2).Padding(0, 12, 4, 34)
+			}
 		}
 		if len(found) > resultsShown {
 			ui.Text(c, fmt.Sprintf("and %d more", len(found)-resultsShown)).FontSize(12).TextColor(t.TextMuted).Padding(4, 12, 4, 34)
@@ -607,6 +742,9 @@ func (a *App) movePick(by int) {
 // sessionItem is a session in the sidebar, with its status marker, the
 // project when it shows outside it, and a menu of what else to do.
 func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project string) ui.Element {
+	if a.renaming == s.Path {
+		return a.renameRow(c, t, s)
+	}
 	label := s.Title
 	if label == "" {
 		label = "Untitled session"
@@ -646,6 +784,28 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 		}
 	}).ContextMenu(func(m *ui.Menu) { a.sessionMenu(m, s) })
 	return item
+}
+
+// renameRow is a session's row while it's renamed in place, as Finder
+// renames: Enter, or clicking away, names it; Escape leaves it as it
+// was; a blank name gives it its first prompt back.
+func (a *App) renameRow(c *ui.Context, t *ui.Theme, s session.Indexed) ui.Element {
+	return ui.Row(c.Key("rename")).Gap(6).Padding(2, 4, 2, 10).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, iconChat).FontSize(14).TextColor(t.Accent)
+		field := ui.TextInput(c.Key("name"), &a.newName).Label("Session name").Placeholder(a.prompts[s.Path]).Grow(1).
+			OnSubmit(func() { a.endRename(true) }).
+			OnShortcut(0, ui.KeyEscape, func() { a.endRename(false) })
+		switch {
+		case a.focusRename:
+			// The whole name selected, to type over, as Finder starts.
+			field.Focus().SetTextSelection(0, utf8.RuneCountInString(a.newName))
+			a.focusRename, a.renameFocused = false, false
+		case field.Focused():
+			a.renameFocused = true
+		case a.renameFocused:
+			a.endRename(true) // the keyboard went elsewhere
+		}
+	})
 }
 
 // sessionMenu is what a session's context menu offers.
@@ -746,8 +906,8 @@ func (a *App) inbox(c *ui.Context, t *ui.Theme) {
 			}
 		}
 	}
-	ui.Row(c).Gap(6).Padding(8, 10).Radius(10).Background(t.Surface.Alpha(0.7)).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Inbox").Bold().FontSize(12)
+	ui.Row(c).Gap(6).Padding(8, 6, 0, 6).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+		ui.Text(c, "Inbox").Bold().FontSize(11).TextColor(t.TextMuted)
 		ui.Spacer(c)
 		if len(blocked)+len(failed)+len(done) == 0 {
 			ui.Text(c, "all clear").FontSize(12).TextColor(t.TextMuted)
@@ -794,10 +954,11 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 	if a.active == nil {
 		a.card(c, t, func() {
 			a.noticeBar(c, t)
-			empty := ui.Column(c).Fill().Center().Gap(10).Children(func() {
-				ui.Icon(c, iconSpark).FontSize(28).TextColor(t.TextMuted)
-				ui.Text(c, "Pick a session, or start a new one").FontSize(15)
-				if ui.PrimaryButton(c.Key("start"), "New session").Clicked() {
+			empty := ui.Column(c).Fill().Center().Gap(6).Children(func() {
+				ui.Text(c, "No Session Open").Bold().FontSize(17).TextColor(t.TextMuted)
+				ui.Text(c, "Pick a session, or start a new one").TextColor(t.TextMuted)
+				ui.Box(c).Height(6)
+				if ui.Button(c.Key("start"), "New session").Clicked() {
 					a.newTab(a.currentDir(), "", "")
 				}
 			})
@@ -833,10 +994,10 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 	}
 }
 
-// card is a pane's rounded frame, as Rex draws them.
+// card is a pane: flush with the window's edges and its neighbour, as
+// macOS's split views are.
 func (a *App) card(c *ui.Context, t *ui.Theme, fn func()) {
-	ui.Column(c).Fill().Margin(0, 10, 10, 4).Radius(12).Background(t.Background).Border(1, t.Border).Clip().
-		Shadow(0, 8, 30, 0, ui.RGBA(0, 0, 0, 0.18)).Children(fn)
+	ui.Column(c).Fill().Background(t.Background).Clip().Children(fn)
 }
 
 func (a *App) noticeBar(c *ui.Context, t *ui.Theme) {
@@ -927,45 +1088,21 @@ func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 	})
 }
 
-// header names the session and its project, as Rex's pane headers do,
-// with buttons to split, show the changes, and close.
+// header names each pane's session while the window is split, the
+// focused one's in bold, with a button to close the tab or the split. The
+// toolbar names the session otherwise.
 func (a *App) header(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
-	st := a.tabStatus(tb)
-	s, p, ok := a.find(tb.path)
-	ui.Row(c).Gap(8).Padding(9, 10, 9, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.Icon(c, iconTerm).FontSize(15).TextColor(stateColor(t, st))
-		ui.Text(c, a.tabTitle(tb)).Bold().SingleLine().Shrink(1)
-		ui.Text(c, "|").TextColor(t.TextMuted)
-		where := filepath.Base(tb.dir)
-		if ok {
-			where = p.Name
-			if s.Subdir != "" {
-				where += "/" + s.Subdir
-			}
+	if a.right == nil {
+		return
+	}
+	ui.Row(c).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(t.Text.Alpha(0.03)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		statusDot(c, t, a.tabStatus(tb))
+		title := ui.Text(c, a.tabTitle(tb)).FontSize(12).SingleLine().Shrink(1)
+		if tb == a.focused() {
+			title.Bold()
 		}
-		ui.Row(c).Gap(4).AlignItems(ui.Center).Tooltip(tb.dir).Shrink(1).Children(func() {
-			ui.Icon(c, iconFolder).FontSize(12).TextColor(t.TextMuted)
-			ui.Text(c, where).TextColor(t.TextMuted).SingleLine().Shrink(1)
-		})
+		ui.Text(c, a.where(tb)).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
 		ui.Spacer(c)
-		label := string(st.State)
-		if st.Msg != "" && (st.State == status.Blocked || st.State == status.Error) {
-			label = st.Msg
-		}
-		if ok && s.Model != "" {
-			label += " · " + s.Model
-		}
-		ui.Text(c, label).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
-		if !right {
-			split := a.iconButton(c, t, "split", iconSplit, "Split: a new session beside this one ("+keyLabel(false, "D")+"), or drop a session here", a.right != nil, a.splitRight)
-			if d, ok := ui.Drop[sessionDrag](split); ok {
-				a.dropSession(string(d), true)
-			}
-			if _, ok := ui.DragOver[sessionDrag](split); ok {
-				split.Background(t.Accent.Alpha(0.25))
-			}
-			a.iconButton(c, t, "changes", iconDiff, "Changes in this project ("+keyLabel(true, "G")+")", a.changes != nil, a.toggleChanges)
-		}
 		if right {
 			a.closeButton(c, t, "Close split (the tab stays open)", a.unsplit)
 		} else {
@@ -975,17 +1112,16 @@ func (a *App) header(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 }
 
 func (a *App) iconButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, tip string, on bool, fn func()) ui.Element {
-	b := ui.Box(c.Key(key)).Padding(4).Radius(6).Label(tip).Tooltip(tip).Cursor(ui.CursorPointer).Children(func() {
-		color := t.TextMuted
-		if on {
-			color = t.Accent
-		}
-		ui.Icon(c, icon).FontSize(13).TextColor(color)
+	// As macOS's toolbar buttons: borderless, a gray face while pressed
+	// in or hovered.
+	b := ui.Box(c.Key(key)).Padding(6).Radius(6).Label(tip).Tooltip(tip).Children(func() {
+		ui.Icon(c, icon).FontSize(15).TextColor(t.Text.Alpha(0.75))
 	})
-	if on {
-		b.Background(t.Accent.Alpha(0.12))
-	} else if b.Hovered() {
-		b.Background(t.SurfaceHover)
+	switch {
+	case on:
+		b.Background(t.Text.Alpha(0.1))
+	case b.Hovered():
+		b.Background(t.Text.Alpha(0.06))
 	}
 	if b.Clicked() {
 		fn()
@@ -994,11 +1130,11 @@ func (a *App) iconButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, t
 }
 
 func (a *App) closeButton(c *ui.Context, t *ui.Theme, label string, fn func()) {
-	b := ui.Box(c.Key("close")).Padding(4).Radius(6).Label(label).Tooltip(label).Cursor(ui.CursorPointer).Children(func() {
-		ui.Icon(c, iconClose).FontSize(13).TextColor(t.TextMuted)
+	b := ui.Box(c.Key("close")).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
+		ui.Icon(c, iconClose).FontSize(12).TextColor(t.TextMuted)
 	})
 	if b.Hovered() {
-		b.Background(t.SurfaceHover)
+		b.Background(t.Text.Alpha(0.06))
 	}
 	if b.Clicked() {
 		fn()

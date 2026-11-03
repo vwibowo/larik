@@ -148,7 +148,7 @@ func TestChangesPane(t *testing.T) {
 	if ch.files[0].diff != first {
 		t.Error("a file keeps its viewer across reads")
 	}
-	tt := ui.NewTester(func(c *ui.Context) { a.changesPane(c, a.palette(true), ch) }, 640, 800)
+	tt := ui.NewTester(func(c *ui.Context) { a.changesPane(c, a.palette(ui.DarkTheme()), ch) }, 640, 800)
 	tt.SetDark(true)
 	tt.Frame()
 	for _, want := range []string{"Changes", "4 files", "main.go", "+3", "−1", "docs/new file.md", "Not shown: binary"} {
@@ -393,8 +393,12 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 
 func TestSearchAndSessionMenu(t *testing.T) {
 	data, _ := fixture(t)
-	a, _ := serialApp(Options{DataDir: data})
+	a, mu := serialApp(Options{DataDir: data})
 	defer a.Close()
+	// The search for what was said reports back through the window's
+	// updates, which wait for the test.
+	mu.Lock()
+	defer mu.Unlock()
 	var copied string
 	a.copyText = func(s string) { copied = s }
 	a.setProjects(index(t, data))
@@ -839,6 +843,8 @@ func TestHideSessionsFromTheSidebar(t *testing.T) {
 	data, _ := fixture(t)
 	a, mu := serialApp(Options{DataDir: data})
 	defer a.Close()
+	mu.Lock() // the window's updates wait for the test
+	defer mu.Unlock()
 	a.setProjects(index(t, data))
 	a.restore()
 	tt := ui.NewTester(a.view, 1240, 800)
@@ -864,12 +870,9 @@ func TestHideSessionsFromTheSidebar(t *testing.T) {
 
 	// It stays hidden next launch.
 	a.saveState()
+	a.Close()
 	next, _ := serialApp(Options{DataDir: data})
 	defer next.Close()
-	waitFor(t, mu, "state saved", func() bool {
-		saved, _ := os.ReadFile(a.statePath())
-		return strings.Contains(string(saved), `"hidden":[`)
-	})
 	next.setProjects(index(t, data))
 	next.restore()
 	tt = ui.NewTester(next.view, 1240, 800)
@@ -1119,11 +1122,7 @@ func TestStateWritesLandInOrder(t *testing.T) {
 		a.saveState()
 	}
 	mu.Unlock()
-	waitFor(t, mu, "the last state written", func() bool {
-		saved, _ := os.ReadFile(a.statePath())
-		return strings.Contains(string(saved), `"split":69`)
-	})
-	time.Sleep(50 * time.Millisecond) // any older write still running
+	a.Close() // waits for every write
 	if saved, _ := os.ReadFile(a.statePath()); !strings.Contains(string(saved), `"split":69`) {
 		t.Fatalf("an older state landed last: %s", saved)
 	}
@@ -1485,7 +1484,7 @@ func TestDragSessionsOntoPanes(t *testing.T) {
 
 func TestPinSessions(t *testing.T) {
 	data, _ := fixture(t)
-	a, mu := serialApp(Options{DataDir: data})
+	a, _ := serialApp(Options{DataDir: data})
 	defer a.Close()
 	a.setProjects(index(t, data))
 	a.restore()
@@ -1537,10 +1536,7 @@ func TestPinSessions(t *testing.T) {
 
 	// Pinned next launch.
 	a.saveState()
-	waitFor(t, mu, "state saved", func() bool {
-		saved, _ := os.ReadFile(a.statePath())
-		return strings.Contains(string(saved), `"pinned":[`)
-	})
+	a.Close()
 	next, _ := serialApp(Options{DataDir: data})
 	defer next.Close()
 	next.setProjects(index(t, data))
@@ -1613,17 +1609,13 @@ func TestDragToPin(t *testing.T) {
 
 func TestRenameSessions(t *testing.T) {
 	data, _ := fixture(t)
-	a, mu := serialApp(Options{DataDir: data})
+	a, _ := serialApp(Options{DataDir: data})
 	defer a.Close()
 	a.setProjects(index(t, data))
 	a.restore()
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
 	const prompt = "Polish the landing copy"
-	mod := ui.Ctrl
-	if runtime.GOOS == "darwin" {
-		mod = ui.Super
-	}
 	rename := func(title, name string, key ui.Key) {
 		t.Helper()
 		if err := tt.RightClick(title); err != nil {
@@ -1633,16 +1625,20 @@ func TestRenameSessions(t *testing.T) {
 			t.Fatal(err, tt.Menu())
 		}
 		tt.Frame()
-		if !tt.HasText("Rename Session") || a.newName != title {
-			t.Fatalf("dialog: %q, field %q", tt.Texts(), a.newName)
-		}
-		snapshot(t, tt, "rename-dark.png")
-		tt.Key(mod, ui.KeyA)
-		tt.Type(name)
-		tt.Key(0, key)
 		tt.Frame()
-		if tt.HasText("Rename Session") {
-			t.Fatal("the dialog stays")
+		if !tt.Focused("Session name") || a.newName != title {
+			t.Fatalf("renaming in place: field focused %v, says %q", tt.Focused("Session name"), a.newName)
+		}
+		snapshot(t, tt, "rename.png")
+		tt.Type(name) // over the name, selected as the field opens
+		if key != 0 {
+			tt.Key(0, key)
+		} else if err := tt.Click("Search sessions (" + keyLabel(false, "K") + ")"); err != nil {
+			t.Fatal(err) // clicking away
+		}
+		tt.Frame()
+		if a.renaming != "" || tt.Focused("Session name") {
+			t.Fatal("still renaming")
 		}
 	}
 	rename(prompt, "  Landing   copy ", ui.KeyEnter)
@@ -1670,13 +1666,16 @@ func TestRenameSessions(t *testing.T) {
 	if !tt.HasText("Landing copy") {
 		t.Fatalf("after a new index and Escape: %q", tt.Texts())
 	}
+	// Clicking away keeps what was typed, as Finder does.
+	rename("Landing copy", "Landing page copy", 0)
+	if !tt.HasText("Landing page copy") {
+		t.Fatalf("after clicking away: %q", tt.Texts())
+	}
+	rename("Landing page copy", "Landing copy", ui.KeyEnter)
 
-	// Named next launch.
+	// Named next launch: quitting waits for the state to be written.
 	a.saveState()
-	waitFor(t, mu, "state saved", func() bool {
-		saved, _ := os.ReadFile(a.statePath())
-		return strings.Contains(string(saved), `"names":{`)
-	})
+	a.Close()
 	next, _ := serialApp(Options{DataDir: data})
 	defer next.Close()
 	next.setProjects(index(t, data))
@@ -1690,5 +1689,245 @@ func TestRenameSessions(t *testing.T) {
 	rename("Landing copy", "", ui.KeyEnter)
 	if !tt.HasText(prompt) || len(next.names) != 0 {
 		t.Fatalf("unnamed: %v, %q", next.names, tt.Texts())
+	}
+}
+
+// In the window, confirmations are the system's sheets, asked once each
+// and answered on the window's frame.
+func TestConfirmationsAskInSheets(t *testing.T) {
+	needTerminal(t)
+	data, _ := fixture(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data})
+	defer a.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	a.setProjects(index(t, data))
+	var site string
+	for i, p := range a.projects {
+		for j, s := range p.Sessions {
+			if s.Title == "Polish the landing copy" {
+				site = s.Path
+				a.projects[i].Sessions[j].Status = status.Report{State: status.Working}
+			}
+		}
+	}
+	a.selectSession(site)
+	type question struct {
+		title, yes string
+		then       func(bool)
+	}
+	var asked []question
+	a.ask = func(title, msg, yes string, then func(bool)) { asked = append(asked, question{title, yes, then}) }
+	left := ""
+	a.leave = func(quit bool) { left = map[bool]string{true: "quit", false: "closed"}[quit] }
+	tt := ui.NewTester(a.view, 1240, 800)
+
+	a.askClose([]*tab{a.active}, nil)
+	tt.Frame()
+	tt.Frame()
+	if len(asked) != 1 || asked[0].title != "Close “Polish the landing copy”?" || asked[0].yes != "Close" || tt.HasText("Cancel") {
+		t.Fatalf("asked %+v; drawn %q", asked, tt.Texts())
+	}
+	asked[0].then(false)
+	tt.Frame()
+	if len(a.tabs) != 1 || a.confirming {
+		t.Fatalf("cancelled: %d tabs, confirming %v", len(a.tabs), a.confirming)
+	}
+
+	// Quitting while it works.
+	a.quitting = true
+	if a.windowClosing() {
+		t.Fatal("the window closed with a tab working")
+	}
+	tt.Frame()
+	if len(asked) != 2 || asked[1].title != "Quit Larik?" || asked[1].yes != "Quit" {
+		t.Fatalf("asked %+v", asked)
+	}
+	asked[1].then(true)
+	if left != "quit" || !a.leaving || !a.windowClosing() {
+		t.Fatalf("quit: left %q, leaving %v", left, a.leaving)
+	}
+}
+
+// The window takes macOS's colours over the system's theme: the accent
+// chosen in System Settings, light or dark.
+func TestLooksLikeMacOS(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	a.setProjects(index(t, data))
+	a.selectStart()
+	a.splitRight()
+	purple := ui.Hex("#a550a7")
+	for _, dark := range []bool{false, true} {
+		tt := ui.NewTester(a.view, 1240, 800)
+		tt.SetDark(dark)
+		tt.SetPreferences(ui.Preferences{Accent: purple})
+		tt.Frame()
+		th := a.theme[map[bool]int{false: 0, true: 1}[dark]]
+		if th == nil || th.Accent != purple || th.Dark != dark {
+			t.Fatalf("dark %v: theme %+v", dark, th)
+		}
+		want := contentLight
+		if dark {
+			want = contentDark
+		}
+		if th.Background != want {
+			t.Errorf("dark %v: content %v", dark, th.Background)
+		}
+		snapshot(t, tt, map[bool]string{false: "look-light.png", true: "look-dark.png"}[dark])
+	}
+}
+
+func TestSplitButtonToggles(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	a.setProjects(index(t, data))
+	a.selectStart()
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if err := tt.Click("Split: a new session beside this one (" + keyLabel(false, "D") + "), or drop a session here"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.right == nil || len(a.tabs) != 2 {
+		t.Fatalf("split: %v, %d tabs", a.right, len(a.tabs))
+	}
+	if err := tt.Click("Close the split (the tab stays open)"); err != nil {
+		t.Fatal(err, tt.Texts())
+	}
+	tt.Frame()
+	if a.right != nil || len(a.tabs) != 2 {
+		t.Fatalf("unsplit: %v, %d tabs", a.right, len(a.tabs))
+	}
+}
+
+func TestWindowMenuListsTabs(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	a.setProjects(index(t, data))
+	sets := 0
+	a.setMenu = func() { sets++ }
+	var opened []string
+	a.openExternal = func(url string) { opened = append(opened, url) }
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if sets != 0 {
+		t.Fatalf("the menu bar set again with no tabs: %d", sets)
+	}
+	a.selectStart()
+	first := a.active
+	a.newTab(t.TempDir(), "", "")
+	tt.Frame()
+	if sets != 1 {
+		t.Fatalf("set %d times for two new tabs", sets)
+	}
+	group := func(title string) []command {
+		for _, g := range a.menuBar() {
+			if g.title == title {
+				return g.items
+			}
+		}
+		t.Fatalf("no %s menu", title)
+		return nil
+	}
+	win := group("Window")
+	tabs := win[len(win)-2:]
+	if tabs[0].label != a.tabTitle(first) || tabs[0].key != "Cmd+1" || tabs[0].checked ||
+		tabs[1].key != "Cmd+2" || !tabs[1].checked {
+		t.Fatalf("window menu's tabs: %+v", tabs)
+	}
+	tabs[0].run()
+	tt.Frame()
+	if a.active != first || sets != 2 {
+		t.Fatalf("choosing the first: showing %v, set %d times", a.active, sets)
+	}
+	tt.Frame()
+	if sets != 2 {
+		t.Fatalf("set again with nothing changed: %d", sets)
+	}
+	for _, cmd := range group("Help") {
+		cmd.run()
+	}
+	if !slices.Equal(opened, []string{helpURL, guideURL}) {
+		t.Fatalf("help opened %q", opened)
+	}
+}
+
+func TestSettingsOpenInATab(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	mu.Lock()
+	a.setProjects(index(t, data))
+	var settings command
+	for _, g := range a.menuBar() {
+		for _, cmd := range g.items {
+			if cmd.label == "Settings…" {
+				if g.role != mygo.RoleAppMenu || cmd.key != "Cmd+," {
+					t.Errorf("Settings… is in %q on %q", g.role, cmd.key)
+				}
+				settings = cmd
+			}
+		}
+	}
+	if settings.run == nil {
+		mu.Unlock()
+		t.Fatal("no Settings… in the menu bar")
+	}
+	settings.run()
+	tab := a.focused()
+	if tab == nil || len(a.tabs) != 1 {
+		mu.Unlock()
+		t.Fatalf("settings: %d tabs", len(a.tabs))
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	mu.Unlock()
+	frameUntil(t, mu, tt, "larik /config", func() bool {
+		text := tab.term.Text()
+		return strings.Contains(text, "args:/config tab:") && strings.Contains(text, filepath.Base(repo))
+	})
+
+	// The key opens another, off macOS too.
+	mod := ui.Ctrl | ui.Shift
+	if runtime.GOOS == "darwin" {
+		mod = ui.Super
+	}
+	mu.Lock()
+	tt.Key(mod, ui.KeyComma)
+	tt.Frame()
+	n := len(a.tabs)
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("the key opened %d tabs", n)
+	}
+}
+
+func TestAboutShowsTheVersion(t *testing.T) {
+	a, _ := serialApp(Options{Version: "9.9.9"})
+	defer a.Close()
+	var shown *mygo.AboutPanelOptions
+	a.about = func(o mygo.AboutPanelOptions) { shown = &o }
+	for _, g := range a.menuBar() {
+		for _, cmd := range g.items {
+			if cmd.label == "About Larik" && g.role == mygo.RoleAppMenu {
+				cmd.run()
+			}
+		}
+	}
+	if shown == nil || shown.ApplicationName != "Larik" || shown.ApplicationVersion != "9.9.9" {
+		t.Fatalf("about: %+v", shown)
 	}
 }
