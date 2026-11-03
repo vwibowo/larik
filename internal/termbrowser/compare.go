@@ -305,24 +305,17 @@ func compareSteady(before, after *image.RGBA, again ...*image.RGBA) (*image.RGBA
 			moves[r*cols+c] = slices.ContainsFunc(again, func(a *image.RGBA) bool { return tileDiffers(after, a, tile(c, r)) })
 		}
 	}
-	// A square beside one that moves can look still by chance, so if it
-	// changed, that is taken for the same movement.
-	nearMove := func(c, r int) bool {
-		for y := max(r-1, 0); y <= min(r+1, rows-1); y++ {
-			for x := max(c-1, 0); x <= min(c+1, cols-1); x++ {
-				if moves[y*cols+x] {
-					return true
-				}
-			}
-		}
-		return false
-	}
+	// The pictures catch a thing that moves at only a few points of its
+	// movement: a spinner's corner may sweep where none of them caught it.
+	// So a square that changed within the bounds of a group of moving
+	// squares, or beside one, is taken for the same movement.
+	near := moveBounds(moves, cols, rows)
 	for r := range rows {
 		for c := range cols {
 			tiles++
 			t := tile(c, r)
 			switch differs := tileDiffers(before, after, t); {
-			case moves[r*cols+c], differs && nearMove(c, r):
+			case moves[r*cols+c], differs && near[r*cols+c]:
 				moving++
 				draw.Draw(out, t.Add(right.Min), gray, image.Point{}, draw.Over)
 			case differs:
@@ -333,6 +326,41 @@ func compareSteady(before, after *image.RGBA, again ...*image.RGBA) (*image.RGBA
 	}
 	n := float64(max(tiles, 1))
 	return out, float64(changed) / n, float64(moving) / n
+}
+
+// moveBounds marks the squares within the bounds of each group of moving
+// squares that touch, and the squares around those bounds.
+func moveBounds(moves []bool, cols, rows int) []bool {
+	near := make([]bool, len(moves))
+	seen := make([]bool, len(moves))
+	for i, m := range moves {
+		if !m || seen[i] {
+			continue
+		}
+		seen[i] = true
+		box := image.Rect(i%cols, i/cols, i%cols+1, i/cols+1)
+		for group := []int{i}; len(group) > 0; {
+			j := group[len(group)-1]
+			group = group[:len(group)-1]
+			c, r := j%cols, j/cols
+			box = box.Union(image.Rect(c, r, c+1, r+1))
+			for y := max(r-1, 0); y <= min(r+1, rows-1); y++ {
+				for x := max(c-1, 0); x <= min(c+1, cols-1); x++ {
+					if k := y*cols + x; moves[k] && !seen[k] {
+						seen[k] = true
+						group = append(group, k)
+					}
+				}
+			}
+		}
+		box = box.Inset(-1).Intersect(image.Rect(0, 0, cols, rows))
+		for y := box.Min.Y; y < box.Max.Y; y++ {
+			for x := box.Min.X; x < box.Max.X; x++ {
+				near[y*cols+x] = true
+			}
+		}
+	}
+	return near
 }
 
 func tileDiffers(a, b *image.RGBA, r image.Rectangle) bool {

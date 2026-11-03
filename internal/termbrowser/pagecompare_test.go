@@ -158,4 +158,17 @@ func TestCompareSteady(t *testing.T) {
 	if share != 0.01 || moving != 0.01 {
 		t.Fatalf("share %v, moving %v", share, moving)
 	}
+
+	// A spinner caught in few places: its moving squares make an L, and
+	// before, its corner was inside the L's bounds, away from the L.
+	before, after, again = solid(), solid(), solid()
+	for i := range 6 {
+		after.Set(19, 19+i*8, color.Black) // down the tiles at column 2
+		after.Set(19+i*8, 59, color.Black) // and along those at row 7
+	}
+	before.Set(51, 27, color.Black)
+	_, share, moving = compareSteady(before, after, again)
+	if share != 0 || moving != 0.12 {
+		t.Fatalf("within a moving group's bounds: share %v, moving %v", share, moving)
+	}
 }
