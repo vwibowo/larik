@@ -85,7 +85,7 @@ const answerChecked = 2500 * time.Millisecond
 // answerChecked passes.
 type pending struct {
 	sent   time.Time // when
-	prompt time.Time // the status file's update of the prompt it answered
+	prompt time.Time // when the session reported the prompt it answered
 }
 
 // answerable returns the tab of a session waiting on a permission prompt
@@ -124,16 +124,16 @@ func (a *App) answerSession(path string, an answer) string {
 		a.refreshIndex()
 		return "The session isn't waiting for an answer."
 	}
-	if p, ok := a.answered[path]; ok && time.Since(p.sent) < answerChecked && !f.Updated.After(p.prompt) {
+	if p, ok := a.answered[path]; ok && time.Since(p.sent) < answerChecked && !f.Since().After(p.prompt) {
 		return "" // a second click on the way, to the same prompt
 	}
 	t.term.Send([]byte(an.key()))
 	sent := time.Now()
-	a.answered[path] = pending{sent: sent, prompt: f.Updated}
+	a.answered[path] = pending{sent: sent, prompt: f.Since()}
 	a.refreshIndex()
 	title := a.tabTitle(t)
 	go func() {
-		took, ok := a.answerTaken(path, f.Updated)
+		took, ok := a.answerTaken(path, f.Since())
 		if !ok {
 			return
 		}
@@ -157,7 +157,7 @@ func (a *App) answerTaken(path string, prompt time.Time) (took, ok bool) {
 	deadline := time.Now().Add(answerChecked)
 	for {
 		g, ok := status.Read(path)
-		if !ok || g.Updated.After(prompt) {
+		if !ok || g.Since().After(prompt) {
 			return true, true
 		}
 		if time.Now().After(deadline) {

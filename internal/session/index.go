@@ -33,6 +33,7 @@ type Indexed struct {
 	Running bool          // a process has the session open
 	Tab     string        // the larik desktop tab it runs in, while it runs
 	PID     int           // the process that has it open, while it runs
+	Usage   status.Usage  // what it runs on and has used, as last reported
 }
 
 // IndexOptions picks what Index includes.
@@ -98,7 +99,7 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 				s.Subdir = rel
 			}
 			if f, ok := status.Read(in.Path); ok {
-				s.Status, s.Running = f.Current(), f.Running()
+				s.Status, s.Running, s.Usage = f.Current(), f.Running(), f.Usage
 				if s.Running {
 					s.Tab, s.PID = f.Tab, f.PID
 				}

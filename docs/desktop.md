@@ -19,7 +19,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 11 | [Answering in place](#phase-11-answering-in-place) | Done |
 | 12 | [Worktrees](#phase-12-worktrees) | Done |
 | 13 | [Changes you can act on](#phase-13-changes-you-can-act-on) | Done |
-| 14 | [What's next](#phase-14-whats-next) | Planned |
+| 14 | [Cost and context](#phase-14-cost-and-context) | Done |
+| 15 | [What's next](#phase-15-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -285,7 +286,17 @@ The changes pane showed what an agent did; reviewing it still meant a terminal f
 - **Beside a split**: the changes no longer close the split. With both, the changes take the right third.
 - The git runs off the main thread, with `GIT_TERMINAL_PROMPT=0` so a push that wants a password fails rather than waiting, and the pane reads the repository again as soon as it's done.
 
-## Phase 14: What's next
+## Phase 14: Cost and context
+
+With several agents at work, what each costs and how full its context is meant switching to its tab and reading its footer. Now the window says.
+
+- **The status file** carries it: larik's TUI writes `usage` beside its status, the model and provider, the permission mode, the cost so far, and the tokens of the model's context window the conversation takes (see [state and persistence](state-and-persistence.md#status-files)). Only when it changes; and as it changes without the status changing, the file's `reported` time is the status's, which `wait` and answering go by.
+- **The toolbar** says it for the focused tab, after its project and status: `larik-hardness — working · gpt-6-luna · 42% context · $0.31 · auto`. A model without a price, as one paid for by subscription, shows no cost, and the default mode no mode.
+- **The sidebar**: each session's tooltip has the same line, and a running session whose context is 80% full shows how full beside its row, amber, then red from 95%, with a tooltip saying `/compact` in it frees room.
+- **For scripts**: `larik desktop list --json` gives each tab's `model`, `mode`, `cost_usd`, `context` (percent) and `tokens`, and `larik sessions --json` each session's `usage`.
+- Only the TUI writes it: a session run with `-p` or `serve` reports its status without it.
+
+## Phase 15: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
@@ -294,7 +305,6 @@ From a review against [Rex](https://www.superlogical.com/updates/public-testing-
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
 - **Hunks**: staging and discarding part of a file, a hunk or the lines chosen, in the changes pane.
 - **Splits** in both directions and more than two, resized by dragging, moved between by keys.
-- **Cost and context** in the status file, and on screen: cost, context used, model, permission mode.
 - **A command palette**, archiving and deleting sessions, names that `/resume` shows, and settings of the window's own (keys, theme, font).
 - **Sessions that outlive the window**, as Rex and herdr keep theirs: a background host the window attaches to, then remote windows on another Mac or over SSH.
 

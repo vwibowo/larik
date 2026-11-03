@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestTrackerFollowsRuns(t *testing.T) {
@@ -86,5 +87,32 @@ func TestStatusFromExitedProcess(t *testing.T) {
 	f.State = Error
 	if f.Current().State != Error {
 		t.Fatal("an error outlives its process")
+	}
+}
+
+func TestStatusUsage(t *testing.T) {
+	session := filepath.Join(t.TempDir(), "s.jsonl")
+	w := NewWriter(session, "tui")
+	u := Usage{Model: "m", Mode: "auto", CostUSD: 0.31, Tokens: 42_000, Window: 100_000}
+	w.SetUsage(u) // nothing to write it with yet
+	if _, ok := Read(session); ok {
+		t.Fatal("usage alone writes no file")
+	}
+	w.Set(Report{State: Done})
+	f, _ := Read(session)
+	if f.Usage != u || f.Usage.ContextPercent() != 42 {
+		t.Fatalf("usage: %+v", f.Usage)
+	}
+	// The usage moving on doesn't move the report's time.
+	reported := f.Since()
+	time.Sleep(2 * time.Millisecond)
+	u.CostUSD = 0.40
+	w.SetUsage(u)
+	g, _ := Read(session)
+	if g.Usage.CostUSD != 0.40 || !g.Since().Equal(reported) || !g.Updated.After(f.Updated) {
+		t.Fatalf("after the usage alone: %+v", g)
+	}
+	if (Usage{Tokens: 5}).ContextPercent() != -1 {
+		t.Fatal("no window, no percent")
 	}
 }

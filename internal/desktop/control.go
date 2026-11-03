@@ -77,10 +77,17 @@ type TabInfo struct {
 	Msg     string `json:"msg,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Ports   []int  `json:"ports,omitempty"`
-	Shown   bool   `json:"shown,omitempty"`   // in the main pane or the split
-	Focused bool   `json:"focused,omitempty"` // has the keyboard
-	Exited  bool   `json:"exited,omitempty"`
-	Code    int    `json:"code,omitempty"`
+	// What its session runs on and has used: Context is how full its
+	// context is, in percent, and CostUSD 0 for a model without a price.
+	Model   string  `json:"model,omitempty"`
+	Mode    string  `json:"mode,omitempty"`
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	Context *int    `json:"context,omitempty"`
+	Tokens  int     `json:"tokens,omitempty"`
+	Shown   bool    `json:"shown,omitempty"`   // in the main pane or the split
+	Focused bool    `json:"focused,omitempty"` // has the keyboard
+	Exited  bool    `json:"exited,omitempty"`
+	Code    int     `json:"code,omitempty"`
 }
 
 // control answers a request, off the main thread: wait waits there, and
@@ -318,7 +325,7 @@ func (a *App) wait(req Request) Response {
 			if f, ok := status.Read(path); ok {
 				cur := f.Current()
 				ended := cur.State == status.Done || cur.State == status.Error
-				if want[cur.State] && (!ended || f.Updated.After(start)) {
+				if want[cur.State] && (!ended || f.Since().After(start)) {
 					if info.ID == "" {
 						return Response{State: string(cur.State)}
 					}
@@ -377,7 +384,7 @@ func (a *App) controlAnswer(req Request) Response {
 	}
 	deadline := time.Now().Add(answerChecked)
 	for time.Now().Before(deadline) {
-		if f, ok := status.Read(info.Path); ok && f.Updated.After(before.Updated) {
+		if f, ok := status.Read(info.Path); ok && f.Since().After(before.Since()) {
 			cur := f.Current()
 			info.State, info.Wants, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
 			return Response{Tab: &info, State: string(cur.State)}
@@ -460,6 +467,11 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	if s, _, ok := a.find(t.path); ok {
 		info.Session = s.ID
 		info.Branch = a.git[s.Cwd].Branch
+		u := s.Usage
+		info.Model, info.Mode, info.CostUSD, info.Tokens = cmp.Or(u.Model, s.Model), u.Mode, u.CostUSD, u.Tokens
+		if pct := u.ContextPercent(); pct >= 0 {
+			info.Context = &pct
+		}
 	}
 	if info.Branch == "" {
 		info.Branch = a.git[t.dir].Branch

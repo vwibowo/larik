@@ -466,8 +466,8 @@ func (a *App) where(tb *tab) string {
 		what = st.Msg
 	}
 	where += " — " + what
-	if ok && s.Model != "" {
-		where += " · " + s.Model
+	if used := usageText(s); ok && used != "" {
+		where += " · " + used
 	}
 	return where
 }
@@ -864,6 +864,9 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 	if a.hidden[s.Path] {
 		tip += " (hidden)"
 	}
+	if used := usageText(s); used != "" {
+		tip += "\n" + used
+	}
 	item := ui.SidebarItem(c, s.Path, icon, label).Tooltip(tip)
 	if a.hidden[s.Path] {
 		item.Opacity(0.55)
@@ -877,7 +880,8 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 		if project != "" {
 			ui.Text(c, project).FontSize(11).TextColor(t.TextMuted).SingleLine().MaxWidth(90)
 		}
-		if !a.marker(c, t, s.Status, a.unread(s)) {
+		full := s.Running && contextMarker(c, t, s.Usage)
+		if !a.marker(c, t, s.Status, a.unread(s)) && !full {
 			ui.Text(c, age(time.Since(s.Modified))).FontSize(11).TextColor(t.TextMuted).SingleLine().Tooltip(s.Modified.Format("Mon 2 Jan 2006, 15:04"))
 		}
 	}).ContextMenu(func(m *ui.Menu) { a.sessionMenu(m, s) })

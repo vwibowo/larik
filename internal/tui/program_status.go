@@ -43,8 +43,9 @@ func (m *model) reportStatus() tea.Cmd {
 	return tea.Raw(osc.Status(r))
 }
 
-// writeStatusFile records r for other processes, following the TUI to
-// whichever session it has open.
+// writeStatusFile records r for other processes, with what the session
+// runs on and has used, following the TUI to whichever session it has
+// open.
 func (m *model) writeStatusFile(r status.Report) {
 	if path := m.agent.SessionPath(); path != m.statusPath {
 		m.statusFile.Release()
@@ -54,6 +55,20 @@ func (m *model) writeStatusFile(r status.Report) {
 		}
 	}
 	m.statusFile.Set(r)
+	m.statusFile.SetUsage(m.programUsage())
+}
+
+// programUsage is what the session runs on and has used, as the footer
+// and /cost show it.
+func (m *model) programUsage() status.Usage {
+	return status.Usage{
+		Model:    m.agent.Model(),
+		Provider: m.agent.ProviderName(),
+		Mode:     string(m.agent.Perms().Mode()),
+		CostUSD:  m.stats.CostUSD,
+		Tokens:   m.stats.ContextTokens,
+		Window:   m.stats.ContextWindow,
+	}
 }
 
 // clearStatus removes Larik's record from the terminal on the way out, so

@@ -66,3 +66,18 @@ func TestReportStatusSendsChangesOnly(t *testing.T) {
 		t.Fatal("program_status false must send nothing")
 	}
 }
+
+func TestStatusFileCarriesUsage(t *testing.T) {
+	m := testModel(t)
+	m.stats.CostUSD, m.stats.ContextTokens, m.stats.ContextWindow = 0.31, 42_000, 100_000
+	m.running = true
+	m.reportStatus()
+	f, ok := status.Read(m.agent.SessionPath())
+	if !ok {
+		t.Fatal("no status file")
+	}
+	u := f.Usage
+	if u.Model != "m" || u.Provider != "ollama" || u.Mode == "" || u.CostUSD != 0.31 || u.ContextPercent() != 42 {
+		t.Fatalf("usage: %+v", u)
+	}
+}

@@ -109,6 +109,7 @@ type jsonSession struct {
 	Modified time.Time     `json:"modified"`
 	Status   status.Report `json:"status"`
 	Running  bool          `json:"running"`
+	Usage    status.Usage  `json:"usage,omitzero"`
 }
 
 func jsonProjects(ps []session.Project) []jsonProject {
@@ -116,7 +117,7 @@ func jsonProjects(ps []session.Project) []jsonProject {
 	for _, p := range ps {
 		jp := jsonProject{Root: p.Root, Name: p.Name, Missing: p.Missing, Scratch: p.Scratch, Updated: p.Updated, Sessions: make([]jsonSession, 0, len(p.Sessions))}
 		for _, s := range p.Sessions {
-			jp.Sessions = append(jp.Sessions, jsonSession{ID: s.ID, Path: s.Path, Title: s.Title, Cwd: s.Cwd, Subdir: s.Subdir, ForkOf: s.ForkOf, Modified: s.Modified, Status: s.Status, Running: s.Running})
+			jp.Sessions = append(jp.Sessions, jsonSession{ID: s.ID, Path: s.Path, Title: s.Title, Cwd: s.Cwd, Subdir: s.Subdir, ForkOf: s.ForkOf, Modified: s.Modified, Status: s.Status, Running: s.Running, Usage: s.Usage})
 		}
 		out = append(out, jp)
 	}
