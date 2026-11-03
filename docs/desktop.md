@@ -15,7 +15,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 7 | [Inbox, notifications, keyboard, launcher](#phase-7-inbox-notifications-keyboard-launcher) | Done |
 | 8 | [Commands and sidebar details](#phase-8-commands-and-sidebar-details) | Done |
 | 9 | [Attention while the window is in front](#phase-9-attention-while-the-window-is-in-front) | Done |
-| 10 | [What's next](#phase-10-whats-next) | Planned |
+| 10 | [Terminal tabs](#phase-10-terminal-tabs) | Done |
+| 11 | [What's next](#phase-11-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -232,11 +233,23 @@ Alerts tell you only from another app: while you work in one tab, a session in a
 - **Notifications**: every alert is kept, whether or not the window was in front, with what `larik desktop notify` posted, up to the last 100. The bell in the toolbar counts those you haven't seen and opens their list, newest first: what each session did, when, a dot on those unread, and **Mark All Read**. Choosing one opens its session. One about the session you're looking at is read as it comes, and looking at a session reads all of its.
 - **The newest unread**: ⇧⌘U (Window › Latest Notification; Ctrl+Shift+U elsewhere) opens what the newest notification you haven't seen is about, the way ⌘J goes through what waits for you now.
 
-## Phase 10: What's next
+## Phase 10: Terminal tabs
+
+Rex and cmux are terminals first: a shell, lazygit or a dev server sits beside the agents. The window ran only larik; now a tab can run your shell, or a program through it.
+
+- **New Terminal** (⇧⌘N, File › New Terminal, right-clicking the toolbar's **+**, or the empty window's **New terminal**) opens your login shell (`$SHELL -l`) in the focused tab's directory. `larik desktop open --shell [dir]` does the same from a script, and `--run "lazygit"` runs a program there through your interactive shell (`$SHELL -ilc`), so your profile's PATH and aliases work. Like larik's tabs, a terminal tab closes when its program exits cleanly, and stays, with Restart, when it fails; it splits, drags, finds and reads (`larik desktop read`) as they do, and `list` says `"kind": "terminal"`.
+- **Terminals** in the sidebar, above Pinned, lists them, with a bell on one that rang while you looked elsewhere.
+- **What a program says**: a notification it posts (OSC 9, OSC 777, as `printf '\e]9;dev server ready\a'`) goes into the bell's list, rings the tab while you look elsewhere, and tells you from another app; so does its bell, as a ring. The terminal library hands over no other sequences, so a program's own OSC 7501 status isn't read yet.
+- **larik in a terminal**: the tab's id is in the shell's environment, so a larik started there writes it into its status file, and the tab shows that session's title and status, rings as larik's own tabs do, and goes back to being a terminal when larik quits.
+- **Remembered**: terminal tabs come back next launch in their place, as your shell in their folder. A program tab comes back as a shell too: running a dev server or a script again as the window opens isn't for the window to decide.
+- In `list` and `read`, what a blocked session waits for is now `wants` (it was `kind`, which now says what the tab is).
+
+## Phase 11: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
-- **Shell and program tabs**: a tab running your shell, lazygit or another agent, with OSC 7501 and OSC 9/99/777 read from any program, so the sidebar shows their state too, as Rex does.
+- **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
+- **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **Answering in place**: Allow, Deny and Open for a session waiting on a permission, from the sidebar, the inbox or the notification, and a rendered plan to review.
 - **Worktrees**: a new session in a new worktree and branch, and merging or removing it when done.
 - **Changes you can act on**: stage, discard and commit per file and hunk, compare with the base branch, open a PR, and the changes beside a split.

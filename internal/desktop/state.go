@@ -9,13 +9,15 @@ import (
 // savedState is what the window remembers across launches: the sessions
 // open as tabs, in order, how the panes showed them, and the sidebar.
 type savedState struct {
-	Tabs   []string `json:"tabs"`              // transcript paths
-	Active int      `json:"active"`            // index into Tabs, -1 for none
-	Right  int      `json:"right"`             // the split's tab, -1 for none
-	SplitP float32  `json:"split,omitempty"`   // the main pane's share, in percent
-	Width  float32  `json:"sidebar,omitempty"` // the sidebar's width
-	Hidden bool     `json:"no_sidebar,omitempty"`
-	Font   float32  `json:"font_size,omitempty"` // the terminals' text size
+	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal tab
+	// Terminals are the terminal tabs, by their index in Tabs.
+	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
+	Active    int                   `json:"active"`            // index into Tabs, -1 for none
+	Right     int                   `json:"right"`             // the split's tab, -1 for none
+	SplitP    float32               `json:"split,omitempty"`   // the main pane's share, in percent
+	Width     float32               `json:"sidebar,omitempty"` // the sidebar's width
+	Hidden    bool                  `json:"no_sidebar,omitempty"`
+	Font      float32               `json:"font_size,omitempty"` // the terminals' text size
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -24,6 +26,15 @@ type savedState struct {
 	Pinned []string `json:"pinned,omitempty"`
 	// Names are the names given to sessions, by transcript path.
 	Names map[string]string `json:"names,omitempty"`
+}
+
+// savedTerminal is a terminal tab as the window remembers it: where it
+// ran, and what. It comes back as a shell there: running a program again
+// as the window opens, as a dev server or a script, isn't for the window
+// to decide.
+type savedTerminal struct {
+	Dir string `json:"dir"`
+	Run string `json:"run,omitempty"`
 }
 
 func (a *App) statePath() string {
@@ -56,7 +67,15 @@ func (a *App) state() savedState {
 		}
 	}
 	for _, t := range a.tabs {
-		if t.path == "" {
+		path := t.path
+		switch {
+		case t.shell() && !t.exited:
+			if st.Terminals == nil {
+				st.Terminals = map[int]savedTerminal{}
+			}
+			st.Terminals[len(st.Tabs)] = savedTerminal{Dir: t.dir, Run: t.run}
+			path = ""
+		case path == "":
 			continue
 		}
 		if t == a.active {
@@ -65,7 +84,7 @@ func (a *App) state() savedState {
 		if t == a.right {
 			st.Right = len(st.Tabs)
 		}
-		st.Tabs = append(st.Tabs, t.path)
+		st.Tabs = append(st.Tabs, path)
 	}
 	return st
 }
@@ -150,6 +169,12 @@ func (a *App) restore() bool {
 	}
 	opened := map[int]*tab{}
 	for i, path := range st.Tabs {
+		if term, ok := st.Terminals[i]; ok {
+			if t := a.startShell(term.Dir, ""); t != nil {
+				opened[i] = t
+			}
+			continue
+		}
 		s, _, ok := a.find(path)
 		if !ok || s.Running {
 			continue

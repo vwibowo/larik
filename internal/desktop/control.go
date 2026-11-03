@@ -30,6 +30,10 @@ type Request struct {
 	Cwd     string `json:"cwd,omitempty"`    // where open starts a new session
 	Prompt  string `json:"prompt,omitempty"` // what open's session starts with
 	Split   bool   `json:"split,omitempty"`  // open beside the main pane
+	// Shell opens a terminal tab in Cwd, running Run through your shell,
+	// or the shell itself when Run is empty.
+	Shell bool   `json:"shell,omitempty"`
+	Run   string `json:"run,omitempty"`
 	// Background opens a tab without showing it, leaving the panes as
 	// they are.
 	Background bool   `json:"background,omitempty"`
@@ -57,12 +61,14 @@ type Response struct {
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
 	ID      string `json:"id"`
+	Kind    string `json:"kind"`              // larik, or terminal
+	Run     string `json:"run,omitempty"`     // a terminal tab's program
 	Session string `json:"session,omitempty"` // its session's id, once it has one
 	Path    string `json:"path,omitempty"`    // its session's transcript
 	Dir     string `json:"dir"`
 	Title   string `json:"title"`
 	State   string `json:"state"`
-	Kind    string `json:"kind,omitempty"`
+	Wants   string `json:"wants,omitempty"` // what a blocked session waits for
 	Msg     string `json:"msg,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Ports   []int  `json:"ports,omitempty"`
@@ -194,6 +200,11 @@ func (a *App) controlOpen(req Request) Response {
 				t.term.Send([]byte(req.Prompt + "\r"))
 			}
 		}
+	case req.Shell || req.Run != "":
+		if req.Cwd == "" {
+			return Response{Error: "open needs a directory for the terminal"}
+		}
+		t = a.startShell(req.Cwd, req.Run)
 	case req.Cwd != "":
 		var flags []string
 		if req.Prompt != "" {
@@ -289,7 +300,7 @@ func (a *App) wait(req Request) Response {
 					if info.ID == "" {
 						return Response{State: string(cur.State)}
 					}
-					info.State, info.Kind, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
+					info.State, info.Wants, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
 					return Response{Tab: &info, State: string(cur.State)}
 				}
 			}
@@ -363,11 +374,15 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	st := a.tabStatus(t)
 	info := TabInfo{
 		ID: t.id, Path: t.path, Dir: t.dir, Title: a.tabTitle(t),
-		State: string(st.State), Kind: string(st.Kind), Msg: st.Msg,
+		Kind: "larik", Run: t.run,
+		State: string(st.State), Wants: string(st.Kind), Msg: st.Msg,
 		Ports:   a.ports[t.path],
 		Shown:   t == a.active || t == a.right,
 		Focused: t == a.focused() && slices.Contains(a.tabs, t),
 		Exited:  t.exited, Code: t.code,
+	}
+	if t.shell() {
+		info.Kind = "terminal"
 	}
 	if s, _, ok := a.find(t.path); ok {
 		info.Session = s.ID

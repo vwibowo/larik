@@ -164,20 +164,31 @@ type App struct {
 	// the window forward (see Run).
 	post  func(title, body string)
 	raise func()
+	// ping tells you, from another app, what a program in a terminal tab
+	// posted (see Run).
+	ping func(tab, title, body string)
 	// setTitle sets the window's title, titled as last set (see Run).
 	setTitle func(title string)
 	titled   string
 }
 
-// tab is a terminal running larik in a session's directory.
+// tab is a terminal running larik in a session's directory, or, for a
+// terminal tab, your shell or a program (see shell.go).
 type tab struct {
 	id     string // in the process's environment as status.TabEnv
 	term   *terminal.Terminal
 	dir    string
 	path   string // the session it has open, once it has one
-	title  string // what larik set as the terminal's title
+	title  string // what larik, or the shell, set as the terminal's title
 	exited bool
 	code   int
+	// cmd is what a terminal tab runs, nil for larik's tabs; run is the
+	// command it was given, "" for the shell; and alerted is when its
+	// program last rang or posted a notification while you looked
+	// elsewhere.
+	cmd     []string
+	run     string
+	alerted time.Time
 
 	// The find bar: open, what it looks for, how the search goes, and
 	// whether its field takes the keyboard next frame.
@@ -296,6 +307,9 @@ func (a *App) setProjects(ps []session.Project) {
 	// A tab follows its larik to whichever session it has open: the one
 	// a new tab started, or one it switched to.
 	for _, t := range a.tabs {
+		if t.shell() {
+			t.path = "" // a larik in it has a session only while it runs
+		}
 		var newest time.Time
 		for _, p := range ps {
 			for _, s := range p.Sessions {
@@ -311,7 +325,7 @@ func (a *App) setProjects(ps []session.Project) {
 		}
 	}
 	if f := a.focused(); f != nil {
-		a.look(f.path)
+		a.lookTab(f)
 	}
 	a.attend(ps)
 }
@@ -788,6 +802,9 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		args = append(args, "--resume", id)
 	}
 	args = append(args, flags...)
+	if t.shell() {
+		args = t.cmd
+	}
 	// The terminal's own end, not one a restart replaced.
 	var term *terminal.Terminal
 	term, err := terminal.New(terminal.Options{
@@ -807,7 +824,9 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 				}
 			})
 		},
-		OnZoom: func(z terminal.Zoom) bool { a.zoom(z); return true },
+		OnZoom:   func(z terminal.Zoom) bool { a.zoom(z); return true },
+		OnBell:   func() { a.update(func() { a.rang(t) }) },
+		OnNotify: func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
 		OnSearch: func(st terminal.SearchStatus) {
 			t.search = st
 			if a.redraw != nil {
@@ -927,7 +946,7 @@ func (a *App) activate(t *tab) {
 	if t.path != "" {
 		a.seen[t.path] = time.Now()
 	}
-	a.look(t.path)
+	a.lookTab(t)
 }
 
 // closeTab closes t, ending its larik; the session stays on disk.
@@ -1084,6 +1103,12 @@ func (a *App) tabTitle(t *tab) string {
 	}
 	if t.title != "" {
 		return t.title
+	}
+	switch {
+	case t.run != "":
+		return t.run
+	case t.shell():
+		return "Terminal"
 	}
 	return "New session"
 }

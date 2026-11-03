@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/egoist/mygo"
@@ -87,6 +88,7 @@ func Run(opts Options) error {
 		a.about = mygo.App.ShowAboutPanel
 		a.alert = func(s session.Indexed) { notify(win, s) }
 		a.post = func(title, body string) { post(win, title, body) }
+		a.ping = func(id, title, body string) { notifyText(win, "larik-tab-"+id, title, body, "") }
 		a.raise = func() { raise(win) }
 		a.ask = func(title, msg, yes string, then func(bool)) {
 			// The sheet waits for the user; the window keeps drawing.
@@ -154,6 +156,9 @@ func Run(opts Options) error {
 						}
 					}
 				}
+				if t := a.tabByID(strings.TrimPrefix(id, "larik-tab-")); t != nil {
+					a.activate(t)
+				}
 			})
 			win.Focus()
 		})
@@ -215,11 +220,20 @@ func notify(win *mygo.Window, s session.Indexed) {
 		return
 	}
 	title, body := alertText(s)
+	notifyText(win, "larik-"+s.ID, title, body, s.Cwd)
+}
+
+// notifyText posts a notification with id, while the window isn't
+// focused, and bounces the Dock icon.
+func notifyText(win *mygo.Window, id, title, body, group string) {
+	if win.IsFocused() {
+		return
+	}
 	if runtime.GOOS == "darwin" {
 		mygo.App.Dock.Bounce(false)
 	}
 	if mygo.NotificationsSupported() {
-		n := mygo.NewNotification(mygo.NotificationOptions{ID: "larik-" + s.ID, Title: title, Body: body, Group: s.Cwd})
+		n := mygo.NewNotification(mygo.NotificationOptions{ID: id, Title: title, Body: body, Group: group})
 		go func() { _ = n.Show() }()
 	}
 }

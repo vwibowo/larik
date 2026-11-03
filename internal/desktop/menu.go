@@ -58,6 +58,7 @@ func (a *App) menuBar() []menuGroup {
 		{title: "File", items: []command{
 			{label: "New Session", key: "Cmd+T", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Split", key: "Cmd+D", run: a.splitRight},
+			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
 			{},
 			{label: "Close Tab", key: "Cmd+W", run: func() {

@@ -1,0 +1,151 @@
+package desktop
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+)
+
+// Terminal tabs run your shell, or a program such as lazygit or a dev
+// server, beside the sessions, as Rex and cmux keep them: the window is
+// a terminal, and not only larik's. A program in one shows what it
+// posts as a notification (OSC 9, OSC 777) and rings its bell on its
+// tab, and a larik started in one shows its session's status there, as
+// the tab's id is in its environment. The terminal library hands over
+// no other sequences, so a program's own OSC 7501 status isn't read.
+
+// shellCommand is what a terminal tab runs: your login shell, or run
+// through it, as an interactive shell reads your profile and its PATH.
+func shellCommand(run string) []string {
+	if runtime.GOOS == "windows" {
+		sh := os.Getenv("COMSPEC")
+		if sh == "" {
+			sh = "cmd.exe"
+		}
+		if run == "" {
+			return []string{sh}
+		}
+		return []string{sh, "/c", run}
+	}
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		sh = "/bin/sh"
+	}
+	if run == "" {
+		return []string{sh, "-l"}
+	}
+	return []string{sh, "-ilc", run}
+}
+
+// startShell starts a terminal tab in dir, running run through the
+// shell, or the shell itself for "", and adds it.
+func (a *App) startShell(dir, run string) *tab {
+	a.notice = ""
+	if _, err := os.Stat(dir); err != nil {
+		a.notice = "Can't open a terminal in " + dir + ": " + err.Error()
+		return nil
+	}
+	t := &tab{id: newTabID(), dir: dir, run: run, cmd: shellCommand(run)}
+	if !a.run(t, "") {
+		return nil
+	}
+	a.tabs = append(a.tabs, t)
+	return t
+}
+
+// openShell opens a terminal tab in the focused tab's directory.
+func (a *App) openShell() {
+	if t := a.startShell(a.currentDir(), ""); t != nil {
+		a.activate(t)
+	}
+}
+
+// shell reports whether t is a terminal tab rather than larik's.
+func (t *tab) shell() bool { return t.cmd != nil }
+
+// programNotify keeps what a program in a terminal tab posted (OSC 9,
+// OSC 777) as a notification, rings the tab while you look elsewhere,
+// and tells you from another app. larik's own tabs say what their
+// sessions do through their status files instead.
+func (a *App) programNotify(t *tab, title, body string) {
+	if !t.shell() || t.path != "" || !slices.Contains(a.tabs, t) {
+		return
+	}
+	if title == "" {
+		title = a.tabTitle(t)
+	}
+	a.record(event{tab: t.id, title: title, body: body})
+	if t != a.focused() {
+		t.alerted = time.Now()
+	}
+	if a.ping != nil {
+		a.ping(t.id, title, body)
+	}
+}
+
+// rang rings a terminal tab you aren't looking at.
+func (a *App) rang(t *tab) {
+	if t.shell() && t != a.focused() {
+		t.alerted = time.Now()
+	}
+}
+
+// tabByID is the open tab with id.
+func (a *App) tabByID(id string) *tab {
+	for _, t := range a.tabs {
+		if id != "" && t.id == id {
+			return t
+		}
+	}
+	return nil
+}
+
+// tabKey names a terminal tab in the sidebar, where sessions go by
+// their transcripts.
+func tabKey(t *tab) string { return "tab:" + t.id }
+
+// terminals lists the terminal tabs above the projects.
+func (a *App) terminals(c *ui.Context, t *ui.Theme) {
+	var shells []*tab
+	for _, tb := range a.tabs {
+		if tb.shell() {
+			shells = append(shells, tb)
+		}
+	}
+	if len(shells) == 0 {
+		return
+	}
+	ui.SidebarSection(c.Key("terminals"), "Terminals", nil, func() {
+		for _, tb := range shells {
+			tip := tildePath(tb.dir)
+			if tb.run != "" {
+				tip += "\n" + tb.run
+			}
+			ui.SidebarItem(c, tabKey(tb), iconTerm, a.tabTitle(tb)).Tooltip(tip).Children(func() {
+				switch {
+				case a.needsLook(tb) && tb.path == "":
+					ui.Icon(c, iconBell).FontSize(13).TextColor(t.Accent).Label("Needs a look")
+				case !a.marker(c, t, a.tabStatus(tb), false):
+					ui.Text(c, filepath.Base(tb.dir)).FontSize(11).TextColor(t.TextMuted).SingleLine().MaxWidth(90)
+				}
+			}).ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
+		}
+	})
+}
+
+// selectKey shows what the sidebar's key names: a terminal tab, or a
+// session.
+func (a *App) selectKey(key string) {
+	if id, ok := strings.CutPrefix(key, "tab:"); ok {
+		if t := a.tabByID(id); t != nil {
+			a.activate(t)
+		}
+		return
+	}
+	a.selectSession(key)
+}

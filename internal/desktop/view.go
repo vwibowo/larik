@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -278,6 +279,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.nextWaiting()
 	case c.Shortcut(mod|ui.Shift, ui.KeyU):
 		a.latestUnread()
+	case c.Shortcut(mod|ui.Shift, ui.KeyN):
+		a.openShell()
 	case c.Shortcut(mod, ui.KeyK):
 		a.focusSearch, a.noSidebar = true, false
 	case c.Shortcut(mod, ui.KeyF):
@@ -377,7 +380,16 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 			a.iconButton(c, t, "changes", iconDiff, "Changes in this project ("+keyLabel(true, "G")+")", a.changes != nil, a.toggleChanges)
 		}
 		a.bell(c, t)
-		a.iconButton(c, t, "new", iconPlus, "New session", false, func() { a.newTab(a.currentDir(), "", "") }).Tooltip("New session (" + keyLabel(false, "T") + ")")
+		a.iconButton(c, t, "new", iconPlus, "New session", false, func() { a.newTab(a.currentDir(), "", "") }).
+			Tooltip("New session (" + keyLabel(false, "T") + "), or right-click for a terminal").
+			ContextMenu(func(m *ui.Menu) {
+				if m.Item("New Session").Chosen() {
+					a.newTab(a.currentDir(), "", "")
+				}
+				if m.Item("New Terminal").Chosen() {
+					a.openShell()
+				}
+			})
 	})
 }
 
@@ -387,6 +399,13 @@ func (a *App) where(tb *tab) string {
 	st := a.tabStatus(tb)
 	s, p, ok := a.find(tb.path)
 	where := filepath.Base(tb.dir)
+	if tb.shell() && !ok {
+		what := cmp.Or(tb.run, "shell")
+		if tb.exited {
+			what = st.Msg
+		}
+		return where + " — " + what
+	}
 	if ok {
 		where = p.Name
 		if s.Subdir != "" {
@@ -491,7 +510,7 @@ func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 		cell.Background(t.Accent.Alpha(0.15))
 	} else if a.needsLook(tb) {
 		// Its session needs you, or finished, while you look elsewhere.
-		color := stateColor(t, a.tabStatus(tb))
+		color := a.ringColor(t, tb)
 		cell.Border(2, color).Background(color.Alpha(0.1))
 	}
 }
@@ -555,6 +574,9 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		selected := ""
 		if f := a.focused(); f != nil {
 			selected = f.path
+			if f.shell() && f.path == "" {
+				selected = tabKey(f)
+			}
 		}
 		if found := a.matches(); strings.TrimSpace(a.query) != "" && len(found) > 0 {
 			selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
@@ -564,13 +586,14 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				a.results(c, t)
 				return
 			}
+			a.terminals(c, t)
 			a.pinnedSection(c, t)
 			for _, p := range a.projects {
 				a.project(c, t, p)
 			}
 		}).Grow(1).Background(ui.Transparent) // the rows on the sidebar's material, as macOS draws them
-		if sb.Changed() && selected != "" && (a.focused() == nil || a.focused().path != selected) {
-			a.selectSession(selected)
+		if f := a.focused(); sb.Changed() && selected != "" && (f == nil || f.path != selected && tabKey(f) != selected) {
+			a.selectKey(selected)
 		}
 		if len(a.projects) == 0 {
 			ui.Text(c, "No sessions yet. Run larik in a project, open a folder ("+keyLabel(false, "O")+"), or drop one here.").TextColor(t.TextMuted).Padding(12)
@@ -1005,9 +1028,14 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 				ui.Text(c, "No Session Open").Bold().FontSize(17).TextColor(t.TextMuted)
 				ui.Text(c, "Pick a session, or start a new one").TextColor(t.TextMuted)
 				ui.Box(c).Height(6)
-				if ui.Button(c.Key("start"), "New session").Clicked() {
-					a.newTab(a.currentDir(), "", "")
-				}
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c.Key("start"), "New session").Clicked() {
+						a.newTab(a.currentDir(), "", "")
+					}
+					if ui.Button(c.Key("shell"), "New terminal").Clicked() {
+						a.openShell()
+					}
+				})
 			})
 			if d, ok := ui.Drop[sessionDrag](empty); ok {
 				a.dropSession(string(d), false)
@@ -1074,7 +1102,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 	if _, ok := ui.DragOver[sessionDrag](body); ok {
 		body.Border(2, t.Accent)
 	} else if a.needsLook(tb) {
-		body.Border(2, stateColor(t, a.tabStatus(tb)))
+		body.Border(2, a.ringColor(t, tb))
 	}
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
 	// the focused one.

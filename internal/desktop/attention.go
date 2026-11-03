@@ -24,6 +24,7 @@ import (
 type event struct {
 	at    time.Time
 	path  string // the session's transcript, or "" for a posted one
+	tab   string // the terminal tab whose program posted it, if one did
 	title string
 	body  string
 	state status.State // what the session did, or "" for a posted one
@@ -39,7 +40,7 @@ func (a *App) record(e event) {
 	if e.at.IsZero() {
 		e.at = time.Now()
 	}
-	if f := a.focused(); f != nil && e.path != "" && f.path == e.path {
+	if f := a.focused(); f != nil && (e.path != "" && f.path == e.path || e.tab != "" && f.id == e.tab) {
 		e.read = true
 	}
 	a.events = append(a.events, e)
@@ -71,6 +72,21 @@ func alertText(s session.Indexed) (title, body string) {
 	return title, "Finished"
 }
 
+// lookTab says you looked at t just now: at its session, and, for a
+// terminal tab, at what its program posted.
+func (a *App) lookTab(t *tab) {
+	a.look(t.path)
+	if !t.shell() {
+		return
+	}
+	a.looked[tabKey(t)] = time.Now()
+	for i := range a.events {
+		if a.events[i].tab == t.id {
+			a.events[i].read = true
+		}
+	}
+}
+
 // look says you looked at the session at path just now: its tab's ring
 // goes, and its notifications are read.
 func (a *App) look(path string) {
@@ -94,7 +110,12 @@ func (a *App) needsLook(tb *tab) bool {
 	}
 	s, _, ok := a.find(tb.path)
 	if !ok {
-		return false
+		// A terminal tab's program rang or posted since you looked.
+		looked := a.looked[tabKey(tb)]
+		if looked.Before(a.started) {
+			looked = a.started
+		}
+		return tb.shell() && tb.alerted.After(looked)
 	}
 	switch s.Status.State {
 	case status.Blocked:
@@ -107,6 +128,17 @@ func (a *App) needsLook(tb *tab) bool {
 		return s.Modified.After(looked)
 	}
 	return false
+}
+
+// ringColor is the colour of the ring on a tab that needs a look: its
+// session's status colour, or the accent for what a terminal tab's
+// program posted.
+func (a *App) ringColor(t *ui.Theme, tb *tab) ui.Color {
+	switch st := a.tabStatus(tb); st.State {
+	case status.Blocked, status.Done, status.Error:
+		return stateColor(t, st)
+	}
+	return t.Accent
 }
 
 // unreadEvents counts the notifications you haven't seen.
@@ -140,6 +172,11 @@ func (a *App) openEvent(i int) {
 	if _, _, ok := a.find(e.path); ok {
 		a.showEvents = false
 		a.reveal(e.path)
+		return
+	}
+	if t := a.tabByID(e.tab); t != nil {
+		a.showEvents = false
+		a.activate(t)
 		return
 	}
 	a.notice = e.title
