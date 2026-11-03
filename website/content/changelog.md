@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.28.0
+
+<p class="release-meta"><time datetime="2026-11-04">November 4, 2026</time></p>
+
+### Added
+
+- **Browser tabs.** **New Browser Tab** (`cmd+alt+n`, in the File menu, the palette and every **New** menu) opens a web page beside your sessions, in the OS's own web view. It splits, zooms and moves like any pane, with back, forward, reload, an address bar (`cmd+l`) and **Open in your browser**. Sign-ins stay in a browser session of larik's own, and tabs come back from their address when the window opens again.
+- **Ports open beside their session.** A port under a session's row opens in a browser tab next to that session's pane, or shows the tab already on it; `cmd`-click opens your browser instead.
+- **Browser tabs in the sidebar**, under Terminals, by page title with the host or a spinner while loading; right-click reloads, copies the address or opens it in your browser.
+- **Pages ask first.** A page wanting the camera, microphone, location or notifications gets a bar to **Allow** or **Don't Allow** it, remembered per site. Downloads go to Downloads, with a progress bar, **Show in Finder** and a note in the bell. `cmd+f` finds in the page.
+- **larik can use the page you see.** larik in a desktop tab gets `desktop_page_navigate`, `history`, `snapshot`, `click`, `type`, `eval` and `screenshot`, for the browser tab beside it rather than a headless Chrome: check a dev server, fill a form, see the layout. Navigating asks per domain, like `browser_navigate`. Scripts get the same with `larik desktop page`, and `larik desktop open --url` opens a browser tab.
+- **A New menu.** The toolbar's **New** menu, and a **+** on each split pane's header, offer a Larik session, a worktree session, a terminal or a browser tab, in that pane.
+- **Plan review beside the session.** While the focused session waits on a plan, a pane beside its terminal shows the plan as Markdown, with **Approve and accept edits**, **Approve, ask each edit** and **Request changes**.
+- **A Settings window.** `cmd+,` opens the window's own preferences, sidebar and text size, with **Open advanced settings…** for `larik /config`.
+- **Terminal tabs report status.** A program in a terminal tab that reports OSC 7501 sets the tab's state, title and message, in the sidebar and the tab bar; closing a live terminal tab asks first.
+
+### Compatibility notes
+
+- To let pages in browser tabs ask for the camera, microphone or location, run `larik desktop --install` again: macOS needs the Larik app to say why it asks, and an app installed before this release doesn't. Until then those requests are refused, with a note saying so.
+- Browser tabs run in the window, not the tabs' host, so they close with it and reopen from their address.
+- larik's clicks and typing in a browser tab go through the page's script, so a page that only takes what a person does may ignore them.
+- The window has been used on macOS. The Linux and Windows builds pass the tests but haven't been tried in a real window yet.
+
 ## v0.27.0
 
 <p class="release-meta"><time datetime="2026-11-03">November 3, 2026</time></p>
