@@ -128,6 +128,10 @@ type App struct {
 	events     []event
 	showEvents bool
 	looked     map[string]time.Time
+	// answered are the sessions answered from the window, by transcript
+	// path, until the session moves on or the window looks whether the
+	// tab took the answer (see answer.go).
+	answered map[string]pending
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -230,6 +234,7 @@ func New(opts Options) *App {
 		showHidden: map[string]bool{},
 		seen:       map[string]time.Time{},
 		looked:     map[string]time.Time{},
+		answered:   map[string]pending{},
 		states:     map[string]status.State{},
 		started:    time.Now(),
 		sidebarW:   280,

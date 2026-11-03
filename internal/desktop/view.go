@@ -517,6 +517,9 @@ func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 
 // tabMenu is what a tab's context menu offers.
 func (a *App) tabMenu(m *ui.Menu, tb *tab) {
+	if s, _, ok := a.find(tb.path); ok {
+		a.answerMenu(m, s)
+	}
 	if tb != a.active && tb != a.right && m.Item("Open in Split").Chosen() {
 		a.showInSplit(tb)
 	}
@@ -831,6 +834,7 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 // that isn't its project's; and the ports its programs listen on, each a
 // link that opens it in the browser.
 func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root string) {
+	defer a.answerButtons(c, t, s, 34)
 	var line []string
 	if st := s.Status.State; (st == status.Working || st == status.Blocked) && s.Status.Msg != "" {
 		line = append(line, s.Status.Msg)
@@ -880,6 +884,7 @@ func (a *App) renameRow(c *ui.Context, t *ui.Theme, s session.Indexed) ui.Elemen
 
 // sessionMenu is what a session's context menu offers.
 func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
+	a.answerMenu(m, s)
 	if m.Item("Open").Chosen() {
 		a.selectSession(s.Path)
 	}

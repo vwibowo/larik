@@ -45,6 +45,7 @@ type Request struct {
 	State   string        `json:"state,omitempty"`
 	Timeout time.Duration `json:"timeout,omitempty"` // how long wait waits, 0 for as long as it takes
 	Force   bool          `json:"force,omitempty"`   // close a tab that's working
+	Always  bool          `json:"always,omitempty"`  // allow answers the prompt's second option
 	Title   string        `json:"title,omitempty"`   // notify's
 	Body    string        `json:"body,omitempty"`    // notify's
 }
@@ -84,6 +85,8 @@ func (a *App) control(req Request) Response {
 	switch req.Cmd {
 	case "wait":
 		return a.wait(req)
+	case "allow", "deny":
+		return a.controlAnswer(req)
 	case "list", "open", "send", "read", "focus", "close", "notify":
 	default:
 		return Response{Error: fmt.Sprintf("unknown command %q", req.Cmd)}
@@ -316,6 +319,57 @@ func (a *App) wait(req Request) Response {
 			return Response{Error: "larik desktop is closing"}
 		}
 	}
+}
+
+// controlAnswer answers the prompt a tab's session waits on, and returns
+// once the session has gone on from it, with what it does now, so that a
+// wait after doesn't find the prompt answered still waiting; or says the
+// tab didn't take the answer.
+func (a *App) controlAnswer(req Request) Response {
+	an := deny
+	switch {
+	case req.Cmd == "allow" && req.Always:
+		an = allowAlways
+	case req.Cmd == "allow":
+		an = allowOnce
+	}
+	var (
+		info   TabInfo
+		before status.File
+		errMsg string
+	)
+	if !a.onMain(func() {
+		t, err := a.tabRef(req.Tab)
+		switch {
+		case err != "":
+			errMsg = err
+		case t.path == "":
+			errMsg = "the tab has no session waiting for an answer"
+		default:
+			info = a.tabInfo(t)
+			before, _ = status.Read(t.path)
+			errMsg = a.answerSession(t.path, an)
+		}
+	}) {
+		return Response{Error: "larik desktop is closing"}
+	}
+	if errMsg != "" {
+		return Response{Error: errMsg}
+	}
+	deadline := time.Now().Add(answerChecked)
+	for time.Now().Before(deadline) {
+		if f, ok := status.Read(info.Path); ok && f.Updated.After(before.Updated) {
+			cur := f.Current()
+			info.State, info.Wants, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
+			return Response{Tab: &info, State: string(cur.State)}
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-a.done:
+			return Response{Error: "larik desktop is closing"}
+		}
+	}
+	return Response{Tab: &info, Error: "the tab didn't take the answer: something in it has the keys, as the diff or a reason being typed"}
 }
 
 // tabRef finds the tab ref names (see Request.Tab), or says why not.

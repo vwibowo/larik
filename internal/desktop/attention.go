@@ -239,8 +239,15 @@ func (a *App) eventList(c *ui.Context, t *ui.Theme) {
 		ui.Scroll(c).MaxHeight(420).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
 				shown := 0
+				answers := map[string]bool{} // under the newest of each session's only
 				for i := len(a.events) - 1; i >= 0 && shown < eventsShown; i, shown = i-1, shown+1 {
 					a.eventRow(c, t, i)
+					if e := a.events[i]; e.state == status.Blocked && !answers[e.path] {
+						answers[e.path] = true
+						if s, _, ok := a.find(e.path); ok {
+							a.answerButtons(c, t, s, 27)
+						}
+					}
 				}
 			})
 		})

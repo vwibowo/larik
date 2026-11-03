@@ -16,7 +16,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 8 | [Commands and sidebar details](#phase-8-commands-and-sidebar-details) | Done |
 | 9 | [Attention while the window is in front](#phase-9-attention-while-the-window-is-in-front) | Done |
 | 10 | [Terminal tabs](#phase-10-terminal-tabs) | Done |
-| 11 | [What's next](#phase-11-whats-next) | Planned |
+| 11 | [Answering in place](#phase-11-answering-in-place) | Done |
+| 12 | [What's next](#phase-12-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -244,13 +245,28 @@ Rex and cmux are terminals first: a shell, lazygit or a dev server sits beside t
 - **Remembered**: terminal tabs come back next launch in their place, as your shell in their folder. A program tab comes back as a shell too: running a dev server or a script again as the window opens isn't for the window to decide.
 - In `list` and `read`, what a blocked session waits for is now `wants` (it was `kind`, which now says what the tab is).
 
-## Phase 11: What's next
+## Phase 11: Answering in place
+
+A session waiting on a permission was a tab away: you went to it, pressed `1`, and went back. Now you can answer it from wherever you see it.
+
+- **Where**: under a waiting session's row in the sidebar, and under its newest notification in the bell's list, are **Allow**, **Always** and **Deny**; right-clicking the session or its tab offers **Allow**, **Always Allow** and **Deny** too. A plan to review offers **Approve** (accept edits), **Approve, Ask** (ask before each edit) and **Keep Planning**, in its prompt's words, with what each does in its tooltip. A question or a sign-in needs words, so it has no buttons: opening the tab answers those.
+- **How**: the window types the key larik's prompt takes into the tab, as you would: `1` for the first option, `2` for the second, Escape for no. Only a session open in a tab here, whose larik runs, can be answered; one in another terminal says to open it there.
+- **Checked**: the session's status file is read again just before, so a prompt that came after the last index (a second or so) is answered and one already answered in the tab isn't; and after, so that if the session hasn't moved on within 2.5 s the notice bar says the tab didn't take it. The diff open in the prompt, or the field for telling larik what to do instead, takes keys first. A second click on the same prompt, while the first is on its way, does nothing; the buttons come back once the session moves on.
+- **From a script**: `larik desktop allow --tab t [--always]` and `larik desktop deny --tab t` answer the same way, and print the state the session moved on to (`working`, or `blocked` again for the next prompt), or fail when nothing waits or the tab didn't take the answer. So an agent driving the window can review and answer another's prompts:
+
+  ```sh
+  larik desktop wait --tab "$tab" --state blocked
+  larik desktop read --tab "$tab" --lines 15   # what it asks
+  larik desktop allow --tab "$tab"
+  ```
+
+## Phase 12: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
 - **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
-- **Answering in place**: Allow, Deny and Open for a session waiting on a permission, from the sidebar, the inbox or the notification, and a rendered plan to review.
+- **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
 - **Worktrees**: a new session in a new worktree and branch, and merging or removing it when done.
 - **Changes you can act on**: stage, discard and commit per file and hunk, compare with the base branch, open a PR, and the changes beside a split.
 - **Splits** in both directions and more than two, resized by dragging, moved between by keys.

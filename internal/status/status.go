@@ -40,6 +40,15 @@ type Report struct {
 // runs. Working and blocked from a process that has exited read as idle.
 func (s State) Live() bool { return s == Working || s == Blocked }
 
+// PlanReview is what a session blocked on its plan says it waits for.
+const PlanReview = "has a plan for you to review"
+
+// ReviewsPlan reports whether r waits for you to review a plan, rather
+// than to let a tool run.
+func (r Report) ReviewsPlan() bool {
+	return r.State == Blocked && r.Kind == Permission && r.Msg == PlanReview
+}
+
 // Waiting is how a permission request for toolName reads as a status:
 // a question for ask_user, otherwise a permission, with what it is for.
 func Waiting(toolName string) (Kind, string) {
@@ -47,7 +56,7 @@ func Waiting(toolName string) (Kind, string) {
 	case permission.AskUserTool:
 		return Question, "has a question for you"
 	case permission.ExitPlanTool:
-		return Permission, "has a plan for you to review"
+		return Permission, PlanReview
 	}
 	return Permission, "needs your permission to use " + toolName
 }
