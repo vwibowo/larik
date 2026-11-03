@@ -2,8 +2,10 @@ package desktop
 
 import (
 	"cmp"
+	"fmt"
 	"net"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -178,6 +180,42 @@ func normalizeURL(s string) (string, bool) {
 		return "https://" + s, true
 	}
 	return "", false
+}
+
+// openPort shows what the session at path serves on port: in the
+// browser tab already on it, or a new one beside the session's pane, or
+// with external in your browser.
+func (a *App) openPort(path string, port int, external bool) {
+	u := fmt.Sprintf("http://localhost:%d", port)
+	if external {
+		a.openURL(u)
+		return
+	}
+	for _, t := range a.tabs {
+		if t.browser && pageHost(t.url) == pageHost(u) {
+			a.activate(t)
+			return
+		}
+	}
+	t := a.startBrowser(u)
+	if t == nil {
+		return
+	}
+	if p := a.paneOf(a.tabOf(path)); p != nil {
+		a.focusPane(p)
+		a.splitPane(p, t, false)
+		return
+	}
+	a.activate(t)
+}
+
+// clickMod names the key that makes a click open a link in your
+// browser.
+func clickMod() string {
+	if runtime.GOOS == "darwin" {
+		return "⌘"
+	}
+	return "Ctrl"
 }
 
 // pageHost is the host of a browser tab's page, for where it is.

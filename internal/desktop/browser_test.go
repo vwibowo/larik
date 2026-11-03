@@ -137,3 +137,17 @@ func TestControlBrowserTab(t *testing.T) {
 		t.Fatalf("close: %+v, %d tabs", res, len(a.tabs))
 	}
 }
+
+func TestPortOpensBesideItsSession(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	s, other := &tab{id: "s", dir: "/work", path: "/s.jsonl"}, &tab{id: "o", dir: "/other"}
+	a.tabs = []*tab{s, other}
+	a.activate(other)
+	a.showInSplit(s, false)
+	a.activate(other)
+	a.openPort("/s.jsonl", 3000, false)
+	b := a.focused()
+	if b == nil || !b.browser || len(a.panes()) != 3 || a.paneOf(b).parent != a.paneOf(s).parent {
+		t.Fatalf("the port's tab beside its session: %d panes", len(a.panes()))
+	}
+}

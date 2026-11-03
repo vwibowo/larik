@@ -1037,7 +1037,7 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 // sessionDetail shows under a session's row what it is doing, while it
 // works or waits for you; the branch of the worktree it runs in, when
 // that isn't its project's; and the ports its programs listen on, each a
-// link that opens it in the browser.
+// link that opens it in a browser tab.
 func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root string) {
 	defer a.answerButtons(c, t, s, 34)
 	var line []string
@@ -1057,9 +1057,10 @@ func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root 
 		}
 		for _, port := range ports {
 			url := fmt.Sprintf("http://localhost:%d", port)
-			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip("Open " + url).Label("Open " + url)
-			if link.Clicked() && a.openExternal != nil {
-				a.openExternal(url)
+			tip := "Open " + url + " in a browser tab (" + clickMod() + "-click: in your browser)"
+			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip(tip).Label("Open " + url)
+			if link.Clicked() {
+				a.openPort(s.Path, port, c.Modifiers()&(ui.Super|ui.Ctrl) != 0)
 			}
 		}
 	})
