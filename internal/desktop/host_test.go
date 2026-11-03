@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -220,5 +222,115 @@ func TestHostedTabsAdopted(t *testing.T) {
 	b.Close()
 	if tabs, err := hostTabs(data); err != nil || len(tabs) != 0 {
 		t.Fatalf("the host still runs %+v, %v", tabs, err)
+	}
+}
+
+// With the window closed, list, read, send, close and wait reach the
+// tabs it left running in the host; the others say they need it.
+func TestCommandsWithoutTheWindow(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	testHost(t, data)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo, Host: true})
+	mu.Lock()
+	a.setProjects(index(t, data))
+	a.selectStart()
+	shell := a.startShell(repo, "echo running; sleep 100")
+	if len(a.tabs) != 2 || shell == nil {
+		mu.Unlock()
+		a.Close()
+		t.Fatalf("%d tabs: %s", len(a.tabs), a.notice)
+	}
+	larik := a.tabs[0]
+	mu.Unlock()
+	a.Close()
+
+	call := func(req Request) Response {
+		t.Helper()
+		res, err := Call(data, req)
+		if err != nil {
+			t.Fatalf("%s: %v", req.Cmd, err)
+		}
+		return res
+	}
+	res := call(Request{Cmd: "list"})
+	if len(res.Tabs) != 2 || res.Tabs[0].ID != larik.id || res.Tabs[0].Kind != "larik" || res.Tabs[1].Kind != "terminal" || res.Tabs[1].Run != "echo running; sleep 100" {
+		t.Fatalf("list: %+v", res.Tabs)
+	}
+	waitText := func(id, want string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			res := call(Request{Cmd: "read", Tab: id})
+			if strings.Contains(res.Text, want) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("read %s: %q, want %q", id, res.Text, want)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitText(larik.id, "tab:"+larik.id)
+	waitText(shell.id, "running")
+	// Typed in, larik exits with 5, which wait reports as an error.
+	call(Request{Cmd: "send", Tab: larik.id, Text: "5", Enter: true})
+	res = call(Request{Cmd: "wait", Tab: larik.id, State: "error", Timeout: 5 * time.Second})
+	if res.State != "error" || res.Tab == nil || res.Tab.Code != 5 {
+		t.Fatalf("wait: %+v", res)
+	}
+	call(Request{Cmd: "close", Tab: shell.id})
+	if res := call(Request{Cmd: "list"}); len(res.Tabs) != 1 {
+		t.Fatalf("after close: %+v", res.Tabs)
+	}
+	if _, err := Call(data, Request{Cmd: "focus", Tab: larik.id}); err == nil || !strings.Contains(err.Error(), "window isn't open") {
+		t.Fatalf("focus without the window: %v", err)
+	}
+	if _, err := Call(data, Request{Cmd: "read", Tab: "focused"}); err == nil {
+		t.Fatal("a focused tab without the window")
+	}
+}
+
+// host stop ends the host and what it runs, by asking it, or by its pid
+// when it doesn't answer.
+func TestStopHost(t *testing.T) {
+	needTerminal(t)
+	data := t.TempDir()
+	ran := make(chan error, 1)
+	go func() { ran <- RunHost(data) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := HostPID(data); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the host didn't start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if pid, _ := os.ReadFile(hostSocketPath(data) + ".pid"); string(pid) != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("pid file: %q", pid)
+	}
+	conn, _, _, err := askHost(data, hostRequest{Op: "open", ID: "x", Command: []string{"sleep", "100"}, Dir: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if err := StopHost(data); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ran:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunHost didn't return")
+	}
+	if _, err := os.Stat(hostSocketPath(data) + ".pid"); err == nil {
+		t.Fatal("the pid file stayed")
+	}
+	if err := StopHost(data); err != ErrNoHost {
+		t.Fatalf("stopping no host: %v", err)
 	}
 }

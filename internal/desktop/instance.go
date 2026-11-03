@@ -106,11 +106,16 @@ const maxRequest = 1 << 20
 // directory.
 var errNotOpen = errors.New("larik desktop isn't open: start it with larik desktop")
 
-// Call sends req to the window open for dataDir and returns its answer.
+// Call sends req to the window open for dataDir and returns its answer,
+// or with no window open, has the host answer it (see callHost).
 // A response with an error is returned as an error, with the response.
 func Call(dataDir string, req Request) (Response, error) {
 	conn, err := net.DialTimeout("unix", socketPath(dataDir), time.Second)
 	if err != nil {
+		if pingHost(dataDir) == nil {
+			// No window, but the tabs it left running.
+			return callHost(dataDir, req)
+		}
 		return Response{}, errNotOpen
 	}
 	defer conn.Close()

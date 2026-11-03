@@ -341,7 +341,11 @@ Closing the window, or quitting, ended every tab's program; larik's tabs came ba
 - **Saved without drawing**: the state is saved as the window draws, and now as the sessions are read again, every second or so, and as the window closes, since a window out of sight may not draw.
 - **The protocol**: a line of JSON asking (`open`, `attach`, `list`, `close`, `ping`) and one answering, then, for a tab, messages both ways, a type byte, a length and what it says.
 
-Not yet: `larik desktop` commands to list and end what the host runs while no window is open, and the host on Windows.
+- **With the window closed**, `larik desktop list`, `read`, `send`, `close` and `wait` reach the tabs it left running: the host answers them, finding a tab by its id or its session's (the session by the tab id in its status file), and `read` reads the host's own terminal. `open`, `focus`, `allow`, `deny` and `notify` need the window, and say so.
+- **`larik desktop host list`** lists what the host runs, with its pid, each tab's session, state or exit status, age and folder, and a `*` on those a window shows (`--json` too). **`larik desktop host stop`** ends the host and every program in it, refusing while any runs unless `--force`; a host that doesn't answer is told to stop by its pid, in a file beside its socket, with SIGTERM, which ends its programs as `stop` does.
+- **Its log** (`logs/desktop-host.log`) says when it starts, each tab it starts, closes or sees exit, and why it exits: idle, asked, or a signal.
+
+Not yet: the host on Windows.
 
 ## Phase 19: What's next
 
@@ -351,7 +355,7 @@ From a review against [Rex](https://www.superlogical.com/updates/public-testing-
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
 - **Archiving and deleting sessions**, names that `/resume` shows, and settings of the window's own (keys, theme, font).
-- **Commands for the host** (see phase 18), then remote windows on another Mac or over SSH, which the host's protocol is the start of.
+- **Remote windows** on another Mac or over SSH, which the host's protocol is the start of (see phase 18).
 
 Still open from phase 7: the headless Linux run.
 

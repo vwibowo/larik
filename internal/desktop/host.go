@@ -12,10 +12,14 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/egoist/mygo/plugins/terminal"
@@ -73,8 +77,10 @@ const (
 type hostRequest struct {
 	// Op is "open", to run a program in a new tab, or attach to the tab
 	// with ID when the host has it (running it again when it ended);
-	// "attach", to attach to it only; "list"; "close", to end its
-	// program and forget it; or "ping".
+	// "attach", to attach to it only; "list"; "read", for the text its
+	// terminal shows, scrollback and all; "send", to type Text into it,
+	// and Return after with Enter; "close", to end its program and forget
+	// it; "stop", to end every program and exit; or "ping".
 	Op      string   `json:"op"`
 	ID      string   `json:"id,omitempty"`
 	Command []string `json:"command,omitempty"`
@@ -86,12 +92,16 @@ type hostRequest struct {
 	// the command it was given, for a window that opens to it not knowing.
 	Shell bool   `json:"shell,omitempty"`
 	Run   string `json:"run,omitempty"`
+	Text  string `json:"text,omitempty"`
+	Enter bool   `json:"enter,omitempty"`
 }
 
 // hostReply is the host's answer.
 type hostReply struct {
 	Error string        `json:"error,omitempty"`
 	Tabs  []hostTabInfo `json:"tabs,omitempty"`
+	Text  string        `json:"text,omitempty"` // read's
+	PID   int           `json:"pid,omitempty"`  // ping's: the host's process
 }
 
 // hostTabInfo is a tab the host keeps.
@@ -101,6 +111,7 @@ type hostTabInfo struct {
 	Command []string  `json:"command"`
 	Shell   bool      `json:"shell,omitempty"`
 	Run     string    `json:"run,omitempty"`
+	Title   string    `json:"title,omitempty"` // what its program set as the terminal's title
 	Exited  bool      `json:"exited,omitempty"`
 	Code    int       `json:"code,omitempty"`
 	Windows int       `json:"windows,omitempty"` // connections showing it
@@ -120,6 +131,9 @@ type host struct {
 	tabs  map[string]*hostTab
 	conns int       // connections open, of any kind
 	idle  time.Time // since when it has had no tab and no connection
+	// stop closes when a request asks the host to exit.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // hostTab is a tab's program and the windows showing it.
@@ -148,8 +162,9 @@ type hostMsg struct {
 }
 
 // RunHost runs the host for dataDir until it has had no tab and no
-// window for a while. It returns at once, with no error, when another
-// host has the socket.
+// window for a while, or is asked to stop, or told to (SIGTERM), when it
+// ends its programs. It returns at once, with no error, when another
+// host has the socket. Its pid is in a file beside the socket.
 func RunHost(dataDir string) error {
 	if err := Prepare(); err != nil {
 		return err
@@ -164,9 +179,23 @@ func RunHost(dataDir string) error {
 		return err
 	}
 	defer os.Remove(path)
+	if err := os.WriteFile(path+".pid", []byte(strconv.Itoa(os.Getpid())), 0o600); err == nil {
+		defer os.Remove(path + ".pid")
+	}
+	log.Printf("host: started for %s, pid %d", dataDir, os.Getpid())
 	h := newHost()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(signals)
 	go func() {
-		h.waitIdle()
+		select {
+		case <-h.waitIdle():
+			log.Print("host: nothing to run, exiting")
+		case <-h.stop:
+			log.Print("host: asked to stop")
+		case sig := <-signals:
+			log.Printf("host: %v", sig)
+		}
 		ln.Close()
 	}()
 	h.serve(ln)
@@ -174,7 +203,9 @@ func RunHost(dataDir string) error {
 	return nil
 }
 
-func newHost() *host { return &host{tabs: map[string]*hostTab{}, idle: time.Now()} }
+func newHost() *host {
+	return &host{tabs: map[string]*hostTab{}, idle: time.Now(), stop: make(chan struct{})}
+}
 
 // serve takes connections until the listener closes.
 func (h *host) serve(ln net.Listener) {
@@ -187,12 +218,27 @@ func (h *host) serve(ln net.Listener) {
 	}
 }
 
-// waitIdle returns once the host has had nothing to do for hostIdle,
-// forgetting, as it waits, tabs whose programs ended long ago.
-func (h *host) waitIdle() {
+// waitIdle closes the channel it returns once the host has had nothing
+// to do for hostIdle, forgetting, as it waits, tabs whose programs ended
+// long ago.
+func (h *host) waitIdle() <-chan struct{} {
+	idle := make(chan struct{})
+	go func() {
+		h.idleLoop()
+		close(idle)
+	}()
+	return idle
+}
+
+func (h *host) idleLoop() {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	for range tick.C {
+	for {
+		select {
+		case <-tick.C:
+		case <-h.stop:
+			return
+		}
 		h.mu.Lock()
 		for id, t := range h.tabs {
 			if t.exited && len(t.clients) == 0 && time.Since(t.ended) > hostKeepExited {
@@ -219,6 +265,9 @@ func (h *host) closeAll() {
 	h.tabs = map[string]*hostTab{}
 	h.mu.Unlock()
 	for _, t := range tabs {
+		if !t.exited {
+			log.Printf("host: ending tab %s", t.id)
+		}
 		t.term.Close()
 	}
 }
@@ -250,12 +299,37 @@ func (h *host) handle(conn net.Conn) {
 	}
 	switch req.Op {
 	case "ping":
-		reply(hostReply{})
+		reply(hostReply{PID: os.Getpid()})
 	case "list":
 		reply(hostReply{Tabs: h.list()})
+	case "read", "send":
+		h.mu.Lock()
+		t := h.tabs[req.ID]
+		h.mu.Unlock()
+		switch {
+		case t == nil:
+			reply(hostReply{Error: fmt.Sprintf("no tab %s", req.ID)})
+		case req.Op == "read":
+			reply(hostReply{Text: t.term.Text()})
+		case t.exited:
+			reply(hostReply{Error: "the tab's program has exited"})
+		default:
+			if strings.ContainsAny(req.Text, "\r\n") {
+				t.term.Paste(req.Text) // as one, not a line at a time
+			} else {
+				t.term.Send([]byte(req.Text))
+			}
+			if req.Enter {
+				t.term.Send([]byte("\r"))
+			}
+			reply(hostReply{})
+		}
 	case "close":
 		h.closeTab(req.ID)
 		reply(hostReply{})
+	case "stop":
+		reply(hostReply{})
+		h.stopOnce.Do(func() { close(h.stop) })
 	case "open", "attach":
 		t, err := h.tab(req)
 		if err != nil {
@@ -276,7 +350,7 @@ func (h *host) list() []hostTabInfo {
 	defer h.mu.Unlock()
 	out := make([]hostTabInfo, 0, len(h.tabs))
 	for _, t := range h.tabs {
-		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
+		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
 	}
 	return out
 }
@@ -288,6 +362,7 @@ func (h *host) closeTab(id string) {
 	delete(h.tabs, id)
 	h.mu.Unlock()
 	if t != nil {
+		log.Printf("host: closing tab %s", id)
 		t.term.Close()
 	}
 }
@@ -322,6 +397,7 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 			h.mu.Lock()
 			t.exited, t.code, t.ended = true, code, time.Now()
 			h.mu.Unlock()
+			log.Printf("host: tab %s exited with %d", t.id, code)
 		},
 	})
 	if err != nil {
@@ -330,6 +406,7 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 	if req.Cols > 0 && req.Rows > 0 {
 		term.Resize(req.Cols, req.Rows)
 	}
+	log.Printf("host: tab %s runs %q in %s", req.ID, req.Command, req.Dir)
 	t.term = term
 	h.mu.Lock()
 	old := h.tabs[req.ID]

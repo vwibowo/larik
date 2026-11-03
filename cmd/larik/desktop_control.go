@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"larik/internal/config"
 	"larik/internal/desktop"
@@ -45,6 +47,10 @@ func desktopUsage() string {
 	b.WriteString("Commands for the open window, for scripts and for agents in its tabs\n(a tab's own id is in $LARIK_DESKTOP_TAB; --tab takes it, the id of its\nsession or enough of one to tell, or \"focused\"; --json prints the answer\nas JSON):\n\n")
 	for _, c := range desktopCommands {
 		fmt.Fprintf(&b, "  %s\n      %s\n", strings.TrimSpace("larik desktop "+c.name+" "+c.usage), c.about)
+	}
+	b.WriteString("\nWith the window closed, its tabs go on in the background, and list, read,\nsend, close and wait reach them there. And for what runs there:\n\n")
+	for _, c := range hostCommands {
+		fmt.Fprintf(&b, "  %s\n      %s\n", strings.TrimSpace("larik desktop host "+c.name+" "+c.usage), c.about)
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -180,4 +186,106 @@ func short(s string, n int) string {
 		return "-"
 	}
 	return s[:min(len(s), n)]
+}
+
+// hostCommands are larik desktop host's, for what runs in the background.
+var hostCommands = []struct{ name, usage, about string }{
+	{"list", "", "list what the host runs, with how long each has run and whether the window shows it"},
+	{"stop", "[--force]", "end every program the host runs, and the host; --force when any still runs"},
+}
+
+// runDesktopHost runs larik desktop host list or stop.
+func runDesktopHost(args []string, w io.Writer) error {
+	name := args[0]
+	fs := flag.NewFlagSet("desktop host "+name, flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print it as JSON")
+	force := fs.Bool("force", false, "end the programs even while some still run")
+	known := false
+	for _, c := range hostCommands {
+		if c.name == name {
+			known = true
+			fs.Usage = func() {
+				fmt.Fprintf(fs.Output(), "Usage: larik desktop host %s %s\n\n%s.\n\n", c.name, c.usage, strings.ToUpper(c.about[:1])+c.about[1:])
+				fs.PrintDefaults()
+			}
+		}
+	}
+	if !known {
+		return fmt.Errorf("larik desktop host: unknown command %q: list or stop", name)
+	}
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	dataDir := config.DataDir()
+	pid, err := desktop.HostPID(dataDir)
+	if name == "stop" && err != nil {
+		// One that doesn't answer may still be there, by its pid.
+		return desktop.StopHost(dataDir)
+	}
+	if err != nil {
+		return err
+	}
+	tabs, err := desktop.HostTabs(dataDir)
+	if err != nil {
+		return err
+	}
+	running := 0
+	for _, t := range tabs {
+		if !t.Exited {
+			running++
+		}
+	}
+	if name == "stop" {
+		if running > 0 && !*force {
+			return fmt.Errorf("the host runs %s: larik desktop host stop --force ends them (larik desktop host list says which)", programs(running))
+		}
+		if err := desktop.StopHost(dataDir); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "stopped the host (pid %d), ending %s\n", pid, programs(running))
+		return nil
+	}
+	if *asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(struct {
+			PID  int               `json:"pid"`
+			Tabs []desktop.HostTab `json:"tabs"`
+		}{pid, tabs})
+	}
+	fmt.Fprintf(w, "host pid %d, %d running\n", pid, running)
+	home, _ := os.UserHomeDir()
+	for _, t := range tabs {
+		state := t.State
+		if t.Exited {
+			state = fmt.Sprintf("exit %d", t.Code)
+		}
+		shown := " "
+		if t.Windows > 0 {
+			shown = "*" // the window shows it
+		}
+		fmt.Fprintf(w, "%s %s  %-8s  %-7s  %6s  %s  %s\n", shown, t.ID, short(t.Session, 8), state, age(time.Since(t.Started)), tildePath(t.Dir, home), cmp.Or(t.Run, t.Title))
+	}
+	return nil
+}
+
+// programs is n programs, in words.
+func programs(n int) string {
+	if n == 1 {
+		return "1 program"
+	}
+	return fmt.Sprintf("%d programs", n)
+}
+
+// age is d, roughly: 40s, 12m, 3h, 2d.
+func age(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }

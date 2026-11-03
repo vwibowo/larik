@@ -269,15 +269,9 @@ func (a *App) controlOpen(req Request) Response {
 // only those reported after the wait began count; the others count as
 // they are, as a session already waiting for you is.
 func (a *App) wait(req Request) Response {
-	want := map[status.State]bool{}
-	for _, s := range strings.Split(cmp.Or(req.State, string(status.Done)), ",") {
-		st := status.State(strings.TrimSpace(s))
-		switch st {
-		case status.Idle, status.Working, status.Done, status.Blocked, status.Error:
-			want[st] = true
-		default:
-			return Response{Error: fmt.Sprintf("unknown state %q: idle, working, done, blocked or error", s)}
-		}
+	want, err := wantStates(req.State)
+	if err != "" {
+		return Response{Error: err}
 	}
 	start := time.Now()
 	var deadline <-chan time.Time
@@ -325,16 +319,12 @@ func (a *App) wait(req Request) Response {
 			return Response{Tab: &info, State: string(status.Error), Error: fmt.Sprintf("larik exited with status %d", info.Code)}
 		}
 		if path != "" {
-			if f, ok := status.Read(path); ok {
-				cur := f.Current()
-				ended := cur.State == status.Done || cur.State == status.Error
-				if want[cur.State] && (!ended || f.Since().After(start)) {
-					if info.ID == "" {
-						return Response{State: string(cur.State)}
-					}
-					info.State, info.Wants, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
-					return Response{Tab: &info, State: string(cur.State)}
+			if cur, ok := reached(path, want, start); ok {
+				if info.ID == "" {
+					return Response{State: string(cur.State)}
 				}
+				info.State, info.Wants, info.Msg = string(cur.State), string(cur.Kind), cur.Msg
+				return Response{Tab: &info, State: string(cur.State)}
 			}
 		}
 		if gone && path == "" {
@@ -348,6 +338,35 @@ func (a *App) wait(req Request) Response {
 			return Response{Error: "larik desktop is closing"}
 		}
 	}
+}
+
+// wantStates are the states wait waits for: one or several, comma
+// separated, done when none; or it says why not.
+func wantStates(states string) (map[status.State]bool, string) {
+	want := map[status.State]bool{}
+	for _, s := range strings.Split(cmp.Or(states, string(status.Done)), ",") {
+		st := status.State(strings.TrimSpace(s))
+		switch st {
+		case status.Idle, status.Working, status.Done, status.Blocked, status.Error:
+			want[st] = true
+		default:
+			return nil, fmt.Sprintf("unknown state %q: idle, working, done, blocked or error", s)
+		}
+	}
+	return want, ""
+}
+
+// reached reports whether the session at path is in one of the states
+// wanted, with its status: done and error only when reported after
+// start, as a turn that ended then.
+func reached(path string, want map[status.State]bool, start time.Time) (status.Report, bool) {
+	f, ok := status.Read(path)
+	if !ok {
+		return status.Report{}, false
+	}
+	cur := f.Current()
+	ended := cur.State == status.Done || cur.State == status.Error
+	return cur, want[cur.State] && (!ended || f.Since().After(start))
 }
 
 // controlAnswer answers the prompt a tab's session waits on, and returns
