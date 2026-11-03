@@ -88,6 +88,7 @@ func (a *App) menuBar() []menuGroup {
 		{title: "Window", items: append([]command{
 			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom}, {},
 			{label: "Next Session Waiting", key: "Cmd+J", run: a.nextWaiting},
+			{label: "Latest Notification", key: "Shift+Cmd+U", run: a.latestUnread},
 			{label: "Show Next Tab", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
 			{label: "Show Previous Tab", key: "Shift+Cmd+[", run: func() { a.cycle(-1) }},
 			{},

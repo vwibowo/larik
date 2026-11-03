@@ -90,7 +90,7 @@ func TestControlOverSocket(t *testing.T) {
 	if _, err := Call(data, Request{Cmd: "bogus"}); err == nil {
 		t.Fatal("an unknown command answered")
 	}
-	if _, err := Call(data, Request{Cmd: "notify", Title: "Build", Body: "passed"}); err != nil || posted != "Build|passed" || a.notice != "Build: passed" {
+	if _, err := Call(data, Request{Cmd: "notify", Title: "Build", Body: "passed"}); err != nil || posted != "Build|passed" || a.notice != "Build: passed" || len(a.events) != 1 || a.events[0].body != "passed" {
 		t.Fatalf("notify: %v %q %q", err, posted, a.notice)
 	}
 	if _, err := Call(data, Request{Cmd: "open", Cwd: filepath.Join(data, "missing")}); err == nil || !strings.Contains(err.Error(), "Can't start larik") {

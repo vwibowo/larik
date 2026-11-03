@@ -122,6 +122,12 @@ type App struct {
 	// programs listen on, by transcript path (see metaLoop).
 	git   map[string]gitMeta
 	ports map[string][]int
+	// events are the notifications, the newest last, under the toolbar's
+	// bell while showEvents; looked is when you last had each session's
+	// tab focused, by transcript path (see attention.go).
+	events     []event
+	showEvents bool
+	looked     map[string]time.Time
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -212,6 +218,7 @@ func New(opts Options) *App {
 		prompts:    map[string]string{},
 		showHidden: map[string]bool{},
 		seen:       map[string]time.Time{},
+		looked:     map[string]time.Time{},
 		states:     map[string]status.State{},
 		started:    time.Now(),
 		sidebarW:   280,
@@ -303,6 +310,9 @@ func (a *App) setProjects(ps []session.Project) {
 			a.seen[t.path] = time.Now()
 		}
 	}
+	if f := a.focused(); f != nil {
+		a.look(f.path)
+	}
 	a.attend(ps)
 }
 
@@ -320,11 +330,14 @@ func (a *App) attend(ps []session.Project) {
 			if cur == status.Blocked || a.unread(s) {
 				waiting++
 			}
-			if first || cur == prev || a.alert == nil {
+			if first || cur == prev {
 				continue
 			}
 			if cur == status.Blocked || (known && prev == status.Working && (cur == status.Done || cur == status.Error)) {
-				a.alert(s)
+				a.recordSession(s)
+				if a.alert != nil {
+					a.alert(s)
+				}
 			}
 		}
 	}
@@ -914,6 +927,7 @@ func (a *App) activate(t *tab) {
 	if t.path != "" {
 		a.seen[t.path] = time.Now()
 	}
+	a.look(t.path)
 }
 
 // closeTab closes t, ending its larik; the session stays on disk.

@@ -14,7 +14,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 6 | [Panes: splits and changes](#phase-6-panes) | Done |
 | 7 | [Inbox, notifications, keyboard, launcher](#phase-7-inbox-notifications-keyboard-launcher) | Done |
 | 8 | [Commands and sidebar details](#phase-8-commands-and-sidebar-details) | Done |
-| 9 | [What's next](#phase-9-whats-next) | Planned |
+| 9 | [Attention while the window is in front](#phase-9-attention-while-the-window-is-in-front) | Done |
+| 10 | [What's next](#phase-10-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -223,11 +224,18 @@ What [cmux](https://github.com/manaflow-ai/cmux) and [herdr](https://herdr.dev) 
 - **Ports**: the TCP ports that a tab's larik, or anything it started, listens on show under the session's row (`:5173`), each opening `http://localhost:<port>` in the browser, as cmux shows a workspace's. They come from `ps` and `lsof`: the processes under each tab's larik, and those on its terminal, as a server started with `&` from a shell that has since exited, which leaves it to launchd (macOS and Linux). A server that detaches from the terminal (`setsid`, a daemon) doesn't show.
 - These are read every three seconds off the main thread: `git status --porcelain=v2 --branch` once per open project, or per worktree a session runs in, and `ps` and `lsof` once for every tab. Folded projects aren't read.
 
-## Phase 9: What's next
+## Phase 9: Attention while the window is in front
+
+Alerts tell you only from another app: while you work in one tab, a session in another could start waiting for you, or finish, with nothing but its sidebar marker to say so. cmux rings the pane and lights the tab; Larik now does the same, and keeps what it would have told you.
+
+- **Rings**: a tab whose session waits for you, or finished or failed since you last had it focused (or since the window opened), takes a ring and a tint in its status colour in the tab bar, and so does its pane while it shows in the split without the keyboard. Focusing it ends the ring. The tab with the keyboard never rings.
+- **Notifications**: every alert is kept, whether or not the window was in front, with what `larik desktop notify` posted, up to the last 100. The bell in the toolbar counts those you haven't seen and opens their list, newest first: what each session did, when, a dot on those unread, and **Mark All Read**. Choosing one opens its session. One about the session you're looking at is read as it comes, and looking at a session reads all of its.
+- **The newest unread**: ⇧⌘U (Window › Latest Notification; Ctrl+Shift+U elsewhere) opens what the newest notification you haven't seen is about, the way ⌘J goes through what waits for you now.
+
+## Phase 10: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
-- **Attention while the window is focused**: a ring on a pane or tab whose session needs you while you look elsewhere, a list of past notifications, and a key for the newest unread (alerts fire only off the window today).
 - **Shell and program tabs**: a tab running your shell, lazygit or another agent, with OSC 7501 and OSC 9/99/777 read from any program, so the sidebar shows their state too, as Rex does.
 - **Answering in place**: Allow, Deny and Open for a session waiting on a permission, from the sidebar, the inbox or the notification, and a rendered plan to review.
 - **Worktrees**: a new session in a new worktree and branch, and merging or removing it when done.

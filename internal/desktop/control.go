@@ -125,6 +125,7 @@ func (a *App) command(req Request) Response {
 			title = "Larik"
 		}
 		a.notice = strings.TrimSuffix(title+": "+req.Body, ": ")
+		a.record(event{title: title, body: req.Body})
 		if a.post != nil {
 			a.post(title, req.Body)
 		}

@@ -40,6 +40,7 @@ var (
 	iconUp    = svg(`<path d="m18 15-6-6-6 6"/>`)
 	iconDown  = svg(`<path d="m6 9 6 6 6-6"/>`)
 	iconRight = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconBell  = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -275,6 +276,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.toggleChanges()
 	case c.Shortcut(mod, ui.KeyJ):
 		a.nextWaiting()
+	case c.Shortcut(mod|ui.Shift, ui.KeyU):
+		a.latestUnread()
 	case c.Shortcut(mod, ui.KeyK):
 		a.focusSearch, a.noSidebar = true, false
 	case c.Shortcut(mod, ui.KeyF):
@@ -373,6 +376,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 			}
 			a.iconButton(c, t, "changes", iconDiff, "Changes in this project ("+keyLabel(true, "G")+")", a.changes != nil, a.toggleChanges)
 		}
+		a.bell(c, t)
 		a.iconButton(c, t, "new", iconPlus, "New session", false, func() { a.newTab(a.currentDir(), "", "") }).Tooltip("New session (" + keyLabel(false, "T") + ")")
 	})
 }
@@ -485,6 +489,10 @@ func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 	}
 	if from, ok := ui.DragOver[*tab](cell); ok && from != tb {
 		cell.Background(t.Accent.Alpha(0.15))
+	} else if a.needsLook(tb) {
+		// Its session needs you, or finished, while you look elsewhere.
+		color := stateColor(t, a.tabStatus(tb))
+		cell.Border(2, color).Background(color.Alpha(0.1))
 	}
 }
 
@@ -1065,6 +1073,8 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 	}
 	if _, ok := ui.DragOver[sessionDrag](body); ok {
 		body.Border(2, t.Accent)
+	} else if a.needsLook(tb) {
+		body.Border(2, stateColor(t, a.tabStatus(tb)))
 	}
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
 	// the focused one.

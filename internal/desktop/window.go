@@ -13,7 +13,6 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"larik/internal/session"
-	"larik/internal/status"
 )
 
 // Prepare loads the terminal library the tabs need, downloading it into
@@ -215,17 +214,7 @@ func notify(win *mygo.Window, s session.Indexed) {
 	if win.IsFocused() {
 		return
 	}
-	title := s.Title
-	if title == "" {
-		title = "Larik session"
-	}
-	body := "Finished"
-	switch s.Status.State {
-	case status.Blocked:
-		body = "Larik " + s.Status.Msg
-	case status.Error:
-		body = "Failed"
-	}
+	title, body := alertText(s)
 	if runtime.GOOS == "darwin" {
 		mygo.App.Dock.Bounce(false)
 	}
