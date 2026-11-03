@@ -34,6 +34,10 @@ type Request struct {
 	// or the shell itself when Run is empty.
 	Shell bool   `json:"shell,omitempty"`
 	Run   string `json:"run,omitempty"`
+	// Worktree opens the tab in a new worktree of the repository Cwd is
+	// in, on the branch larik/<Branch>, or one named for it.
+	Worktree bool   `json:"worktree,omitempty"`
+	Branch   string `json:"branch,omitempty"`
 	// Background opens a tab without showing it, leaving the panes as
 	// they are.
 	Background bool   `json:"background,omitempty"`
@@ -87,7 +91,22 @@ func (a *App) control(req Request) Response {
 		return a.wait(req)
 	case "allow", "deny":
 		return a.controlAnswer(req)
-	case "list", "open", "send", "read", "focus", "close", "notify":
+	case "open":
+		if req.Worktree {
+			// Off the main thread: git checks the files out.
+			if req.Session != "" {
+				return Response{Error: "open --worktree starts a new session; it can't open one"}
+			}
+			if req.Cwd == "" {
+				return Response{Error: "open --worktree needs the repository's directory"}
+			}
+			w, err := a.makeWorktree(req.Cwd, req.Branch)
+			if err != nil {
+				return Response{Error: "can't make a worktree: " + err.Error()}
+			}
+			req.Cwd = w.Path
+		}
+	case "list", "send", "read", "focus", "close", "notify":
 	default:
 		return Response{Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}

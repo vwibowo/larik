@@ -3,6 +3,7 @@ package desktop
 import (
 	"cmp"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -158,6 +159,7 @@ func (a *App) view(c *ui.Context) {
 		}
 		a.confirmClose(c)
 		a.confirmLeave(c)
+		a.confirmAsked(c)
 	})
 	a.saveState()
 	if title := a.windowTitle(); a.setTitle != nil && title != a.titled {
@@ -251,6 +253,48 @@ func (a *App) confirmLeave(c *ui.Context) {
 	}
 }
 
+// confirmation is a question confirmAsk put, and what a yes does.
+type confirmation struct {
+	title, msg, yes string
+	then            func()
+}
+
+// confirmAsk asks whether to do something, as a sheet: then runs on a
+// yes.
+func (a *App) confirmAsk(title, msg, yes string, then func()) {
+	a.asked, a.askedOpen = &confirmation{title: title, msg: msg, yes: yes, then: then}, true
+}
+
+// confirmAsked shows what confirmAsk asks, until it's answered.
+func (a *App) confirmAsked(c *ui.Context) {
+	q := a.asked
+	if q == nil {
+		return
+	}
+	answer := func(yes bool) {
+		a.asked, a.askedOpen = nil, false
+		if yes {
+			q.then()
+		}
+	}
+	if a.ask != nil {
+		if !a.asking {
+			a.asking = true
+			a.ask(q.title, q.msg, q.yes, func(yes bool) {
+				a.asking = false
+				answer(yes)
+			})
+		}
+		return
+	}
+	switch ui.AlertDialog(c.Key("confirm-asked"), &a.askedOpen, q.title, q.msg, "Cancel", q.yes) {
+	case 1:
+		answer(true)
+	case 0, ui.AlertDismissed:
+		answer(false)
+	}
+}
+
 // shortcuts are the window's keys. Command keys on macOS never reach the
 // terminal; elsewhere they take Control+Shift, as terminal apps do, so
 // that Control keys stay larik's. Shift adds nothing there, so no two
@@ -261,6 +305,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		mod = ui.Super
 	}
 	switch {
+	case c.Shortcut(mod|ui.Alt, ui.KeyT):
+		a.newWorktreeSession(a.currentDir())
 	case c.Shortcut(mod, ui.KeyT):
 		a.newTab(a.currentDir(), "", "")
 	case c.Shortcut(mod, ui.KeyW):
@@ -385,6 +431,9 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 			ContextMenu(func(m *ui.Menu) {
 				if m.Item("New Session").Chosen() {
 					a.newTab(a.currentDir(), "", "")
+				}
+				if m.Item("New Session in Worktree").Chosen() {
+					a.newWorktreeSession(a.currentDir())
 				}
 				if m.Item("New Terminal").Chosen() {
 					a.openShell()
@@ -540,6 +589,9 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	}
 	if m.Item("Rename…").Chosen() {
 		a.askRename(tb.path)
+	}
+	if s, p, ok := a.find(tb.path); ok {
+		a.worktreeMenu(m, s, p.Root)
 	}
 	m.Separator()
 	if s, _, ok := a.find(tb.path); ok && m.Item("Copy Session ID").Chosen() && a.copyText != nil {
@@ -718,6 +770,9 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 func (a *App) projectMenu(m *ui.Menu, p session.Project) {
 	if !p.Missing && m.Item("New Session Here").Chosen() {
 		a.newTab(p.Root, "", "")
+	}
+	if _, err := os.Lstat(filepath.Join(p.Root, ".git")); err == nil && !p.Missing && m.Item("New Session in Worktree").Chosen() {
+		a.newWorktreeSession(p.Root)
 	}
 	open := "Open Folder"
 	if runtime.GOOS == "darwin" {
@@ -911,6 +966,9 @@ func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
 	} else if m.Item("Hide from Sidebar").Chosen() {
 		a.hidden[s.Path] = true
 		a.pin(s.Path, false)
+	}
+	if _, p, ok := a.find(s.Path); ok {
+		a.worktreeMenu(m, s, p.Root)
 	}
 	m.Separator()
 	if m.Item("Copy Session ID").Chosen() && a.copyText != nil {

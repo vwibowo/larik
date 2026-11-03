@@ -132,6 +132,9 @@ type App struct {
 	// path, until the session moves on or the window looks whether the
 	// tab took the answer (see answer.go).
 	answered map[string]pending
+	// asked is the question confirmAsk is putting, while it's up.
+	asked     *confirmation
+	askedOpen bool
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -477,7 +480,7 @@ func (a *App) sessionTab(path string) *tab {
 	if t := a.tabOf(path); t != nil {
 		return t
 	}
-	s, _, ok := a.find(path)
+	s, p, ok := a.find(path)
 	if !ok {
 		return nil
 	}
@@ -489,7 +492,11 @@ func (a *App) sessionTab(path string) *tab {
 		a.notice = fmt.Sprintf("%q is open in another terminal. Only one larik can have a session at a time: switch to that terminal, or quit larik there to open it here.", title)
 		return nil
 	}
-	return a.startTab(s.Cwd, s.ID, path)
+	dir := s.Cwd
+	if _, err := os.Stat(dir); err != nil && a.inWorktree(dir) {
+		dir = p.Root // its worktree was merged, or removed: back where it came from
+	}
+	return a.startTab(dir, s.ID, path)
 }
 
 // newTab starts larik in dir, resuming the session id unless it is

@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -227,5 +228,80 @@ func TestExecutableRepoConfigKeepsSpacedSubsections(t *testing.T) {
 	}
 	if _, err := w.Finish("spaced"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMerge(t *testing.T) {
+	repo := newRepo(t)
+	root := t.TempDir()
+	ctx := context.Background()
+	if _, err := CreateNamed(ctx, root, repo, "bad..name"); err == nil {
+		t.Fatal("a name that can't be a branch")
+	}
+	w, err := CreateNamed(ctx, root, repo, "fix/parser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Branch != "larik/fix/parser" || filepath.Base(w.Path) != "fix-parser" {
+		t.Fatalf("named: %+v", w)
+	}
+	if got, err := Repo(ctx, w.Path); err != nil || got != repo {
+		t.Fatalf("the worktree's repository: %q %v", got, err)
+	}
+	if _, err := CreateNamed(ctx, root, repo, "fix/parser"); err == nil {
+		t.Fatal("the same name twice")
+	}
+	// A commit on the branch, and something left uncommitted: both come in.
+	os.WriteFile(filepath.Join(w.Path, "b.txt"), []byte("two\n"), 0o644)
+	run(t, w.Path, "add", ".")
+	run(t, w.Path, "commit", "-qm", "b")
+	os.WriteFile(filepath.Join(w.Path, "c.txt"), []byte("three\n"), 0o644)
+	got, err := w.Merge(ctx, "the rest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Into != "main" || !got.Committed || got.Commits != 2 || !slices.Equal(got.Files, []string{"b.txt", "c.txt"}) {
+		t.Fatalf("merged: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "c.txt")); err != nil {
+		t.Fatal("the uncommitted file didn't come in")
+	}
+	if err := w.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Fatal("the worktree stayed")
+	}
+	if out := run(t, repo, "branch", "--list", w.Branch); out != "" {
+		t.Fatalf("the branch stayed: %q", out)
+	}
+}
+
+func TestMergeConflict(t *testing.T) {
+	repo := newRepo(t)
+	ctx := context.Background()
+	w, err := CreateNamed(ctx, t.TempDir(), repo, "edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(w.Path, "a.txt"), []byte("theirs\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "a.txt"), []byte("ours\n"), 0o644)
+	run(t, repo, "commit", "-qam", "ours")
+	_, err = w.Merge(ctx, "theirs")
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) || !slices.Equal(conflict.Files, []string{"a.txt"}) {
+		t.Fatalf("a conflict: %v", err)
+	}
+	// Undone: the checkout as it was, the worktree and branch kept.
+	if st := run(t, repo, "status", "--porcelain"); st != "" {
+		t.Fatalf("the checkout after: %q", st)
+	}
+	if b, _ := os.ReadFile(filepath.Join(w.Path, "a.txt")); string(b) != "theirs\n" {
+		t.Fatalf("the worktree after: %q", b)
+	}
+	// Nothing on it that isn't in the checkout: nothing merged.
+	w2, _ := CreateNamed(ctx, t.TempDir(), repo, "empty")
+	if got, err := w2.Merge(ctx, "nothing"); err != nil || got.Commits != 0 || got.Committed {
+		t.Fatalf("an empty worktree: %+v %v", got, err)
 	}
 }

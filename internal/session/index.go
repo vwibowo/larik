@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"larik/internal/status"
+	"larik/internal/worktree"
 )
 
 // Project is a place sessions ran: a git repository, with its subfolders
@@ -25,7 +26,8 @@ type Project struct {
 type Indexed struct {
 	Info
 	// Subdir is where the session ran relative to the project root, or ""
-	// at the root. A worktree's sessions show the worktree's own path.
+	// at the root. A worktree's sessions show the worktree's own path, and
+	// those in one of larik's own, kept in the data dir, its name.
 	Subdir  string
 	Status  status.Report // as of now; idle when nothing has reported
 	Running bool          // a process has the session open
@@ -53,6 +55,7 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 		return nil, err
 	}
 	tmp := tempRoots()
+	store := filepath.Join(dataDir, "worktrees")
 	byRoot := map[string]*Project{}
 	roots := map[string]string{} // cwd → project root, found once per directory
 	for _, d := range dirs {
@@ -68,14 +71,19 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 				continue
 			}
 			cwd := filepath.Clean(in.Cwd)
-			scratch := underAny(cwd, tmp)
-			if scratch && !opts.Scratch {
-				continue
-			}
 			root, ok := roots[cwd]
 			if !ok {
 				root = projectRoot(cwd)
+				if _, err := os.Stat(cwd); err != nil && storedWorktree(store, cwd) != "" {
+					root = cwd // gone; see foldWorktrees
+				}
 				roots[cwd] = root
+			}
+			// A larik worktree is scratch as its repository is, wherever
+			// the data dir is.
+			scratch := underAny(root, tmp) && (root != cwd || storedWorktree(store, cwd) == "")
+			if scratch && !opts.Scratch {
+				continue
 			}
 			p := byRoot[root]
 			if p == nil {
@@ -84,7 +92,9 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 				byRoot[root] = p
 			}
 			s := Indexed{Info: in, Status: status.Report{State: status.Idle}}
-			if rel, err := filepath.Rel(root, cwd); err == nil && rel != "." {
+			if name := storedWorktree(store, cwd); name != "" {
+				s.Subdir = name
+			} else if rel, err := filepath.Rel(root, cwd); err == nil && rel != "." {
 				s.Subdir = rel
 			}
 			if f, ok := status.Read(in.Path); ok {
@@ -99,6 +109,7 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 			}
 		}
 	}
+	foldWorktrees(store, byRoot)
 	out := make([]Project, 0, len(byRoot))
 	for _, p := range byRoot {
 		slices.SortFunc(p.Sessions, func(a, b Indexed) int { return b.Modified.Compare(a.Modified) })
@@ -111,6 +122,46 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 		return strings.Compare(a.Root, b.Root)
 	})
 	return out, nil
+}
+
+// storedWorktree is the name of the larik worktree in store that dir is
+// in, with the folder in it, or "" for a directory outside store.
+// Worktrees there are <store>/<repository>/<name> (see worktree.Dir).
+func storedWorktree(store, dir string) string {
+	rel, err := filepath.Rel(store, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	_, name, ok := strings.Cut(rel, string(filepath.Separator))
+	if !ok {
+		return ""
+	}
+	return name
+}
+
+// foldWorktrees moves the sessions of larik worktrees that have been
+// merged or removed back under their repositories, where they ran: the
+// folder is gone, so projectRoot can't say whose it was, but the folder
+// the worktree was in names the repository.
+func foldWorktrees(store string, byRoot map[string]*Project) {
+	for root, p := range byRoot {
+		if !p.Missing || storedWorktree(store, root) == "" {
+			continue
+		}
+		rel, _ := filepath.Rel(store, root)
+		repoDir, _, _ := strings.Cut(rel, string(filepath.Separator))
+		for _, q := range byRoot {
+			if q.Missing || worktree.Dir(store, q.Root) != filepath.Join(store, repoDir) {
+				continue
+			}
+			q.Sessions = append(q.Sessions, p.Sessions...)
+			if p.Updated.After(q.Updated) {
+				q.Updated = p.Updated
+			}
+			delete(byRoot, root)
+			break
+		}
+	}
 }
 
 // projectRoot is the repository cwd belongs to, with a linked worktree

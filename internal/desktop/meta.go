@@ -50,7 +50,8 @@ func (a *App) metaLoop() {
 
 // metaWanted is what to look up, asked of the main thread: the roots of
 // the projects whose sections are open, and the directories of sessions
-// running in one of them, which a worktree has a branch of its own in;
+// running in one of them, or in one of larik's worktrees, which a
+// worktree has a branch of its own in;
 // and the processes of sessions running in this window's tabs, by
 // transcript path.
 func (a *App) metaWanted() (dirs []string, pids map[string]int) {
@@ -64,7 +65,7 @@ func (a *App) metaWanted() (dirs []string, pids map[string]int) {
 			}
 			dirs = append(dirs, p.Root)
 			for _, s := range p.Sessions {
-				if s.Running && s.Cwd != p.Root && !slices.Contains(dirs, s.Cwd) {
+				if (s.Running || a.inWorktree(s.Cwd)) && s.Cwd != p.Root && !slices.Contains(dirs, s.Cwd) {
 					dirs = append(dirs, s.Cwd)
 				}
 			}

@@ -57,7 +57,7 @@ var commands = []command{
 	{"/browser", "[on|off|show|hide|quit]", "browser tools: switch them on/off (fresh context), show or hide the browser beside the conversation (F3), or quit Chrome", "tools", "f3"},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
-	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents; delete one", "tools", ""},
+	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents and larik desktop; delete one", "tools", ""},
 	{"/config", "[area|key=value]", "search every setting, or open an editor: mcp hooks lsp sandbox models web-search stt tts sidebar statusline", "other", ""},
 	{"/statusline", "", "configure and preview a personal command in the footer", "other", ""},
 	{"/reload", "", "rebuild app services and use a fresh model context without losing the session transcript", "other", ""},

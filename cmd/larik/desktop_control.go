@@ -18,7 +18,7 @@ import (
 // with what each does, for usage.
 var desktopCommands = []struct{ name, usage, about string }{
 	{"list", "", "list the window's tabs: id, session, state, directory and title"},
-	{"open", "[--session id] [--prompt text] [--shell | --run cmd] [--split | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell or --run a terminal tab running your shell or cmd there; prints the tab's id"},
+	{"open", "[--session id] [--prompt text] [--shell | --run cmd] [--worktree [--branch name]] [--split | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell or --run a terminal tab running your shell or cmd there; --worktree starts it in a new git worktree of dir's repository, on the branch larik/name; prints the tab's id"},
 	{"send", "--tab tab [--no-enter] [text | -]", "type text into a tab and press Return; - or no text reads it from stdin"},
 	{"read", "--tab tab [--lines n]", "print the last lines a tab's terminal shows, its scrollback included"},
 	{"wait", "(--tab tab | --session id) [--state done] [--timeout d]", "wait until the session is in a state: done, error, blocked, working or idle, or several comma separated; prints the state"},
@@ -64,6 +64,8 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.BoolVar(&req.Background, "background", false, "open it in a tab without showing it")
 		fs.BoolVar(&req.Shell, "shell", false, "open a terminal tab running your shell instead of larik")
 		fs.StringVar(&req.Run, "run", "", "open a terminal tab running this command through your shell, as lazygit or npm run dev")
+		fs.BoolVar(&req.Worktree, "worktree", false, "start it in a new git worktree of the directory's repository, apart from your checkout")
+		fs.StringVar(&req.Branch, "branch", "", "the worktree's branch, under larik/ (one is named for it when empty); implies --worktree")
 	case "send", "read", "focus", "close", "wait", "allow", "deny":
 		fs.StringVar(&req.Tab, "tab", "", "the tab: its id, its session's id, or \"focused\"")
 	}
@@ -105,6 +107,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	rest := strings.Join(words, " ")
 	switch name {
 	case "open":
+		req.Worktree = req.Worktree || req.Branch != "" // a branch says which worktree
 		if req.Session == "" {
 			dir := rest
 			if dir == "" {

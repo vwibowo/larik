@@ -362,7 +362,8 @@ func (m *model) sessionPickerView() string {
 	return m.st.modal.Width(max(m.width-2, 10)).Render(header + "\n" + p.filterLine(m.st, "filter by ID or title…") + "\n" + p.view(m.st, w) + "\n" + hint)
 }
 
-// worktreesCommand lists or removes worktrees kept by isolated subagents.
+// worktreesCommand lists or removes worktrees kept by isolated subagents
+// and larik desktop's worktree sessions.
 func (m *model) worktreesCommand(args []string, info, fail func(string) tea.Cmd) tea.Cmd {
 	repo := agent.GitRoot(m.agent.Cwd())
 	if repo == "" {
@@ -403,7 +404,7 @@ func (m *model) worktreesCommand(args []string, info, fail func(string) tea.Cmd)
 		return fail(err.Error())
 	}
 	if len(list) == 0 {
-		return info("no worktrees from isolated subagents")
+		return info("no worktrees from isolated subagents or larik desktop")
 	}
 	var b strings.Builder
 	for _, in := range list {

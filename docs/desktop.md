@@ -17,7 +17,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 9 | [Attention while the window is in front](#phase-9-attention-while-the-window-is-in-front) | Done |
 | 10 | [Terminal tabs](#phase-10-terminal-tabs) | Done |
 | 11 | [Answering in place](#phase-11-answering-in-place) | Done |
-| 12 | [What's next](#phase-12-whats-next) | Planned |
+| 12 | [Worktrees](#phase-12-worktrees) | Done |
+| 13 | [What's next](#phase-13-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -260,14 +261,24 @@ A session waiting on a permission was a tab away: you went to it, pressed `1`, a
   larik desktop allow --tab "$tab"
   ```
 
-## Phase 12: What's next
+## Phase 12: Worktrees
+
+Two sessions in one checkout edit the same files. cmux and herdr run agents side by side in worktrees; now the window does too.
+
+- **New Session in Worktree** (⌥⌘T, File › New Session in Worktree, a project's right-click menu, or right-clicking the toolbar's **+**) makes a worktree of the focused tab's repository at its `HEAD`, on a new branch `larik/session-xxxxxx`, and starts a session in it. `larik desktop open --worktree [dir]` does the same from a script, and `--branch fix-parser` names the branch `larik/fix-parser` (and implies `--worktree`); it works with `--prompt`, `--shell` and `--run` too.
+- **Where they live**: with the worktrees isolated subagents make, in the data dir (`~/.local/share/larik/worktrees/<repository>/<name>`), on `larik/` branches, so `/worktrees` in larik lists them too. A worktree in the project's own folder would be under `.larik/`, which the sandbox keeps commands from writing.
+- **In the sidebar**: a worktree's sessions are under its repository, named by the worktree (`larik sessions` shows `[fix-parser]`), with its branch under the row. They stay there once it's merged or removed, and opening one then resumes it in the repository, where its work went.
+- **Merge Worktree into main…**, in a worktree session's or tab's right-click menu, says what the worktree has that the checkout's branch doesn't (its commits, its uncommitted changes) and asks. On a yes it commits what's uncommitted in the worktree on its branch, under the session's title, and merges the branch into the branch the repository's checkout is on. Then it closes the worktree's tabs, and removes the worktree and its branch. A merge that conflicts is undone (`git merge --abort`), leaving the checkout, the worktree and its tabs as they were, and the notice bar names the files, to merge them in a terminal. So does a merge git refuses, for changes in the checkout it would overwrite.
+- **Remove Worktree…** removes it and its branch, after saying what's lost.
+- Neither runs while a session in the worktree is working or waiting for you, or is open in another terminal: the notice bar says which. The git runs off the main thread, as larik's subagents run it: hooks, and repository config that could run a program, are off.
+
+## Phase 13: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
 - **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
-- **Worktrees**: a new session in a new worktree and branch, and merging or removing it when done.
 - **Changes you can act on**: stage, discard and commit per file and hunk, compare with the base branch, open a PR, and the changes beside a split.
 - **Splits** in both directions and more than two, resized by dragging, moved between by keys.
 - **Cost and context** in the status file, and on screen: cost, context used, model, permission mode.

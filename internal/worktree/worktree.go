@@ -58,14 +58,27 @@ func Dir(root, repo string) string {
 
 // Create adds a worktree of repo at HEAD on a new branch.
 func Create(ctx context.Context, root, repo string) (*Worktree, error) {
+	b := make([]byte, 3)
+	_, _ = rand.Read(b)
+	return CreateNamed(ctx, root, repo, "task-"+hex.EncodeToString(b))
+}
+
+// CreateNamed adds a worktree of repo at HEAD on a new branch named
+// BranchPrefix+name, in root's folder for repo; a slash in name becomes
+// a dash in the folder's name.
+func CreateNamed(ctx context.Context, root, repo, name string) (*Worktree, error) {
 	base, err := git(ctx, repo, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return nil, errors.New("worktree isolation needs a repository with at least one commit")
 	}
-	b := make([]byte, 3)
-	_, _ = rand.Read(b)
-	name := "task-" + hex.EncodeToString(b)
-	w := &Worktree{Name: name, Path: filepath.Join(Dir(root, repo), name), Branch: BranchPrefix + name, Base: base, Repo: repo}
+	w := &Worktree{Name: name, Branch: BranchPrefix + name, Base: base, Repo: repo}
+	if _, err := git(ctx, repo, "check-ref-format", "--branch", w.Branch); err != nil {
+		return nil, fmt.Errorf("%q can't name a branch", name)
+	}
+	w.Path = filepath.Join(Dir(root, repo), strings.ReplaceAll(name, "/", "-"))
+	if _, err := os.Lstat(w.Path); err == nil {
+		return nil, fmt.Errorf("a worktree named %q is there already", name)
+	}
 	if err := os.MkdirAll(filepath.Dir(w.Path), 0o700); err != nil {
 		return nil, err
 	}
@@ -75,6 +88,19 @@ func Create(ctx context.Context, root, repo string) (*Worktree, error) {
 		return nil, fmt.Errorf("creating worktree: %w", err)
 	}
 	return w, nil
+}
+
+// Repo is the main repository of the checkout dir is in: the one a
+// linked worktree was made from, or the checkout's own top level.
+func Repo(ctx context.Context, dir string) (string, error) {
+	common, err := git(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", errors.New("not in a git repository")
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common), nil
+	}
+	return git(ctx, dir, "rev-parse", "--show-toplevel") // a bare repository's worktree
 }
 
 // CommonDir returns the repository's shared .git directory, which commits
@@ -95,26 +121,15 @@ func (w *Worktree) Finish(message string) (Outcome, error) {
 	defer cancel()
 	var out Outcome
 
-	status, err := git(ctx, w.Path, "status", "--porcelain")
-	if err != nil {
+	committed, err := w.commitAll(ctx, message)
+	var cerr commitError
+	switch {
+	case errors.As(err, &cerr):
+		out.Warning = "could not commit the remaining changes: " + cerr.err.Error()
+	case err != nil:
 		return out, err
 	}
-	if status != "" {
-		if _, err := git(ctx, w.Path, "add", "-A"); err != nil {
-			return out, err
-		}
-		args := []string{"commit", "--quiet", "--no-verify", "-m", message}
-		if _, err := git(ctx, w.Path, args...); err != nil {
-			// No identity configured: commit under a Larik one instead.
-			if _, err2 := git(ctx, w.Path, append([]string{"-c", "user.name=Larik", "-c", "user.email=larik@localhost"}, args...)...); err2 != nil {
-				out.Warning = "could not commit the remaining changes: " + err.Error()
-			} else {
-				out.Committed = true
-			}
-		} else {
-			out.Committed = true
-		}
-	}
+	out.Committed = committed
 
 	count, err := git(ctx, w.Path, "rev-list", "--count", w.Base+"..HEAD")
 	if err != nil {
@@ -129,6 +144,109 @@ func (w *Worktree) Finish(message string) (Outcome, error) {
 		return out, nil
 	}
 	return out, w.Remove(ctx)
+}
+
+// commitError is a commit that failed, as against git failing to say
+// what there is to commit.
+type commitError struct{ err error }
+
+func (e commitError) Error() string { return e.err.Error() }
+
+// commitAll commits whatever is uncommitted in the worktree on its
+// branch, and reports whether there was anything.
+func (w *Worktree) commitAll(ctx context.Context, message string) (bool, error) {
+	status, err := git(ctx, w.Path, "status", "--porcelain")
+	if err != nil || status == "" {
+		return false, err
+	}
+	if _, err := git(ctx, w.Path, "add", "-A"); err != nil {
+		return false, err
+	}
+	args := []string{"commit", "--quiet", "--no-verify", "-m", message}
+	if _, err := git(ctx, w.Path, args...); err != nil {
+		// No identity configured: commit under a Larik one instead.
+		if _, err2 := git(ctx, w.Path, append(larikIdentity, args...)...); err2 != nil {
+			return false, commitError{err}
+		}
+	}
+	return true, nil
+}
+
+// larikIdentity commits as Larik where git has no identity of yours.
+var larikIdentity = []string{"-c", "user.name=Larik", "-c", "user.email=larik@localhost"}
+
+// Merged is what Merge brought in.
+type Merged struct {
+	Into      string   // the branch checked out in the repository
+	Committed bool     // uncommitted changes were committed on the worktree's branch first
+	Commits   int      // commits the branch had that Into didn't
+	Files     []string // files those changed
+}
+
+// ConflictError is a merge that conflicted, and was undone.
+type ConflictError struct {
+	Branch, Into string
+	Files        []string
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("merging %s into %s conflicts in %s; nothing was merged", e.Branch, e.Into, strings.Join(e.Files, ", "))
+}
+
+// Merge brings the worktree's work into the branch checked out in the
+// repository: what's uncommitted in it is committed on its branch with
+// message, and the branch is merged in. The worktree stays, for Remove
+// once whatever runs in it has stopped. A merge that conflicts is undone,
+// with a ConflictError, and one git refuses, for changes in the checkout
+// that it would overwrite, fails as git says.
+func (w *Worktree) Merge(ctx context.Context, message string) (Merged, error) {
+	var out Merged
+	into, err := git(ctx, w.Repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return out, errors.New("the repository's checkout isn't on a branch to merge into")
+	}
+	out.Into = into
+	if out.Committed, err = w.commitAll(ctx, message); err != nil {
+		return out, fmt.Errorf("committing what's uncommitted in the worktree: %w", err)
+	}
+	if n, err := git(ctx, w.Repo, "rev-list", "--count", "HEAD.."+w.Branch); err == nil {
+		out.Commits, _ = strconv.Atoi(n)
+	}
+	if out.Commits > 0 {
+		if files, err := git(ctx, w.Repo, "diff", "--no-ext-diff", "--name-only", "HEAD..."+w.Branch); err == nil && files != "" {
+			out.Files = strings.Split(files, "\n")
+		}
+		if err := w.mergeIn(ctx, into); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// mergeIn merges the branch into the repository's checkout, undoing a
+// merge that conflicts.
+func (w *Worktree) mergeIn(ctx context.Context, into string) error {
+	unlock := lock(w.Repo)
+	defer unlock()
+	args := []string{"merge", "--quiet", "--no-edit", w.Branch}
+	if _, err := git(ctx, w.Repo, "var", "GIT_COMMITTER_IDENT"); err != nil {
+		args = append(larikIdentity, args...) // a merge commit needs one
+	}
+	_, err := git(ctx, w.Repo, args...)
+	if err == nil {
+		return nil
+	}
+	if _, merging := git(ctx, w.Repo, "rev-parse", "--quiet", "--verify", "MERGE_HEAD"); merging != nil {
+		return err // refused before it began
+	}
+	conflict := &ConflictError{Branch: w.Branch, Into: into}
+	if files, err := git(ctx, w.Repo, "diff", "--name-only", "--diff-filter=U"); err == nil && files != "" {
+		conflict.Files = strings.Split(files, "\n")
+	}
+	if _, err := git(ctx, w.Repo, "merge", "--abort"); err != nil {
+		return fmt.Errorf("%v, and undoing it failed: %w", conflict, err)
+	}
+	return conflict
 }
 
 // Remove deletes the worktree and its branch.
@@ -209,18 +327,33 @@ func List(ctx context.Context, repo string) ([]Info, error) {
 	return list, nil
 }
 
-// Open returns the Larik worktree of repo with the given name or branch.
+// Open returns the Larik worktree of repo with the given name, branch or
+// path.
 func Open(ctx context.Context, repo, name string) (*Worktree, error) {
 	list, err := List(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
 	for _, in := range list {
-		if in.Branch == name || in.Branch == BranchPrefix+name || filepath.Base(in.Path) == name {
+		if in.Branch == name || in.Branch == BranchPrefix+name || filepath.Base(in.Path) == name || samePath(in.Path, name) {
 			return &Worktree{Name: strings.TrimPrefix(in.Branch, BranchPrefix), Path: in.Path, Branch: in.Branch, Repo: repo}, nil
 		}
 	}
 	return nil, fmt.Errorf("no Larik worktree %q", name)
+}
+
+// samePath reports whether a and b name the same folder, as git may
+// keep one with symlinks resolved (/private/var for /var on macOS).
+func samePath(a, b string) bool {
+	if !filepath.IsAbs(b) {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
 }
 
 func short(sha string) string {
