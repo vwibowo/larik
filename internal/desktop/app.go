@@ -118,11 +118,14 @@ type App struct {
 	confirmingLeave bool
 	quitting        bool
 	leaving         bool
-	leave           func(quit bool)
-	theme           [2]*ui.Theme       // light, dark
-	termTh          [2]*terminal.Theme // light, dark
-	notice          string
-	host            string
+	// ending says quitting ends the programs the host runs too, which
+	// otherwise go on (see quitEnding).
+	ending bool
+	leave  func(quit bool)
+	theme  [2]*ui.Theme       // light, dark
+	termTh [2]*terminal.Theme // light, dark
+	notice string
+	host   string
 	// git is the branch and changes of each project root, and of each
 	// worktree a session runs in, and ports the ports each session's
 	// programs listen on, by transcript path (see metaLoop).
@@ -285,7 +288,13 @@ func (a *App) Close() {
 	case <-a.done:
 		return
 	default:
-		close(a.done)
+	}
+	a.saveState() // as it is as the window goes
+	close(a.done)
+	for _, t := range a.tabs {
+		if t.hosted && a.ending {
+			closeHostTab(a.opts.DataDir, t.id)
+		}
 	}
 	for _, t := range a.tabs {
 		t.close()
@@ -307,7 +316,9 @@ func (a *App) indexLoop() {
 		}
 		projects, err := session.Index(a.opts.DataDir, session.IndexOptions{})
 		if err == nil {
-			a.update(func() { a.setProjects(projects) })
+			// Saved here too, as frames save it: a window out of sight may
+			// not draw, and the tabs the host runs are to be found again.
+			a.update(func() { a.setProjects(projects); a.saveState() })
 		}
 	}
 }
@@ -331,21 +342,7 @@ func (a *App) setProjects(ps []session.Project) {
 			a.open[p.Root] = &open
 		}
 	}
-	// A tab follows its larik to whichever session it has open: the one
-	// a new tab started, or one it switched to.
-	for _, t := range a.tabs {
-		if t.shell() {
-			t.path = "" // a larik in it has a session only while it runs
-		}
-		var newest time.Time
-		for _, p := range ps {
-			for _, s := range p.Sessions {
-				if s.Tab == t.id && s.Modified.After(newest) {
-					t.path, newest = s.Path, s.Modified
-				}
-			}
-		}
-	}
+	a.followSessions()
 	for _, t := range a.shownTabs() {
 		if t.path != "" {
 			a.seen[t.path] = time.Now()
@@ -355,6 +352,24 @@ func (a *App) setProjects(ps []session.Project) {
 		a.lookTab(f)
 	}
 	a.attend(ps)
+}
+
+// followSessions has each tab follow its larik to whichever session it
+// has open: the one a new tab started, or one it switched to.
+func (a *App) followSessions() {
+	for _, t := range a.tabs {
+		if t.shell() {
+			t.path = "" // a larik in it has a session only while it runs
+		}
+		var newest time.Time
+		for _, p := range a.projects {
+			for _, s := range p.Sessions {
+				if s.Tab == t.id && s.Modified.After(newest) {
+					t.path, newest = s.Path, s.Modified
+				}
+			}
+		}
+	}
 }
 
 // attend raises what started waiting for the user since the last index:
@@ -1017,13 +1032,38 @@ func (a *App) closeOthers(keep *tab) {
 }
 
 // windowClosing decides whether the window may close, and with it every
-// tab's larik: at once when none is working, else after asking.
+// tab's larik but those the host runs: at once when none that ends is
+// working, else after asking.
 func (a *App) windowClosing() bool {
-	if a.leaving || len(a.workingTabs()) == 0 {
+	if a.leaving || len(a.stopping()) == 0 {
 		return true
 	}
 	a.confirmingLeave = true
 	return false
+}
+
+// stopping are the working tabs whose larik leaving the window stops:
+// those the host doesn't run, or all when quitting ends those too.
+func (a *App) stopping() []*tab {
+	var out []*tab
+	for _, t := range a.workingTabs() {
+		if !t.hosted || a.ending {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// quitEnding quits, ending the programs the host runs as well, after
+// asking when any is working.
+func (a *App) quitEnding() {
+	a.ending, a.quitting = true, true
+	if a.windowClosing() {
+		a.leaving = true
+		if a.leave != nil {
+			a.leave(true)
+		}
+	}
 }
 
 // workingTabs are the tabs whose larik is in a turn.

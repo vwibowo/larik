@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"larik/internal/config"
 	"larik/internal/desktop"
@@ -18,8 +19,8 @@ func runDesktop(args []string) error {
 	if len(args) > 0 && isDesktopCommand(args[0]) {
 		return runDesktopCommand(args[0], args[1:], os.Stdin, os.Stdout)
 	}
-	// The host the window's tabs run in, when LARIK_DESKTOP_HOST is set,
-	// which the window starts: not for running by hand.
+	// The host the window's tabs run in, which the window starts: not for
+	// running by hand.
 	if len(args) == 1 && args[0] == "host" {
 		return desktop.RunHost(config.DataDir())
 	}
@@ -78,9 +79,10 @@ func runDesktop(args []string) error {
 	}
 	if *foreground {
 		opts := desktop.Options{Bin: exe, DataDir: config.DataDir(), Cwd: cwd, Version: version}
-		// Tabs whose programs go on when the window closes: a trial, for
-		// now (see docs/desktop.md).
-		if os.Getenv("LARIK_DESKTOP_HOST") == "1" {
+		// Tabs whose programs go on when the window closes (see
+		// docs/desktop.md), unless LARIK_DESKTOP_HOST=0; not on Windows,
+		// whose terminals the host hasn't been tried with.
+		if os.Getenv("LARIK_DESKTOP_HOST") != "0" && runtime.GOOS != "windows" {
 			opts.Host, opts.StartHost = true, func() error { return startDesktopHost(exe) }
 		}
 		return desktop.Run(opts)

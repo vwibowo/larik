@@ -144,21 +144,20 @@ func (a *App) saveState() {
 }
 
 // restore reopens the tabs of the last launch, attaching to those whose
-// programs the host still runs and resuming the others' sessions, and
-// reports whether it opened any. A session that is gone, or open in
-// another terminal now, is skipped.
+// programs the host still runs and resuming the others' sessions, then
+// attaches to what else the host runs, and reports whether it opened
+// any. A session that is gone, or open in another terminal now, is
+// skipped.
 func (a *App) restore() bool {
 	data, err := os.ReadFile(a.statePath())
 	if a.opts.DataDir == "" {
 		err = os.ErrNotExist
 	}
 	a.restored = true
-	if err != nil {
-		return false
-	}
+	live := a.hostedTabs()
 	st := savedState{Right: -1}
-	if json.Unmarshal(data, &st) != nil {
-		return false
+	if err != nil || json.Unmarshal(data, &st) != nil {
+		return a.showAdopted(a.adoptHosted(live))
 	}
 	a.saved = string(data)
 	if st.Width > 0 {
@@ -182,13 +181,9 @@ func (a *App) restore() bool {
 		}
 	}
 	opened := map[int]*tab{}
-	var live map[string]hostTabInfo
-	if len(st.Hosted) > 0 {
-		live = a.hostedTabs()
-	}
 	for i, path := range st.Tabs {
 		if h, ok := live[st.Hosted[i]]; ok {
-			if t := a.attachTab(h, path, st.Terminals[i]); t != nil {
+			if t := a.attachTab(h, path); t != nil {
 				opened[i] = t
 				continue
 			}
@@ -207,8 +202,9 @@ func (a *App) restore() bool {
 			opened[i] = t
 		}
 	}
+	adopted := a.adoptHosted(live)
 	if len(opened) == 0 {
-		return false
+		return a.showAdopted(adopted)
 	}
 	if st.Panes == nil {
 		// An earlier version's: the main pane, and the split beside it.
@@ -227,5 +223,15 @@ func (a *App) restore() bool {
 	}
 	a.zoomed = st.Zoomed && a.split()
 	a.focusNext = a.focus.tab
+	return true
+}
+
+// showAdopted shows the first of the tabs adopted, when nothing else
+// opened, and reports whether there was one.
+func (a *App) showAdopted(adopted []*tab) bool {
+	if len(adopted) == 0 {
+		return false
+	}
+	a.activate(adopted[0])
 	return true
 }

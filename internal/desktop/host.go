@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,10 @@ type hostRequest struct {
 	Env     []string `json:"env,omitempty"`
 	Cols    int      `json:"cols,omitempty"`
 	Rows    int      `json:"rows,omitempty"`
+	// Shell and Run say what the tab is to the window, a terminal tab and
+	// the command it was given, for a window that opens to it not knowing.
+	Shell bool   `json:"shell,omitempty"`
+	Run   string `json:"run,omitempty"`
 }
 
 // hostReply is the host's answer.
@@ -91,12 +96,15 @@ type hostReply struct {
 
 // hostTabInfo is a tab the host keeps.
 type hostTabInfo struct {
-	ID      string   `json:"id"`
-	Dir     string   `json:"dir"`
-	Command []string `json:"command"`
-	Exited  bool     `json:"exited,omitempty"`
-	Code    int      `json:"code,omitempty"`
-	Windows int      `json:"windows,omitempty"` // connections showing it
+	ID      string    `json:"id"`
+	Dir     string    `json:"dir"`
+	Command []string  `json:"command"`
+	Shell   bool      `json:"shell,omitempty"`
+	Run     string    `json:"run,omitempty"`
+	Exited  bool      `json:"exited,omitempty"`
+	Code    int       `json:"code,omitempty"`
+	Windows int       `json:"windows,omitempty"` // connections showing it
+	Started time.Time `json:"started"`
 }
 
 // hostSocketPath is the host's socket for dataDir, in the temp folder as
@@ -119,10 +127,13 @@ type hostTab struct {
 	id      string
 	dir     string
 	command []string
+	shell   bool
+	run     string
 	term    *terminal.Terminal
 	clients map[*hostClient]bool
 	exited  bool
 	code    int
+	started time.Time
 	ended   time.Time
 }
 
@@ -265,7 +276,7 @@ func (h *host) list() []hostTabInfo {
 	defer h.mu.Unlock()
 	out := make([]hostTabInfo, 0, len(h.tabs))
 	for _, t := range h.tabs {
-		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Exited: t.exited, Code: t.code, Windows: len(t.clients)})
+		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
 	}
 	return out
 }
@@ -297,7 +308,7 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 	case req.Op == "attach":
 		return nil, fmt.Errorf("no tab %s", req.ID)
 	}
-	t = &hostTab{id: req.ID, dir: req.Dir, command: req.Command, clients: map[*hostClient]bool{}}
+	t = &hostTab{id: req.ID, dir: req.Dir, command: req.Command, shell: req.Shell, run: req.Run, started: time.Now(), clients: map[*hostClient]bool{}}
 	term, err := terminal.New(terminal.Options{
 		Command: req.Command,
 		Dir:     req.Dir,
@@ -466,7 +477,7 @@ func (a *App) openHosted(t *tab, args []string) (*hostConn, error) {
 	if !a.opts.Host {
 		return nil, nil
 	}
-	req := hostRequest{Op: "open", ID: t.id, Command: args, Dir: t.dir, Env: []string{status.TabEnv + "=" + t.id}}
+	req := hostRequest{Op: "open", ID: t.id, Command: args, Dir: t.dir, Env: []string{status.TabEnv + "=" + t.id}, Shell: t.shell(), Run: t.run}
 	if t.reattach {
 		req.Op = "attach"
 	}
@@ -690,16 +701,46 @@ func (c *hostConn) Close() error { return c.conn.Close() }
 // host went instead.
 func (c *hostConn) exitCode() int { return int(c.code.Load()) }
 
-// attachTab adds a tab showing the program the host runs as h: the
-// session at path's larik, or, as term, a terminal tab's.
-func (a *App) attachTab(h hostTabInfo, path string, term savedTerminal) *tab {
+// attachTab adds a tab showing the program the host runs as h: a
+// session's larik, at path when the window knows it, or a terminal tab's.
+func (a *App) attachTab(h hostTabInfo, path string) *tab {
 	t := &tab{id: h.ID, dir: h.Dir, path: path, reattach: true}
-	if path == "" {
-		t.run, t.cmd = term.Run, shellCommand(term.Run)
+	if h.Shell {
+		t.path, t.run, t.cmd = "", h.Run, shellCommand(h.Run)
 	}
 	if !a.run(t, "") {
 		return nil
 	}
 	a.tabs = append(a.tabs, t)
 	return t
+}
+
+// adoptHosted attaches to the tabs the host runs that the window has no
+// tab for, as those of a window that ended before it saved them, in the
+// order the host started them, and returns them.
+func (a *App) adoptHosted(live map[string]hostTabInfo) []*tab {
+	var left []hostTabInfo
+	for id, h := range live {
+		if a.tabByID(id) == nil {
+			left = append(left, h)
+		}
+	}
+	slices.SortFunc(left, func(x, y hostTabInfo) int { return x.Started.Compare(y.Started) })
+	var out []*tab
+	for _, h := range left {
+		if t := a.attachTab(h, ""); t != nil {
+			out = append(out, t)
+		}
+	}
+	a.followSessions()
+	return out
+}
+
+// quitEndingCommand is Quit and End Tabs, when the host runs the tabs'
+// programs, which quitting otherwise leaves running; else none.
+func (a *App) quitEndingCommand() []command {
+	if !a.opts.Host {
+		return nil
+	}
+	return []command{{label: "Quit and End Tabs", key: "Alt+Cmd+Q", run: a.quitEnding}}
 }

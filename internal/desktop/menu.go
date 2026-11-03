@@ -42,7 +42,7 @@ type menuGroup struct {
 func (a *App) menuBar() []menuGroup {
 	return []menuGroup{
 		// MyGo's app menu, with Settings where Mac apps have it.
-		{role: mygo.RoleAppMenu, items: []command{
+		{role: mygo.RoleAppMenu, items: append([]command{
 			{label: "About Larik", run: a.showAbout},
 			{},
 			{label: "Settings…", key: "Cmd+,", run: a.openSettings},
@@ -54,7 +54,7 @@ func (a *App) menuBar() []menuGroup {
 			{role: mygo.RoleUnhide},
 			{},
 			{role: mygo.RoleQuit},
-		}},
+		}, a.quitEndingCommand()...)},
 		{title: "File", items: []command{
 			{label: "New Session", key: "Cmd+T", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Split", key: "Cmd+D", run: a.splitRight},

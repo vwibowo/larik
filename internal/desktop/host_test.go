@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -79,20 +80,16 @@ func TestHostedTabOutlivesTheWindow(t *testing.T) {
 	})
 	// Typed, it goes to the host's terminal, which echoes it back.
 	mu.Lock()
-	first.term.Send([]byte("4"))
+	first.term.Send([]byte("47"))
 	mu.Unlock()
-	frameUntil(t, mu, tt, "the echo", func() bool { return strings.Contains(first.term.Text(), "4") })
-	mu.Lock()
-	st := a.state()
-	mu.Unlock()
-	if st.Hosted[0] != first.id {
-		a.Close()
-		t.Fatalf("saved: %+v", st.Hosted)
-	}
-	saved, _ := json.Marshal(st)
-	os.MkdirAll(filepath.Join(data, "desktop"), 0o700)
-	os.WriteFile(a.statePath(), saved, 0o600)
+	frameUntil(t, mu, tt, "the echo", func() bool { return strings.Contains(first.term.Text(), "\n47") })
+	// Closing, the window saves which tabs the host runs.
 	a.Close()
+	var st savedState
+	saved, _ := os.ReadFile(a.statePath())
+	if json.Unmarshal(saved, &st) != nil || st.Hosted[0] != first.id {
+		t.Fatalf("saved: %s", saved)
+	}
 
 	// The window's gone; the program isn't.
 	tabs, err := hostTabs(data)
@@ -118,7 +115,7 @@ func TestHostedTabOutlivesTheWindow(t *testing.T) {
 	mu.Unlock()
 	frameUntil(t, mu, tt, "what it showed", func() bool {
 		text := again.term.Text()
-		return strings.Contains(text, "tab:"+first.id) && strings.Contains(text, "4")
+		return strings.Contains(text, "tab:"+first.id) && strings.Contains(text, "\n47")
 	})
 	mu.Lock()
 	if strings.Count(again.term.Text(), "args:") != 1 {
@@ -126,13 +123,13 @@ func TestHostedTabOutlivesTheWindow(t *testing.T) {
 		t.Fatalf("larik ran again: %q", again.term.Text())
 	}
 	snapshot(t, tt, "hosted-dark.png")
-	// It ends with 4, which the host tells: the tab stays, for what it
+	// It ends with 47, which the host tells: the tab stays, for what it
 	// printed.
 	again.term.Send([]byte("\r"))
 	mu.Unlock()
 	waitFor(t, mu, "the exit", func() bool { return again.exited })
 	mu.Lock()
-	if again.code != 4 || len(b.tabs) != 1 {
+	if again.code != 47 || len(b.tabs) != 1 {
 		mu.Unlock()
 		t.Fatalf("exited with %d, %d tabs", again.code, len(b.tabs))
 	}
@@ -164,5 +161,64 @@ func TestHostedTabGoneResumes(t *testing.T) {
 	a.setProjects(projects)
 	if !a.restore() || len(a.tabs) != 1 || a.tabs[0].id == "gone" || !a.tabs[0].hosted || a.tabs[0].path != path {
 		t.Fatalf("restored %d tabs: %s", len(a.tabs), a.notice)
+	}
+}
+
+// The tabs the host runs that a window didn't save, as one killed before
+// it could, come back all the same; quitting and ending them ends them.
+func TestHostedTabsAdopted(t *testing.T) {
+	needTerminal(t)
+	data, repo := fixture(t)
+	testHost(t, data)
+	opts := Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo, Host: true}
+
+	a, mu := serialApp(opts) // never restored, so never saving
+	mu.Lock()
+	a.setProjects(index(t, data))
+	a.selectStart()
+	shell := a.startShell(repo, "echo running; sleep 100")
+	if len(a.tabs) != 2 || shell == nil || !shell.hosted {
+		mu.Unlock()
+		a.Close()
+		t.Fatalf("%d tabs: %s", len(a.tabs), a.notice)
+	}
+	ids := []string{a.tabs[0].id, shell.id}
+	mu.Unlock()
+	a.Close()
+	if _, err := os.Stat(a.statePath()); err == nil {
+		t.Fatal("a window that never restored saved")
+	}
+
+	b, mu := serialApp(opts)
+	mu.Lock()
+	b.setProjects(index(t, data))
+	if !b.restore() || len(b.tabs) != 2 || b.tabs[0].id != ids[0] || b.tabs[1].id != ids[1] {
+		mu.Unlock()
+		b.Close()
+		t.Fatalf("adopted %d tabs: %s", len(b.tabs), b.notice)
+	}
+	if b.tabs[0].shell() || !b.tabs[1].shell() || b.tabs[1].run != "echo running; sleep 100" || b.focused() != b.tabs[0] {
+		mu.Unlock()
+		b.Close()
+		t.Fatalf("adopted as %+v, %+v", b.tabs[0], b.tabs[1])
+	}
+	// Quit and End Tabs: nothing working, so it quits at once, and the
+	// host's programs end as the window does.
+	var quit bool
+	b.leave = func(q bool) { quit = q }
+	if !slices.ContainsFunc(b.menuBar()[0].items, func(c command) bool { return c.label == "Quit and End Tabs" }) {
+		mu.Unlock()
+		b.Close()
+		t.Fatal("no Quit and End Tabs")
+	}
+	b.quitEnding()
+	mu.Unlock()
+	if !quit || !b.ending {
+		b.Close()
+		t.Fatalf("quit %v, ending %v", quit, b.ending)
+	}
+	b.Close()
+	if tabs, err := hostTabs(data); err != nil || len(tabs) != 0 {
+		t.Fatalf("the host still runs %+v, %v", tabs, err)
 	}
 }

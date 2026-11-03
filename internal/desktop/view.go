@@ -222,7 +222,7 @@ func (a *App) confirmLeave(c *ui.Context) {
 		if a.quitting {
 			title, yes = "Quit Larik?", "Quit"
 		}
-		working := a.workingTabs()
+		working := a.stopping()
 		msg = fmt.Sprintf("%d sessions are working. Leaving stops their turns; the sessions stay, and their tabs open again next time.", len(working))
 		if len(working) == 1 {
 			msg = fmt.Sprintf("“%s” is working. Leaving stops its turn; the session stays, and its tab opens again next time.", a.tabTitle(working[0]))
@@ -230,7 +230,7 @@ func (a *App) confirmLeave(c *ui.Context) {
 	}
 	leave := func(yes bool) {
 		if !yes {
-			a.quitting = false
+			a.quitting, a.ending = false, false
 			return
 		}
 		a.leaving = true
