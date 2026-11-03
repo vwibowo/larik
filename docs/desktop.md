@@ -330,7 +330,18 @@ The changes pane staged and discarded whole files, so keeping one of an agent's 
 - **How**: the pane makes the text the index or the file is to have, from the texts the diff shows, and puts it there (`git hash-object` and `git update-index`, keeping the file's mode, or a write of the file), rather than handing `git apply` a patch, so there are no context lines to match or newlines at ends of files to mark. First it checks the index or the file still has what the diff was read from, and says so if an agent changed it in the meantime. Unstaging all of a new file's staged text leaves it untracked. CRLF line endings stay.
 - The index's text of each file with staged changes is read by its blob, once, as HEAD's text is.
 
-## Phase 18: What's next
+## Phase 18: Tabs that outlive the window (a trial)
+
+Closing the window, or quitting, ended every tab's program; larik's tabs came back by resuming their sessions from their transcripts, which loses a turn in flight, and a dev server in a terminal tab just stopped. Rex and herdr keep their sessions running apart from the window. With `LARIK_DESKTOP_HOST=1` in the environment `larik desktop` starts with, so does larik desktop, as a first round.
+
+- **The host**: `larik desktop host`, a process of its own, started by the window when it isn't running (logging to `logs/desktop-host.log` in larik's data folder), one per data folder, on a socket in the temp folder beside the window's. It runs each tab's program in a terminal no window shows, and exits when it has had no tab and no window for ten seconds.
+- **The window's tabs show the host's terminals** through a connection: what's typed goes to the host, and the host sends frames of what its terminal shows (the terminal library's `Mirror`), screen and scrollback cell for cell, with the modes, colours, cursor and title, about every 30 ms while it changes. The view asks the host for the size it fits, and the host's terminal takes it, so programs see the window's size. Bells, notifications (OSC 9 and 777) and how the program ended come over the same connection, so a tab whose larik failed stays, with Restart, as before.
+- **Closing the window leaves the programs running.** The saved state names each tab's id in the host, and the window opening again attaches to those still running, showing what they showed, rather than resuming their sessions; a tab whose program ended meanwhile, or that the host doesn't have, resumes as before. Closing a tab ends its program in the host.
+- **The protocol**: a line of JSON asking (`open`, `attach`, `list`, `close`, `ping`) and one answering, then, for a tab, messages both ways, a type byte, a length and what it says.
+
+Not yet: tabs on by default, a window opening to tabs the host runs that its saved state doesn't name (the state is written as the window draws, so a window killed early can miss its last tabs), quitting with a choice of ending them, and `larik desktop` commands to list and end what the host runs.
+
+## Phase 19: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
@@ -338,7 +349,7 @@ From a review against [Rex](https://www.superlogical.com/updates/public-testing-
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
 - **Archiving and deleting sessions**, names that `/resume` shows, and settings of the window's own (keys, theme, font).
-- **Sessions that outlive the window**, as Rex and herdr keep theirs: a background host the window attaches to, then remote windows on another Mac or over SSH.
+- **Tabs that outlive the window**, finished (see phase 18), then remote windows on another Mac or over SSH, which the host's protocol is the start of.
 
 Still open from phase 7: the headless Linux run.
 

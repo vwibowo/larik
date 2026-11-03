@@ -12,7 +12,10 @@ type savedState struct {
 	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal tab
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
-	Active    int                   `json:"active"` // the focused pane's tab, by index into Tabs, -1 for none
+	// Hosted are the tabs the host runs the programs of, their ids by their
+	// index in Tabs, to attach to again (see host.go).
+	Hosted map[int]string `json:"hosted,omitempty"`
+	Active int            `json:"active"` // the focused pane's tab, by index into Tabs, -1 for none
 	// Panes are how the panes show the tabs, and Zoomed that the focused
 	// one shows alone.
 	Panes  *savedPane `json:"panes,omitempty"`
@@ -86,6 +89,12 @@ func (a *App) state() savedState {
 		case path == "":
 			continue
 		}
+		if t.hosted && !t.exited {
+			if st.Hosted == nil {
+				st.Hosted = map[int]string{}
+			}
+			st.Hosted[len(st.Tabs)] = t.id
+		}
 		if t == a.focused() {
 			st.Active = len(st.Tabs)
 		}
@@ -134,8 +143,9 @@ func (a *App) saveState() {
 	}()
 }
 
-// restore reopens the tabs of the last launch, resuming their sessions,
-// and reports whether it opened any. A session that is gone, or open in
+// restore reopens the tabs of the last launch, attaching to those whose
+// programs the host still runs and resuming the others' sessions, and
+// reports whether it opened any. A session that is gone, or open in
 // another terminal now, is skipped.
 func (a *App) restore() bool {
 	data, err := os.ReadFile(a.statePath())
@@ -172,7 +182,17 @@ func (a *App) restore() bool {
 		}
 	}
 	opened := map[int]*tab{}
+	var live map[string]hostTabInfo
+	if len(st.Hosted) > 0 {
+		live = a.hostedTabs()
+	}
 	for i, path := range st.Tabs {
+		if h, ok := live[st.Hosted[i]]; ok {
+			if t := a.attachTab(h, path, st.Terminals[i]); t != nil {
+				opened[i] = t
+				continue
+			}
+		}
 		if term, ok := st.Terminals[i]; ok {
 			if t := a.startShell(term.Dir, ""); t != nil {
 				opened[i] = t

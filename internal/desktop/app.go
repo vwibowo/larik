@@ -33,6 +33,11 @@ type Options struct {
 	DataDir string // where sessions live
 	Cwd     string // the directory larik desktop was started in
 	Version string // larik's, for About Larik
+	// Host runs the tabs' programs in the host, where they go on when the
+	// window closes (see host.go), and StartHost starts it, in a process of
+	// its own, when it isn't running.
+	Host      bool
+	StartHost func() error
 }
 
 // App is the window's state. The view reads it on the main thread;
@@ -206,6 +211,9 @@ type tab struct {
 	cmd     []string
 	run     string
 	alerted time.Time
+	// hosted says the host runs its program, and reattach that the next
+	// run is to attach to it there, not run one (see host.go).
+	hosted, reattach bool
 
 	// The find bar: open, what it looks for, how the search goes, and
 	// whether its field takes the keyboard next frame.
@@ -270,7 +278,8 @@ func (a *App) Start() {
 	go a.metaLoop()
 }
 
-// Close ends the index loop and every tab's larik.
+// Close ends the index loop and every tab's larik, but those the host
+// runs, which go on.
 func (a *App) Close() {
 	select {
 	case <-a.done:
@@ -781,38 +790,63 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 	}
 	// The terminal's own end, not one a restart replaced.
 	var term *terminal.Terminal
-	term, err := terminal.New(terminal.Options{
-		Command:      args,
-		Dir:          t.dir,
-		Env:          []string{status.TabEnv + "=" + t.id},
+	opts := terminal.Options{
 		Font:         a.termFont(),
 		Theme:        a.terminalTheme(false),
 		DarkTheme:    a.terminalTheme(true),
 		Padding:      terminal.Padding{X: 14, Y: 10},
 		PaddingColor: terminal.PaddingExtend,
 		OnTitle:      func(title string) { a.update(func() { t.title = title }) },
-		OnExit: func(code int) {
-			a.update(func() {
-				if t.term == term {
-					a.exited(t, code)
-				}
-			})
-		},
-		OnZoom:   func(z terminal.Zoom) bool { a.zoom(z); return true },
-		OnBell:   func() { a.update(func() { a.rang(t) }) },
-		OnNotify: func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
+		OnZoom:       func(z terminal.Zoom) bool { a.zoom(z); return true },
+		OnBell:       func() { a.update(func() { a.rang(t) }) },
+		OnNotify:     func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
 		OnSearch: func(st terminal.SearchStatus) {
 			t.search = st
 			if a.redraw != nil {
 				a.redraw()
 			}
 		},
-	})
+	}
+	hc, err := a.openHosted(t, args)
+	switch {
+	case err != nil && t.reattach:
+		a.notice = "Can't reach the tab in the host: " + err.Error()
+		return false
+	case err != nil:
+		a.notice = "The host isn't running, so this tab's program ends with the window: " + err.Error()
+	}
+	t.reattach = false
+	if hc != nil {
+		// The host's terminal rings and posts, and how it ended is the
+		// host's to say.
+		hc.onBell, hc.onNotify = opts.OnBell, opts.OnNotify
+		opts.OnBell, opts.OnNotify = nil, nil
+		opts.Conn, opts.ResizeByConn = hc, true
+	} else {
+		opts.Command, opts.Dir, opts.Env = args, t.dir, []string{status.TabEnv + "=" + t.id}
+	}
+	opts.OnExit = func(code int) {
+		if hc != nil {
+			code = hc.exitCode()
+		}
+		a.update(func() {
+			if t.term == term {
+				a.exited(t, code)
+			}
+		})
+	}
+	term, err = terminal.New(opts)
 	if err != nil {
+		if hc != nil {
+			hc.Close()
+		}
 		a.notice = "Can't open a terminal: " + err.Error()
 		return false
 	}
-	t.term = term
+	if hc != nil {
+		hc.attached(term)
+	}
+	t.term, t.hosted = term, hc != nil
 	return true
 }
 
@@ -875,7 +909,7 @@ func (a *App) zoom(z terminal.Zoom) {
 	}
 }
 
-// close ends the tab's larik.
+// close ends the tab's larik, or leaves the host running it.
 func (t *tab) close() {
 	if t.term != nil {
 		t.term.Close()
@@ -911,6 +945,9 @@ func (a *App) closeTab(t *tab) {
 	}
 	a.tabs = slices.Delete(a.tabs, i, i+1)
 	t.close()
+	if t.hosted {
+		go closeHostTab(a.opts.DataDir, t.id) // its program ends too
+	}
 	if t.path != "" {
 		a.closed = append(slices.DeleteFunc(a.closed, func(p string) bool { return p == t.path }), t.path)
 		if len(a.closed) > closedKept {

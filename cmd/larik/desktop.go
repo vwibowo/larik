@@ -18,6 +18,11 @@ func runDesktop(args []string) error {
 	if len(args) > 0 && isDesktopCommand(args[0]) {
 		return runDesktopCommand(args[0], args[1:], os.Stdin, os.Stdout)
 	}
+	// The host the window's tabs run in, when LARIK_DESKTOP_HOST is set,
+	// which the window starts: not for running by hand.
+	if len(args) == 1 && args[0] == "host" {
+		return desktop.RunHost(config.DataDir())
+	}
 	fs := flag.NewFlagSet("desktop", flag.ContinueOnError)
 	foreground := fs.Bool("foreground", false, "keep the window attached to this terminal")
 	install := fs.Bool("install", false, "add Larik to ~/Applications (macOS) or the applications menu (Linux), to open it without a terminal")
@@ -72,7 +77,13 @@ func runDesktop(args []string) error {
 		return err
 	}
 	if *foreground {
-		return desktop.Run(desktop.Options{Bin: exe, DataDir: config.DataDir(), Cwd: cwd, Version: version})
+		opts := desktop.Options{Bin: exe, DataDir: config.DataDir(), Cwd: cwd, Version: version}
+		// Tabs whose programs go on when the window closes: a trial, for
+		// now (see docs/desktop.md).
+		if os.Getenv("LARIK_DESKTOP_HOST") == "1" {
+			opts.Host, opts.StartHost = true, func() error { return startDesktopHost(exe) }
+		}
+		return desktop.Run(opts)
 	}
 
 	logDir := filepath.Join(config.DataDir(), "logs")
@@ -92,5 +103,26 @@ func runDesktop(args []string) error {
 		return err
 	}
 	fmt.Printf("larik desktop is open (log: %s)\n", logPath)
+	return cmd.Process.Release()
+}
+
+// startDesktopHost starts the host the window's tabs run in, in a process
+// of its own, which outlives the window's, logging to the logs folder.
+func startDesktopHost(exe string) error {
+	logDir := filepath.Join(config.DataDir(), "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return err
+	}
+	log, err := os.OpenFile(filepath.Join(logDir, "desktop-host.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	cmd := exec.Command(exe, "desktop", "host")
+	cmd.Stdout, cmd.Stderr = log, log
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
 	return cmd.Process.Release()
 }
