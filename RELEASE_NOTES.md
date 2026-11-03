@@ -12,12 +12,14 @@ You can now open web pages in larik desktop beside your sessions, and larik can 
 - **Pages ask first.** A page wanting the camera, microphone, location or notifications gets a bar to **Allow** or **Don't Allow** it, remembered per site. Downloads go to Downloads, with a progress bar, **Show in Finder** and a note in the bell. `cmd+f` finds in the page.
 - **larik can use the page you see.** larik in a desktop tab gets `desktop_page_navigate`, `history`, `snapshot`, `click`, `type`, `eval` and `screenshot`, for the browser tab beside it rather than a headless Chrome: check a dev server, fill a form, see the layout. Navigating asks per domain, like `browser_navigate`. Scripts get the same with `larik desktop page`, and `larik desktop open --url` opens a browser tab.
 - **A New menu.** The toolbar's **New** menu, and a **+** on each split pane's header, offer a Larik session, a worktree session, a terminal or a browser tab, in that pane.
+- **A New Tab page.** `cmd+t`, and `cmd+d` in a split, open a page that asks what to open: a Larik session, a worktree session, a terminal or a browser tab, in the folder it shows (**Change…** picks another). Choose with the arrows and Enter, a letter or a click. The window with no tab open offers the same. **New Larik Session** in the File menu and the palette still starts larik at once.
 - **Plan review beside the session.** While the focused session waits on a plan, a pane beside its terminal shows the plan as Markdown, with **Approve and accept edits**, **Approve, ask each edit** and **Request changes**.
 - **A Settings window.** `cmd+,` opens the window's own preferences, sidebar and text size, with **Open advanced settings…** for `larik /config`.
 - **Terminal tabs report status.** A program in a terminal tab that reports OSC 7501 sets the tab's state, title and message, in the sidebar and the tab bar; closing a live terminal tab asks first.
 
 ### Compatibility notes
 
+- `cmd+t` and `cmd+d` now open the New Tab page rather than a Larik session. To have them start larik as before, turn off **New tabs ask what to open** in Settings (`cmd+,`).
 - To let pages in browser tabs ask for the camera, microphone or location, run `larik desktop --install` again: macOS needs the Larik app to say why it asks, and an app installed before this release doesn't. Until then those requests are refused, with a note saying so.
 - Browser tabs run in the window, not the tabs' host, so they close with it and reopen from their address.
 - larik's clicks and typing in a browser tab go through the page's script, so a page that only takes what a person does may ignore them.

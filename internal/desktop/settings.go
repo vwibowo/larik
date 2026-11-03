@@ -21,6 +21,11 @@ func (a *App) settingsView(c *ui.Context) {
 					a.noSidebar = !showSidebar
 					a.settingsChanged()
 				}
+				choose := !a.noChooser
+				if ui.Checkbox(c.Key("chooser"), &choose, "New tabs ask what to open ("+keyLabel(false, "T")+")").Changed() {
+					a.noChooser = !choose
+					a.settingsChanged()
+				}
 			})
 			ui.Column(c).Gap(8).Children(func() {
 				ui.Text(c, "Terminal text").Bold().FontSize(13)

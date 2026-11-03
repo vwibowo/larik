@@ -41,7 +41,7 @@ func TestPaletteItems(t *testing.T) {
 
 	// With nothing focused: the menu bar's commands, then the sessions.
 	got := labels(a.paletteItems())
-	for _, want := range []string{"New Session", "Toggle Sidebar", "Next Session Waiting", "Fix the flaky test", "Write the docs"} {
+	for _, want := range []string{"New Tab", "New Larik Session", "Toggle Sidebar", "Next Session Waiting", "Fix the flaky test", "Write the docs"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("no %q in %q", want, got)
 		}
@@ -82,7 +82,7 @@ func TestPaletteItems(t *testing.T) {
 		t.Fatalf("site docs: %q", got)
 	}
 	a.paletteQuery = "new"
-	if got := labels(a.paletteMatches()); got[0] != "New Session" {
+	if got := labels(a.paletteMatches()); got[0] != "New Tab" {
 		t.Fatalf("new: %q", got)
 	}
 	a.paletteQuery = "zzz"

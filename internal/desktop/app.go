@@ -198,6 +198,11 @@ type App struct {
 	// sites are what you let pages use, or didn't, by siteKey.
 	newWebView func(url string) (*mygo.WebView, error)
 	sites      map[string]bool
+	// noChooser makes a new tab start larik, without the chooser;
+	// emptyPick and emptyDir are the window's own chooser's, with no tab.
+	noChooser bool
+	emptyPick choice
+	emptyDir  string
 	// lastBrowser is the browser tab focused last, which page commands go
 	// to when no other is named or focused.
 	lastBrowser *tab
@@ -261,6 +266,10 @@ type tab struct {
 	download *pageDownload
 	// found is how its find bar's search of its page went.
 	found mygo.FindResult
+
+	// A chooser tab's (see chooser.go): the kind highlighted.
+	chooser bool
+	choice  choice
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
@@ -1246,6 +1255,8 @@ func (a *App) tabTitle(t *tab) string {
 		return t.title
 	}
 	switch {
+	case t.chooser:
+		return "New Tab"
 	case t.browser && t.url != blankPage:
 		return pageHost(t.url)
 	case t.browser:

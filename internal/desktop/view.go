@@ -341,7 +341,7 @@ func (a *App) shortcuts(c *ui.Context) {
 	case c.Shortcut(mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
 	case c.Shortcut(mod, ui.KeyT):
-		a.newTab(a.currentDir(), "", "")
+		a.openNew()
 	case c.Shortcut(mod, ui.KeyW):
 		if t := a.focused(); t != nil {
 			a.askClose([]*tab{t}, nil)
@@ -489,7 +489,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		}
 		a.bell(c, t)
 		newButton := ui.Row(c.Key("new")).Gap(3).Padding(5, 7).Radius(6).AlignItems(ui.Center).
-			Label("New tab").Tooltip("New session, worktree session, or terminal").Children(func() {
+			Label("New tab").Tooltip("New session, worktree session, terminal, or browser tab").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(15).TextColor(t.Text.Alpha(0.75))
 			ui.Text(c, "New").FontSize(12)
 			ui.Icon(c, iconDown).FontSize(10).TextColor(t.TextMuted)
@@ -530,6 +530,9 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 // where says where a tab's session is and what it's doing: its project
 // and folder, its status, and its model.
 func (a *App) where(tb *tab) string {
+	if tb.chooser {
+		return tildePath(tb.dir)
+	}
 	if tb.browser {
 		if tb.loading {
 			return pageHost(tb.url) + " — loading"
@@ -629,6 +632,9 @@ func (a *App) visibleTabs() []*tab {
 }
 
 func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
+	if tb.chooser {
+		return "New tab", iconPlus
+	}
 	if tb.browser {
 		return "Browser", iconGlobe
 	}
@@ -1246,22 +1252,11 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 	if a.layout == nil {
 		a.card(c, t, func() {
 			a.noticeBar(c, t)
-			empty := ui.Column(c).Fill().Center().Gap(6).Children(func() {
-				ui.Text(c, "No Session Open").Bold().FontSize(17).TextColor(t.TextMuted)
-				ui.Text(c, "Pick a session, or start a new one").TextColor(t.TextMuted)
-				ui.Box(c).Height(6)
-				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c.Key("start"), "New session").Clicked() {
-						a.newTab(a.currentDir(), "", "")
-					}
-					if ui.Button(c.Key("shell"), "New terminal").Clicked() {
-						a.openShell()
-					}
-					if ui.Button(c.Key("worktree"), "New worktree session").Clicked() {
-						a.newWorktreeSession(a.currentDir())
-					}
-					if ui.Button(c.Key("browser"), "New browser tab").Clicked() {
-						a.openBrowser("")
+			empty := ui.Column(c).Fill().Children(func() {
+				dir := cmp.Or(a.emptyDir, a.currentDir())
+				a.chooser(c, t, "No Session Open", "Pick a session in the sidebar, or open a new tab", &a.emptyPick, dir, func(d string) { a.emptyDir = d }, func(i int) {
+					if tb := a.startKind(i, dir); tb != nil {
+						a.activate(tb)
 					}
 				})
 			})
@@ -1300,7 +1295,7 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 
 // splitTip is the split button's tooltip.
 func splitTip() string {
-	return "Split: a new session beside this one (" + keyLabel(false, "D") + "), or below it (" + keyText(splitBelowKey()) + "); or drop a session here"
+	return "Split: a new tab beside this one (" + keyLabel(false, "D") + "), or below it (" + keyText(splitBelowKey()) + "); or drop a session here"
 }
 
 // paneTree draws p: a pane, or a split's two, beside each other or one
@@ -1341,6 +1336,10 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	body := ui.Column(c).Grow(1).Children(func() {
 		a.header(c, t, p)
 		a.exitBar(c, t, tb)
+		if tb.chooser {
+			term = a.chooserPane(c, t, tb)
+			return
+		}
 		if tb.browser {
 			a.addressBar(c, t, tb)
 			a.siteBars(c, t, tb)

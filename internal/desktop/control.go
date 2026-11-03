@@ -78,7 +78,7 @@ type Response struct {
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
 	ID      string `json:"id"`
-	Kind    string `json:"kind"`              // larik, terminal, or browser
+	Kind    string `json:"kind"`              // larik, terminal, browser, or chooser
 	Run     string `json:"run,omitempty"`     // a terminal tab's program
 	URL     string `json:"url,omitempty"`     // a browser tab's page
 	Session string `json:"session,omitempty"` // its session's id, once it has one
@@ -604,6 +604,9 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	}
 	if t.browser {
 		info.Kind, info.URL = "browser", t.url
+	}
+	if t.chooser {
+		info.Kind = "chooser"
 	}
 	if s, _, ok := a.find(t.path); ok {
 		info.Session = s.ID

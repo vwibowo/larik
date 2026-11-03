@@ -182,10 +182,16 @@ func (a *App) closePane(p *pane) {
 // beside the focused one, or below it.
 func (a *App) splitNew(below bool) {
 	if a.focus == nil {
-		a.newTab(a.currentDir(), "", "")
+		a.openNew()
 		return
 	}
-	if t := a.startTab(a.currentDir(), "", ""); t != nil {
+	var t *tab
+	if a.noChooser {
+		t = a.startTab(a.currentDir(), "", "")
+	} else {
+		t = a.newChooser(a.currentDir())
+	}
+	if t != nil {
 		a.splitPane(a.focus, t, below)
 	}
 }

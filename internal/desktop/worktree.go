@@ -69,7 +69,12 @@ func (a *App) makeWorktree(dir, name string) (*worktree.Worktree, error) {
 
 // newWorktreeSession starts a session in a new worktree of the
 // repository dir is in.
-func (a *App) newWorktreeSession(dir string) {
+func (a *App) newWorktreeSession(dir string) { a.newWorktreeSessionThen(dir, nil) }
+
+// newWorktreeSessionThen starts a session in a new worktree of dir, as
+// newWorktreeSession does, and hands it to then, when set, to show
+// rather than showing it in the focused pane.
+func (a *App) newWorktreeSessionThen(dir string, then func(t *tab)) {
 	target := a.focus
 	a.notice = "Making a worktree of " + tildePath(dir) + "…"
 	go func() {
@@ -83,7 +88,12 @@ func (a *App) newWorktreeSession(dir string) {
 			if target != nil && a.paneOf(target.tab) == target {
 				a.focusPane(target)
 			}
-			if t := a.startTab(w.Path, "", ""); t != nil {
+			t := a.startTab(w.Path, "", "")
+			switch {
+			case t == nil:
+			case then != nil:
+				then(t)
+			default:
 				a.activate(t)
 			}
 		})

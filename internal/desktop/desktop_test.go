@@ -59,6 +59,9 @@ func fixture(t *testing.T) (data, repo string) {
 // main thread, so a test can read its state under mu.
 func serialApp(opts Options) (*App, *sync.Mutex) {
 	a := New(opts)
+	// These run larik in their tabs: a new tab starts it, as with the
+	// chooser turned off (chooser_test.go tests the chooser).
+	a.noChooser = true
 	var mu sync.Mutex
 	// As the window's Update, it runs fn later, on the window's turn:
 	// a terminal closing calls back while the caller holds the lock.
@@ -89,7 +92,7 @@ func TestSidebarGroupsSessionsByProject(t *testing.T) {
 	for _, want := range []string{
 		"larik-hardness", "ornith-page", // projects
 		"Add OSC 7501 output", "Refactor the parser and run the tests", // sessions
-		"Pick a session, or start a new one",
+		"Pick a session in the sidebar, or open a new tab", "Larik Session", "Browser",
 		"Inbox",
 	} {
 		if !tt.HasText(want) {

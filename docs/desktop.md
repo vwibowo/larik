@@ -26,7 +26,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 18 | [Tabs that outlive the window](#phase-18-tabs-that-outlive-the-window) | Done |
 | 19 | [Names, archiving and the Trash](#phase-19-names-archiving-and-the-trash) | Done |
 | 20 | [Browser tabs](#phase-20-browser-tabs) | Done |
-| 21 | [What's next](#phase-21-whats-next) | Planned |
+| 21 | [New tab chooser](#phase-21-new-tab-chooser) | Done |
+| 22 | [What's next](#phase-22-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -381,7 +382,17 @@ Checking a dev server, the docs or a pull request meant leaving the window. Rex 
 - **larik drives it too**: larik in a desktop tab gets `desktop_page_navigate`, `history`, `snapshot`, `click`, `type`, `eval` and `screenshot`, for the page you see beside the session rather than the headless Chrome of the `browser_*` tools. They go to the focused browser tab, or the one focused last, and going somewhere with none opens one beside the focused pane, which keeps the keyboard. The snapshot is the browser tools' outline (their `snapshot.js`, run in the page), with a ref on each link, button and field; a click or what's typed goes through the page's script, so a page that only takes what a person does (`isTrusted`) may ignore it. Navigating asks per domain, as `browser_navigate` does, and a rule naming one (`desktop_page_navigate(domain:localhost)`) allows it.
 - **From scripts, the same**: `larik desktop page navigate localhost:3000`, `back`, `forward`, `reload`, `snapshot`, `click --ref e4`, `type --ref e2 --enter text`, `eval code` (or `-` for stdin) and `screenshot --out page.png`, with `--tab` to name one.
 
-## Phase 21: What's next
+## Phase 21: New tab chooser
+
+A new tab started larik, so a terminal or a page beside it took a menu. Now a new tab asks first, as a browser's new tab page does:
+
+- **`cmd+t`**, File › **New Tab**, and a split's **`cmd+d`** / **`cmd+shift+d`** (File › New Tab in Split) open a **New Tab** chooser in the pane: **Larik Session**, **Session in a Worktree**, **Terminal** or **Browser**, in the folder it names, which **Change…** picks. It takes the keyboard: Up and Down move, Enter opens, and so do `l`, `w`, `t`, `b` and `1`–`4`; a click does too. What you choose takes the chooser's place, in its pane and in the tab bar; a worktree session takes it once its worktree is made. Closing the chooser starts nothing.
+- **The window with no tab** shows the same choices under "No Session Open".
+- **The menus' own items start theirs at once**: File › New Larik Session, New Session in Worktree, New Terminal and New Browser Tab, the toolbar's **New** menu, and each pane's **+**.
+- **Settings › New tabs ask what to open** turns it off: a new tab, or a split, starts larik, as before. It's kept with the window's state.
+- `larik desktop list` names a chooser's kind `chooser`.
+
+## Phase 22: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 

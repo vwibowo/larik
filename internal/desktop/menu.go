@@ -56,9 +56,10 @@ func (a *App) menuBar() []menuGroup {
 			{role: mygo.RoleQuit},
 		}, a.quitEndingCommand()...)},
 		{title: "File", items: []command{
-			{label: "New Session", key: "Cmd+T", run: func() { a.newTab(a.currentDir(), "", "") }},
-			{label: "New Session in Split", key: "Cmd+D", run: a.splitRight},
-			{label: "New Session in Split Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
+			{label: "New Tab", key: "Cmd+T", run: a.openNew},
+			{label: "New Tab in Split", key: "Cmd+D", run: a.splitRight},
+			{label: "New Tab in Split Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
+			{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
 			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
 			{label: "New Browser Tab", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
