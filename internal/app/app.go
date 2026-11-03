@@ -461,7 +461,7 @@ func (a *App) Open(o Options) (*Session, error) {
 	}
 	modelSpec := o.Model
 	if resumeID != "" {
-		path, err := session.Find(a.SessionDir, resumeID)
+		path, err := session.Resume(a.SessionDir, resumeID)
 		if err != nil {
 			return nil, err
 		}

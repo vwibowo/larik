@@ -34,7 +34,9 @@ type savedState struct {
 	HiddenSessions []string `json:"hidden,omitempty"`
 	// Pinned are the sessions pinned at the top, in order.
 	Pinned []string `json:"pinned,omitempty"`
-	// Names are the names given to sessions, by transcript path.
+	// Names are the names given to sessions in the window, by transcript
+	// path, as earlier versions kept them, read once to put them beside
+	// the transcripts (session.SetName).
 	Names map[string]string `json:"names,omitempty"`
 }
 
@@ -67,14 +69,6 @@ func (a *App) state() savedState {
 	}
 	for _, s := range a.pinnedSessions() {
 		st.Pinned = append(st.Pinned, s.Path)
-	}
-	for path, name := range a.names {
-		if _, _, ok := a.find(path); ok {
-			if st.Names == nil {
-				st.Names = map[string]string{}
-			}
-			st.Names[path] = name
-		}
 	}
 	index := map[*tab]int{}
 	for _, t := range a.tabs {
@@ -169,7 +163,9 @@ func (a *App) restore() bool {
 	}
 	a.pinned = st.Pinned
 	for path, name := range st.Names {
-		a.names[path] = name
+		if s, _, ok := a.find(path); ok && s.Name == "" {
+			a.rename(path, name)
+		}
 	}
 	a.applyNames()
 	if st.Font >= minFont && st.Font <= maxFont {

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	"larik/internal/session"
 )
 
 // Terminal tabs run your shell, or a program such as lazygit or a dev
@@ -145,6 +147,10 @@ func (a *App) selectKey(key string) {
 		if t := a.tabByID(id); t != nil {
 			a.activate(t)
 		}
+		return
+	}
+	if session.IsArchived(key) {
+		a.openArchived(key)
 		return
 	}
 	a.selectSession(key)

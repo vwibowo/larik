@@ -32,7 +32,7 @@ func runDesktop(args []string) error {
 	install := fs.Bool("install", false, "add Larik to ~/Applications (macOS) or the applications menu (Linux), to open it without a terminal")
 	uninstall := fs.Bool("uninstall", false, "remove what --install added")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: larik desktop [--foreground | --install | --uninstall]\n       larik desktop <command> [flags]   (list, open, send, read, wait, allow, deny, focus, close, notify)\n       larik desktop host (list | stop [--force])\n\nOpens a window with sessions from every project, grouped by the directory\nthey ran in, and a terminal tab running larik for each open session. New\nsessions start in this directory. The tabs get this shell's environment,\nso provider keys set here work there.\n\n")
+		fmt.Fprintf(fs.Output(), "Usage: larik desktop [--foreground | --install | --uninstall]\n       larik desktop <command> [flags]   (list, open, send, read, wait, allow, deny, focus, close, notify,\n                                     archive, unarchive, trash)\n       larik desktop host (list | stop [--force])\n\nOpens a window with sessions from every project, grouped by the directory\nthey ran in, and a terminal tab running larik for each open session. New\nsessions start in this directory. The tabs get this shell's environment,\nso provider keys set here work there.\n\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(fs.Output(), "\n%s", desktopUsage())
 	}

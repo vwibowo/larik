@@ -29,6 +29,9 @@ var desktopCommands = []struct{ name, usage, about string }{
 	{"focus", "--tab tab", "show a tab and bring the window forward"},
 	{"close", "--tab tab [--force]", "close a tab; --force stops one mid-turn"},
 	{"notify", "[--title title] text", "post a notification"},
+	{"archive", "--session id", "archive a session that isn't running: it leaves the sidebar and /resume for its project's archived ones"},
+	{"unarchive", "--session id", "bring an archived session back"},
+	{"trash", "--session id", "move a session that isn't running, archived or not, to the Trash, with what larik kept beside it"},
 }
 
 // isDesktopCommand reports whether name is one of desktopCommands.
@@ -75,6 +78,8 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.StringVar(&req.Branch, "branch", "", "the worktree's branch, under larik/ (one is named for it when empty); implies --worktree")
 	case "send", "read", "focus", "close", "wait", "allow", "deny":
 		fs.StringVar(&req.Tab, "tab", "", "the tab: its id, its session's id, or \"focused\"")
+	case "archive", "unarchive", "trash":
+		fs.StringVar(&req.Session, "session", "", "the session, by id or the start of one")
 	}
 	switch name {
 	case "send":
@@ -143,6 +148,10 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	case "wait":
 		if req.Tab == "" && req.Session == "" {
 			return errors.New("wait needs --tab or --session")
+		}
+	case "archive", "unarchive", "trash":
+		if req.Session == "" {
+			return fmt.Errorf("%s needs --session", name)
 		}
 	}
 	res, err := desktop.Call(config.DataDir(), req)

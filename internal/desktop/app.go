@@ -8,6 +8,7 @@
 package desktop
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -57,13 +58,16 @@ type App struct {
 	// and showHidden the projects showing theirs anyway.
 	hidden     map[string]bool
 	showHidden map[string]bool
+	// showArchived are the projects listing their archived sessions, and
+	// trashItem moves a file to the Trash (see lifecycle.go and Run).
+	showArchived map[string]bool
+	trashItem    func(path string) error
 	// pinned are the sessions pinned above the projects, in the order
 	// pinned, by transcript path.
 	pinned []string
-	// names are the sessions' names given in the window, by transcript
-	// path, shown instead of their first prompts, which prompts keeps for
-	// search.
-	names   map[string]string
+	// prompts are the sessions' first prompts, by transcript path, kept
+	// for search and tooltips where a name given to one (session.SetName)
+	// shows instead.
 	prompts map[string]string
 	// renaming is the session renamed in the sidebar, newName what its
 	// field says, focusRename that the field is to take the keyboard, and
@@ -246,24 +250,24 @@ func (a *App) closeFind(t *tab) {
 func New(opts Options) *App {
 	host, _ := os.Hostname()
 	return &App{
-		opts:       opts,
-		update:     func(fn func()) { fn() },
-		done:       make(chan struct{}),
-		kick:       make(chan struct{}, 1),
-		open:       map[string]*bool{},
-		showAll:    map[string]bool{},
-		hidden:     map[string]bool{},
-		names:      map[string]string{},
-		prompts:    map[string]string{},
-		showHidden: map[string]bool{},
-		seen:       map[string]time.Time{},
-		looked:     map[string]time.Time{},
-		answered:   map[string]pending{},
-		states:     map[string]status.State{},
-		started:    time.Now(),
-		sidebarW:   280,
-		changesP:   60,
-		host:       host,
+		opts:         opts,
+		update:       func(fn func()) { fn() },
+		done:         make(chan struct{}),
+		kick:         make(chan struct{}, 1),
+		open:         map[string]*bool{},
+		showAll:      map[string]bool{},
+		hidden:       map[string]bool{},
+		prompts:      map[string]string{},
+		showHidden:   map[string]bool{},
+		showArchived: map[string]bool{},
+		seen:         map[string]time.Time{},
+		looked:       map[string]time.Time{},
+		answered:     map[string]pending{},
+		states:       map[string]status.State{},
+		started:      time.Now(),
+		sidebarW:     280,
+		changesP:     60,
+		host:         host,
 	}
 }
 
@@ -582,29 +586,38 @@ func (a *App) dropDirs(paths []string) {
 // with their first prompts.
 func (a *App) applyNames() {
 	for i := range a.projects {
-		for j := range a.projects[i].Sessions {
-			s := &a.projects[i].Sessions[j]
-			prompt, ok := a.prompts[s.Path]
-			if !ok {
-				prompt = s.Title
-				a.prompts[s.Path] = prompt
-			}
-			s.Title = prompt
-			if name := a.names[s.Path]; name != "" {
-				s.Title = name
+		for _, list := range [][]session.Indexed{a.projects[i].Sessions, a.projects[i].Archived} {
+			for j := range list {
+				s := &list[j]
+				prompt, ok := a.prompts[s.Path]
+				if !ok {
+					prompt = s.Title
+					a.prompts[s.Path] = prompt
+				}
+				s.Title = cmp.Or(s.Name, prompt)
 			}
 		}
 	}
 }
 
-// rename names the session at path, or gives it its first prompt back
+// rename names the session at path, beside its transcript, where the
+// command line's /resume finds it too, or gives it its first prompt back
 // for a blank name.
 func (a *App) rename(path, name string) {
 	name = strings.Join(strings.Fields(name), " ")
-	if name == "" || name == a.prompts[path] {
-		delete(a.names, path)
-	} else {
-		a.names[path] = name
+	if name == a.prompts[path] {
+		name = ""
+	}
+	if err := session.SetName(path, name); err != nil {
+		a.notice = "Can't rename the session: " + err.Error()
+		return
+	}
+	for i := range a.projects {
+		for j := range a.projects[i].Sessions {
+			if s := &a.projects[i].Sessions[j]; s.Path == path {
+				s.Name = name
+			}
+		}
 	}
 	a.applyNames()
 }

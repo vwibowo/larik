@@ -37,7 +37,7 @@ func (m *model) sessionCommand(name string, args []string, info, fail func(strin
 
 	switch name {
 	case "/resume":
-		path, err := session.Find(m.opts.App.SessionDir, args[0])
+		path, err := session.Resume(m.opts.App.SessionDir, args[0])
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -300,6 +300,23 @@ func (m *model) open(o app.Options, label, prefill string) tea.Cmd {
 	return tea.Batch(m.waitBackground(), tea.Sequence(cmds...))
 }
 
+// renameSession names this session, beside its transcript, where
+// /sessions and larik desktop find it, or with no name takes its name
+// away.
+func (m *model) renameSession(name string, info, fail func(string) tea.Cmd) tea.Cmd {
+	path := m.agent.SessionPath()
+	if _, err := os.Stat(path); path == "" || err != nil {
+		return fail("this session has nothing to name yet: say something first")
+	}
+	if err := session.SetName(path, name); err != nil {
+		return fail("can't rename the session: " + err.Error())
+	}
+	if name = strings.Join(strings.Fields(name), " "); name == "" {
+		return info("the session has no name now: it goes by its first prompt")
+	}
+	return info("named the session “" + name + "”")
+}
+
 func (m *model) listSessions(info, fail func(string) tea.Cmd) tea.Cmd {
 	dir := m.opts.SessionDir
 	if m.opts.App != nil {
@@ -317,6 +334,9 @@ func (m *model) listSessions(info, fail func(string) tea.Cmd) tea.Cmd {
 		title := in.Title
 		if title == "" {
 			title = "(empty)"
+		}
+		if in.Name != "" {
+			title = in.Name + " — " + title // the prompt still to filter by
 		}
 		if in.ForkOf != "" {
 			title = "⑂ " + title + " (branch of " + in.ForkOf + ")"

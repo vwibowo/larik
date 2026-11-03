@@ -847,7 +847,9 @@ func TestDragTabsToReorder(t *testing.T) {
 	}
 }
 
-func TestHideSessionsFromTheSidebar(t *testing.T) {
+// Archiving took the place of hiding; sessions hidden before stay hidden
+// until you show them.
+func TestHiddenSessionsStayHidden(t *testing.T) {
 	data, _ := fixture(t)
 	a, mu := serialApp(Options{DataDir: data})
 	defer a.Close()
@@ -856,13 +858,7 @@ func TestHideSessionsFromTheSidebar(t *testing.T) {
 	a.setProjects(index(t, data))
 	a.restore()
 	tt := ui.NewTester(a.view, 1240, 800)
-	tt.Frame()
-	if err := tt.RightClick("Polish the landing copy"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.ChooseMenuItem("Hide from Sidebar"); err != nil {
-		t.Fatal(err, tt.Menu())
-	}
+	a.hidden[pathOf(t, a, "Polish the landing copy")] = true
 	tt.Frame()
 	if tt.HasText("Polish the landing copy") || !tt.HasText("Show 1 hidden") {
 		t.Fatalf("hidden: %q", tt.Texts())
@@ -1536,10 +1532,10 @@ func TestPinSessions(t *testing.T) {
 		t.Errorf("order: Pinned %v, site %v, parser %v", pinned.Y, site.Y, parser.Y)
 	}
 
-	// Hiding a pinned session unpins it.
-	pin("Refactor the parser and run the tests", "Hide from Sidebar")
+	// Archiving a pinned session unpins it.
+	pin("Refactor the parser and run the tests", "Archive")
 	if s, _, _ := a.find(a.pinned[0]); len(a.pinned) != 1 || s.Title != "Polish the landing copy" {
-		t.Fatalf("hiding didn't unpin: %q", a.pinned)
+		t.Fatalf("archiving didn't unpin: %q, %q", a.pinned, a.notice)
 	}
 
 	// Pinned next launch.
@@ -1654,10 +1650,16 @@ func TestRenameSessions(t *testing.T) {
 		t.Fatalf("renamed: %q", tt.Texts())
 	}
 	path := ""
-	for p, n := range a.names {
-		if n == "Landing copy" {
-			path = p
+	for _, p := range a.projects {
+		for _, s := range p.Sessions {
+			if s.Name == "Landing copy" {
+				path = s.Path
+			}
 		}
+	}
+	// Beside the transcript, where the command line's /resume finds it.
+	if got, _ := os.ReadFile(session.NamePath(path)); string(got) != "Landing copy\n" {
+		t.Fatalf("name file: %q", got)
 	}
 	// Search finds it by its name and by its first prompt.
 	for _, q := range []string{"landing copy", "polish"} {
@@ -1695,8 +1697,8 @@ func TestRenameSessions(t *testing.T) {
 	}
 	// A blank name gives the first prompt back.
 	rename("Landing copy", "", ui.KeyEnter)
-	if !tt.HasText(prompt) || len(next.names) != 0 {
-		t.Fatalf("unnamed: %v, %q", next.names, tt.Texts())
+	if _, err := os.Stat(session.NamePath(path)); !tt.HasText(prompt) || err == nil {
+		t.Fatalf("unnamed: %v, %q", err, tt.Texts())
 	}
 }
 

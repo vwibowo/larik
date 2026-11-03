@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,5 +52,30 @@ func TestSessionPickerFiltersAndScrolls(t *testing.T) {
 	m.command("/resume")
 	if m.sessionPick == nil {
 		t.Fatal("/resume without ID should open session picker")
+	}
+}
+
+// /rename names the session beside its transcript, and /sessions shows
+// and filters by the name, its first prompt still there.
+func TestRenameSession(t *testing.T) {
+	m := testModel(t)
+	path := m.agent.SessionPath()
+	m.opts.SessionDir = filepath.Dir(path)
+	m.command("/rename   Parser   work ")
+	if got, _ := os.ReadFile(session.NamePath(path)); string(got) != "Parser work\n" {
+		t.Fatalf("name file: %q", got)
+	}
+	m.command("/sessions")
+	if m.sessionPick == nil || len(m.sessionPick.items) != 1 || !strings.Contains(m.sessionPick.items[0].detail, "Parser work") {
+		t.Fatalf("picker: %+v", m.sessionPick)
+	}
+	typeText(m, "parser")
+	if len(m.sessionPick.visible()) != 1 {
+		t.Fatal("the name doesn't filter")
+	}
+	m.Update(press(tea.KeyEscape))
+	m.command("/rename")
+	if _, err := os.Stat(session.NamePath(path)); err == nil {
+		t.Fatal("/rename with no name kept the name")
 	}
 }

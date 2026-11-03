@@ -48,6 +48,7 @@ var commands = []command{
 	{"/sessions", "[id]", "choose a session from this directory, or switch by ID (also /resume)", "sessions", ""},
 	{"/new", "", "start a new session", "sessions", ""},
 	{"/fork", "", "branch the conversation into a new session and continue there", "sessions", ""},
+	{"/rename", "[name]", "name this session, as /sessions and larik desktop list it; with no name, they show its first prompt again", "sessions", ""},
 	{"/mcp", "[approve|login|logout <name>]", "MCP servers, their tools, prompts and resources; approve a project server, or sign in to one", "tools", ""},
 	{"/hooks", "[approve]", "configured lifecycle hooks; approve the project's shared hooks", "tools", ""},
 	{"/skills", "", "list available skills", "tools", ""},

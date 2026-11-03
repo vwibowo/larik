@@ -398,6 +398,9 @@ func (m *model) command(line string) tea.Cmd {
 	case "/sessions", "/resume", "/new", "/fork", "/rewind":
 		return m.sessionCommand(name, args, info, fail)
 
+	case "/rename":
+		return m.renameSession(arg, info, fail)
+
 	case "/prompt":
 		return m.promptCommand(args, info, fail)
 	}

@@ -78,6 +78,10 @@ func (a *App) paletteItems() []paletteItem {
 			if a.copyText != nil {
 				add("Copy Session ID", s.ID, "", func() { a.copyText(s.ID) })
 			}
+			if !s.Running { // its larik ended
+				add("Archive Session", title, "", func() { a.archive(s.Path) })
+				add("Move Session to Trash…", title, "", func() { a.trash(s.Path) })
+			}
 		}
 		if f.exited && f.code != 0 {
 			add("Restart", title, "", func() { a.restart(f) })
@@ -141,6 +145,13 @@ func (a *App) paletteItems() []paletteItem {
 			}
 			path := s.Path
 			items = append(items, paletteItem{label: cmp.Or(s.Title, "Untitled session"), detail: detail, run: func() { a.reveal(path) }, session: true})
+		}
+	}
+	// Then the archived, which opening brings back.
+	for _, p := range a.projects {
+		for _, s := range p.Archived {
+			path := s.Path
+			items = append(items, paletteItem{label: cmp.Or(s.Title, "Untitled session"), detail: p.Name + " · archived", run: func() { a.openArchived(path) }, session: true})
 		}
 	}
 	return items

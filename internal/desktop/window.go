@@ -83,6 +83,7 @@ func Run(opts Options) error {
 		a.badge = mygo.App.SetBadgeCount
 		a.copyText = func(s string) { _ = mygo.Clipboard.Write(transfer.TextData(s)) }
 		a.showFile = mygo.Shell.ShowItemInFolder
+		a.trashItem = mygo.Shell.TrashItem
 		a.openPath = func(path string) { _ = mygo.Shell.OpenPath(path) }
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 		a.about = mygo.App.ShowAboutPanel

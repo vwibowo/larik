@@ -20,6 +20,7 @@ type Project struct {
 	Scratch  bool      // under the system temp folder
 	Updated  time.Time // the newest session's last change
 	Sessions []Indexed // newest first
+	Archived []Indexed // archived, newest first; idle, as they don't run
 }
 
 // Indexed is a session in the index, with what it is doing now.
@@ -67,7 +68,9 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 		if err != nil {
 			continue
 		}
-		for _, in := range infos {
+		archived, _ := Archived(filepath.Join(dataDir, "sessions", d.Name()))
+		for i, in := range append(infos, archived...) {
+			isArchived := i >= len(infos)
 			if in.Cwd == "" {
 				continue
 			}
@@ -98,6 +101,10 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 			} else if rel, err := filepath.Rel(root, cwd); err == nil && rel != "." {
 				s.Subdir = rel
 			}
+			if isArchived {
+				p.Archived = append(p.Archived, s)
+				continue
+			}
 			if f, ok := status.Read(in.Path); ok {
 				s.Status, s.Running, s.Usage = f.Current(), f.Running(), f.Usage
 				if s.Running {
@@ -114,6 +121,7 @@ func Index(dataDir string, opts IndexOptions) ([]Project, error) {
 	out := make([]Project, 0, len(byRoot))
 	for _, p := range byRoot {
 		slices.SortFunc(p.Sessions, func(a, b Indexed) int { return b.Modified.Compare(a.Modified) })
+		slices.SortFunc(p.Archived, func(a, b Indexed) int { return b.Modified.Compare(a.Modified) })
 		out = append(out, *p)
 	}
 	slices.SortFunc(out, func(a, b Project) int {
@@ -156,6 +164,7 @@ func foldWorktrees(store string, byRoot map[string]*Project) {
 				continue
 			}
 			q.Sessions = append(q.Sessions, p.Sessions...)
+			q.Archived = append(q.Archived, p.Archived...)
 			if p.Updated.After(q.Updated) {
 				q.Updated = p.Updated
 			}

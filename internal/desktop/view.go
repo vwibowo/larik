@@ -779,6 +779,7 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 		case a.showHidden[p.Root] && a.footLink(c, t, "hidden", "Leave hidden ones out"):
 			a.showHidden[p.Root] = false
 		}
+		a.archived(c, t, p)
 		if !p.Missing {
 			row := ui.Row(c.Key("new")).Gap(6).Padding(4, 12, 4, 14).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("New session in " + p.Name).Children(func() {
 				ui.Icon(c, iconPlus).FontSize(12).TextColor(t.TextMuted)
@@ -994,13 +995,14 @@ func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
 	} else if m.Item("Pin to Top").Chosen() {
 		a.pin(s.Path, true)
 	}
-	if a.hidden[s.Path] {
-		if m.Item("Show in Sidebar").Chosen() {
-			delete(a.hidden, s.Path)
-		}
-	} else if m.Item("Hide from Sidebar").Chosen() {
-		a.hidden[s.Path] = true
-		a.pin(s.Path, false)
+	if a.hidden[s.Path] && m.Item("Show in Sidebar").Chosen() {
+		delete(a.hidden, s.Path)
+	}
+	if m.Item("Archive").Chosen() {
+		a.archive(s.Path)
+	}
+	if m.Item("Move to Trash…").Chosen() {
+		a.trash(s.Path)
 	}
 	if _, p, ok := a.find(s.Path); ok {
 		a.worktreeMenu(m, s, p.Root)

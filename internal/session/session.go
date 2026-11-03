@@ -543,6 +543,7 @@ type Info struct {
 	Path     string
 	Modified time.Time
 	Title    string // first user prompt
+	Name     string // the name given it, if any (see SetName)
 	ForkOf   string // parent session id for branches
 	Cwd      string // the directory the session ran in
 	Model    string // "provider/model" it started with
@@ -557,6 +558,12 @@ func List(dir string) ([]Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	named := map[string]bool{}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".name") {
+			named[strings.TrimSuffix(e.Name(), ".name")] = true
+		}
+	}
 	var out []Info
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
@@ -568,7 +575,12 @@ func List(dir string) ([]Info, error) {
 		}
 		path := filepath.Join(dir, e.Name())
 		sc := scanCached(path, fi)
-		out = append(out, Info{ID: strings.TrimSuffix(e.Name(), ".jsonl"), Path: path, Modified: fi.ModTime(), Title: sc.title, ForkOf: sc.forkOf, Cwd: sc.cwd, Model: sc.model})
+		id := strings.TrimSuffix(e.Name(), ".jsonl")
+		in := Info{ID: id, Path: path, Modified: fi.ModTime(), Title: sc.title, ForkOf: sc.forkOf, Cwd: sc.cwd, Model: sc.model}
+		if named[id] {
+			in.Name = readName(path)
+		}
+		out = append(out, in)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
 	return out, nil

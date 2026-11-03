@@ -128,7 +128,11 @@ func run() error {
 			return err
 		}
 		for _, in := range infos {
-			fmt.Printf("%s  %s  %s\n", in.ID, in.Modified.Format("2006-01-02 15:04"), in.Title)
+			title := in.Title
+			if in.Name != "" {
+				title = in.Name + " — " + title
+			}
+			fmt.Printf("%s  %s  %s\n", in.ID, in.Modified.Format("2006-01-02 15:04"), title)
 		}
 		return nil
 	}

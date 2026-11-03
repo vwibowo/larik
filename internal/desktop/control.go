@@ -116,7 +116,9 @@ func (a *App) control(req Request) Response {
 			}
 			req.Cwd = w.Path
 		}
-	case "list", "send", "read", "focus", "close", "notify":
+	case "trash":
+		return a.controlTrash(req)
+	case "list", "send", "read", "focus", "close", "notify", "archive", "unarchive":
 	default:
 		return Response{Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}
@@ -154,6 +156,24 @@ func (a *App) command(req Request) Response {
 		return Response{Tabs: tabs}
 	case "open":
 		return a.controlOpen(req)
+	case "archive":
+		s, err := a.sessionRef(req.Session)
+		if err != "" {
+			return Response{Error: err}
+		}
+		if !a.archive(s.Path) {
+			return Response{Error: a.notice}
+		}
+		return Response{}
+	case "unarchive":
+		s, err := a.archivedRef(req.Session)
+		if err != "" {
+			return Response{Error: err}
+		}
+		if a.unarchive(s.Path) == "" {
+			return Response{Error: a.notice}
+		}
+		return Response{}
 	case "notify":
 		if req.Body == "" && req.Title == "" {
 			return Response{Error: "notify needs something to say"}
@@ -418,6 +438,78 @@ func (a *App) controlAnswer(req Request) Response {
 		}
 	}
 	return Response{Tab: &info, Error: "the tab didn't take the answer: something in it has the keys, as the diff or a reason being typed"}
+}
+
+// controlTrash moves a session to the Trash, archived or not, without
+// asking: the command is the asking.
+func (a *App) controlTrash(req Request) Response {
+	var folder, path, errMsg string
+	if !a.onMain(func() {
+		s, err := a.sessionRef(req.Session)
+		if err != "" {
+			var archErr string
+			if s, archErr = a.archivedRef(req.Session); archErr != "" {
+				// What neither list has is no session at all.
+				errMsg = err
+				if !strings.HasPrefix(archErr, "no ") {
+					errMsg = archErr
+				}
+				return
+			}
+		}
+		path = s.Path
+		if errMsg = a.unmovable(path); errMsg != "" {
+			return
+		}
+		if a.trashItem == nil {
+			errMsg = "there's no Trash to move it to here"
+			return
+		}
+		var gerr error
+		if folder, gerr = session.Gather(path); gerr != nil {
+			errMsg = gerr.Error()
+			return
+		}
+		a.forget(path)
+		a.moved(path, "", false)
+	}) {
+		return Response{Error: "larik desktop is closing"}
+	}
+	if errMsg != "" {
+		return Response{Error: "can't move the session to the Trash: " + errMsg}
+	}
+	if err := a.trashItem(folder); err != nil {
+		msg := "can't move the session to the Trash: " + err.Error() + "; it's where it was"
+		if uerr := session.Ungather(path, folder); uerr != nil {
+			msg = fmt.Sprintf("can't move the session to the Trash: %v, and it stayed in %s: %v", err, folder, uerr)
+		}
+		a.refreshIndex()
+		return Response{Error: msg}
+	}
+	return Response{}
+}
+
+// archivedRef finds the archived session ref names, by id or the start
+// of one.
+func (a *App) archivedRef(ref string) (session.Indexed, string) {
+	var found []session.Indexed
+	for _, p := range a.projects {
+		for _, s := range p.Archived {
+			if s.ID == ref {
+				return s, ""
+			}
+			if ref != "" && strings.HasPrefix(s.ID, ref) {
+				found = append(found, s)
+			}
+		}
+	}
+	switch len(found) {
+	case 0:
+		return session.Indexed{}, fmt.Sprintf("no archived session %q", ref)
+	case 1:
+		return found[0], ""
+	}
+	return session.Indexed{}, fmt.Sprintf("%q is the start of %d archived sessions: give more of it", ref, len(found))
 }
 
 // tabRef finds the tab ref names (see Request.Tab), or says why not.

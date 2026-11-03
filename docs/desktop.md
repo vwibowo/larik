@@ -195,9 +195,9 @@ The browser and trace panes in the first plan are dropped: the TUI's own browser
 - **Window title**: the window is named after the focused tab's session ("… — Larik"), as the Window menu, Mission Control and the app switcher show it.
 - **Restarting**: a tab whose larik failed shows a bar over what it printed, with its exit status and a Restart button; Restart, also in the tab's menu, runs larik again in the same tab and place, resuming its session (or a new one if it had none yet).
 - **Reopening**: ⇧⌘T, or Reopen Closed Tab in a tab's menu (off macOS, where the window's keys take Shift already), resumes the session of the tab closed last, then the one before, up to 20; one that's gone or open again is skipped.
-- **Hiding sessions**: "Hide from Sidebar" in a session's menu leaves it out of its project's list (search still finds it), and "Show N hidden" under the project brings hidden ones back to view, dimmed, where "Show in Sidebar" unhides one. A hidden session still shows while it's open in a tab or waiting for you, and doesn't count in the inbox once it finishes. Nothing is deleted; the window just remembers the list.
-- **Renaming**: "Rename…" in a session's or a tab's menu turns the session's sidebar row into a field with the whole name selected, as Finder renames, showing the row first (the sidebar, its project, and the session even if hidden or past the first eight). Enter, or clicking away, names the session, as the sidebar, its tab, the window title, the Dock menu and alerts then show it, in place of its first prompt. The first prompt stays in the session's tooltip and the field's placeholder, and search finds either; a blank name gives the first prompt back, and Escape leaves it as it was. The names are the window's, kept with its state: `larik --resume` and `/resume` still list the first prompt.
-- **Pinning**: "Pin to Top" in a session's menu moves it into a Pinned section above the projects, with its project's name, in the order pinned; "Unpin" puts it back in its project. Pinning a hidden session shows it again, and hiding a pinned one unpins it. The pins come back next launch; a session that's gone drops out. Dragging a session onto the Pinned section pins it where it's dropped, before the pinned one under it, and dragging pinned ones reorders them; while a session is dragged and nothing is pinned yet, the section shows to drop it on.
+- **Hiding sessions**: "Hide from Sidebar" in a session's menu left it out of its project's list (search still finds it), and "Show N hidden" under the project brings hidden ones back to view, dimmed, where "Show in Sidebar" unhides one. A hidden session still shows while it's open in a tab or waiting for you, and doesn't count in the inbox once it finishes. Archiving (phase 19) has since taken its place in the menus; sessions hidden before stay hidden until you show them.
+- **Renaming**: "Rename…" in a session's or a tab's menu turns the session's sidebar row into a field with the whole name selected, as Finder renames, showing the row first (the sidebar, its project, and the session even if hidden or past the first eight). Enter, or clicking away, names the session, as the sidebar, its tab, the window title, the Dock menu and alerts then show it, in place of its first prompt. The first prompt stays in the session's tooltip and the field's placeholder, and search finds either; a blank name gives the first prompt back, and Escape leaves it as it was. The names are kept beside the transcripts (phase 19), so `/sessions` and `larik --list` show them too.
+- **Pinning**: "Pin to Top" in a session's menu moves it into a Pinned section above the projects, with its project's name, in the order pinned; "Unpin" puts it back in its project. Pinning a hidden session shows it again, and archiving a pinned one unpins it. The pins come back next launch; a session that's gone drops out. Dragging a session onto the Pinned section pins it where it's dropped, before the pinned one under it, and dragging pinned ones reorders them; while a session is dragged and nothing is pinned yet, the section shows to drop it on.
 - **Ages**: each session in the sidebar shows how long ago it last changed (now, 5m, 3h, 2d, 4w), unless it has a status marker; the date and time are in its tooltip.
 - **Launcher**: `larik desktop --install` writes `~/Applications/Larik.app` on macOS, or a `.desktop` entry on Linux, that starts `larik desktop` through your interactive login shell, as Visual Studio Code reads the shell's environment, so provider keys set in your shell profile work. `--uninstall` removes it. The bundle runs `larik` through a link inside it, so macOS takes the process for the app's and lets it show notifications (checked: the window reports them on from the bundle, off from a terminal); the first one asks for permission. The icon, Larik's three bars on the dark card, is drawn with MyGo's own renderer when installing, so there's no image file in the repository. It runs the `larik` you installed it from, so reinstall after moving the binary.
 
@@ -347,14 +347,24 @@ Closing the window, or quitting, ended every tab's program; larik's tabs came ba
 
 Not yet: the host on Windows.
 
-## Phase 19: What's next
+## Phase 19: Names, archiving and the Trash
+
+A session could be hidden and renamed, but only the window knew: the CLI listed every session by its first prompt, and nothing ever went away. Now:
+
+- **Names beside the transcripts**: a session's name is in `<id>.name` beside its transcript, so the window, `/sessions` in the TUI and `larik --list` all show it, the CLI as "name — first prompt". **`/rename [name]`** in the TUI names the session you're in, and with no name gives it its first prompt back. Names the window kept in its state before are moved beside their transcripts the first time it opens.
+- **Archive**, in a session's menu and the command palette, moves its transcript and the files beside it into `archive/` in its project's sessions folder. It leaves the sidebar and the inbox; "Show N archived" under the project lists the archived ones, dimmed, and opening one, from there, the palette or search, brings it back first, as `larik --resume <id>` and `/resume <id>` do. **Unarchive** in an archived one's menu brings it back without opening it.
+- **Move to Trash…** asks, then gathers the session's files into one folder, `larik session <id>`, and moves that to the system's Trash, where it can be put back; if the Trash refuses, the files go back where they were.
+- **A session in use isn't moved**: one open in a tab says to close the tab first, and one open in another terminal (its status file names a live process) says so.
+- **From scripts**: `larik desktop archive`, `unarchive` and `trash`, each with `--session` and an id or the start of one; `trash` takes an archived session too. They need the window.
+
+## Phase 20: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
 - **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
-- **Archiving and deleting sessions**, names that `/resume` shows, and settings of the window's own (keys, theme, font).
+- **Settings of the window's own**: keys, theme and font.
 - **Remote windows** on another Mac or over SSH, which the host's protocol is the start of (see phase 18).
 
 Still open from phase 7: the headless Linux run.
