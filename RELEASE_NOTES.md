@@ -1,3 +1,30 @@
+# Larik v0.27.0
+
+_November 3, 2026 · Previous release: v0.26.0._
+
+You can now answer, split, stage and archive from larik desktop, and its tabs keep running when you close the window.
+
+### Added
+
+- **Tabs that outlive the window.** Closing the window or quitting leaves each tab's program running in a host process of its own, and opening the window again shows them where they were, mid-turn. **Quit and End Tabs** (`cmd+alt+q`) ends them. With the window closed, `larik desktop list`, `read`, `send`, `close` and `wait` still reach them, `larik desktop host list` shows what runs, and `larik desktop host stop --force` ends it all. `LARIK_DESKTOP_HOST=0` keeps tabs in the window, as before.
+- **Scripts and agents can drive the window.** `larik desktop open` (with `--worktree`, `--below` and `--run`), `send`, `read`, `wait --state done`, `allow`, `deny`, `focus`, `close`, `notify` and `list`. A tab's larik finds its own tab's id in `$LARIK_DESKTOP_TAB`.
+- **Names, archiving and the Trash.** A session's name is now kept beside its transcript, so `/sessions` and `larik --list` show it too, and `/rename` names the session you're in. **Archive** takes Hide from Sidebar's place: it moves a session out of the sidebar into `archive/`, "Show N archived" under the project lists them, and opening one, or `larik --resume <id>`, brings it back. **Move to Trash…** gathers a session's files into one folder for the system's Trash. `larik desktop archive`, `unarchive` and `trash` do the same from scripts.
+- **Panes, any number, both ways.** `cmd+d` splits the focused pane beside it and `cmd+shift+d` below it, as often as you like. Every divider drags, `cmd+alt` and an arrow moves between panes, `cmd+shift+enter` zooms one, and the layout comes back next time.
+- **Act on the changes.** The changes pane stages, unstages and discards per file, per change, or per line chosen by its number, shows what's staged apart from what isn't, commits from a box, compares a branch **Since main**, and opens a pull request with `gh`.
+- **A command palette.** `cmd+shift+p` lists everything the window does, the focused session's actions and the changes pane's first, then every menu command with its key, then the sessions.
+- **Answer in place.** A session waiting on a permission or a plan review has **Allow**, **Always** and **Deny** (or **Approve**) under its row, in its notification and in its right-click menu.
+- **Terminal tabs.** `cmd+shift+n` opens a tab with your shell, or `larik desktop open --run lazygit` a program, listed under Terminals. What its programs post as notifications rings the tab, and a larik started in one shows its status there.
+- **Attention while you work.** A tab whose session needs you or finished takes a ring in its status colour, the toolbar's bell keeps every notification, and `cmd+shift+u` opens the newest unseen one.
+- **Worktrees.** `cmd+alt+t` starts a session in a new git worktree of the project, on a branch of its own, and its menu merges the branch back or removes it.
+- **More on each row.** A project's section names its branch and how many files changed; a working or waiting session shows what it's doing; and the ports its programs listen on open in the browser. The toolbar names the focused session's model, how full its context is, its cost and its permission mode.
+
+### Compatibility notes
+
+- Session names are no longer the window's alone. Names it kept before move beside their transcripts the first time it opens.
+- "Hide from Sidebar" is replaced by Archive. Sessions hidden before stay hidden until you show them.
+- The tabs' host isn't available on Windows yet.
+- The window has been used on macOS. The Linux and Windows builds pass the tests but haven't been tried in a real window yet.
+
 # Larik v0.26.0
 
 _November 3, 2026 · Previous release: v0.25.0._
