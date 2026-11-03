@@ -1,3 +1,29 @@
+# Larik v0.26.0
+
+_November 3, 2026 · Previous release: v0.25.0._
+
+You can now run Larik in a window: `larik desktop` shows every project's sessions in a sidebar and opens each in a terminal tab.
+
+### Added
+
+- **Larik in a window with `larik desktop`.** A sidebar lists every project's sessions with what each is doing: working, waiting for you, finished or failed. Each session you open is a tab running `larik` in a real terminal, so everything works as it does in your terminal. `cmd+d` splits, `cmd+shift+g` shows the project's changes beside a session as the agent makes them, and `cmd+j` jumps to the next session waiting for you, which the Dock icon also counts. The window starts in its own process and gives the terminal back, and your tabs, sidebar and text size come back the next time it opens.
+- **Find a session by what was said.** `cmd+k` searches every project's sessions by title, project, directory or ID, and then by what was said in their prompts and replies, showing the passage.
+- **Keep the sidebar tidy.** Pin sessions above the projects, rename them, hide them, or drag them onto a pane to open them there. Dropping a folder on the sidebar, or `cmd+o`, starts a session in it.
+- **A Mac app.** The window uses macOS's sidebar material, a toolbar naming the focused session, your accent colour and the system's sheets. The menu bar lists the window's keys and open tabs, with Settings… on `cmd+,`. `larik desktop --install` adds a Larik app to `~/Applications`, or to your applications menu on Linux, that can show notifications.
+- **Run a command when Larik starts.** A built-in command after `larik` runs as if typed, so `larik /config` opens the settings.
+
+### Fixed
+
+- **`/compare` leaves out a spinner's corner.** A spinner's corner could move where none of the comparison's pictures caught it, and show as a change.
+
+### Compatibility notes
+
+- `larik desktop` needs Ghostty's terminal library, which the first run downloads (about 2 MB, checked against its SHA-256) into your cache. Set `MYGO_GHOSTTY_VT` to use your own copy. It needs macOS 13, glibc 2.28 or Windows 10 1809.
+- The window has been used on macOS. The Linux and Windows builds pass the tests but haven't been tried in a real window yet.
+- A prompt on the command line that starts with a built-in command's name, as `larik "/model openai/gpt-5.5"`, now runs that command instead of going to the model. A prompt that starts with a path still goes to the model.
+- On macOS, notifications need the app from `larik desktop --install`. A window started from a terminal can't show them.
+- Names you give sessions are kept by the window. The TUI and `larik sessions` still show their titles.
+
 # Larik v0.25.0
 
 _November 2, 2026 · Previous release: v0.24.1._
