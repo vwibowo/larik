@@ -29,7 +29,10 @@ type Request struct {
 	Session string `json:"session,omitempty"`
 	Cwd     string `json:"cwd,omitempty"`    // where open starts a new session
 	Prompt  string `json:"prompt,omitempty"` // what open's session starts with
-	Split   bool   `json:"split,omitempty"`  // open beside the main pane
+	// Split opens it in a new pane beside the focused one, or with Below
+	// under it.
+	Split bool `json:"split,omitempty"`
+	Below bool `json:"below,omitempty"`
 	// Shell opens a terminal tab in Cwd, running Run through your shell,
 	// or the shell itself when Run is empty.
 	Shell bool   `json:"shell,omitempty"`
@@ -84,7 +87,7 @@ type TabInfo struct {
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	Context *int    `json:"context,omitempty"`
 	Tokens  int     `json:"tokens,omitempty"`
-	Shown   bool    `json:"shown,omitempty"`   // in the main pane or the split
+	Shown   bool    `json:"shown,omitempty"`   // in a pane
 	Focused bool    `json:"focused,omitempty"` // has the keyboard
 	Exited  bool    `json:"exited,omitempty"`
 	Code    int     `json:"code,omitempty"`
@@ -252,8 +255,8 @@ func (a *App) controlOpen(req Request) Response {
 	}
 	switch {
 	case req.Background:
-	case req.Split:
-		a.showInSplit(t)
+	case req.Split || req.Below:
+		a.showInSplit(t, req.Below)
 	default:
 		a.activate(t)
 	}
@@ -457,7 +460,7 @@ func (a *App) tabInfo(t *tab) TabInfo {
 		Kind: "larik", Run: t.run,
 		State: string(st.State), Wants: string(st.Kind), Msg: st.Msg,
 		Ports:   a.ports[t.path],
-		Shown:   t == a.active || t == a.right,
+		Shown:   a.shown(t),
 		Focused: t == a.focused() && slices.Contains(a.tabs, t),
 		Exited:  t.exited, Code: t.code,
 	}

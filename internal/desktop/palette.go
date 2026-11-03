@@ -82,9 +82,6 @@ func (a *App) paletteItems() []paletteItem {
 		if f.exited && f.code != 0 {
 			add("Restart", title, "", func() { a.restart(f) })
 		}
-		if a.right != nil {
-			add("Close the Split", "its tab stays open", "", a.unsplit)
-		}
 	}
 	// The changes pane's, while it's open.
 	if ch := a.changes; ch != nil && ch.loaded && ch.err == "" && ch.busy == "" {
@@ -125,6 +122,9 @@ func (a *App) paletteItems() []paletteItem {
 		for _, cmd := range cmds {
 			if cmd.run == nil || cmd.label == "" || cmd.label == paletteLabel || cmd.label == "Search Sessions…" {
 				continue
+			}
+			if !a.split() && strings.Contains(cmd.label, "Pane") {
+				continue // nothing to zoom, close or move to
 			}
 			add(cmd.label, menu, keyText(cmd.key), cmd.run)
 		}
@@ -306,6 +306,9 @@ func keyText(key string) string {
 			if slices.Contains(mods, m.name) {
 				b.WriteString(m.sym)
 			}
+		}
+		if sym, ok := map[string]string{"Left": "←", "Right": "→", "Up": "↑", "Down": "↓", "Enter": "↩"}[k]; ok {
+			k = sym
 		}
 		return b.String() + k
 	}

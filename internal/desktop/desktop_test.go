@@ -146,11 +146,11 @@ func TestTabsRunLarik(t *testing.T) {
 	mu.Lock()
 	a.setProjects(index(t, data))
 	a.selectStart() // the newest session of repo, which nothing has open
-	if len(a.tabs) != 1 || a.active == nil {
+	if len(a.tabs) != 1 || shownAt(a, 0) == nil {
 		mu.Unlock()
 		t.Fatalf("selectStart opened %d tabs: %s", len(a.tabs), a.notice)
 	}
-	resumed := a.active
+	resumed := shownAt(a, 0)
 	s, _, _ := a.find(resumed.path)
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.SetDark(true)
@@ -175,7 +175,7 @@ func TestTabsRunLarik(t *testing.T) {
 		mu.Unlock()
 		t.Fatal(err)
 	}
-	fresh := a.active
+	fresh := shownAt(a, 0)
 	if len(a.tabs) != 2 || fresh == resumed || fresh.dir != repo {
 		mu.Unlock()
 		t.Fatalf("new tab: %d tabs, dir %q", len(a.tabs), fresh.dir)
@@ -200,7 +200,7 @@ func TestTabsRunLarik(t *testing.T) {
 	}
 	// Choosing a session that has a tab shows that tab.
 	a.selectSession(resumed.path)
-	if a.active != resumed || len(a.tabs) != 2 {
+	if shownAt(a, 0) != resumed || len(a.tabs) != 2 {
 		t.Errorf("the session's tab shows again")
 	}
 	mu.Unlock()
@@ -217,7 +217,7 @@ func TestTabsRunLarik(t *testing.T) {
 	waitFor(t, mu, "tab closed", func() bool { return len(a.tabs) == 1 })
 	mu.Lock()
 	defer mu.Unlock()
-	if a.active != fresh {
+	if shownAt(a, 0) != fresh {
 		t.Errorf("the remaining tab shows")
 	}
 }
@@ -225,15 +225,15 @@ func TestTabsRunLarik(t *testing.T) {
 func TestCycleTabs(t *testing.T) {
 	a := New(Options{})
 	a.tabs = []*tab{{id: "a"}, {id: "b"}, {id: "c"}}
-	a.active = a.tabs[0]
+	a.activate(a.tabs[0])
 	a.cycle(-1)
-	if a.active.id != "c" {
-		t.Fatalf("back from the first: %s", a.active.id)
+	if shownAt(a, 0).id != "c" {
+		t.Fatalf("back from the first: %s", shownAt(a, 0).id)
 	}
 	a.cycle(1)
 	a.cycle(1)
-	if a.active.id != "b" {
-		t.Fatalf("on twice: %s", a.active.id)
+	if shownAt(a, 0).id != "b" {
+		t.Fatalf("on twice: %s", shownAt(a, 0).id)
 	}
 }
 
@@ -289,4 +289,13 @@ func waitFor(t *testing.T, mu *sync.Mutex, what string, ok func() bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// shownAt is the tab the i'th pane shows, left to right and top to
+// bottom, or nil.
+func shownAt(a *App, i int) *tab {
+	if ps := a.panes(); i < len(ps) {
+		return ps[i].tab
+	}
+	return nil
 }

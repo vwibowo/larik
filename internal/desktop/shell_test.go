@@ -14,7 +14,7 @@ func TestTerminalTabs(t *testing.T) {
 	defer a.Close()
 	mu.Lock()
 	a.newTab(dir, "", "")
-	session := a.active
+	session := shownAt(a, 0)
 	run := `printf '\033]777;notify;Tests;all green\007'; sleep 30`
 	sh := a.startShell(dir, run)
 	if sh == nil || !sh.shell() || a.tabTitle(sh) != run || a.focused() != session {
@@ -56,7 +56,7 @@ func TestTerminalTabs(t *testing.T) {
 	defer next.Close()
 	mu2.Lock()
 	defer mu2.Unlock()
-	if !next.restore() || len(next.tabs) != 1 || !next.tabs[0].shell() || next.tabs[0].run != "" || next.tabs[0].dir != dir || next.active != next.tabs[0] {
+	if !next.restore() || len(next.tabs) != 1 || !next.tabs[0].shell() || next.tabs[0].run != "" || next.tabs[0].dir != dir || shownAt(next, 0) != next.tabs[0] {
 		t.Fatalf("restored: %+v", next.tabs)
 	}
 }

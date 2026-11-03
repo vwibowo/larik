@@ -12,12 +12,19 @@ type savedState struct {
 	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal tab
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
-	Active    int                   `json:"active"`            // index into Tabs, -1 for none
-	Right     int                   `json:"right"`             // the split's tab, -1 for none
-	SplitP    float32               `json:"split,omitempty"`   // the main pane's share, in percent
-	Width     float32               `json:"sidebar,omitempty"` // the sidebar's width
-	Hidden    bool                  `json:"no_sidebar,omitempty"`
-	Font      float32               `json:"font_size,omitempty"` // the terminals' text size
+	Active    int                   `json:"active"` // the focused pane's tab, by index into Tabs, -1 for none
+	// Panes are how the panes show the tabs, and Zoomed that the focused
+	// one shows alone.
+	Panes  *savedPane `json:"panes,omitempty"`
+	Zoomed bool       `json:"zoomed,omitempty"`
+	// Right and SplitP are the one split of earlier versions, the tab
+	// beside the main one and the main one's share, read when there are no
+	// Panes.
+	Right  int     `json:"right,omitempty"`
+	SplitP float32 `json:"split,omitempty"`
+	Width  float32 `json:"sidebar,omitempty"` // the sidebar's width
+	Hidden bool    `json:"no_sidebar,omitempty"`
+	Font   float32 `json:"font_size,omitempty"` // the terminals' text size
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -44,7 +51,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Active: -1, Right: -1, SplitP: a.splitP, Width: a.sidebarW, Hidden: a.noSidebar, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, Font: a.fontSize, Open: map[string]bool{}}
 	for root, open := range a.open {
 		st.Open[root] = *open
 	}
@@ -66,6 +73,7 @@ func (a *App) state() savedState {
 			st.Names[path] = name
 		}
 	}
+	index := map[*tab]int{}
 	for _, t := range a.tabs {
 		path := t.path
 		switch {
@@ -78,14 +86,13 @@ func (a *App) state() savedState {
 		case path == "":
 			continue
 		}
-		if t == a.active {
+		if t == a.focused() {
 			st.Active = len(st.Tabs)
 		}
-		if t == a.right {
-			st.Right = len(st.Tabs)
-		}
+		index[t] = len(st.Tabs)
 		st.Tabs = append(st.Tabs, path)
 	}
+	st.Panes = savePanes(a.layout, index)
 	return st
 }
 
@@ -139,14 +146,11 @@ func (a *App) restore() bool {
 	if err != nil {
 		return false
 	}
-	var st savedState
+	st := savedState{Right: -1}
 	if json.Unmarshal(data, &st) != nil {
 		return false
 	}
 	a.saved = string(data)
-	if st.SplitP > 0 {
-		a.splitP = st.SplitP
-	}
 	if st.Width > 0 {
 		a.sidebarW = st.Width
 	}
@@ -186,13 +190,22 @@ func (a *App) restore() bool {
 	if len(opened) == 0 {
 		return false
 	}
-	a.active = opened[st.Active]
-	if a.active == nil {
-		a.active = a.tabs[0]
+	if st.Panes == nil {
+		// An earlier version's: the main pane, and the split beside it.
+		st.Panes = &savedPane{Tab: st.Active}
+		if _, ok := opened[st.Right]; ok && st.Right != st.Active {
+			st.Panes = &savedPane{Tab: -1, Percent: st.SplitP, Panes: []savedPane{{Tab: st.Active}, {Tab: st.Right}}}
+		}
 	}
-	if r := opened[st.Right]; r != nil && r != a.active {
-		a.right = r
+	a.layout = restorePanes(st.Panes, opened, map[*tab]bool{})
+	if a.layout == nil {
+		a.layout = &pane{tab: a.tabs[0]}
 	}
-	a.focusNext = a.active
+	a.focus = a.paneOf(opened[st.Active])
+	if a.focus == nil {
+		a.focus = a.panes()[0]
+	}
+	a.zoomed = st.Zoomed && a.split()
+	a.focusNext = a.focus.tab
 	return true
 }

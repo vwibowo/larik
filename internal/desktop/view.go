@@ -29,20 +29,22 @@ func svg(body string) *ui.SVG {
 }
 
 var (
-	iconChat  = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
-	iconTerm  = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
-	iconPlus  = svg(`<path d="M12 5v14M5 12h14"/>`)
-	iconClose = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
-	iconPause = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
-	iconCheck = svg(`<path d="M20 6 9 17l-5-5"/>`)
-	iconError = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
-	iconDiff  = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
-	iconSplit = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
-	iconPanel = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
-	iconUp    = svg(`<path d="m18 15-6-6-6 6"/>`)
-	iconDown  = svg(`<path d="m6 9 6 6 6-6"/>`)
-	iconRight = svg(`<path d="m9 18 6-6-6-6"/>`)
-	iconBell  = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
+	iconChat   = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
+	iconTerm   = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
+	iconPlus   = svg(`<path d="M12 5v14M5 12h14"/>`)
+	iconClose  = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
+	iconPause  = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
+	iconCheck  = svg(`<path d="M20 6 9 17l-5-5"/>`)
+	iconError  = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
+	iconDiff   = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
+	iconSplit  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
+	iconPanel  = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
+	iconUp     = svg(`<path d="m18 15-6-6-6 6"/>`)
+	iconDown   = svg(`<path d="m6 9 6 6 6-6"/>`)
+	iconRight  = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconZoom   = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
+	iconShrink = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
+	iconBell   = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -316,8 +318,20 @@ func (a *App) shortcuts(c *ui.Context) {
 		if t := a.focused(); t != nil {
 			a.askClose([]*tab{t}, nil)
 		}
+	case c.Shortcut(splitBelowMods(), ui.KeyD):
+		a.splitNew(true)
 	case c.Shortcut(mod, ui.KeyD):
 		a.splitRight()
+	case c.Shortcut(mod|ui.Shift, ui.KeyEnter):
+		a.toggleZoom()
+	case c.Shortcut(mod|ui.Alt, ui.KeyLeft):
+		a.focusToward(-1, 0)
+	case c.Shortcut(mod|ui.Alt, ui.KeyRight):
+		a.focusToward(1, 0)
+	case c.Shortcut(mod|ui.Alt, ui.KeyUp):
+		a.focusToward(0, -1)
+	case c.Shortcut(mod|ui.Alt, ui.KeyDown):
+		a.focusToward(0, 1)
 	case c.Shortcut(mod, ui.KeyO):
 		a.openFolder()
 	case c.Shortcut(mod, ui.KeyComma):
@@ -413,15 +427,18 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 			}
 		}
 		ui.Spacer(c)
-		if a.active != nil {
-			// A toggle, as the changes button is: pressed in while split.
-			tip, fn := "Split: a new session beside this one ("+keyLabel(false, "D")+"), or drop a session here", a.splitRight
-			if a.right != nil {
-				tip, fn = "Close the split (the tab stays open)", a.unsplit
-			}
-			split := a.iconButton(c, t, "split", iconSplit, tip, a.right != nil, fn)
+		if a.layout != nil {
+			split := a.iconButton(c, t, "split", iconSplit, splitTip(), false, a.splitRight)
+			split.ContextMenu(func(m *ui.Menu) {
+				if m.Item("New Session in Split").Chosen() {
+					a.splitNew(false)
+				}
+				if m.Item("New Session in Split Below").Chosen() {
+					a.splitNew(true)
+				}
+			})
 			if d, ok := ui.Drop[sessionDrag](split); ok {
-				a.dropSession(string(d), true)
+				a.openInSplit(string(d), false)
 			}
 			if _, ok := ui.DragOver[sessionDrag](split); ok {
 				split.Background(t.Accent.Alpha(0.25))
@@ -513,7 +530,7 @@ func (a *App) tabBar(c *ui.Context, t *ui.Theme) {
 // button that shows over it.
 func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 	active := tb == a.focused()
-	shown := tb == a.active || tb == a.right
+	shown := a.shown(tb)
 	cell := ui.Row(c.Key(tb.id)).Label(a.tabTitle(tb)+" tab").Grow(1).Basis(0).MinWidth(0).Gap(6).Padding(0, 8).AlignItems(ui.Center)
 	if divider {
 		cell.BorderWidth(0, 0, 0, 1).BorderColor(t.Border)
@@ -572,8 +589,16 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if s, _, ok := a.find(tb.path); ok {
 		a.answerMenu(m, s)
 	}
-	if tb != a.active && tb != a.right && m.Item("Open in Split").Chosen() {
-		a.showInSplit(tb)
+	if !a.shown(tb) {
+		if m.Item("Open in Split").Chosen() {
+			a.showInSplit(tb, false)
+		}
+		if m.Item("Open in Split Below").Chosen() {
+			a.showInSplit(tb, true)
+		}
+	}
+	if p := a.paneOf(tb); p != nil && a.split() && m.Item("Close Pane").Chosen() {
+		a.closePane(p)
 	}
 	if tb.exited && tb.code != 0 && m.Item("Restart").Chosen() {
 		a.restart(tb)
@@ -951,7 +976,10 @@ func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
 		a.selectSession(s.Path)
 	}
 	if m.Item("Open in Split").Chosen() {
-		a.openInSplit(s.Path)
+		a.openInSplit(s.Path, false)
+	}
+	if m.Item("Open in Split Below").Chosen() {
+		a.openInSplit(s.Path, true)
 	}
 	if m.Item("Fork into a New Tab").Chosen() {
 		a.fork(s.Path)
@@ -1088,10 +1116,10 @@ func (a *App) reveal(path string) {
 	a.selectSession(path)
 }
 
-// main is the open tab's card, with the split, the changes or both beside it,
-// or a hint when no tab is open.
+// main is the panes, with the changes beside them, or a hint when no
+// tab is open.
 func (a *App) main(c *ui.Context, t *ui.Theme) {
-	if a.active == nil {
+	if a.layout == nil {
 		a.card(c, t, func() {
 			a.noticeBar(c, t)
 			empty := ui.Column(c).Fill().Center().Gap(6).Children(func() {
@@ -1108,7 +1136,7 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 				})
 			})
 			if d, ok := ui.Drop[sessionDrag](empty); ok {
-				a.dropSession(string(d), false)
+				a.dropSession(string(d), nil)
 			}
 			if _, ok := ui.DragOver[sessionDrag](empty); ok {
 				empty.Background(t.Accent.Alpha(0.08))
@@ -1116,33 +1144,45 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 		})
 		return
 	}
-	// The changes are the main tab's project's: they follow it.
-	if a.changes != nil && a.changes.dir != a.active.dir {
+	// The changes are the focused tab's project's: they follow it.
+	if a.changes != nil && a.changes.dir != a.focused().dir {
 		a.closeChanges()
 		a.toggleChanges()
 	}
-	left := func() {
-		a.card(c, t, func() {
+	panes := func() {
+		ui.Column(c).Fill().Children(func() {
 			a.noticeBar(c, t)
-			a.pane(c, t, a.active, false)
+			root := a.layout
+			if a.zoomed {
+				root = a.focus
+			}
+			a.paneTree(c, t, root)
 		})
 	}
-	panes := left
-	if a.right != nil {
-		panes = func() {
-			ui.SplitPercent(c, &a.splitP, left, func() {
-				a.card(c, t, func() { a.pane(c, t, a.right, true) })
-			}).Grow(1)
-		}
-	}
-	switch {
-	case a.changes != nil && a.right != nil:
-		// Beside the split, the changes take a third.
+	if a.changes != nil {
 		ui.SplitPercent(c, &a.changesP, panes, func() { a.changesPane(c, t, a.changes) }).Grow(1)
-	case a.changes != nil:
-		ui.SplitPercent(c, &a.splitP, left, func() { a.changesPane(c, t, a.changes) }).Grow(1)
-	default:
+	} else {
 		ui.Column(c).Grow(1).Children(panes)
+	}
+}
+
+// splitTip is the split button's tooltip.
+func splitTip() string {
+	return "Split: a new session beside this one (" + keyLabel(false, "D") + "), or below it (" + keyText(splitBelowKey()) + "); or drop a session here"
+}
+
+// paneTree draws p: a pane, or a split's two, beside each other or one
+// over the other, with the divider between them to drag.
+func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
+	if !p.split() {
+		a.card(c, t, func() { a.pane(c, t, p) })
+		return
+	}
+	first, second := func() { a.paneTree(c, t, p.first) }, func() { a.paneTree(c, t, p.second) }
+	if p.below {
+		ui.SplitVerticalPercent(c, &p.percent, first, second).Grow(1)
+	} else {
+		ui.SplitPercent(c, &p.percent, first, second).Grow(1)
 	}
 }
 
@@ -1162,11 +1202,12 @@ func (a *App) noticeBar(c *ui.Context, t *ui.Theme) {
 	})
 }
 
-// pane is a tab's header, find bar and terminal.
-func (a *App) pane(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
+// pane is a pane's tab: its header, find bar and terminal.
+func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
+	tb := p.tab
 	var term ui.Element
 	body := ui.Column(c).Grow(1).Children(func() {
-		a.header(c, t, tb, right)
+		a.header(c, t, p)
 		a.exitBar(c, t, tb)
 		if tb.finding {
 			a.findBar(c, t, tb)
@@ -1174,7 +1215,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 		term = terminal.View(c.Key(tb.id), tb.term).Grow(1)
 	})
 	if d, ok := ui.Drop[sessionDrag](body); ok {
-		a.dropSession(string(d), right)
+		a.dropSession(string(d), p)
 	}
 	if _, ok := ui.DragOver[sessionDrag](body); ok {
 		body.Border(2, t.Accent)
@@ -1186,8 +1227,8 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 	if a.focusNext == tb {
 		term.Focus()
 		a.focusNext = nil
-	} else if body.FocusWithin() && a.right != nil && a.rightFocused != right {
-		a.rightFocused = right
+	} else if body.FocusWithin() && a.focus != p {
+		a.focus = p
 	}
 }
 
@@ -1243,12 +1284,13 @@ func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 }
 
 // header names each pane's session while the window is split, the
-// focused one's in bold, with a button to close the tab or the split. The
-// toolbar names the session otherwise.
-func (a *App) header(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
-	if a.right == nil {
+// focused one's in bold, with buttons to zoom the pane and to close it.
+// The toolbar names the session otherwise.
+func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
+	if !a.split() {
 		return
 	}
+	tb := p.tab
 	ui.Row(c).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(t.Text.Alpha(0.03)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		statusDot(c, t, a.tabStatus(tb))
 		title := ui.Text(c, a.tabTitle(tb)).FontSize(12).SingleLine().Shrink(1)
@@ -1257,11 +1299,15 @@ func (a *App) header(c *ui.Context, t *ui.Theme, tb *tab, right bool) {
 		}
 		ui.Text(c, a.where(tb)).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
 		ui.Spacer(c)
-		if right {
-			a.closeButton(c, t, "Close split (the tab stays open)", a.unsplit)
+		if a.zoomed {
+			a.smallButton(c, t, "zoom", iconShrink, "Show every pane ("+keyText("Shift+Cmd+Enter")+")", a.toggleZoom)
 		} else {
-			a.closeButton(c, t, "Close tab", func() { a.askClose([]*tab{tb}, nil) })
+			a.smallButton(c, t, "zoom", iconZoom, "Zoom: this pane alone ("+keyText("Shift+Cmd+Enter")+")", func() {
+				a.focusPane(p)
+				a.toggleZoom()
+			})
 		}
+		a.closeButton(c, t, "Close pane (the tab stays open)", func() { a.closePane(p) })
 	})
 }
 
@@ -1284,8 +1330,13 @@ func (a *App) iconButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, t
 }
 
 func (a *App) closeButton(c *ui.Context, t *ui.Theme, label string, fn func()) {
-	b := ui.Box(c.Key("close")).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
-		ui.Icon(c, iconClose).FontSize(12).TextColor(t.TextMuted)
+	a.smallButton(c, t, "close", iconClose, label, fn)
+}
+
+// smallButton is a borderless icon button, as a bar's close button.
+func (a *App) smallButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, label string, fn func()) {
+	b := ui.Box(c.Key(key)).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
+		ui.Icon(c, icon).FontSize(12).TextColor(t.TextMuted)
 	})
 	if b.Hovered() {
 		b.Background(t.Text.Alpha(0.06))

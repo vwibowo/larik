@@ -23,28 +23,28 @@ func TestSplitFollowsFocus(t *testing.T) {
 	one, two, three := &tab{id: "1", dir: "/one"}, &tab{id: "2", dir: "/two"}, &tab{id: "3", dir: "/three"}
 	a.tabs = []*tab{one, two, three}
 	a.activate(one)
-	a.right, a.rightFocused = two, true
+	a.showInSplit(two, false)
 	if a.focused() != two || a.currentDir() != "/two" {
 		t.Fatalf("the split has the keyboard: %v", a.focused().id)
 	}
 	// A tab chosen while the split is focused opens there.
 	a.activate(three)
-	if a.active != one || a.right != three {
-		t.Fatalf("chosen into the split: %s | %s", a.active.id, a.right.id)
+	if shownAt(a, 0) != one || shownAt(a, 1) != three {
+		t.Fatalf("chosen into the split: %s | %s", shownAt(a, 0).id, shownAt(a, 1).id)
 	}
-	// Choosing the main pane's tab moves the keyboard back.
+	// Choosing the first pane's tab moves the keyboard back.
 	a.activate(one)
-	if a.rightFocused || a.focused() != one {
-		t.Fatal("the main pane's tab takes the keyboard")
+	if a.focus != a.panes()[0] || a.focused() != one {
+		t.Fatal("the first pane's tab takes the keyboard")
 	}
-	// Closing the main tab hands its pane to the split.
+	// Closing the first pane's tab hands its room to the split.
 	a.closeTab(one)
-	if a.active != three || a.right != nil {
-		t.Fatalf("after closing the main tab: %v %v", a.active, a.right)
+	if shownAt(a, 0) != three || a.split() || a.focused() != three {
+		t.Fatalf("after closing the first tab: %v %v", shownAt(a, 0), shownAt(a, 1))
 	}
-	a.right = two
+	a.showInSplit(two, false)
 	a.closeTab(two)
-	if a.right != nil || a.active != three || len(a.tabs) != 1 {
+	if a.split() || shownAt(a, 0) != three || len(a.tabs) != 1 {
 		t.Fatal("closing the split's tab unsplits")
 	}
 }
@@ -274,9 +274,9 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	mu.Lock()
 	a.setProjects(index(t, data))
 	a.selectStart()
-	main := a.active
+	main := shownAt(a, 0)
 	a.splitRight()
-	right := a.right
+	right := shownAt(a, 1)
 	if right == nil || a.focused() != right || right.dir != repo || len(a.tabs) != 2 {
 		mu.Unlock()
 		t.Fatalf("split: %+v", right)
@@ -293,12 +293,12 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 		t.Error("the new split keeps the keyboard")
 	}
 	snapshot(t, tt, "split-dark.png")
-	if err := tt.Click("Close split (the tab stays open)"); err != nil {
+	if err := tt.Click("Close pane (the tab stays open)"); err != nil {
 		mu.Unlock()
 		t.Fatal(err)
 	}
-	if a.right != nil || len(a.tabs) != 2 {
-		t.Errorf("closing the split keeps its tab")
+	if a.split() || a.shown(main) || !a.shown(right) || len(a.tabs) != 2 {
+		t.Errorf("closing the first pane keeps its tab, and gives the split its room")
 	}
 	if err := tt.Click("Changes in this project (" + keyLabel(true, "G") + ")"); err != nil {
 		mu.Unlock()
@@ -315,10 +315,10 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	}
 	snapshot(t, tt, "changes-window-dark.png")
 	// The changes beside a split: both stay.
-	a.showInSplit(right)
+	a.showInSplit(main, false)
 	tt.Frame()
-	if a.right != right || a.changes != ch || !tt.HasText("notes.md") {
-		t.Errorf("a split beside the changes: right %v, changes %v", a.right != nil, a.changes != nil)
+	if shownAt(a, 1) != main || a.changes != ch || !tt.HasText("notes.md") {
+		t.Errorf("a split beside the changes: right %v, changes %v", shownAt(a, 1) != nil, a.changes != nil)
 	}
 	snapshot(t, tt, "split-changes-dark.png")
 }
@@ -334,7 +334,7 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 		t.Fatal("nothing to restore on the first launch")
 	}
 	first.selectStart()
-	main := first.active.path
+	main := shownAt(first, 0).path
 	var site string
 	for _, p := range first.projects {
 		if p.Name == "ornith-page" {
@@ -346,9 +346,9 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 	first.noSidebar = true
 	first.splitRight()        // focused, so the session chosen next opens there
 	first.selectSession(site) // opens in the focused split
-	if first.right == nil || first.right.path != site {
+	if shownAt(first, 1) == nil || shownAt(first, 1).path != site {
 		mu.Unlock()
-		t.Fatalf("split: %+v", first.right)
+		t.Fatalf("split: %+v", shownAt(first, 1))
 	}
 	first.saveState()
 	mu.Unlock()
@@ -368,8 +368,8 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	next.setProjects(index(t, data))
-	if !next.restore() || len(next.tabs) != 2 || next.active.path != main || next.right == nil || next.right.path != site {
-		t.Fatalf("restored: %d tabs, active %v, right %v", len(next.tabs), next.active, next.right)
+	if !next.restore() || len(next.tabs) != 2 || shownAt(next, 0).path != main || shownAt(next, 1) == nil || shownAt(next, 1).path != site {
+		t.Fatalf("restored: %d tabs, active %v, right %v", len(next.tabs), shownAt(next, 0), shownAt(next, 1))
 	}
 	if !next.noSidebar || *next.open[mainProject.Root] {
 		t.Fatalf("the sidebar: hidden %v, %s open %v", next.noSidebar, mainProject.Name, *next.open[mainProject.Root])
@@ -447,17 +447,17 @@ func TestOpenInSplitAndFork(t *testing.T) {
 	mu.Lock()
 	a.setProjects(index(t, data))
 	a.selectStart()
-	main := a.active
+	main := shownAt(a, 0)
 	var site session.Indexed
 	for _, p := range a.projects {
 		if p.Name == "ornith-page" {
 			site = p.Sessions[0]
 		}
 	}
-	a.openInSplit(site.Path)
-	if a.active != main || a.right == nil || a.right.path != site.Path || a.focused() != a.right {
+	a.openInSplit(site.Path, false)
+	if shownAt(a, 0) != main || shownAt(a, 1) == nil || shownAt(a, 1).path != site.Path || a.focused() != shownAt(a, 1) {
 		mu.Unlock()
-		t.Fatalf("open in split: %v %v", a.active, a.right)
+		t.Fatalf("open in split: %v %v", shownAt(a, 0), shownAt(a, 1))
 	}
 	a.fork(site.Path)
 	forked := a.focused()
@@ -490,7 +490,7 @@ func TestSearchKeys(t *testing.T) {
 	tt.Frame()
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	opened := a.active
+	opened := shownAt(a, 0)
 	if opened == nil || a.query != "" || !strings.Contains(a.tabTitle(opened), "landing") {
 		mu.Unlock()
 		t.Fatalf("enter: %v, query %q", opened, a.query)
@@ -548,8 +548,8 @@ func TestTabMenu(t *testing.T) {
 		t.Fatal(err, tt.Menu())
 	}
 	tt.Frame()
-	if a.right != siteTab || a.focused() != siteTab {
-		t.Fatalf("open in split: right %v", a.right)
+	if shownAt(a, 1) != siteTab || a.focused() != siteTab {
+		t.Fatalf("open in split: right %v", shownAt(a, 1))
 	}
 	if err := tt.RightClick("Polish the landing copy tab"); err != nil {
 		t.Fatal(err)
@@ -571,8 +571,8 @@ func TestTabMenu(t *testing.T) {
 		t.Fatal(err, tt.Menu())
 	}
 	tt.Frame()
-	if len(a.tabs) != 1 || a.active != parserTab || a.right != nil {
-		t.Fatalf("close others: %d tabs, active %v, right %v", len(a.tabs), a.active, a.right)
+	if len(a.tabs) != 1 || shownAt(a, 0) != parserTab || shownAt(a, 1) != nil {
+		t.Fatalf("close others: %d tabs, active %v, right %v", len(a.tabs), shownAt(a, 0), shownAt(a, 1))
 	}
 }
 
@@ -588,11 +588,11 @@ func TestSearchKeyFromTheTerminal(t *testing.T) {
 	a.selectStart()
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
-	frameUntil(t, mu, tt, "larik to start", func() bool { return a.active.term.Text() != "" })
+	frameUntil(t, mu, tt, "larik to start", func() bool { return shownAt(a, 0).term.Text() != "" })
 	mu.Lock()
 	tt.Type("zq") // echoed only if the terminal has the keyboard
 	mu.Unlock()
-	frameUntil(t, mu, tt, "typing to reach the terminal", func() bool { return strings.Contains(a.active.term.Text(), "zq") })
+	frameUntil(t, mu, tt, "typing to reach the terminal", func() bool { return strings.Contains(shownAt(a, 0).term.Text(), "zq") })
 	mu.Lock()
 	defer mu.Unlock()
 	mod := ui.Ctrl | ui.Shift
@@ -601,8 +601,8 @@ func TestSearchKeyFromTheTerminal(t *testing.T) {
 	}
 	tt.Key(mod, ui.KeyK)
 	tt.Frame()
-	if !tt.Focused("Search sessions ("+keyLabel(false, "K")+")") || !strings.Contains(a.active.term.Text(), "zq") {
-		t.Fatalf("search focused %v, terminal %q", tt.Focused("Search sessions ("+keyLabel(false, "K")+")"), a.active.term.Text())
+	if !tt.Focused("Search sessions ("+keyLabel(false, "K")+")") || !strings.Contains(shownAt(a, 0).term.Text(), "zq") {
+		t.Fatalf("search focused %v, terminal %q", tt.Focused("Search sessions ("+keyLabel(false, "K")+")"), shownAt(a, 0).term.Text())
 	}
 }
 
@@ -657,7 +657,7 @@ func TestClosingAWorkingTabAsks(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if len(a.tabs) != 1 || a.tabs[0] != idle || a.active != idle {
+	if len(a.tabs) != 1 || a.tabs[0] != idle || shownAt(a, 0) != idle {
 		t.Fatalf("close: %d tabs", len(a.tabs))
 	}
 
@@ -679,7 +679,7 @@ func TestZoomSizesEveryTab(t *testing.T) {
 	a.restore()
 	a.selectStart()
 	a.splitRight()
-	left, right := a.active, a.right
+	left, right := shownAt(a, 0), shownAt(a, 1)
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "both terminals sized", func() bool {
@@ -753,7 +753,7 @@ func TestFindInTheTerminal(t *testing.T) {
 	mu.Lock()
 	a.setProjects(index(t, data))
 	a.selectStart()
-	tb := a.active
+	tb := shownAt(a, 0)
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "larik to start", func() bool { return strings.Contains(tb.term.Text(), "dir:") })
@@ -1091,7 +1091,7 @@ func TestChangesFollowTheMainTab(t *testing.T) {
 	defer mu.Unlock()
 	one, two := t.TempDir(), t.TempDir()
 	a.newTab(one, "", "")
-	first := a.active
+	first := shownAt(a, 0)
 	a.startTab(two, "", "")
 	second := a.tabs[1]
 	a.toggleChanges()
@@ -1126,12 +1126,12 @@ func TestStateWritesLandInOrder(t *testing.T) {
 	mu.Lock()
 	a.restore()
 	for i := range 40 {
-		a.splitP = float32(30 + i)
+		a.sidebarW = float32(200 + i)
 		a.saveState()
 	}
 	mu.Unlock()
 	a.Close() // waits for every write
-	if saved, _ := os.ReadFile(a.statePath()); !strings.Contains(string(saved), `"split":69`) {
+	if saved, _ := os.ReadFile(a.statePath()); !strings.Contains(string(saved), `"sidebar":239`) {
 		t.Fatalf("an older state landed last: %s", saved)
 	}
 }
@@ -1145,13 +1145,13 @@ func TestFindBarFocusesItsPane(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	a.newTab(t.TempDir(), "", "")
-	left := a.active
+	left := shownAt(a, 0)
 	left.finding = true
 	a.splitRight()
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
 	tt.Frame()
-	if a.focused() != a.right {
+	if a.focused() != shownAt(a, 1) {
 		t.Fatal("the new split should have the keyboard")
 	}
 	if err := tt.Click("Find in the terminal"); err != nil {
@@ -1219,13 +1219,13 @@ func TestOpenDirShowsItsProject(t *testing.T) {
 	a.setProjects(index(t, data))
 	site := filepath.Join(filepath.Dir(repo), "ornith-page")
 	a.openDir(site)
-	if a.active == nil || filepath.Base(a.active.dir) != "ornith-page" || a.tabTitle(a.active) != "Polish the landing copy" {
-		t.Fatalf("open the site: %v", a.active)
+	if shownAt(a, 0) == nil || filepath.Base(shownAt(a, 0).dir) != "ornith-page" || a.tabTitle(shownAt(a, 0)) != "Polish the landing copy" {
+		t.Fatalf("open the site: %v", shownAt(a, 0))
 	}
 	elsewhere := t.TempDir()
 	a.openDir(elsewhere)
-	if a.active.dir != elsewhere || a.active.path != "" {
-		t.Fatalf("a directory with no sessions gets a new one: %+v", a.active)
+	if shownAt(a, 0).dir != elsewhere || shownAt(a, 0).path != "" {
+		t.Fatalf("a directory with no sessions gets a new one: %+v", shownAt(a, 0))
 	}
 	home, _ := os.UserHomeDir()
 	n := len(a.tabs)
@@ -1255,7 +1255,7 @@ func TestReopenClosedTabs(t *testing.T) {
 	a.newTab(t.TempDir(), "", "") // nothing to reopen: no session yet
 	a.closeTab(a.tabOf(site))
 	a.closeTab(a.tabOf(parser))
-	a.closeTab(a.active)
+	a.closeTab(shownAt(a, 0))
 	if len(a.tabs) != 0 || !slices.Equal(a.closed, []string{site, parser}) {
 		t.Fatalf("closed: %d tabs, %q", len(a.tabs), a.closed)
 	}
@@ -1267,10 +1267,10 @@ func TestReopenClosedTabs(t *testing.T) {
 		a.reopenClosed()
 	}
 	tt.Frame()
-	if a.active == nil || a.active.path != parser {
-		t.Fatalf("reopened first: %v", a.active)
+	if shownAt(a, 0) == nil || shownAt(a, 0).path != parser {
+		t.Fatalf("reopened first: %v", shownAt(a, 0))
 	}
-	if err := tt.RightClick(a.tabTitle(a.active) + " tab"); err != nil {
+	if err := tt.RightClick(a.tabTitle(shownAt(a, 0)) + " tab"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.ChooseMenuItem("Reopen Closed Tab"); err != nil {
@@ -1315,8 +1315,8 @@ func TestArrowKeysPickASearchMatch(t *testing.T) {
 	}
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	if a.active == nil || a.active.path != found[1].Path || a.query != "" || a.pick != 0 {
-		t.Fatalf("opened %v, query %q", a.active, a.query)
+	if shownAt(a, 0) == nil || shownAt(a, 0).path != found[1].Path || a.query != "" || a.pick != 0 {
+		t.Fatalf("opened %v, query %q", shownAt(a, 0), a.query)
 	}
 }
 
@@ -1341,8 +1341,8 @@ func TestOpenFolderAndDrops(t *testing.T) {
 	}
 	tt.Key(mod, ui.KeyO)
 	tt.Frame()
-	if a.active == nil || a.active.dir != picked || start != a.opts.Cwd {
-		t.Fatalf("opened %v, asked from %q", a.active, start)
+	if shownAt(a, 0) == nil || shownAt(a, 0).dir != picked || start != a.opts.Cwd {
+		t.Fatalf("opened %v, asked from %q", shownAt(a, 0), start)
 	}
 
 	// A folder, and the folder of a file, dropped on the sidebar; a path
@@ -1357,8 +1357,8 @@ func TestOpenFolderAndDrops(t *testing.T) {
 		t.Fatal("the sidebar didn't take the drop")
 	}
 	tt.Frame()
-	if len(a.tabs) != n+2 || a.tabs[n].dir != dropped || a.active.dir != other {
-		t.Fatalf("after the drop: %d tabs (had %d), showing %v", len(a.tabs), n, a.active)
+	if len(a.tabs) != n+2 || a.tabs[n].dir != dropped || shownAt(a, 0).dir != other {
+		t.Fatalf("after the drop: %d tabs (had %d), showing %v", len(a.tabs), n, shownAt(a, 0))
 	}
 }
 
@@ -1379,7 +1379,7 @@ func TestRestartAFailedTab(t *testing.T) {
 	}
 	a.newTab(t.TempDir(), "", "")
 	a.selectSession(site.Path)
-	tb := a.active
+	tb := shownAt(a, 0)
 	first := tb.term
 	mu.Unlock()
 
@@ -1396,8 +1396,8 @@ func TestRestartAFailedTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.exited || tb.term == first || len(a.tabs) != 2 || a.tabs[1] != tb || a.active != tb {
-		t.Fatalf("restarted: exited %v, %d tabs, showing %v", tb.exited, len(a.tabs), a.active)
+	if tb.exited || tb.term == first || len(a.tabs) != 2 || a.tabs[1] != tb || shownAt(a, 0) != tb {
+		t.Fatalf("restarted: exited %v, %d tabs, showing %v", tb.exited, len(a.tabs), shownAt(a, 0))
 	}
 	if tt.HasText("Restart") {
 		t.Error("the exit bar stays after the restart")
@@ -1461,32 +1461,32 @@ func TestDragSessionsOntoPanes(t *testing.T) {
 
 	// Onto the empty main pane.
 	drag(site, 700, 450)
-	if a.active == nil || a.tabTitle(a.active) != "Polish the landing copy" {
-		t.Fatalf("after the first drop: %v", a.active)
+	if shownAt(a, 0) == nil || a.tabTitle(shownAt(a, 0)) != "Polish the landing copy" {
+		t.Fatalf("after the first drop: %v", shownAt(a, 0))
 	}
-	siteTab := a.active
+	siteTab := shownAt(a, 0)
 	if titles[len(titles)-1] != "Polish the landing copy — Larik" {
 		t.Errorf("title: %q", titles)
 	}
 
 	// Onto the split button: it opens in the split.
-	split, ok := tt.Find("Split: a new session beside this one (" + keyLabel(false, "D") + "), or drop a session here")
+	split, ok := tt.Find(splitTip())
 	if !ok {
 		t.Fatal("no split button")
 	}
 	drag(parser, split.X+split.W/2, split.Y+split.H/2)
-	if a.right == nil || a.tabTitle(a.right) != "Refactor the parser and run the tests" || a.active != siteTab {
-		t.Fatalf("after the split drop: main %v, split %v", a.active, a.right)
+	if shownAt(a, 1) == nil || a.tabTitle(shownAt(a, 1)) != "Refactor the parser and run the tests" || shownAt(a, 0) != siteTab {
+		t.Fatalf("after the split drop: main %v, split %v", shownAt(a, 0), shownAt(a, 1))
 	}
 	if titles[len(titles)-1] != "Refactor the parser and run the tests — Larik" {
 		t.Errorf("the title follows the focused pane: %q", titles)
 	}
 
 	// The split's session onto the main pane swaps the two.
-	parserTab := a.right
+	parserTab := shownAt(a, 1)
 	drag(parser, 500, 450)
-	if a.active != parserTab || a.right != siteTab || len(a.tabs) != 2 {
-		t.Fatalf("after the swap: main %v, split %v, %d tabs", a.active, a.right, len(a.tabs))
+	if shownAt(a, 0) != parserTab || shownAt(a, 1) != siteTab || len(a.tabs) != 2 {
+		t.Fatalf("after the swap: main %v, split %v, %d tabs", shownAt(a, 0), shownAt(a, 1), len(a.tabs))
 	}
 }
 
@@ -1730,7 +1730,7 @@ func TestConfirmationsAskInSheets(t *testing.T) {
 	a.leave = func(quit bool) { left = map[bool]string{true: "quit", false: "closed"}[quit] }
 	tt := ui.NewTester(a.view, 1240, 800)
 
-	a.askClose([]*tab{a.active}, nil)
+	a.askClose([]*tab{shownAt(a, 0)}, nil)
 	tt.Frame()
 	tt.Frame()
 	if len(asked) != 1 || asked[0].title != "Close “Polish the landing copy”?" || asked[0].yes != "Close" || tt.HasText("Cancel") {
@@ -1790,7 +1790,7 @@ func TestLooksLikeMacOS(t *testing.T) {
 	}
 }
 
-func TestSplitButtonToggles(t *testing.T) {
+func TestSplitButton(t *testing.T) {
 	needTerminal(t)
 	data, repo := fixture(t)
 	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
@@ -1801,19 +1801,32 @@ func TestSplitButtonToggles(t *testing.T) {
 	a.selectStart()
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	if err := tt.Click("Split: a new session beside this one (" + keyLabel(false, "D") + "), or drop a session here"); err != nil {
+	if err := tt.Click(splitTip()); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.right == nil || len(a.tabs) != 2 {
-		t.Fatalf("split: %v, %d tabs", a.right, len(a.tabs))
+	if len(a.panes()) != 2 || len(a.tabs) != 2 || a.layout.below {
+		t.Fatalf("split: %d panes, %d tabs", len(a.panes()), len(a.tabs))
 	}
-	if err := tt.Click("Close the split (the tab stays open)"); err != nil {
+	// Right-clicked, it splits the focused pane below.
+	if err := tt.RightClick(splitTip()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("New Session in Split Below"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(a.panes()) != 3 || len(a.tabs) != 3 || !a.layout.second.below || a.focused() != shownAt(a, 2) {
+		t.Fatalf("split below: %d panes, %d tabs", len(a.panes()), len(a.tabs))
+	}
+	// A pane's close button closes it, and its tab stays.
+	first := shownAt(a, 0)
+	if err := tt.Click("Close pane (the tab stays open)"); err != nil {
 		t.Fatal(err, tt.Texts())
 	}
 	tt.Frame()
-	if a.right != nil || len(a.tabs) != 2 {
-		t.Fatalf("unsplit: %v, %d tabs", a.right, len(a.tabs))
+	if len(a.panes()) != 2 || len(a.tabs) != 3 || a.shown(first) || !a.layout.below {
+		t.Fatalf("closing a pane: %d panes, %d tabs", len(a.panes()), len(a.tabs))
 	}
 }
 
@@ -1835,7 +1848,7 @@ func TestWindowMenuListsTabs(t *testing.T) {
 		t.Fatalf("the menu bar set again with no tabs: %d", sets)
 	}
 	a.selectStart()
-	first := a.active
+	first := shownAt(a, 0)
 	a.newTab(t.TempDir(), "", "")
 	tt.Frame()
 	if sets != 1 {
@@ -1858,8 +1871,8 @@ func TestWindowMenuListsTabs(t *testing.T) {
 	}
 	tabs[0].run()
 	tt.Frame()
-	if a.active != first || sets != 2 {
-		t.Fatalf("choosing the first: showing %v, set %d times", a.active, sets)
+	if shownAt(a, 0) != first || sets != 2 {
+		t.Fatalf("choosing the first: showing %v, set %d times", shownAt(a, 0), sets)
 	}
 	tt.Frame()
 	if sets != 2 {

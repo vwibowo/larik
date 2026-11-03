@@ -36,7 +36,7 @@ func TestUsageShows(t *testing.T) {
 		t.Fatalf("list: %+v", info)
 	}
 
-	a.tabs, a.active = nil, nil // the sidebar alone: this tab has no terminal to draw
+	a.tabs, a.layout, a.focus = nil, nil, nil // the sidebar alone: this tab has no terminal to draw
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.SetDark(true)
 	tt.Frame()

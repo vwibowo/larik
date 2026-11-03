@@ -68,17 +68,17 @@ type App struct {
 	// dragging says a session is being dragged from the sidebar.
 	dragging bool
 	tabs     []*tab
-	active   *tab // the tab in the main pane
-	// right is the tab split beside it, and rightFocused says the keyboard
-	// is there, so that the sidebar, the title bar and the keys follow it.
-	right        *tab
-	rightFocused bool
-	changes      *changes // the changes pane, beside the main one when open
-	splitP       float32  // the main pane's share of the width while split, in percent
-	changesP     float32  // the panes' share beside the changes, while split too
-	focusNext    *tab     // the tab whose terminal takes the keyboard next frame
-	saved        string   // the state last saved, as JSON
-	saves        int      // how many times the state was saved
+	// layout is the panes showing tabs, nil with none (see panes.go);
+	// focus is the one with the keyboard, which the sidebar, the title bar
+	// and the keys follow, and zoomed shows it alone.
+	layout    *pane
+	focus     *pane
+	zoomed    bool
+	changes   *changes // the changes pane, beside the panes when open
+	changesP  float32  // the panes' share of the width beside the changes, in percent
+	focusNext *tab     // the tab whose terminal takes the keyboard next frame
+	saved     string   // the state last saved, as JSON
+	saves     int      // how many times the state was saved
 	// writeMu orders the writes of the saved state, and written is the
 	// number of the save last written, so an older one never lands last;
 	// Close waits for writing.
@@ -251,8 +251,7 @@ func New(opts Options) *App {
 		states:     map[string]status.State{},
 		started:    time.Now(),
 		sidebarW:   280,
-		splitP:     50,
-		changesP:   66,
+		changesP:   60,
 		host:       host,
 	}
 }
@@ -338,8 +337,8 @@ func (a *App) setProjects(ps []session.Project) {
 			}
 		}
 	}
-	for _, t := range []*tab{a.active, a.right} {
-		if t != nil && t.path != "" {
+	for _, t := range a.shownTabs() {
+		if t.path != "" {
 			a.seen[t.path] = time.Now()
 		}
 	}
@@ -427,7 +426,7 @@ func (a *App) waiting() []session.Indexed {
 // home directory, as from the launcher, it opens none: that is where
 // larik desktop starts, not a project you are in.
 func (a *App) selectStart() {
-	if a.active != nil || a.opts.Cwd == "" {
+	if a.layout != nil || a.opts.Cwd == "" {
 		return
 	}
 	if home, err := os.UserHomeDir(); err == nil && a.opts.Cwd == home {
@@ -555,40 +554,6 @@ func (a *App) dropDirs(paths []string) {
 	}
 }
 
-// splitRight starts larik in the focused tab's directory, in a pane
-// beside the main one.
-func (a *App) splitRight() {
-	if a.active == nil {
-		a.newTab(a.currentDir(), "", "")
-		return
-	}
-	if t := a.startTab(a.currentDir(), "", ""); t != nil {
-		a.right, a.rightFocused, a.focusNext = t, true, t
-	}
-}
-
-// unsplit closes the pane beside the main one; its tab stays open.
-func (a *App) unsplit() {
-	a.right, a.rightFocused = nil, false
-}
-
-// openInSplit shows the session at path in the split.
-func (a *App) openInSplit(path string) {
-	if t := a.sessionTab(path); t != nil {
-		a.showInSplit(t)
-	}
-}
-
-// showInSplit shows an open tab in the split, or in the main pane when
-// nothing else shows.
-func (a *App) showInSplit(t *tab) {
-	if a.active == nil || t == a.active {
-		a.activate(t)
-		return
-	}
-	a.right, a.rightFocused, a.focusNext = t, true, t
-}
-
 // applyNames titles the sessions given names with them, and the others
 // with their first prompts.
 func (a *App) applyNames() {
@@ -686,22 +651,19 @@ func (a *App) pinnedSessions() []session.Indexed {
 // sessionDrag is a session dragged from the sidebar, by its transcript.
 type sessionDrag string
 
-// dropSession shows the session dropped on a pane in that pane: the
-// split, or the main pane, which a tab in the split swaps with.
-func (a *App) dropSession(path string, right bool) {
+// dropSession shows the session dropped on a pane in that pane, which a
+// pane showing it already swaps with; with no pane, in a new one.
+func (a *App) dropSession(path string, p *pane) {
 	t := a.sessionTab(path)
 	switch {
 	case t == nil:
 		return
-	case right:
-		a.showInSplit(t)
+	case p == nil:
+		a.activate(t)
 		return
-	case t == a.right:
-		a.active, a.right = t, a.active
-	default:
-		a.active = t
 	}
-	a.activate(t)
+	a.show(p, t)
+	a.focusPane(p)
 }
 
 // windowTitle names the window after the focused tab's session, for the
@@ -785,14 +747,6 @@ func (a *App) searchConversations() {
 			}
 		})
 	}()
-}
-
-// focused is the tab with the keyboard: the main pane's, or the split's.
-func (a *App) focused() *tab {
-	if a.rightFocused && a.right != nil {
-		return a.right
-	}
-	return a.active
 }
 
 // startTab starts larik in dir, resuming the session id unless it is
@@ -949,26 +903,6 @@ func (a *App) exited(t *tab, code int) {
 	a.refreshIndex()
 }
 
-// activate shows t in the focused pane, or moves the keyboard to it if
-// a pane shows it already, and marks its session read.
-func (a *App) activate(t *tab) {
-	switch {
-	case t == a.active:
-		a.rightFocused = false
-	case t == a.right:
-		a.rightFocused = true
-	case a.rightFocused && a.right != nil:
-		a.right = t
-	default:
-		a.active = t
-	}
-	a.focusNext = t
-	if t.path != "" {
-		a.seen[t.path] = time.Now()
-	}
-	a.lookTab(t)
-}
-
 // closeTab closes t, ending its larik; the session stays on disk.
 func (a *App) closeTab(t *tab) {
 	i := slices.Index(a.tabs, t)
@@ -983,19 +917,8 @@ func (a *App) closeTab(t *tab) {
 			a.closed = a.closed[1:]
 		}
 	}
-	switch {
-	case a.right == t:
-		a.right, a.rightFocused = nil, false
-	case a.active == t && a.right != nil:
-		// The split takes the main pane.
-		a.active, a.right, a.rightFocused = a.right, nil, false
-	case a.active == t:
-		a.active = nil
-		if len(a.tabs) > 0 {
-			a.activate(a.tabs[min(i, len(a.tabs)-1)])
-		}
-	}
-	if a.active == nil {
+	a.unshow(t, i)
+	if a.layout == nil {
 		a.closeChanges() // nothing left for them to be beside
 	}
 	a.refreshIndex()
@@ -1139,8 +1062,8 @@ func (a *App) unread(s session.Indexed) bool {
 	if st := s.Status.State; st != status.Done && st != status.Error || a.hidden[s.Path] {
 		return false
 	}
-	for _, t := range []*tab{a.active, a.right} {
-		if t != nil && t.path == s.Path {
+	for _, t := range a.shownTabs() {
+		if t.path == s.Path {
 			return false
 		}
 	}

@@ -58,6 +58,7 @@ func (a *App) menuBar() []menuGroup {
 		{title: "File", items: []command{
 			{label: "New Session", key: "Cmd+T", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Split", key: "Cmd+D", run: a.splitRight},
+			{label: "New Session in Split Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
 			{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
 			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
@@ -96,6 +97,13 @@ func (a *App) menuBar() []menuGroup {
 			{label: "Show Next Tab", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
 			{label: "Show Previous Tab", key: "Shift+Cmd+[", run: func() { a.cycle(-1) }},
 			{},
+			{label: "Zoom Pane", key: "Shift+Cmd+Enter", run: a.toggleZoom, checked: a.zoomed},
+			{label: "Close Pane", run: func() { a.closePane(a.focus) }},
+			{label: "Pane to the Left", key: "Alt+Cmd+Left", run: func() { a.focusToward(-1, 0) }},
+			{label: "Pane to the Right", key: "Alt+Cmd+Right", run: func() { a.focusToward(1, 0) }},
+			{label: "Pane Above", key: "Alt+Cmd+Up", run: func() { a.focusToward(0, -1) }},
+			{label: "Pane Below", key: "Alt+Cmd+Down", run: func() { a.focusToward(0, 1) }},
+			{},
 			{role: mygo.RoleFront},
 		}, a.tabCommands()...)},
 		{title: "Help", role: mygo.RoleHelp, items: []command{
@@ -127,6 +135,9 @@ func (a *App) tabCommands() []command {
 // when it changes.
 func (a *App) menuTabs() string {
 	var b strings.Builder
+	if a.zoomed {
+		b.WriteString("zoomed\n") // Zoom Pane's check
+	}
 	for _, tb := range a.tabs {
 		fmt.Fprintf(&b, "%v %s\n", tb == a.focused(), a.tabTitle(tb))
 	}
