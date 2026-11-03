@@ -15,13 +15,17 @@ import (
 // sessions. It starts the window in a process of its own and returns, so
 // the terminal is free again; --foreground keeps it attached.
 func runDesktop(args []string) error {
+	if len(args) > 0 && isDesktopCommand(args[0]) {
+		return runDesktopCommand(args[0], args[1:], os.Stdin, os.Stdout)
+	}
 	fs := flag.NewFlagSet("desktop", flag.ContinueOnError)
 	foreground := fs.Bool("foreground", false, "keep the window attached to this terminal")
 	install := fs.Bool("install", false, "add Larik to ~/Applications (macOS) or the applications menu (Linux), to open it without a terminal")
 	uninstall := fs.Bool("uninstall", false, "remove what --install added")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: larik desktop [--foreground | --install | --uninstall]\n\nOpens a window with sessions from every project, grouped by the directory\nthey ran in, and a terminal tab running larik for each open session. New\nsessions start in this directory. The tabs get this shell's environment,\nso provider keys set here work there.\n\n")
+		fmt.Fprintf(fs.Output(), "Usage: larik desktop [--foreground | --install | --uninstall]\n       larik desktop <command> [flags]   (list, open, send, read, wait, focus, close, notify)\n\nOpens a window with sessions from every project, grouped by the directory\nthey ran in, and a terminal tab running larik for each open session. New\nsessions start in this directory. The tabs get this shell's environment,\nso provider keys set here work there.\n\n")
 		fs.PrintDefaults()
+		fmt.Fprintf(fs.Output(), "\n%s", desktopUsage())
 	}
 	if err := fs.Parse(args); err != nil {
 		return err

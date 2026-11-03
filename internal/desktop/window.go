@@ -49,6 +49,14 @@ func Run(opts Options) error {
 			return
 		}
 		show(opened, a, cwd)
+	}, func(req Request) Response {
+		mu.Lock()
+		ready := opened != nil
+		mu.Unlock()
+		if !ready {
+			return Response{Error: "larik desktop is still opening: try again in a moment"}
+		}
+		return a.control(req)
 	})
 	if errors.Is(err, errRunning) {
 		Handover(opts.DataDir, opts.Cwd)
@@ -79,6 +87,8 @@ func Run(opts Options) error {
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 		a.about = mygo.App.ShowAboutPanel
 		a.alert = func(s session.Indexed) { notify(win, s) }
+		a.post = func(title, body string) { post(win, title, body) }
+		a.raise = func() { raise(win) }
 		a.ask = func(title, msg, yes string, then func(bool)) {
 			// The sheet waits for the user; the window keeps drawing.
 			go func() {
@@ -171,12 +181,30 @@ func show(win *mygo.Window, a *App, cwd string) {
 		return
 	}
 	win.Update(func() { a.openDir(cwd) })
+	raise(win)
+}
+
+// raise brings the window forward, from the Dock when minimized.
+func raise(win *mygo.Window) {
 	if win.IsMinimized() {
 		win.Restore()
 	}
 	win.Show()
 	win.Focus()
 	mygo.App.Focus()
+}
+
+// post posts a notification larik desktop notify asked for, focused or
+// not, as it was asked for, and bounces the Dock icon while the window
+// isn't focused.
+func post(win *mygo.Window, title, body string) {
+	if runtime.GOOS == "darwin" && !win.IsFocused() {
+		mygo.App.Dock.Bounce(false)
+	}
+	if mygo.NotificationsSupported() {
+		n := mygo.NewNotification(mygo.NotificationOptions{ID: "larik-notify-" + newTabID(), Title: title, Body: body})
+		go func() { _ = n.Show() }()
+	}
 }
 
 // notify tells the user, while the window isn't focused, that a session

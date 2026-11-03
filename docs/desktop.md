@@ -13,6 +13,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 5 | [Desktop shell: window, sidebar, terminal tabs](#phase-5-desktop-shell) | Done |
 | 6 | [Panes: splits and changes](#phase-6-panes) | Done |
 | 7 | [Inbox, notifications, keyboard, launcher](#phase-7-inbox-notifications-keyboard-launcher) | Done |
+| 8 | [Commands and sidebar details](#phase-8-commands-and-sidebar-details) | Done |
+| 9 | [What's next](#phase-9-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -191,3 +193,49 @@ The browser and trace panes in the first plan are dropped: the TUI's own browser
 - **Launcher**: `larik desktop --install` writes `~/Applications/Larik.app` on macOS, or a `.desktop` entry on Linux, that starts `larik desktop` through your interactive login shell, as Visual Studio Code reads the shell's environment, so provider keys set in your shell profile work. `--uninstall` removes it. The bundle runs `larik` through a link inside it, so macOS takes the process for the app's and lets it show notifications (checked: the window reports them on from the bundle, off from a terminal); the first one asks for permission. The icon, Larik's three bars on the dark card, is drawn with MyGo's own renderer when installing, so there's no image file in the repository. It runs the `larik` you installed it from, so reinstall after moving the binary.
 
 Still open: the headless Linux run from phase 4 (Linux and Windows builds compile; nothing has run on Linux yet).
+
+## Phase 8: Commands and sidebar details
+
+What [cmux](https://github.com/manaflow-ai/cmux) and [herdr](https://herdr.dev) have that the window didn't: a way for scripts and agents to drive it, and more about each project and session at a glance.
+
+- **Commands**: `larik desktop <command>` sends the open window a request on its socket, as JSON, and prints the answer; `--json` prints the answer itself. A tab is named with `--tab`: its id, which larik in the tab has as `$LARIK_DESKTOP_TAB`, the id of the session it has open or enough of one to tell, or `focused`. A request is a JSON object where a handover was a bare directory, so `larik desktop` still hands one over as before, and a window from before commands says so rather than taking one for a folder.
+
+  | Command | Does |
+  |---|---|
+  | `list` | the tabs: id, session, state, directory, title (`*` has the keyboard) |
+  | `open [dir] [--session id] [--prompt text] [--split \| --background]` | a session in a tab, or a new one in `dir` (this directory by default), starting with the prompt; prints the tab's id. `--background` leaves the panes as they are |
+  | `send --tab t [--no-enter] [text \| -]` | types the text and presses Return; several lines go as one paste; `-` or none reads stdin |
+  | `read --tab t [--lines 50]` | the last lines of the tab's screen and scrollback (`0` for all) |
+  | `wait --tab t \| --session id [--state done] [--timeout 10m]` | waits until the session is in one of the states (comma separated), and prints it. `done` and `error` say a turn ended, so only those reported after the wait began count, as after a `send`; `blocked`, `working` and `idle` count as they are. A tab whose larik failed answers `error` |
+  | `focus --tab t` | shows the tab and brings the window forward |
+  | `close --tab t [--force]` | closes the tab; one that's working only with `--force` |
+  | `notify [--title t] text` | posts a notification, and shows it in the window |
+
+  ```sh
+  tab=$(larik desktop open ~/Code/site --background --prompt "run the tests and fix what fails")
+  larik desktop wait --tab "$tab" --state done,error,blocked --timeout 30m
+  larik desktop read --tab "$tab" --lines 20
+  ```
+
+  Each connection is served on its own, so a wait doesn't hold the others up; the commands run on the window's main thread, and a wait reads the session's status file every 0.4 s between asking it which session the tab has.
+- **Branch and changes**: each open project's section names the branch checked out and how many files changed (`larik-hardness · main ±3`), the commit when detached. A session running in a worktree on another branch shows that branch under its row.
+- **What a session is doing**: while a session works or waits for you, the line under its row says what, as its status says it ("needs your permission to use bash").
+- **Ports**: the TCP ports that a tab's larik, or anything it started, listens on show under the session's row (`:5173`), each opening `http://localhost:<port>` in the browser, as cmux shows a workspace's. They come from `ps` and `lsof`: the processes under each tab's larik, and those on its terminal, as a server started with `&` from a shell that has since exited, which leaves it to launchd (macOS and Linux). A server that detaches from the terminal (`setsid`, a daemon) doesn't show.
+- These are read every three seconds off the main thread: `git status --porcelain=v2 --branch` once per open project, or per worktree a session runs in, and `ps` and `lsof` once for every tab. Folded projects aren't read.
+
+## Phase 9: What's next
+
+From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
+
+- **Attention while the window is focused**: a ring on a pane or tab whose session needs you while you look elsewhere, a list of past notifications, and a key for the newest unread (alerts fire only off the window today).
+- **Shell and program tabs**: a tab running your shell, lazygit or another agent, with OSC 7501 and OSC 9/99/777 read from any program, so the sidebar shows their state too, as Rex does.
+- **Answering in place**: Allow, Deny and Open for a session waiting on a permission, from the sidebar, the inbox or the notification, and a rendered plan to review.
+- **Worktrees**: a new session in a new worktree and branch, and merging or removing it when done.
+- **Changes you can act on**: stage, discard and commit per file and hunk, compare with the base branch, open a PR, and the changes beside a split.
+- **Splits** in both directions and more than two, resized by dragging, moved between by keys.
+- **Cost and context** in the status file, and on screen: cost, context used, model, permission mode.
+- **A command palette**, archiving and deleting sessions, names that `/resume` shows, and settings of the window's own (keys, theme, font).
+- **Sessions that outlive the window**, as Rex and herdr keep theirs: a background host the window attaches to, then remote windows on another Mac or over SSH.
+
+Still open from phase 7: the headless Linux run.
+

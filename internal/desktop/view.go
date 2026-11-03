@@ -596,6 +596,7 @@ func (a *App) pinnedSection(c *ui.Context, t *ui.Theme) {
 		for _, s := range pinned {
 			_, p, _ := a.find(s.Path)
 			it := a.sessionItem(c, t, s, p.Name)
+			a.sessionDetail(c, t, s, p.Root)
 			if d, ok := ui.Drop[sessionDrag](it); ok {
 				a.movePin(string(d), s.Path)
 			}
@@ -624,6 +625,12 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 	if p.Missing {
 		title += " (folder gone)"
 	}
+	if g, ok := a.git[p.Root]; ok && g.Branch != "" {
+		title += " · " + g.Branch
+		if g.Dirty > 0 {
+			title += fmt.Sprintf(" ±%d", g.Dirty)
+		}
+	}
 	// Keyed, so that the Pinned section coming and going above, as a
 	// drag begins, leaves the session dragged where it was.
 	ui.SidebarSection(c.Key(p.Root), title, a.open[p.Root], func() {
@@ -645,6 +652,7 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 		}
 		for _, s := range sessions[:n] {
 			a.sessionItem(c, t, s, "")
+			a.sessionDetail(c, t, s, p.Root)
 		}
 		if more := len(sessions) - n; more > 0 {
 			if a.footLink(c, t, "more", fmt.Sprintf("Show %d more", more)) {
@@ -710,6 +718,7 @@ func (a *App) results(c *ui.Context, t *ui.Theme) {
 		for _, s := range found[:min(len(found), resultsShown)] {
 			_, p, _ := a.find(s.Path)
 			a.sessionItem(c, t, s, p.Name)
+			a.sessionDetail(c, t, s, p.Root)
 			if said := a.saidIn(s.Path); said != "" {
 				ui.Text(c, said).FontSize(11).TextColor(t.TextMuted).MaxLines(2).Padding(0, 12, 4, 34)
 			}
@@ -784,6 +793,36 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 		}
 	}).ContextMenu(func(m *ui.Menu) { a.sessionMenu(m, s) })
 	return item
+}
+
+// sessionDetail shows under a session's row what it is doing, while it
+// works or waits for you; the branch of the worktree it runs in, when
+// that isn't its project's; and the ports its programs listen on, each a
+// link that opens it in the browser.
+func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root string) {
+	var line []string
+	if st := s.Status.State; (st == status.Working || st == status.Blocked) && s.Status.Msg != "" {
+		line = append(line, s.Status.Msg)
+	}
+	if g, ok := a.git[s.Cwd]; ok && s.Cwd != root && g.Branch != "" && g.Branch != a.git[root].Branch {
+		line = append(line, g.Branch)
+	}
+	ports := a.ports[s.Path]
+	if len(line) == 0 && len(ports) == 0 {
+		return
+	}
+	ui.Row(c.Key("detail-"+s.Path)).Gap(8).Padding(0, 12, 4, 34).AlignItems(ui.Center).Children(func() {
+		if len(line) > 0 {
+			ui.Text(c, strings.Join(line, " · ")).FontSize(11).TextColor(t.TextMuted).SingleLine().Grow(1).Tooltip(strings.Join(line, "\n"))
+		}
+		for _, port := range ports {
+			url := fmt.Sprintf("http://localhost:%d", port)
+			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip("Open " + url).Label("Open " + url)
+			if link.Clicked() && a.openExternal != nil {
+				a.openExternal(url)
+			}
+		}
+	})
 }
 
 // renameRow is a session's row while it's renamed in place, as Finder

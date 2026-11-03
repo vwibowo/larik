@@ -1161,11 +1161,11 @@ func TestOneWindowPerDataDir(t *testing.T) {
 		t.Fatal("handed over with no window open")
 	}
 	got := make(chan string, 4)
-	ln, err := listen(data, func(cwd string) { got <- cwd })
+	ln, err := listen(data, func(cwd string) { got <- cwd }, noControl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := listen(data, func(string) {}); !errors.Is(err, errRunning) {
+	if _, err := listen(data, func(string) {}, noControl); !errors.Is(err, errRunning) {
 		t.Fatalf("a second window: %v", err)
 	}
 	if !Handover(data, "/work/site") {
@@ -1194,7 +1194,7 @@ func TestOneWindowPerDataDir(t *testing.T) {
 	}
 	// A socket left by a window that crashed is taken over.
 	os.WriteFile(socketPath(data), nil, 0o600)
-	ln, err = listen(data, func(string) {})
+	ln, err = listen(data, func(string) {}, noControl)
 	if err != nil {
 		t.Fatalf("over a stale socket: %v", err)
 	}
@@ -1931,3 +1931,7 @@ func TestAboutShowsTheVersion(t *testing.T) {
 		t.Fatalf("about: %+v", shown)
 	}
 }
+
+// noControl answers every request with nothing, for tests of the
+// handover alone.
+func noControl(Request) Response { return Response{} }

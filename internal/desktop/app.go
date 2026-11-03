@@ -117,6 +117,11 @@ type App struct {
 	termTh          [2]*terminal.Theme // light, dark
 	notice          string
 	host            string
+	// git is the branch and changes of each project root, and of each
+	// worktree a session runs in, and ports the ports each session's
+	// programs listen on, by transcript path (see metaLoop).
+	git   map[string]gitMeta
+	ports map[string][]int
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -149,6 +154,10 @@ type App struct {
 	about        func(mygo.AboutPanelOptions) // shows the About panel
 	menuSaid     string
 	openExternal func(url string)
+	// post posts a notification a command asked for, and raise brings
+	// the window forward (see Run).
+	post  func(title, body string)
+	raise func()
 	// setTitle sets the window's title, titled as last set (see Run).
 	setTitle func(title string)
 	titled   string
@@ -222,6 +231,7 @@ func (a *App) Start() {
 		}
 	})
 	go a.indexLoop()
+	go a.metaLoop()
 }
 
 // Close ends the index loop and every tab's larik.
