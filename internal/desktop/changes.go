@@ -61,7 +61,9 @@ const (
 	compareBase          // where the branch left its base
 )
 
-// fileChange is one changed file, with its diff viewer.
+// fileChange is one changed file, with its diffs: what isn't staged and
+// what is, for a file whose changes can be taken a hunk at a time (see
+// hunks.go), or all of its change.
 type fileChange struct {
 	path       string
 	from       string // its name at the last commit, when it was renamed
@@ -69,8 +71,7 @@ type fileChange struct {
 	adds, dels int
 	note       string // why there's no diff: binary, too large
 	open       bool
-	diff       *editor.DiffState
-	old, new   string
+	parts      []*diffPart
 }
 
 // staged reports whether some of the file's change is staged, and all.
@@ -80,12 +81,16 @@ func (f *fileChange) staged() (some, all bool) {
 	return some, some && y == ' '
 }
 
-// fileRead is a file's change as read from disk, off the main thread.
+// fileRead is a file's change as read from disk, off the main thread:
+// its text at the commit compared with, in the working tree, and, when
+// hunks says its changes can be taken a hunk at a time, in the index.
 type fileRead struct {
 	path, from, code string
 	adds, dels       int
 	note             string
 	old, new         string
+	index            string
+	hunks            bool
 }
 
 // changesRead is a read of the repository, off the main thread.
@@ -183,26 +188,71 @@ func (ch *changes) apply(r changesRead) {
 			f = &fileChange{path: s.path, open: i < filesOpened}
 		}
 		f.from, f.code, f.adds, f.dels, f.note = s.from, s.code, s.adds, s.dels, s.note
-		if s.note == "" {
-			if f.diff == nil {
-				lang := editor.LanguageFor(s.path)
-				old, nw := editor.NewBuffer(s.old), editor.NewBuffer(s.new)
-				old.SetLanguage(lang)
-				nw.SetLanguage(lang)
-				f.diff = &editor.DiffState{Old: old, New: nw, Layout: editor.DiffUnified, FitContent: true, Wrap: true}
-			} else {
-				if s.old != f.old {
-					f.diff.Old.Set(s.old)
-				}
-				if s.new != f.new {
-					f.diff.New.Set(s.new)
-				}
-			}
-			f.old, f.new = s.old, s.new
-		}
+		f.parts = ch.parts(f, s)
 		files = append(files, f)
 	}
 	ch.files = files
+}
+
+// parts are the diffs a file shows for its read: what isn't staged and
+// what is, when its changes can be taken a hunk at a time, or else all
+// of its change; each keeps its viewer from the last read.
+func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
+	if s.note != "" {
+		return nil
+	}
+	type text struct {
+		staged   bool
+		old, new string
+	}
+	var want []text
+	switch {
+	case !s.hunks:
+		want = []text{{false, s.old, s.new}}
+	default:
+		if s.index != s.new {
+			want = append(want, text{false, s.index, s.new})
+		}
+		if s.old != s.index {
+			want = append(want, text{true, s.old, s.index})
+		}
+		if len(want) == 0 {
+			want = []text{{false, s.old, s.new}} // a change of mode alone
+		}
+	}
+	var out []*diffPart
+	for _, w := range want {
+		var p *diffPart
+		for _, q := range f.parts {
+			if q.staged == w.staged {
+				p = q
+			}
+		}
+		if p == nil {
+			lang := editor.LanguageFor(s.path)
+			old, nw := editor.NewBuffer(w.old), editor.NewBuffer(w.new)
+			old.SetLanguage(lang)
+			nw.SetLanguage(lang)
+			p = &diffPart{staged: w.staged, old: w.old, new: w.new,
+				diff: &editor.DiffState{Old: old, New: nw, Layout: editor.DiffUnified, FitContent: true, Wrap: true}}
+		} else {
+			if w.old != p.old {
+				p.diff.Old.Set(w.old)
+			}
+			if w.new != p.new {
+				p.diff.New.Set(w.new)
+			}
+			p.old, p.new = w.old, w.new
+		}
+		// Hunks can be taken while the index shows.
+		p.diff.HunkActions = s.hunks
+		p.diff.LineSelection = s.hunks
+		if !s.hunks {
+			p.diff.SetSelectedLines(editor.DiffLineRange{}, false)
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // headCache keeps the text of files at HEAD between reads, by commit and
@@ -249,6 +299,7 @@ func readChanges(dir string, heads headCache, against int) (r changesRead) {
 		}
 	}
 	counts := numstat(ctx, root, cmp.Or(since, "HEAD"))
+	var index map[string]string // path → its blob in the index, for files with staged changes
 	used := map[string]bool{}
 	if len(entries) > maxChangedFiles {
 		r.more = len(entries) - maxChangedFiles
@@ -284,6 +335,28 @@ func readChanges(dir string, heads headCache, against int) (r changesRead) {
 			s.note, s.old, s.new = "too large to show", "", ""
 		case isBinary(s.old) || isBinary(s.new):
 			s.note, s.old, s.new = "binary", "", ""
+		case against == compareCommit && hunkable(s):
+			// What's in the index: HEAD's text, with nothing staged.
+			s.hunks, s.index = true, s.old
+			if s.code[0] != ' ' {
+				if index == nil {
+					index = indexBlobs(ctx, root)
+				}
+				blob, ok := index[s.path]
+				if !ok {
+					s.hunks = false
+					break
+				}
+				key := "blob:" + blob
+				text, ok := heads[key]
+				if !ok {
+					out, _ := git(ctx, root, "cat-file", "blob", blob)
+					text = string(out)
+					heads[key] = text
+				}
+				used[key] = true
+				s.index = text
+			}
 		}
 		r.snaps = append(r.snaps, s)
 	}
@@ -293,6 +366,31 @@ func readChanges(dir string, heads headCache, against int) (r changesRead) {
 		}
 	}
 	return r
+}
+
+// hunkable reports whether a file's change can be taken a hunk at a
+// time: a text file in git, changed rather than deleted, renamed or in a
+// conflict.
+func hunkable(s fileRead) bool {
+	x, y := s.code[0], s.code[1]
+	return s.from == "" && strings.IndexByte(" MA", x) >= 0 && strings.IndexByte(" M", y) >= 0
+}
+
+// indexBlobs lists the blob of each file in the index, by path.
+func indexBlobs(ctx context.Context, root string) map[string]string {
+	out, err := git(ctx, root, "ls-files", "-s", "-z")
+	if err != nil {
+		return nil
+	}
+	blobs := map[string]string{}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		// "<mode> <blob> <stage>\t<path>"
+		meta, path, ok := strings.Cut(entry, "\t")
+		if f := strings.Fields(meta); ok && len(f) == 3 && f[2] == "0" {
+			blobs[path] = f[1]
+		}
+	}
+	return blobs
 }
 
 // findBase is what the branch is compared with: for one of larik's
@@ -567,12 +665,25 @@ func (a *App) fileDiff(c *ui.Context, t *ui.Theme, ch *changes, f *fileChange) {
 		if !f.open {
 			return
 		}
-		if f.note != "" || f.diff == nil {
+		if f.note != "" || len(f.parts) == 0 {
 			ui.Text(c, "Not shown: "+f.note).FontSize(12).TextColor(t.TextMuted).Padding(8, 12)
 			return
 		}
-		f.diff.Font = ui.Font{Family: mono, Size: 12}
-		editor.DiffView(c, f.diff)
+		for _, p := range f.parts {
+			ui.Column(c.Key(p.staged)).Children(func() {
+				if len(f.parts) > 1 {
+					// Both, as git keeps them: what a commit takes is the staged.
+					label := "Unstaged"
+					if p.staged {
+						label = "Staged"
+					}
+					ui.Text(c, label).FontSize(11).Bold().TextColor(t.TextMuted).Padding(6, 12, 4, 12)
+				}
+				p.diff.Font = ui.Font{Family: mono, Size: 12}
+				p.diff.RenderHunkActions = a.hunkActions(ch, f, p)
+				editor.DiffView(c, p.diff)
+			})
+		}
 	})
 }
 

@@ -144,9 +144,9 @@ func TestChangesPane(t *testing.T) {
 	a := New(Options{})
 	ch := &changes{dir: repo}
 	ch.apply(r)
-	first := ch.files[0].diff
+	first := ch.files[0].parts[0].diff
 	ch.apply(r)
-	if ch.files[0].diff != first {
+	if ch.files[0].parts[0].diff != first {
 		t.Error("a file keeps its viewer across reads")
 	}
 	tt := ui.NewTester(func(c *ui.Context) { a.changesPane(c, a.palette(ui.DarkTheme()), ch) }, 640, 800)

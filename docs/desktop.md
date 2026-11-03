@@ -22,7 +22,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 14 | [Cost and context](#phase-14-cost-and-context) | Done |
 | 15 | [Command palette](#phase-15-command-palette) | Done |
 | 16 | [Panes, any number, both ways](#phase-16-panes-any-number-both-ways) | Done |
-| 17 | [What's next](#phase-17-whats-next) | Planned |
+| 17 | [Hunks and lines](#phase-17-hunks-and-lines) | Done |
+| 18 | [What's next](#phase-18-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -319,14 +320,23 @@ One split, side by side, was enough to watch two agents; with three or four at w
 - **Remembered**: the window saves the tree, with each divider's place, the focused pane and the zoom, and opens it so next time; a pane whose tab didn't come back gives its room to its neighbour. A state saved by an earlier version, with one split, opens as that split.
 - The changes pane sits beside all the panes, at 60% to 40% to start, and follows the focused pane's project.
 
-## Phase 17: What's next
+## Phase 17: Hunks and lines
+
+The changes pane staged and discarded whole files, so keeping one of an agent's edits to a file and not another meant a terminal. Now it takes a change at a time, or a few lines of one, as GitHub Desktop and Xcode do.
+
+- **Two diffs, as git keeps them.** A file with changes both staged and not shows what isn't staged (the index to the working tree) over what is (HEAD to the index), each headed; a file with one or the other shows the one. Comparing since the base, and untracked, deleted, renamed, binary or conflicted files, show one diff as before, and stage as a whole.
+- **Buttons on the change under the pointer**: Stage and Discard on what isn't staged, Unstage on what is. Discarding asks first, as discarding a file does.
+- **Lines**: clicking and dragging line numbers chooses lines, and the buttons on a change with chosen lines in it take only those (Stage Lines, Discard Lines, Unstage Lines). Lines are chosen on one side: the added lines, or the deleted ones. Staging only the added lines of a changed line keeps the old one and adds the new after it; staging only the deleted ones removes it.
+- **How**: the pane makes the text the index or the file is to have, from the texts the diff shows, and puts it there (`git hash-object` and `git update-index`, keeping the file's mode, or a write of the file), rather than handing `git apply` a patch, so there are no context lines to match or newlines at ends of files to mark. First it checks the index or the file still has what the diff was read from, and says so if an agent changed it in the meantime. Unstaging all of a new file's staged text leaves it untracked. CRLF line endings stay.
+- The index's text of each file with staged changes is read by its blob, once, as HEAD's text is.
+
+## Phase 18: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
 - **Program status from any program**: OSC 7501 read from what runs in a terminal tab, which needs the terminal library to hand the sequence over.
 - **Asking before closing a busy terminal**, as Terminal does when a program is still running in it.
 - **A rendered plan to review**, beside the prompt, as cmux's markdown panel, and answers from the system notification itself.
-- **Hunks**: staging and discarding part of a file, a hunk or the lines chosen, in the changes pane.
 - **Archiving and deleting sessions**, names that `/resume` shows, and settings of the window's own (keys, theme, font).
 - **Sessions that outlive the window**, as Rex and herdr keep theirs: a background host the window attaches to, then remote windows on another Mac or over SSH.
 
