@@ -11,6 +11,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/permission"
+	"larik/internal/status"
 	"larik/internal/textutil"
 	"larik/internal/tools"
 )
@@ -38,6 +39,12 @@ const denyReason = "running non-interactively; permission prompts are auto-denie
 // closing structured_output event).
 func Run(ctx context.Context, a *agent.Agent, prompt string, opts Options, stdout, stderr io.Writer) error {
 	p := &printer{format: opts.Format, stdout: stdout, stderr: stderr, enc: json.NewEncoder(stdout), atLineStart: true, structured: len(opts.Schema) > 0}
+	p.st = status.NewTracker(status.NewWriter(a.SessionPath(), "headless"))
+	p.st.Busy(true)
+	defer func() {
+		p.st.Busy(false)
+		p.st.Release()
+	}()
 	if p.structured {
 		prompt += schemaNote(opts.Schema)
 	}
@@ -128,7 +135,8 @@ type printer struct {
 	// structured: the answer must match a schema, so text format keeps
 	// the model's prose off stdout, which gets only the final value.
 	structured bool
-	last       string // the main agent's latest assistant text
+	last       string          // the main agent's latest assistant text
+	st         *status.Tracker // the session's status file
 }
 
 // consume handles a turn's events and returns the last error text.
@@ -140,6 +148,10 @@ func (p *printer) consume(ch <-chan agent.Event) string {
 		}
 		if e.Kind == agent.EvError && e.Agent == "" {
 			failure = e.Text
+			p.st.Failed()
+		}
+		if e.Kind == agent.EvDone && e.Agent == "" {
+			p.st.Stopped(e.StopReason)
 		}
 		p.handle(e)
 	}

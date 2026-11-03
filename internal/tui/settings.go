@@ -220,6 +220,11 @@ var settingSpecs = []settingSpec{
 		func(m *model, on bool) {
 			m.opts.Config.InlineImages = &on
 		}),
+	toggle("program_status", "Status in terminal tabs", "appearance",
+		(*config.Config).ProgramStatusOn,
+		func(m *model, on bool) {
+			m.opts.Config.ProgramStatus = &on
+		}),
 	toggle("mouse", "Mouse scrolling", "appearance",
 		(*config.Config).MouseOn,
 		func(m *model, on bool) {

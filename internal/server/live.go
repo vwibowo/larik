@@ -10,6 +10,7 @@ import (
 
 	"larik/internal/agent"
 	"larik/internal/app"
+	"larik/internal/status"
 )
 
 var errBusy = errors.New("session is busy; wait for the current run or cancel it")
@@ -20,6 +21,7 @@ type live struct {
 	s   *app.Session
 	a   *agent.Agent
 	bus *bus
+	st  *status.Tracker // the session's status file
 
 	mu     sync.Mutex
 	busy   bool
@@ -49,6 +51,7 @@ func newLive(s *app.Session) *live {
 		s:         s,
 		a:         s.Agent,
 		bus:       newBus(),
+		st:        status.NewTracker(status.NewWriter(s.Agent.SessionPath(), "serve")),
 		pending:   map[string]*pendingPerm{},
 		closeDone: make(chan struct{}),
 		stopDrain: make(chan struct{}),
@@ -88,11 +91,21 @@ func (l *live) publish(e agent.Event, bg bool) Event {
 		l.pending[ev.RequestID] = p
 		// Publish while holding pmu so the stored copy carries the seq.
 		p.ev = l.bus.publish(ev)
+		kind, msg := status.Waiting(e.ToolName)
+		l.st.Block(ev.RequestID, kind, msg)
 		l.pmu.Unlock()
 		return p.ev
 	}
 	if e.Kind == agent.EvToolEnd {
 		l.expireCall(e)
+	}
+	if !bg && e.Agent == "" {
+		switch e.Kind {
+		case agent.EvError:
+			l.st.Failed()
+		case agent.EvDone:
+			l.st.Stopped(e.StopReason)
+		}
 	}
 	return l.bus.publish(ev)
 }
@@ -106,6 +119,8 @@ func (l *live) expireCall(end agent.Event) {
 		if p.ev.ToolID == end.ToolID && p.ev.Agent == end.Agent && p.ev.TaskID == end.TaskID {
 			gone = append(gone, id)
 			delete(l.pending, id)
+
+			l.st.Unblock(id)
 		}
 	}
 	l.pmu.Unlock()
@@ -155,6 +170,7 @@ func (l *live) deliverNotifications() {
 func (l *live) startLocked(parent context.Context) context.Context {
 	ctx, cancel := context.WithCancel(parent)
 	l.busy, l.cancel = true, cancel
+	l.st.Busy(true)
 	l.runs.Add(1)
 	l.status(true)
 	return ctx
@@ -163,6 +179,7 @@ func (l *live) startLocked(parent context.Context) context.Context {
 // endLocked clears the run state; l.mu must be held.
 func (l *live) endLocked() {
 	l.busy = false
+	l.st.Busy(false)
 	l.cancel()
 	l.cancel = nil
 }
@@ -243,6 +260,8 @@ func (l *live) answer(id string, r agent.PermissionReply) bool {
 	l.pmu.Lock()
 	p, ok := l.pending[id]
 	delete(l.pending, id)
+
+	l.st.Unblock(id)
 	l.pmu.Unlock()
 	if !ok {
 		return false
@@ -265,6 +284,8 @@ func (l *live) expire(all bool) {
 		if all || !p.bg {
 			gone = append(gone, id)
 			delete(l.pending, id)
+
+			l.st.Unblock(id)
 		}
 	}
 	l.pmu.Unlock()
@@ -291,6 +312,8 @@ func (l *live) expireTask(taskID, label string) {
 			gone = append(gone, id)
 			replies = append(replies, p.reply)
 			delete(l.pending, id)
+
+			l.st.Unblock(id)
 		}
 	}
 	l.pmu.Unlock()
@@ -354,6 +377,7 @@ func (l *live) beginClose() {
 			<-l.drained
 			l.expire(true)
 			l.s.Close("other")
+			l.st.Release()
 		}()
 	})
 }

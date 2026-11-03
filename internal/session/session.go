@@ -544,6 +544,8 @@ type Info struct {
 	Modified time.Time
 	Title    string // first user prompt
 	ForkOf   string // parent session id for branches
+	Cwd      string // the directory the session ran in
+	Model    string // "provider/model" it started with
 }
 
 // List returns sessions in dir, newest first.
@@ -565,8 +567,8 @@ func List(dir string) ([]Info, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		title, forkOf := scan(path)
-		out = append(out, Info{ID: strings.TrimSuffix(e.Name(), ".jsonl"), Path: path, Modified: fi.ModTime(), Title: title, ForkOf: forkOf})
+		sc := scanCached(path, fi)
+		out = append(out, Info{ID: strings.TrimSuffix(e.Name(), ".jsonl"), Path: path, Modified: fi.ModTime(), Title: sc.title, ForkOf: sc.forkOf, Cwd: sc.cwd, Model: sc.model})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
 	return out, nil
@@ -604,10 +606,42 @@ func Find(dir, id string) (string, error) {
 }
 
 // scan reads a session's title (first prompt) and fork origin.
-func scan(path string) (title, forkOf string) {
+// scanned is what scan found in a file, as of its size and mtime.
+type scanned struct {
+	size                      int64
+	mod                       time.Time
+	title, forkOf, cwd, model string
+}
+
+var (
+	scanMu    sync.Mutex
+	scanCache = map[string]scanned{}
+)
+
+// scanCached is scan, kept until the file changes: listing every project
+// again, as the desktop's sidebar does every few seconds, then reads only
+// the transcripts that grew.
+func scanCached(path string, fi os.FileInfo) scanned {
+	scanMu.Lock()
+	s, ok := scanCache[path]
+	scanMu.Unlock()
+	if ok && s.size == fi.Size() && s.mod.Equal(fi.ModTime()) {
+		return s
+	}
+	s = scan(path)
+	s.size, s.mod = fi.Size(), fi.ModTime()
+	scanMu.Lock()
+	scanCache[path] = s
+	scanMu.Unlock()
+	return s
+}
+
+// scan reads the start of a session: its first prompt, as a title, and
+// what its meta entry says.
+func scan(path string) (s scanned) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return s
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -618,17 +652,24 @@ func scan(path string) (title, forkOf string) {
 			continue
 		}
 		if e.Type == EntryMeta && e.Meta != nil {
-			forkOf = e.Meta.ForkOf
+			s.forkOf, s.cwd = e.Meta.ForkOf, e.Meta.Cwd
+			if e.Meta.Model != "" {
+				s.model = e.Meta.Model
+				if e.Meta.Provider != "" {
+					s.model = e.Meta.Provider + "/" + e.Meta.Model
+				}
+			}
 		}
 		if e.Type == EntryMessage && e.Message != nil && IsPrompt(*e.Message) {
 			t := strings.ReplaceAll(strings.TrimSpace(e.Message.Text()), "\n", " ")
 			if len(t) > 80 {
 				t = t[:77] + "..."
 			}
-			return t, forkOf
+			s.title = t
+			return s
 		}
 	}
-	return "", forkOf
+	return s
 }
 
 // IsPrompt reports whether m starts a turn: a user message with text and

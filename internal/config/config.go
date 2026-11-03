@@ -116,6 +116,9 @@ type Config struct {
 	// Notifications alerts an unfocused terminal when larik needs you:
 	// "off" (the default), "bell" or "desktop".
 	Notifications string `json:"notifications,omitempty"`
+	// ProgramStatus reports what Larik is doing to the terminal over OSC
+	// 7501, for terminals that show it in tabs. Nil means on.
+	ProgramStatus *bool `json:"program_status,omitempty"`
 	// Language is what the model replies in; empty leaves it to the model.
 	Language string `json:"language,omitempty"`
 	// SpinnerTips shows a tip under the spinner during a turn. Nil means on.
@@ -360,6 +363,9 @@ func ScheduleFile() string { return filepath.Join(configDir(), "schedules.json")
 
 // ScheduleLogDir holds the logs of scheduled runs, one folder per entry.
 func ScheduleLogDir() string { return filepath.Join(dataDir(), "schedules") }
+
+// DataDir is where Larik keeps sessions and other state for every project.
+func DataDir() string { return dataDir() }
 
 func dataDir() string {
 	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
@@ -675,7 +681,7 @@ func (c *Config) merge(path string, trusted bool) error {
 			return fmt.Errorf("%s: appearance must be compact, default, or verbose", path)
 		}
 	}
-	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.InlineImages, &o.InlineImages}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
+	for _, b := range []struct{ dst, src **bool }{{&c.AutoCompact, &o.AutoCompact}, {&c.Verbose, &o.Verbose}, {&c.InlineImages, &o.InlineImages}, {&c.ProgramStatus, &o.ProgramStatus}, {&c.SpinnerTips, &o.SpinnerTips}, {&c.Mouse, &o.Mouse}} {
 		if *b.src != nil {
 			*b.dst = *b.src
 		}
@@ -1142,6 +1148,9 @@ func (c *Config) MouseOn() bool { return on(c.Mouse, true) }
 
 // InlineImagesOn reports whether images show in the conversation.
 func (c *Config) InlineImagesOn() bool { return on(c.InlineImages, true) }
+
+// ProgramStatusOn reports whether the TUI sends OSC 7501 program status.
+func (c *Config) ProgramStatusOn() bool { return on(c.ProgramStatus, true) }
 
 // SetUserSetting writes a top-level setting to the user config, or removes
 // it when value is nil or "", so the built-in default applies again. It

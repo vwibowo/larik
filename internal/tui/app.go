@@ -31,6 +31,7 @@ import (
 	"larik/internal/permission"
 	"larik/internal/sandbox"
 	"larik/internal/skills"
+	"larik/internal/status"
 	"larik/internal/subagent"
 	"larik/internal/termbrowser"
 	"larik/internal/tools"
@@ -95,6 +96,7 @@ func RunWithStartup(start func(context.Context) (Options, error)) error {
 
 func cleanupModel(m *model) {
 	m.inline.forget(os.Stdout)
+	clearStatus(m)
 	if m.browser != nil {
 		m.browser.Close()
 	}
@@ -384,7 +386,12 @@ type model struct {
 	suggestion    string
 	suggestGen    int
 	suggestCancel context.CancelFunc
-	lastStop      string // stop reason of the last main-agent turn
+	lastStop      string         // stop reason of the last main-agent turn
+	turnFailed    bool           // the main agent reported an error this turn
+	turnEnded     bool           // a turn has finished since the session opened
+	reported      status.Report  // the program status last sent to the terminal
+	statusFile    *status.Writer // the open session's status file
+	statusPath    string         // the session statusFile writes for
 	// The command palette shows while a bare "/name" is being typed.
 	palette       *picker
 	paletteQ      string // input the palette was built for
@@ -623,6 +630,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if st := m.refreshStatus(); st != nil {
 		cmd = tea.Batch(cmd, st)
 	}
+	if ps := m.reportStatus(); ps != nil {
+		cmd = tea.Batch(cmd, ps)
+	}
 	return md, cmd
 }
 
@@ -832,6 +842,7 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.compactTools = nil
 		flush := m.flushGroup() // a run the turn ended on
 		m.running, m.cancel, m.events = false, nil, nil
+		m.turnEnded = true
 		m.dropForegroundPerms()
 		m.resetStream()
 		m.stats = m.agent.Stats()
@@ -1306,6 +1317,7 @@ func (m *model) submit(text string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.running, m.cancel, m.prompted = true, cancel, true
 	m.turnStart, m.turnChars = time.Now(), 0
+	m.turnFailed = false
 	m.motion.resetTokens()
 	m.turnStats = turnStats{}
 	m.tip = nextTip(m.keys)
@@ -1619,6 +1631,9 @@ func (m *model) applyEvent(e agent.Event) tea.Cmd {
 		}
 		return tea.Sequence(m.println(m.agentLine(e, m.st.warn.Render("! "+e.Text))), m.showImages(e))
 	case agent.EvError:
+		if e.Agent == "" {
+			m.turnFailed = true
+		}
 		return m.println(m.agentLine(e, m.st.err.Render("✗ "+e.Text)))
 	case agent.EvDone:
 		if e.Agent == "" {

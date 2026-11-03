@@ -6,6 +6,7 @@ Larik keeps several kinds of state on disk. All of it is under `~/.local/share/l
 ~/.local/share/larik/
 ├── sessions/<cwd-slug>/
 │   ├── 20260927-101500-a1b2c3.jsonl          one session (or branch)
+│   ├── 20260927-101500-a1b2c3.status.json    what the session is doing, for other processes
 │   ├── 20260927-101500-a1b2c3-agents/        subagent transcripts for that session
 │   │   └── 20260927-101733-d4e5f6.jsonl
 │   └── 20260927-101500-a1b2c3.trace/         debug mode only: events.jsonl + http/ bodies
@@ -63,6 +64,16 @@ classDiagram
 Every entry has an `id` and the `parent_id` of the previous entry, so the file is also a linked list. `read` tolerates a torn last line after a crash. Opening it for appending adds a `recovery` entry after the incomplete line; other malformed lines cause loading and forking to fail rather than silently dropping history.
 
 **Why append-only?** Three reasons: a crash can't corrupt earlier history; provider prompt caches and thinking-block rules depend on earlier messages never changing; and forking, resuming and inspecting the transcript all read the same simple file. Operations that feel like edits are expressed as new entries: compaction adds a summary, `/undo` adds a note to the next message, `/clear` just starts a fresh in-memory context while the file continues.
+
+### Status files
+
+[internal/status](../internal/status/status.go). Beside each session, `<id>.status.json` says what the session is doing for any process that wants to know, such as the desktop app's sidebar. It is the one file here that is rewritten: whichever front end has the session open (TUI, `-p` or `serve`) replaces it in one rename whenever its status changes.
+
+```json
+{"state":"blocked","kind":"permission","msg":"needs your permission to use bash","pid":4242,"front_end":"tui","updated":"2026-11-02T03:04:05Z"}
+```
+
+The states are those of the [OSC 7501](https://www.superlogical.com/rex/docs/build/program-status) program status protocol, which the TUI also sends to its terminal: `idle`, `working`, `done`, `blocked` (with `kind` `permission` or `question`) and `error`. `working` and `blocked` hold only while the process in `pid` runs; a reader treats them as `idle` once it has exited, and the front end sets `pid` to 0 when it lets go of the session. `done` and `error` stay. A larik that `larik desktop` started in one of its tabs also writes `tab`, the `LARIK_DESKTOP_TAB` from its environment, so the window can tell which session that tab has open. The transcript stays the record: a missing or unreadable status file just means nobody has reported anything.
 
 ## Branches: fork and rewind
 

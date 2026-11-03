@@ -68,6 +68,12 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "schedule" {
 		return runSchedule(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "desktop" {
+		return runDesktop(os.Args[2:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "sessions" {
+		return runSessions(os.Args[2:], os.Stdout)
+	}
 	var (
 		print   = flag.Bool("p", false, "print mode: run the prompt non-interactively and exit")
 		output  = flag.String("output", "text", "print-mode output: text or json (one event per line)")
@@ -87,6 +93,8 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "Usage: larik [flags] [prompt]\n       larik serve [flags]   (HTTP + SSE API; see larik serve -h)\n"+
 			"       larik bench --models spec1,spec2,...  (compare models on small self-checking tasks; see larik bench -h)\n"+
 			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n"+
+			"       larik sessions [--all] [--json]   (sessions from every project; see larik sessions -h)\n"+
+			"       larik desktop   (a window with every project's sessions; see larik desktop -h)\n"+
 			"       larik browser view --socket <path>   (the in-terminal browser pane browser_show opens)\n\n")
 		flag.PrintDefaults()
 	}

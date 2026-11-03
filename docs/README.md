@@ -16,6 +16,7 @@ These docs explain how Larik works inside: what each package does, how a prompt 
 | 8 | [Server mode](server-mode.md) | The HTTP + SSE API and how it wraps an agent |
 | 9 | [How Larik compares](comparison.md) | Design choices that set it apart from other agent harnesses |
 | 10 | [Contributing guide](contributing-guide.md) | Recipes: add a tool, a provider, a command, a hook event |
+| 11 | [Desktop app plan](desktop.md) | The phased plan for `larik desktop` and the program status it builds on |
 
 ## The mental model on one page
 
