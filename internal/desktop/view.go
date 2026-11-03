@@ -1343,6 +1343,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		a.exitBar(c, t, tb)
 		if tb.browser {
 			a.addressBar(c, t, tb)
+			a.siteBars(c, t, tb)
 			if tb.web != nil {
 				term = ui.WebView(c.Key(tb.id), tb.web).Grow(1)
 			} else {

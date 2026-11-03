@@ -12,8 +12,10 @@ type savedState struct {
 	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal or browser tab
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
-	// Browsers are the browser tabs' pages, by their index in Tabs.
-	Browsers map[int]string `json:"browsers,omitempty"`
+	// Browsers are the browser tabs' pages, by their index in Tabs, and
+	// Sites what you let their pages use, or didn't, by siteKey.
+	Browsers map[int]string  `json:"browsers,omitempty"`
+	Sites    map[string]bool `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
 	Hosted map[int]string `json:"hosted,omitempty"`
@@ -104,6 +106,9 @@ func (a *App) state() savedState {
 		st.Tabs = append(st.Tabs, path)
 	}
 	st.Panes = savePanes(a.layout, index)
+	if len(a.sites) > 0 {
+		st.Sites = a.sites
+	}
 	return st
 }
 
@@ -170,6 +175,9 @@ func (a *App) restore() bool {
 		a.hidden[path] = true
 	}
 	a.pinned = st.Pinned
+	if st.Sites != nil {
+		a.sites = st.Sites
+	}
 	for path, name := range st.Names {
 		if s, _, ok := a.find(path); ok && s.Name == "" {
 			a.rename(path, name)

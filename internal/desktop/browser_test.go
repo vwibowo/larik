@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -182,5 +183,68 @@ func TestSidebarListsBrowserTabs(t *testing.T) {
 	tt.Frame()
 	if copied != "https://example.com" {
 		t.Fatalf("copied %q", copied)
+	}
+}
+
+func TestSitePermissions(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("meet.example.com")
+	b := a.focused()
+	call := mygo.PermissionRequest{Origin: "https://meet.example.com", Permissions: []mygo.Permission{mygo.PermissionNotifications}}
+	// Asked first, it gets nothing yet, and the bar asks you.
+	if a.permitted(b, call) || b.asking == nil || permissionText(b.asking.perms) != "your notifications" {
+		t.Fatalf("first ask: %+v", b.asking)
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if !tt.HasText("meet.example.com wants to use your notifications.") {
+		t.Fatalf("no bar in %q", tt.Texts())
+	}
+	if err := tt.Click("Allow"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if b.asking != nil || !a.permitted(b, call) {
+		t.Fatal("allowed, it gets it")
+	}
+	// Don't Allow keeps it from asking again; another site still asks.
+	other := mygo.PermissionRequest{Origin: "https://ads.example.com", Permissions: []mygo.Permission{mygo.PermissionNotifications}}
+	a.permitted(b, other)
+	a.answerSite(b, false)
+	if a.permitted(b, other) || b.asking != nil {
+		t.Fatal("denied, it doesn't ask again")
+	}
+	// The answers are kept.
+	if st := a.state(); !st.Sites[siteKey(call.Origin, mygo.PermissionNotifications)] || st.Sites[siteKey(other.Origin, mygo.PermissionNotifications)] {
+		t.Fatalf("saved: %v", st.Sites)
+	}
+	if got := permissionText([]mygo.Permission{mygo.PermissionCamera, mygo.PermissionMicrophone}); got != "your camera and microphone" {
+		t.Fatal(got)
+	}
+}
+
+func TestDownloadBar(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	var shown string
+	a.showFile = func(p string) { shown = p }
+	a.openBrowser("example.com")
+	b := a.focused()
+	b.download = &pageDownload{name: "report.pdf"}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if !tt.HasText("Downloading report.pdf…") {
+		t.Fatalf("no progress in %q", tt.Texts())
+	}
+	a.downloaded(b, "/Users/me/Downloads/report (2).pdf", "")
+	tt.Frame()
+	if !tt.HasText("Downloaded report (2).pdf") || len(a.events) != 1 {
+		t.Fatalf("done: %q, %d events", tt.Texts(), len(a.events))
+	}
+	if err := tt.Click(showInFolder()); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if shown != "/Users/me/Downloads/report (2).pdf" {
+		t.Fatalf("showed %q", shown)
 	}
 }

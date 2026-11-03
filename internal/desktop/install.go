@@ -147,6 +147,14 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>A page in a browser tab asks to use the camera.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>A page in a browser tab asks to use the microphone.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>A page in a browser tab asks for your location.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>A page in a browser tab asks for your location.</string>
 </dict>
 </plist>
 `

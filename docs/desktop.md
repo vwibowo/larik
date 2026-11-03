@@ -371,11 +371,13 @@ Checking a dev server, the docs or a pull request meant leaving the window. Rex 
 - **The address bar**: back, forward, reload (stop while it loads), the address, and **Open in your browser**. What's typed goes as typed when it has a scheme, over http for this machine and the local network (`localhost:3000`, `127.0.0.1:5173`, `192.168.1.20`), and over https otherwise (`github.com`); words aren't searched, and say so. `cmd+l` gives the bar the keyboard, or opens a browser tab from any other; `cmd+r` reloads and `cmd+[` / `cmd+]` go back and forward. A link opening a window opens a tab instead.
 - **In the sidebar**, under Terminals: a **Browser** section lists the browser tabs by their page's title, with its host, or a spinner while it loads; right-clicking one reloads its page, copies its address or opens it in your browser.
 - **A session's ports open here**: a port under a session's row opens in a browser tab beside the session's pane, or shows the browser tab already on it; `cmd`-click opens it in your browser.
-- **The page is someone else's**: it runs untrusted (MyGo's `PageOptions.Untrusted`), so it calls none of the window's Go, gets no permission (camera, location, notifications) and downloads nothing. Its cookies and storage are a session of their own, `larik-browser`, kept from one run to the next, so what you sign in to stays signed in.
+- **The page is someone else's**: it runs untrusted (MyGo's `PageOptions.Untrusted`), so it calls none of the window's Go, and gets nothing it asks for on its own. Its cookies and storage are a session of their own, `larik-browser`, kept from one run to the next, so what you sign in to stays signed in.
+- **Permissions, asked**: a page asking for the camera, the microphone, your location or to notify you gets nothing at first, and a bar over it asks: **Allow** lets that site have it from then on and reloads the page, **Don't Allow** stops it asking. The answers are kept with the window's state. macOS ends an app that asks for the camera, microphone or location without saying why, so the Larik app now says why; one installed before needs `larik desktop --install` again, and says so.
+- **Downloads** go to the Downloads folder, numbered when the name is taken, with a bar while they go and **Show in Finder** once done; the bell keeps them too.
 - **It lives in the window**, not the host, so it ends as the window closes, and comes back from its page's address, in its pane, when the window opens again.
 - **From scripts**: `larik desktop open --url localhost:3000` opens one (with `--split`, `--below` or `--background`), `list` names it `browser` with its `url`, and `send` and `read` say it has no terminal.
 
-Not yet: driving the page from larik's browser tools, find in page, downloads, and permission prompts.
+Not yet: driving the page from larik's browser tools, and find in page.
 
 ## Phase 21: What's next
 

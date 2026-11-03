@@ -194,8 +194,10 @@ type App struct {
 	menuSaid     string
 	openExternal func(url string)
 	showSettings func()
-	// newWebView makes a browser tab's web view, loading url (see Run).
+	// newWebView makes a browser tab's web view, loading url (see Run);
+	// sites are what you let pages use, or didn't, by siteKey.
 	newWebView func(url string) (*mygo.WebView, error)
+	sites      map[string]bool
 	// post posts a notification a command asked for, and raise brings
 	// the window forward (see Run).
 	post  func(title, body string)
@@ -250,6 +252,10 @@ type tab struct {
 	loading   bool
 	back, fwd bool
 	off       []func()
+	// asking is what its page asked to use and waits on you for, and
+	// download its last download (see browser.go).
+	asking   *siteAsk
+	download *pageDownload
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the

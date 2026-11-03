@@ -59,6 +59,7 @@ func (a *App) startBrowser(u string) *tab {
 		}
 		t.web = v
 		a.watchPage(t)
+		a.watchSite(t)
 	}
 	a.tabs = append(a.tabs, t)
 	return t
