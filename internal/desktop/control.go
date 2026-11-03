@@ -41,8 +41,14 @@ type Request struct {
 	// in, on the branch larik/<Branch>, or one named for it.
 	Worktree bool   `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
-	// URL opens a browser tab on the page, as a web address is typed.
+	// URL opens a browser tab on the page, as a web address is typed, or
+	// is where page's navigate goes.
 	URL string `json:"url,omitempty"`
+	// Op is what page does to a browser tab's page (see pagectl.go), and
+	// Ref the element of its outline it clicks or types into; Text is
+	// what type types or eval runs, and Enter submits what was typed.
+	Op  string `json:"op,omitempty"`
+	Ref string `json:"ref,omitempty"`
 	// Background opens a tab without showing it, leaving the panes as
 	// they are.
 	Background bool   `json:"background,omitempty"`
@@ -61,11 +67,12 @@ type Request struct {
 
 // Response is the window's answer.
 type Response struct {
-	Error string    `json:"error,omitempty"`
-	Tabs  []TabInfo `json:"tabs,omitempty"` // list's
-	Tab   *TabInfo  `json:"tab,omitempty"`  // the tab acted on
-	Text  string    `json:"text,omitempty"` // read's
-	State string    `json:"state,omitempty"`
+	Error string      `json:"error,omitempty"`
+	Tabs  []TabInfo   `json:"tabs,omitempty"` // list's
+	Tab   *TabInfo    `json:"tab,omitempty"`  // the tab acted on
+	Text  string      `json:"text,omitempty"` // read's
+	State string      `json:"state,omitempty"`
+	Page  *PageResult `json:"page,omitempty"` // page's
 }
 
 // TabInfo is a tab as commands see it.
@@ -102,6 +109,8 @@ func (a *App) control(req Request) Response {
 	switch req.Cmd {
 	case "wait":
 		return a.wait(req)
+	case "page":
+		return a.pageControl(req)
 	case "allow", "deny":
 		return a.controlAnswer(req)
 	case "open":

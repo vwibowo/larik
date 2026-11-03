@@ -85,6 +85,9 @@ func (a *App) focusPane(p *pane) {
 		a.zoomed = false
 	}
 	a.focus, a.focusNext = p, p.tab
+	if p.tab.browser {
+		a.lastBrowser = p.tab
+	}
 	if p.tab.path != "" {
 		a.seen[p.tab.path] = time.Now()
 	}

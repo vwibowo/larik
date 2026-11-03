@@ -40,7 +40,7 @@ type Snapshot struct {
 func (s *Session) Snapshot(ctx context.Context, ref string) (Snapshot, error) {
 	var snap Snapshot
 	var err error
-	js := snapshotJS + "(" + strconv.Quote(ref) + ")"
+	js := SnapshotScript(ref)
 	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
 	defer cancel()
 	// A click can start a navigation that destroys the page mid-evaluation;
@@ -663,3 +663,8 @@ func (s *Session) Eval(ctx context.Context, js string) (string, error) {
 	}
 	return res.Description, nil
 }
+
+// SnapshotScript is the script that outlines a page, or with ref just
+// that element's subtree, for a browser other than the session's (larik
+// desktop's browser tabs): its result decodes as a Snapshot.
+func SnapshotScript(ref string) string { return snapshotJS + "(" + strconv.Quote(ref) + ")" }

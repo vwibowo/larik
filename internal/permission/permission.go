@@ -158,7 +158,7 @@ func Subject(tool string, input json.RawMessage) string {
 		return in.Command
 	case "browser_screenshot":
 		return in.SavePath
-	case "web_fetch", "browser_navigate":
+	case "web_fetch", "browser_navigate", "desktop_page_navigate":
 		return urlHost(in.URL)
 	}
 	return in.Path
@@ -197,7 +197,7 @@ var optionalWritePath = map[string]bool{"browser_screenshot": true}
 
 // NetworkTools reach the internet but change nothing locally: plan mode
 // asks for them instead of denying, since research is what planning needs.
-var NetworkTools = []string{"web_fetch", "web_search", "browser_navigate"}
+var NetworkTools = []string{"web_fetch", "web_search", "browser_navigate", "desktop_page_navigate"}
 
 var networkTools = map[string]bool{}
 
@@ -214,7 +214,7 @@ func init() {
 
 // domainTools take URLs; their rules name a domain, e.g.
 // web_fetch(domain:go.dev).
-var domainTools = map[string]bool{"web_fetch": true, "browser_navigate": true}
+var domainTools = map[string]bool{"web_fetch": true, "browser_navigate": true, "desktop_page_navigate": true}
 
 // Decide returns the decision and, for Deny, a reason to show the model.
 func (c *Checker) Decide(call Call) (Decision, string) {

@@ -19,6 +19,7 @@ import (
 	"larik/internal/audio"
 	"larik/internal/checkpoint"
 	"larik/internal/config"
+	"larik/internal/desktoppage"
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/lsp"
@@ -269,6 +270,11 @@ func Setup(cwd, version string) (*App, error) {
 		}
 		a.Browser = termbrowser.New(browserOpts)
 		baseTools = append(baseTools, termbrowser.Tools(a.Browser)...)
+	}
+	// In a larik desktop tab, the window's browser tabs too: the page the
+	// user sees beside the session.
+	if desktoppage.Available() {
+		baseTools = append(baseTools, desktoppage.Tools(cfg.DataDir)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))

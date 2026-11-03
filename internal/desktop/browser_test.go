@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo"
@@ -270,5 +271,38 @@ func TestFindInPageBar(t *testing.T) {
 	a.closeFind(b)
 	if b.finding || b.find != "" || b.found.Matches != 0 || a.focusNext != b {
 		t.Fatal("closing the bar clears it")
+	}
+}
+
+func TestPageCommandsFindTheirTab(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	if res := a.command(Request{Cmd: "list"}); res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	if _, msg := a.pageTab(Request{Op: PageSnapshot}); !strings.Contains(msg, "no browser tab is open") {
+		t.Fatalf("with none: %q", msg)
+	}
+	s := &tab{id: "s", dir: "/work", path: "/s.jsonl"}
+	a.tabs = []*tab{s}
+	a.activate(s)
+	// Going somewhere with none opens one beside the focused pane, which
+	// keeps the keyboard.
+	_, msg := a.pageTab(Request{Op: PageNavigate, URL: "localhost:3000"})
+	if len(a.tabs) != 2 || !a.tabs[1].browser || a.tabs[1].url != "http://localhost:3000" || !a.split() || a.focused() != s {
+		t.Fatalf("navigate with none: %d tabs, split %v, msg %q", len(a.tabs), a.split(), msg)
+	}
+	if msg != "the browser tab has no page" { // no window in a test
+		t.Fatalf("msg %q", msg)
+	}
+	// Then it goes to the browser tab focused last; a named one must be a
+	// browser tab.
+	b := a.tabs[1]
+	a.activate(b)
+	a.activate(s)
+	if got, _ := a.pageTab(Request{Op: PageSnapshot}); got != nil || a.lastBrowser != b {
+		t.Fatalf("the one focused last: %v", a.lastBrowser)
+	}
+	if _, msg := a.pageTab(Request{Op: PageSnapshot, Tab: "s"}); msg != "the tab isn't a browser tab" {
+		t.Fatalf("named: %q", msg)
 	}
 }

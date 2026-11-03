@@ -198,6 +198,9 @@ type App struct {
 	// sites are what you let pages use, or didn't, by siteKey.
 	newWebView func(url string) (*mygo.WebView, error)
 	sites      map[string]bool
+	// lastBrowser is the browser tab focused last, which page commands go
+	// to when no other is named or focused.
+	lastBrowser *tab
 	// post posts a notification a command asked for, and raise brings
 	// the window forward (see Run).
 	post  func(title, body string)

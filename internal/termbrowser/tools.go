@@ -902,3 +902,9 @@ func (s *Session) SetShower(f func() (msg string, ok bool)) {
 
 // ServeDefault starts the control socket in the configured directory.
 func (s *Session) ServeDefault() (string, error) { return s.Serve(s.opts.SocketDir) }
+
+// RenderSnapshot is a snapshot as the browser tools return it to the
+// model, from character start of its outline, after what did says.
+func RenderSnapshot(snap Snapshot, did string, start int) tools.Result {
+	return render(snap, did, start)
+}

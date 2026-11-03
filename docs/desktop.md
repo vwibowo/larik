@@ -378,7 +378,8 @@ Checking a dev server, the docs or a pull request meant leaving the window. Rex 
 - **It lives in the window**, not the host, so it ends as the window closes, and comes back from its page's address, in its pane, when the window opens again.
 - **From scripts**: `larik desktop open --url localhost:3000` opens one (with `--split`, `--below` or `--background`), `list` names it `browser` with its `url`, and `send` and `read` say it has no terminal.
 
-Not yet: driving the page from larik's browser tools.
+- **larik drives it too**: larik in a desktop tab gets `desktop_page_navigate`, `history`, `snapshot`, `click`, `type`, `eval` and `screenshot`, for the page you see beside the session rather than the headless Chrome of the `browser_*` tools. They go to the focused browser tab, or the one focused last, and going somewhere with none opens one beside the focused pane, which keeps the keyboard. The snapshot is the browser tools' outline (their `snapshot.js`, run in the page), with a ref on each link, button and field; a click or what's typed goes through the page's script, so a page that only takes what a person does (`isTrusted`) may ignore it. Navigating asks per domain, as `browser_navigate` does, and a rule naming one (`desktop_page_navigate(domain:localhost)`) allows it.
+- **From scripts, the same**: `larik desktop page navigate localhost:3000`, `back`, `forward`, `reload`, `snapshot`, `click --ref e4`, `type --ref e2 --enter text`, `eval code` (or `-` for stdin) and `screenshot --out page.png`, with `--tab` to name one.
 
 ## Phase 21: What's next
 

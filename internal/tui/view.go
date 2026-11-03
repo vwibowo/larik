@@ -1143,6 +1143,16 @@ func (m *model) permQuestion(e *agent.Event) string {
 		return "Run this script in the page?"
 	case "browser_upload":
 		return "Upload these files to the page?"
+	case "desktop_page_navigate":
+		return "Open this page in the browser tab?"
+	case "desktop_page_history":
+		return "Move the browser tab's page?"
+	case "desktop_page_click":
+		return "Click this in the browser tab?"
+	case "desktop_page_type":
+		return "Type this in the browser tab?"
+	case "desktop_page_eval":
+		return "Run this script in the browser tab's page?"
 	case permission.MemoryTool:
 		scope := str(in["scope"])
 		if scope == "" {
@@ -1214,6 +1224,12 @@ func (m *model) permDetail(e *agent.Event) string {
 		return bold.Render(str(in["text"])) + "\n" + m.st.dim.Render("into "+str(in["ref"])+" on the current page")
 	case "browser_eval":
 		return bold.Render(str(in["expression"]))
+	case "desktop_page_navigate":
+		return bold.Render(str(in["url"])) + "\n" + m.st.dim.Render("opens in larik desktop's browser tab, with your sign-ins there")
+	case "desktop_page_type":
+		return bold.Render(str(in["text"])) + "\n" + m.st.dim.Render("into "+str(in["ref"])+" on the browser tab's page")
+	case "desktop_page_eval":
+		return bold.Render(str(in["code"]))
 	case "browser_upload":
 		paths, _ := in["paths"].([]any)
 		var names []string
@@ -1841,12 +1857,16 @@ func toolTitle(name string, input []byte, shorten func(string) string) string {
 		if todos, err := tools.ParseTodos(input); err == nil {
 			arg = todoProgress(todos)
 		}
-	case "web_fetch", "browser_navigate":
+	case "web_fetch", "browser_navigate", "desktop_page_navigate":
 		arg = str(in["url"])
-	case "browser_click", "browser_select":
+	case "browser_click", "browser_select", "desktop_page_click":
 		arg = str(in["ref"])
-	case "browser_type":
+	case "browser_type", "desktop_page_type":
 		arg = str(in["ref"]) + " " + strconv.Quote(str(in["text"]))
+	case "desktop_page_history":
+		arg = str(in["action"])
+	case "desktop_page_eval":
+		arg = str(in["code"])
 	case "browser_press_key":
 		arg = str(in["key"])
 	case "browser_eval":

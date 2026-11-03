@@ -14,6 +14,7 @@ import (
 
 	"larik/internal/config"
 	"larik/internal/desktop"
+	"larik/internal/termbrowser"
 )
 
 // desktopCommands are the commands larik desktop sends the open window,
@@ -29,6 +30,7 @@ var desktopCommands = []struct{ name, usage, about string }{
 	{"focus", "--tab tab", "show a tab and bring the window forward"},
 	{"close", "--tab tab [--force]", "close a tab; --force stops one mid-turn"},
 	{"notify", "[--title title] text", "post a notification"},
+	{"page", "op [--tab tab] [--ref ref] [--enter] [--out file] [url | text | code | -]", "drive a browser tab's page, the focused one or the one focused last: navigate url (opening a tab beside the focused pane when none is open), back, forward, reload, snapshot (the page's text and its links, buttons and fields, each with a ref), click --ref, type --ref text (--enter submits it), eval code (- reads it from stdin; prints what it returns, as JSON) or screenshot (a PNG, to --out, page.png by default)"},
 	{"archive", "--session id", "archive a session that isn't running: it leaves the sidebar and /resume for its project's archived ones"},
 	{"unarchive", "--session id", "bring an archived session back"},
 	{"trash", "--session id", "move a session that isn't running, archived or not, to the Trash, with what larik kept beside it"},
@@ -65,6 +67,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	asJSON := fs.Bool("json", false, "print the window's answer as JSON")
 	req := desktop.Request{Cmd: name}
 	var noEnter bool
+	var pageOut string
 	switch name {
 	case "open":
 		fs.StringVar(&req.Session, "session", "", "the session to open, by id or the start of one")
@@ -97,6 +100,11 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.BoolVar(&req.Always, "always", false, "the prompt's second option: don't ask again, or for a plan, approve and ask before each edit")
 	case "notify":
 		fs.StringVar(&req.Title, "title", "Larik", "the notification's title")
+	case "page":
+		fs.StringVar(&req.Tab, "tab", "", "the browser tab: its id, or \"focused\"")
+		fs.StringVar(&req.Ref, "ref", "", "the element click or type acts on, as snapshot names it")
+		fs.BoolVar(&req.Enter, "enter", false, "after type, submit, as Return would")
+		fs.StringVar(&pageOut, "out", "page.png", "where screenshot writes its PNG")
 	}
 	for _, c := range desktopCommands {
 		if c.name == name {
@@ -110,7 +118,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		return err
 	}
 	words := fs.Args()
-	if name == "open" && len(words) > 1 {
+	if (name == "open" || name == "page") && len(words) > 1 {
 		// Flags after the directory too, as larik desktop open . --split.
 		if err := fs.Parse(words[1:]); err != nil {
 			return err
@@ -146,6 +154,24 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		}
 	case "notify":
 		req.Body = rest
+	case "page":
+		if len(words) == 0 {
+			return errors.New("page needs an op: navigate, back, forward, reload, snapshot, click, type, eval or screenshot")
+		}
+		req.Op = words[0]
+		arg := strings.Join(words[1:], " ")
+		if arg == "-" {
+			data, err := io.ReadAll(stdin)
+			if err != nil {
+				return err
+			}
+			arg = strings.TrimSuffix(string(data), "\n")
+		}
+		if req.Op == desktop.PageNavigate {
+			req.URL = arg
+		} else {
+			req.Text = arg
+		}
 	case "wait":
 		if req.Tab == "" && req.Session == "" {
 			return errors.New("wait needs --tab or --session")
@@ -186,6 +212,31 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fmt.Fprintln(w, res.Text)
 	case "wait", "allow", "deny":
 		fmt.Fprintln(w, res.State)
+	case "page":
+		return printPage(w, res, pageOut)
+	}
+	return nil
+}
+
+// printPage prints what a page op found: the page's outline, what a
+// script returned, or where its screenshot went.
+func printPage(w io.Writer, res desktop.Response, out string) error {
+	p := res.Page
+	switch {
+	case p == nil:
+	case p.PNG != nil:
+		if err := os.WriteFile(out, p.PNG, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintln(w, out)
+	case p.Snapshot != nil:
+		did := ""
+		if p.Loading {
+			did = "The page is still loading; what has loaded so far:"
+		}
+		fmt.Fprintln(w, termbrowser.RenderSnapshot(*p.Snapshot, did, 0).Content)
+	default:
+		fmt.Fprintln(w, p.Value)
 	}
 	return nil
 }
