@@ -11,15 +11,16 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"larik/internal/session"
+	"larik/internal/status"
 )
 
 // Terminal tabs run your shell, or a program such as lazygit or a dev
 // server, beside the sessions, as Rex and cmux keep them: the window is
 // a terminal, and not only larik's. A program in one shows what it
 // posts as a notification (OSC 9, OSC 777) and rings its bell on its
-// tab, and a larik started in one shows its session's status there, as
-// the tab's id is in its environment. The terminal library hands over
-// no other sequences, so a program's own OSC 7501 status isn't read.
+// tab. OSC 7501 reports from programs in terminal tabs show their live
+// status, and a larik started in one can also use its status file, as the
+// tab's id is in its environment.
 
 // shellCommand is what a terminal tab runs: your login shell, or run
 // through it, as an interactive shell reads your profile and its PATH.
@@ -69,6 +70,19 @@ func (a *App) openShell() {
 
 // shell reports whether t is a terminal tab rather than larik's.
 func (t *tab) shell() bool { return t.cmd != nil }
+
+// setProgramStatus updates the tab and keeps an in-app alert when a program
+// starts waiting, finishes, or fails while another tab has the focus.
+func (a *App) setProgramStatus(t *tab, r status.Report) {
+	old := t.program
+	if old == r {
+		return
+	}
+	t.program, t.programAt = r, time.Now()
+	if slices.Contains(a.tabs, t) && t.path == "" && r.State != old.State && (r.State == status.Blocked || r.State == status.Done || r.State == status.Error) {
+		a.record(event{tab: t.id, title: a.tabTitle(t), body: r.Msg, state: r.State})
+	}
+}
 
 // programNotify keeps what a program in a terminal tab posted (OSC 9,
 // OSC 777) as a notification, rings the tab while you look elsewhere,

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1205,6 +1206,62 @@ func TestOneWindowPerDataDir(t *testing.T) {
 	ln.Close()
 }
 
+func TestWindowStartupWaitsForSocketOwner(t *testing.T) {
+	data := t.TempDir()
+	unlock, err := lockSocket(socketPath(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		ln, err := listen(data, func(string) {}, noControl)
+		if ln != nil {
+			ln.Close()
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		unlock()
+		t.Fatalf("listened while another startup held the lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup stayed blocked after the lock was released")
+	}
+}
+
+func TestClosingOldWindowPreservesReplacementSocket(t *testing.T) {
+	data := t.TempDir()
+	path := socketPath(data)
+	old, err := listen(data, func(string) {}, noControl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pathname being replaced between the old listener closing
+	// and cleaning up. Its cleanup must leave the replacement alone.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("closing the old listener removed the replacement: %v", err)
+	}
+}
+
 func TestOpenDirShowsItsProject(t *testing.T) {
 	needTerminal(t)
 	data, repo := fixture(t)
@@ -1832,6 +1889,71 @@ func TestSplitButton(t *testing.T) {
 	}
 }
 
+func TestNewMenuCreatesEachTabKind(t *testing.T) {
+	needTerminal(t)
+	repo, data := gitRepo(t), t.TempDir()
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	mu.Lock()
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	snapshot(t, tt, "new-menu-empty.png")
+	for _, choice := range []string{"New Larik Session", "New Terminal"} {
+		if err := tt.Click("New tab"); err != nil {
+			mu.Unlock()
+			t.Fatal(err)
+		}
+		if err := tt.ChooseMenuItem(choice); err != nil {
+			mu.Unlock()
+			t.Fatalf("%s: %v; menu %q", choice, err, tt.Menu())
+		}
+		tt.Frame()
+	}
+	if len(a.tabs) != 2 || a.tabs[0].shell() || !a.tabs[1].shell() {
+		mu.Unlock()
+		t.Fatalf("new menu made %+v", a.tabs)
+	}
+	if err := tt.Click("New tab"); err != nil {
+		mu.Unlock()
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("New Session in Worktree"); err != nil {
+		mu.Unlock()
+		t.Fatal(err)
+	}
+	mu.Unlock()
+	waitFor(t, mu, "worktree tab", func() bool { return len(a.tabs) == 3 })
+	mu.Lock()
+	defer mu.Unlock()
+	if a.tabs[2].shell() || !a.inWorktree(a.tabs[2].dir) {
+		t.Fatalf("new worktree tab: %+v", a.tabs[2])
+	}
+}
+
+func TestPaneNewMenuUsesItsPane(t *testing.T) {
+	needTerminal(t)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), Cwd: t.TempDir()})
+	defer a.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	a.newTab(a.opts.Cwd, "", "")
+	a.splitRight()
+	left, right := shownAt(a, 0), shownAt(a, 1)
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if err := tt.Click("New in this pane"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("New Terminal"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	snapshot(t, tt, "new-menu-pane.png")
+	if len(a.tabs) != 3 || !shownAt(a, 0).shell() || shownAt(a, 1) != right || !slices.Contains(a.tabs, left) {
+		t.Fatalf("pane menu: %d tabs, left %+v, right %+v", len(a.tabs), shownAt(a, 0), shownAt(a, 1))
+	}
+}
+
 func TestWindowMenuListsTabs(t *testing.T) {
 	needTerminal(t)
 	data, repo := fixture(t)
@@ -1888,13 +2010,15 @@ func TestWindowMenuListsTabs(t *testing.T) {
 	}
 }
 
-func TestSettingsOpenInATab(t *testing.T) {
+func TestSettingsWindowAndAdvancedEditor(t *testing.T) {
 	needTerminal(t)
 	data, repo := fixture(t)
 	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
 	defer a.Close()
 	mu.Lock()
 	a.setProjects(index(t, data))
+	opened := 0
+	a.showSettings = func() { opened++ }
 	var settings command
 	for _, g := range a.menuBar() {
 		for _, cmd := range g.items {
@@ -1911,17 +2035,12 @@ func TestSettingsOpenInATab(t *testing.T) {
 		t.Fatal("no Settings… in the menu bar")
 	}
 	settings.run()
-	tab := a.focused()
-	if tab == nil || len(a.tabs) != 1 {
+	if opened != 1 || len(a.tabs) != 0 {
 		mu.Unlock()
-		t.Fatalf("settings: %d tabs", len(a.tabs))
+		t.Fatalf("settings opened %d times and created %d tabs", opened, len(a.tabs))
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
-	frameUntil(t, mu, tt, "larik /config", func() bool {
-		text := tab.term.Text()
-		return strings.Contains(text, "args:/config tab:") && strings.Contains(text, filepath.Base(repo))
-	})
 
 	// The key opens another, off macOS too.
 	mod := ui.Ctrl | ui.Shift
@@ -1932,9 +2051,112 @@ func TestSettingsOpenInATab(t *testing.T) {
 	tt.Key(mod, ui.KeyComma)
 	tt.Frame()
 	n := len(a.tabs)
+	count := opened
 	mu.Unlock()
-	if n != 2 {
-		t.Fatalf("the key opened %d tabs", n)
+	if n != 0 || count != 2 {
+		t.Fatalf("the key opened %d tabs and showed settings %d times", n, count)
+	}
+
+	mu.Lock()
+	settingsUI := ui.NewTester(a.settingsView, 480, 330)
+	settingsUI.Frame()
+	snapshot(t, settingsUI, "settings-window.png")
+	if !settingsUI.HasText("Show sidebar") || !settingsUI.HasText("13 pt") {
+		mu.Unlock()
+		t.Fatal("settings controls missing")
+	}
+	settingsUI.Click("Larger")
+	settingsUI.Frame()
+	if a.termFont().Size != 14 || !settingsUI.HasText("14 pt") {
+		mu.Unlock()
+		t.Fatalf("terminal font size: %g", a.termFont().Size)
+	}
+	settingsUI.Click("Open advanced settings…")
+	tab := a.focused()
+	if tab == nil || len(a.tabs) != 1 {
+		mu.Unlock()
+		t.Fatalf("advanced settings: %d tabs", len(a.tabs))
+	}
+	mu.Unlock()
+	frameUntil(t, mu, tt, "larik /config", func() bool {
+		text := tab.term.Text()
+		return strings.Contains(text, "args:/config tab:") && strings.Contains(text, filepath.Base(repo))
+	})
+}
+
+func TestTabKindsAndOverflow(t *testing.T) {
+	a := New(Options{DataDir: t.TempDir()})
+	for i := range 9 {
+		a.tabs = append(a.tabs, &tab{id: string(rune('a' + i)), dir: "/project"})
+	}
+	a.activate(a.tabs[7])
+	visible := a.visibleTabs()
+	if len(visible) != visibleTabLimit || !slices.Contains(visible, a.focused()) {
+		t.Fatalf("active tab missing from %d visible tabs", len(visible))
+	}
+	view := ui.NewTester(func(c *ui.Context) { a.tabBar(c, c.Theme()) }, 900, 100)
+	view.Frame()
+	snapshot(t, view, "tab-overflow.png")
+	if !view.HasText("4 more") {
+		t.Fatal("overflow control missing")
+	}
+	if kind, _ := a.tabKind(a.tabs[0]); kind != "Larik session" {
+		t.Fatalf("session kind: %s", kind)
+	}
+	worktree := &tab{dir: filepath.Join(a.worktreeRoot(), "project", "branch")}
+	if kind, _ := a.tabKind(worktree); kind != "Worktree session" {
+		t.Fatalf("worktree kind: %s", kind)
+	}
+}
+
+func TestClosingLiveTerminalAsks(t *testing.T) {
+	a := New(Options{})
+	term := &tab{id: "terminal", cmd: []string{"sh"}, dir: "/project"}
+	a.tabs = []*tab{term}
+	a.activate(term)
+	a.askClose([]*tab{term}, nil)
+	if !a.confirming || len(a.tabs) != 1 {
+		t.Fatal("live terminal closed without asking")
+	}
+	var answer func(bool)
+	var message string
+	a.ask = func(_, msg, _ string, then func(bool)) { message, answer = msg, then }
+	view := ui.NewTester(a.confirmClose, 540, 260)
+	view.Frame()
+	if !strings.Contains(message, "ends its shell or command") || answer == nil {
+		t.Fatalf("terminal confirmation: %q", message)
+	}
+	answer(false)
+	if len(a.tabs) != 1 || a.confirming {
+		t.Fatal("cancel did not keep terminal")
+	}
+	a.askClose([]*tab{term}, nil)
+	view.Frame()
+	answer(true)
+	if len(a.tabs) != 0 || a.confirming {
+		t.Fatal("confirmed terminal did not close")
+	}
+
+	exited := &tab{id: "exited", cmd: []string{"sh"}, exited: true}
+	a.tabs = []*tab{exited}
+	a.activate(exited)
+	a.askClose([]*tab{exited}, nil)
+	if len(a.tabs) != 0 || a.confirming {
+		t.Fatal("exited terminal asked or stayed open")
+	}
+}
+
+func TestHostedTerminalCloseWindowAndQuit(t *testing.T) {
+	a := New(Options{})
+	term := &tab{id: "terminal", cmd: []string{"sh"}, hosted: true}
+	a.tabs = []*tab{term}
+	a.activate(term)
+	if !a.windowClosing() || a.confirmingLeave {
+		t.Fatal("closing the window should keep hosted terminal running")
+	}
+	a.ending = true
+	if a.windowClosing() || !a.confirmingLeave {
+		t.Fatal("quitting should ask before ending hosted terminal")
 	}
 }
 

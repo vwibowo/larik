@@ -168,10 +168,14 @@ func TestTabsRunLarik(t *testing.T) {
 	}
 	snapshot(t, tt, "window-dark.png")
 
-	// The new-session button starts larik in the same directory, without
+	// The New menu starts larik in the same directory, without
 	// --resume; once its status file names the tab, the tab has the
 	// session.
-	if err := tt.Click("New session"); err != nil {
+	if err := tt.Click("New tab"); err != nil {
+		mu.Unlock()
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("New Larik Session"); err != nil {
 		mu.Unlock()
 		t.Fatal(err)
 	}

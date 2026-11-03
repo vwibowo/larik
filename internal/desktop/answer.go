@@ -24,9 +24,10 @@ import (
 type answer int
 
 const (
-	allowOnce   answer = iota // the prompt's first option
-	allowAlways               // its second
-	deny                      // Escape: no, or for a plan, keep planning
+	allowOnce      answer = iota // the prompt's first option
+	allowAlways                  // its second
+	deny                         // Escape: no, or for a plan, keep planning
+	requestChanges               // n: open the TUI's plan feedback field
 )
 
 // key is what answer types into larik's prompt.
@@ -36,6 +37,8 @@ func (an answer) key() string {
 		return "1"
 	case allowAlways:
 		return "2"
+	case requestChanges:
+		return "n"
 	}
 	return "\x1b"
 }
@@ -126,6 +129,13 @@ func (a *App) answerSession(path string, an answer) string {
 	}
 	if p, ok := a.answered[path]; ok && time.Since(p.sent) < answerChecked && !f.Since().After(p.prompt) {
 		return "" // a second click on the way, to the same prompt
+	}
+	if an == requestChanges {
+		if !s.Status.ReviewsPlan() {
+			return "The session isn't waiting for a plan review."
+		}
+		t.term.Send([]byte(an.key()))
+		return "" // feedback is entered in the terminal; status stays blocked
 	}
 	t.term.Send([]byte(an.key()))
 	sent := time.Now()

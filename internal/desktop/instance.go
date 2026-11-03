@@ -57,6 +57,11 @@ var errRunning = errors.New("larik desktop is already open")
 // socket left by a window that crashed is taken over.
 func listen(dataDir string, open func(cwd string), control func(Request) Response) (net.Listener, error) {
 	path := socketPath(dataDir)
+	unlock, err := lockSocket(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if Handover(dataDir, "") {
 		return nil, errRunning
 	}
@@ -65,7 +70,13 @@ func listen(dataDir string, open func(cwd string), control func(Request) Respons
 	if err != nil {
 		return nil, err
 	}
+	ln, err = ownSocket(ln, path)
+	if err != nil {
+		return nil, err
+	}
+	ready := make(chan struct{})
 	go func() {
+		close(ready)
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
@@ -75,6 +86,7 @@ func listen(dataDir string, open func(cwd string), control func(Request) Respons
 			go serve(conn, open, control)
 		}
 	}()
+	<-ready
 	return ln, nil
 }
 

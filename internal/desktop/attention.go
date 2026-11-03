@@ -115,7 +115,13 @@ func (a *App) needsLook(tb *tab) bool {
 		if looked.Before(a.started) {
 			looked = a.started
 		}
-		return tb.shell() && tb.alerted.After(looked)
+		if !tb.shell() {
+			return false
+		}
+		if tb.program.State == status.Blocked {
+			return true
+		}
+		return tb.alerted.After(looked) || (tb.program.State == status.Done || tb.program.State == status.Error) && tb.programAt.After(looked)
 	}
 	switch s.Status.State {
 	case status.Blocked:

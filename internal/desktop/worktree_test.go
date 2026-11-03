@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -183,5 +184,47 @@ func TestMergeConflictSaysSo(t *testing.T) {
 	}
 	if _, err := os.Stat(w.Path); err != nil {
 		t.Fatal("the worktree went")
+	}
+}
+
+func TestWorktreeRemovalWaitsForHostedTabToStop(t *testing.T) {
+	needTerminal(t)
+	repo, data := gitRepo(t), t.TempDir()
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data, Cwd: repo})
+	defer a.Close()
+	w, err := a.makeWorktree(repo, "slow-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	mu.Lock()
+	tb := a.startTab(w.Path, "", "")
+	if tb == nil {
+		mu.Unlock()
+		t.Fatalf("start tab: %s", a.notice)
+	}
+	tb.hosted = true
+	a.stopHosted = func(string) error {
+		close(entered)
+		<-release
+		return nil
+	}
+	a.finishWorktree(w, "", false)
+	mu.Unlock()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("host close did not start")
+	}
+	// The host has not acknowledged stopping its process yet.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(w.Path); err != nil {
+		close(release)
+		t.Fatalf("worktree removed before the hosted tab stopped: %v", err)
+	}
+	close(release)
+	waitFor(t, mu, "worktree removal", func() bool { return strings.HasPrefix(a.notice, "Removed") })
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Fatalf("worktree remained after the hosted tab stopped: %v", err)
 	}
 }

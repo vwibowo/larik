@@ -50,6 +50,7 @@ const (
 	msgFrame  = 'F' // what brings the window's terminal to what the host's shows
 	msgBell   = 'B'
 	msgNotify = 'N' // a notification: [title, body], as JSON
+	msgStatus = 'P' // a program status report, as JSON
 	msgExit   = 'X' // the program ended, with this code; nothing follows
 	// From the window.
 	msgInput  = 'I' // what was typed
@@ -106,16 +107,17 @@ type hostReply struct {
 
 // hostTabInfo is a tab the host keeps.
 type hostTabInfo struct {
-	ID      string    `json:"id"`
-	Dir     string    `json:"dir"`
-	Command []string  `json:"command"`
-	Shell   bool      `json:"shell,omitempty"`
-	Run     string    `json:"run,omitempty"`
-	Title   string    `json:"title,omitempty"` // what its program set as the terminal's title
-	Exited  bool      `json:"exited,omitempty"`
-	Code    int       `json:"code,omitempty"`
-	Windows int       `json:"windows,omitempty"` // connections showing it
-	Started time.Time `json:"started"`
+	ID      string        `json:"id"`
+	Dir     string        `json:"dir"`
+	Command []string      `json:"command"`
+	Shell   bool          `json:"shell,omitempty"`
+	Run     string        `json:"run,omitempty"`
+	Title   string        `json:"title,omitempty"` // what its program set as the terminal's title
+	Status  status.Report `json:"status,omitzero"`
+	Exited  bool          `json:"exited,omitempty"`
+	Code    int           `json:"code,omitempty"`
+	Windows int           `json:"windows,omitempty"` // connections showing it
+	Started time.Time     `json:"started"`
 }
 
 // hostSocketPath is the host's socket for dataDir, in the temp folder as
@@ -127,10 +129,12 @@ func hostSocketPath(dataDir string) string {
 
 // host is the running host.
 type host struct {
-	mu    sync.Mutex
-	tabs  map[string]*hostTab
-	conns int       // connections open, of any kind
-	idle  time.Time // since when it has had no tab and no connection
+	openMu  sync.Mutex // serializes opens and closes of a tab id
+	closing bool       // guarded by openMu: no new tab after closeAll
+	mu      sync.Mutex
+	tabs    map[string]*hostTab
+	conns   int       // connections open, of any kind
+	idle    time.Time // since when it has had no tab and no connection
 	// stop closes when a request asks the host to exit.
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -149,6 +153,7 @@ type hostTab struct {
 	code    int
 	started time.Time
 	ended   time.Time
+	records statusRecords
 }
 
 // hostClient is a window showing a tab: what's to be sent to it.
@@ -170,6 +175,15 @@ func RunHost(dataDir string) error {
 		return err
 	}
 	path := hostSocketPath(dataDir)
+	unlock, err := lockSocket(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 	if pingHost(dataDir) == nil {
 		return nil
 	}
@@ -178,9 +192,23 @@ func RunHost(dataDir string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(path)
-	if err := os.WriteFile(path+".pid", []byte(strconv.Itoa(os.Getpid())), 0o600); err == nil {
-		defer os.Remove(path + ".pid")
+	ln, err = ownSocket(ln, path)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	pid := strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(path+".pid", []byte(pid), 0o600); err == nil {
+		defer func() {
+			unlock, err := lockSocket(path)
+			if err != nil {
+				return
+			}
+			defer unlock()
+			if current, err := os.ReadFile(path + ".pid"); err == nil && string(current) == pid {
+				_ = os.Remove(path + ".pid")
+			}
+		}()
 	}
 	log.Printf("host: started for %s, pid %d", dataDir, os.Getpid())
 	h := newHost()
@@ -198,7 +226,17 @@ func RunHost(dataDir string) error {
 		}
 		ln.Close()
 	}()
-	h.serve(ln)
+	served := make(chan struct{})
+	ready := make(chan struct{})
+	go func() {
+		close(ready)
+		h.serve(ln)
+		close(served)
+	}()
+	<-ready
+	unlock()
+	unlock = nil
+	<-served
 	h.closeAll()
 	return nil
 }
@@ -260,14 +298,19 @@ func (h *host) idleLoop() {
 // closeAll ends every tab's program, as the host exits. A terminal
 // closing calls OnExit, which takes h.mu: they close after.
 func (h *host) closeAll() {
+	h.openMu.Lock()
+	h.closing = true
 	h.mu.Lock()
 	tabs := h.tabs
 	h.tabs = map[string]*hostTab{}
-	h.mu.Unlock()
 	for _, t := range tabs {
 		if !t.exited {
 			log.Printf("host: ending tab %s", t.id)
 		}
+	}
+	h.mu.Unlock()
+	h.openMu.Unlock()
+	for _, t := range tabs {
 		t.term.Close()
 	}
 }
@@ -305,13 +348,14 @@ func (h *host) handle(conn net.Conn) {
 	case "read", "send":
 		h.mu.Lock()
 		t := h.tabs[req.ID]
+		exited := t != nil && t.exited
 		h.mu.Unlock()
 		switch {
 		case t == nil:
 			reply(hostReply{Error: fmt.Sprintf("no tab %s", req.ID)})
 		case req.Op == "read":
 			reply(hostReply{Text: t.term.Text()})
-		case t.exited:
+		case exited:
 			reply(hostReply{Error: "the tab's program has exited"})
 		default:
 			if strings.ContainsAny(req.Text, "\r\n") {
@@ -350,13 +394,15 @@ func (h *host) list() []hostTabInfo {
 	defer h.mu.Unlock()
 	out := make([]hostTabInfo, 0, len(h.tabs))
 	for _, t := range h.tabs {
-		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
+		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Status: t.records.current(), Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
 	}
 	return out
 }
 
 // closeTab ends the tab's program and forgets the tab.
 func (h *host) closeTab(id string) {
+	h.openMu.Lock()
+	defer h.openMu.Unlock()
 	h.mu.Lock()
 	t := h.tabs[id]
 	delete(h.tabs, id)
@@ -364,6 +410,7 @@ func (h *host) closeTab(id string) {
 	if t != nil {
 		log.Printf("host: closing tab %s", id)
 		t.term.Close()
+		<-t.term.Done()
 	}
 }
 
@@ -374,11 +421,17 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 	if req.ID == "" {
 		return nil, errors.New("no tab id")
 	}
+	h.openMu.Lock()
+	defer h.openMu.Unlock()
+	if h.closing {
+		return nil, errors.New("the host is stopping")
+	}
 	h.mu.Lock()
 	t := h.tabs[req.ID]
+	exited := t != nil && t.exited
 	h.mu.Unlock()
 	switch {
-	case t != nil && (!t.exited || req.Op == "attach"):
+	case t != nil && (!exited || req.Op == "attach"):
 		return t, nil
 	case req.Op == "attach":
 		return nil, fmt.Errorf("no tab %s", req.ID)
@@ -393,10 +446,31 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 			data, _ := json.Marshal([2]string{title, body})
 			h.broadcast(t, hostMsg{kind: msgNotify, data: data})
 		},
+		OnStatus: func(payload string) {
+			if !t.shell {
+				return
+			}
+			h.statusEvent(t, func(s *statusRecords) (status.Report, bool) { return s.apply(payload) })
+		},
+		OnPrompt: func() {
+			if t.shell {
+				h.statusEvent(t, (*statusRecords).dropLive)
+			}
+		},
+		OnReset: func() {
+			if t.shell {
+				h.statusEvent(t, (*statusRecords).clearAll)
+			}
+		},
 		OnExit: func(code int) {
 			h.mu.Lock()
+			report, changed := t.records.dropLive()
 			t.exited, t.code, t.ended = true, code, time.Now()
 			h.mu.Unlock()
+			if changed {
+				data, _ := json.Marshal(report)
+				h.broadcast(t, hostMsg{kind: msgStatus, data: data})
+			}
 			log.Printf("host: tab %s exited with %d", t.id, code)
 		},
 	})
@@ -416,6 +490,16 @@ func (h *host) tab(req hostRequest) (*hostTab, error) {
 		old.term.Close() // ended already: what's left of it
 	}
 	return t, nil
+}
+
+func (h *host) statusEvent(t *hostTab, update func(*statusRecords) (status.Report, bool)) {
+	h.mu.Lock()
+	report, changed := update(&t.records)
+	h.mu.Unlock()
+	if changed {
+		data, _ := json.Marshal(report)
+		h.broadcast(t, hostMsg{kind: msgStatus, data: data})
+	}
 }
 
 // broadcast sends m to every window showing t, dropping it for one too
@@ -443,6 +527,11 @@ func (h *host) attach(t *hostTab, conn net.Conn, r *bufio.Reader) {
 	c := &hostClient{send: make(chan hostMsg, 64)}
 	h.mu.Lock()
 	t.clients[c] = true
+	current := t.records.current()
+	if current.State != status.Idle {
+		data, _ := json.Marshal(current)
+		c.send <- hostMsg{kind: msgStatus, data: data}
+	}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -682,6 +771,7 @@ type hostConn struct {
 	// onBell and onNotify are the program's bells and notifications.
 	onBell   func()
 	onNotify func(title, body string)
+	onStatus func(status.Report)
 	// pending is what's left of the frame Read last read; code is how the
 	// program ended, -1 until the host says, as when the host went.
 	pending []byte
@@ -726,6 +816,11 @@ func (c *hostConn) Read(p []byte) (int, error) {
 			var n [2]string
 			if json.Unmarshal(data, &n) == nil && c.onNotify != nil {
 				c.onNotify(n[0], n[1])
+			}
+		case msgStatus:
+			var report status.Report
+			if json.Unmarshal(data, &report) == nil && c.onStatus != nil {
+				c.onStatus(report)
 			}
 		case msgExit:
 			if len(data) == 4 {

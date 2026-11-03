@@ -70,6 +70,7 @@ func (a *App) makeWorktree(dir, name string) (*worktree.Worktree, error) {
 // newWorktreeSession starts a session in a new worktree of the
 // repository dir is in.
 func (a *App) newWorktreeSession(dir string) {
+	target := a.focus
 	a.notice = "Making a worktree of " + tildePath(dir) + "…"
 	go func() {
 		w, err := a.makeWorktree(dir, "")
@@ -78,6 +79,9 @@ func (a *App) newWorktreeSession(dir string) {
 			if err != nil {
 				a.notice = "Can't make a worktree: " + err.Error()
 				return
+			}
+			if target != nil && a.paneOf(target.tab) == target {
+				a.focusPane(target)
 			}
 			if t := a.startTab(w.Path, "", ""); t != nil {
 				a.activate(t)
@@ -269,16 +273,33 @@ func (a *App) finishWorktree(w *worktree.Worktree, title string, merge bool) {
 			}
 		}
 		closed := make(chan struct{})
+		var stopped []<-chan error
 		a.update(func() {
 			defer close(closed)
 			for _, t := range a.worktreeTabs(w.Path) {
-				a.closeTab(t)
+				if done := a.closeTab(t); done != nil {
+					stopped = append(stopped, done)
+				}
 			}
 		})
 		select {
 		case <-closed:
 		case <-a.done:
 			return
+		}
+		for _, done := range stopped {
+			select {
+			case err := <-done:
+				if err != nil {
+					a.update(func() { a.notice = "Couldn't stop a tab before removing the worktree: " + err.Error() })
+					return
+				}
+			case <-ctx.Done():
+				a.update(func() { a.notice = "Couldn't stop a tab before removing the worktree: " + ctx.Err().Error() })
+				return
+			case <-a.done:
+				return
+			}
 		}
 		err := w.Remove(ctx)
 		a.update(func() {

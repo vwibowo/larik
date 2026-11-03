@@ -34,6 +34,7 @@ func Run(opts Options) error {
 	}
 	a := New(opts)
 	defer a.Close()
+	var settingsWin *mygo.Window
 	// win is set once the window opens; a directory handed over before
 	// then waits for it.
 	var (
@@ -62,6 +63,9 @@ func Run(opts Options) error {
 		Handover(opts.DataDir, opts.Cwd)
 		return nil
 	}
+	if err != nil {
+		return err
+	}
 	if ln != nil {
 		defer ln.Close()
 	}
@@ -80,6 +84,20 @@ func Run(opts Options) error {
 		fmt.Fprintf(os.Stderr, "larik desktop: notifications %s\n", map[bool]string{true: "on", false: "off (macOS shows them only for an app bundle: larik desktop --install)"}[mygo.NotificationsSupported()])
 		a.update = win.Update
 		a.redraw = func() { win.Update(func() {}) }
+		a.showSettings = func() {
+			if settingsWin != nil {
+				settingsWin.Show()
+				settingsWin.Focus()
+				return
+			}
+			settingsWin = mygo.NewWindow(mygo.WindowOptions{
+				Title: "Larik Settings", Width: 480, Height: 330,
+				MinWidth: 420, MinHeight: 300, StateKey: "settings",
+				Content: ui.View(a.settingsView),
+			})
+			settingsWin.OnClosed(func() { settingsWin = nil })
+			settingsWin.Show()
+		}
 		a.badge = mygo.App.SetBadgeCount
 		a.copyText = func(s string) { _ = mygo.Clipboard.Write(transfer.TextData(s)) }
 		a.showFile = mygo.Shell.ShowItemInFolder
@@ -139,6 +157,11 @@ func Run(opts Options) error {
 			if !a.windowClosing() {
 				e.PreventDefault()
 				win.Update(func() {})
+			}
+		})
+		win.OnClosed(func() {
+			if settingsWin != nil {
+				settingsWin.Close()
 			}
 		})
 		a.leave = func(quit bool) {

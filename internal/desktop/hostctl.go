@@ -112,6 +112,10 @@ func HostTabs(dataDir string) ([]HostTab, error) {
 		info := TabInfo{ID: h.ID, Kind: "larik", Run: h.Run, Dir: h.Dir, Title: h.Title, State: string(status.Idle), Exited: h.Exited, Code: h.Code}
 		if h.Shell {
 			info.Kind, info.Title = "terminal", cmp.Or(h.Title, h.Run, "shell")
+			if h.Status.State != "" {
+				info.State, info.Wants, info.Msg = string(h.Status.State), string(h.Status.Kind), h.Status.Msg
+				info.Title = cmp.Or(h.Status.Title, info.Title)
+			}
 		}
 		if s, ok := sessions[h.ID]; ok && !h.Shell {
 			info.Session, info.Path = s.ID, s.Path

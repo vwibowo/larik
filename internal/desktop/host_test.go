@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"net"
@@ -9,11 +10,61 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"larik/internal/status"
 )
+
+func TestHostForwardsProgramStatus(t *testing.T) {
+	needTerminal(t)
+	h := newHost()
+	defer h.closeAll()
+	tb, err := h.tab(hostRequest{
+		Op: "open", ID: "status", Shell: true, Dir: t.TempDir(),
+		Command: []string{"/bin/sh", "-c", "printf '\\033]7501;state=blocked:kind=question:msg=QW5zd2VyIG1l\\007'; sleep 5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.mu.Lock()
+		report := tb.records.current()
+		h.mu.Unlock()
+		if report.State == status.Blocked && report.Kind == status.Question && report.Msg == "Answer me" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("host did not parse OSC 7501: %+v", report)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := h.list()[0].Status.State; got != status.Blocked {
+		t.Fatalf("list status: %s", got)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	go h.attach(tb, server, bufio.NewReader(server))
+	r := bufio.NewReader(client)
+	client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		kind, data, err := readMsg(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != msgStatus {
+			continue
+		}
+		var report status.Report
+		if err := json.Unmarshal(data, &report); err != nil || report.State != status.Blocked {
+			t.Fatalf("attach status: %+v, %v", report, err)
+		}
+		break
+	}
+}
 
 func TestHostMessages(t *testing.T) {
 	var b bytes.Buffer
@@ -31,6 +82,103 @@ func TestHostMessages(t *testing.T) {
 	// A length past the bound is refused, not allocated.
 	if _, _, err := readMsg(bytes.NewReader([]byte{msgFrame, 0xff, 0xff, 0xff, 0xff})); err == nil {
 		t.Fatal("a 4 GB message read")
+	}
+}
+
+// Concurrent opens for one ID must attach to one process, rather than
+// starting two and closing the first out from under its window.
+func TestConcurrentHostOpenSameID(t *testing.T) {
+	needTerminal(t)
+	h := newHost()
+	req := hostRequest{Op: "open", ID: "same", Command: []string{"sleep", "100"}, Dir: t.TempDir()}
+	var wg sync.WaitGroup
+	results := make([]*hostTab, 2)
+	errs := make([]error, 2)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = h.tab(req)
+		}()
+	}
+	wg.Wait()
+	defer h.closeAll()
+	if errs[0] != nil || errs[1] != nil || results[0] != results[1] {
+		t.Fatalf("two opens: tabs %p and %p, errors %v and %v", results[0], results[1], errs[0], errs[1])
+	}
+}
+
+func TestHostAttachDuringExit(t *testing.T) {
+	h := newHost()
+	tab := &hostTab{id: "exiting"}
+	h.tabs[tab.id] = tab
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			h.mu.Lock()
+			tab.exited = i%2 == 0
+			h.mu.Unlock()
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		if got, err := h.tab(hostRequest{Op: "attach", ID: tab.id}); err != nil || got != tab {
+			t.Fatalf("attach during exit: %p, %v", got, err)
+		}
+	}
+	<-done
+}
+
+func TestHostCloseWaitsForProcessExit(t *testing.T) {
+	needTerminal(t)
+	h := newHost()
+	tab, err := h.tab(hostRequest{Op: "open", ID: "close", Command: []string{"sleep", "100"}, Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.closeTab(tab.id)
+	select {
+	case <-tab.term.Done():
+	default:
+		t.Fatal("close returned before the process exited")
+	}
+}
+
+func TestHostStartupWaitsForSocketOwner(t *testing.T) {
+	needTerminal(t)
+	data := t.TempDir()
+	unlock, err := lockSocket(hostSocketPath(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- RunHost(data) }()
+	select {
+	case err := <-result:
+		unlock()
+		t.Fatalf("host startup finished while the lock was held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := os.Stat(hostSocketPath(data)); !os.IsNotExist(err) {
+		unlock()
+		t.Fatalf("host bound its socket while the lock was held: %v", err)
+	}
+	unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := HostPID(data); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("host did not start after the lock was released")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := StopHost(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -204,16 +352,25 @@ func TestHostedTabsAdopted(t *testing.T) {
 		b.Close()
 		t.Fatalf("adopted as %+v, %+v", b.tabs[0], b.tabs[1])
 	}
-	// Quit and End Tabs: nothing working, so it quits at once, and the
+	// Quit and End Tabs asks before ending the live terminal, then the
 	// host's programs end as the window does.
 	var quit bool
 	b.leave = func(q bool) { quit = q }
+	var confirm func(bool)
+	b.ask = func(_, _, _ string, then func(bool)) { confirm = then }
 	if !slices.ContainsFunc(b.menuBar()[0].items, func(c command) bool { return c.label == "Quit and End Tabs" }) {
 		mu.Unlock()
 		b.Close()
 		t.Fatal("no Quit and End Tabs")
 	}
 	b.quitEnding()
+	ui.NewTester(b.confirmLeave, 600, 300).Frame()
+	if !b.confirmingLeave || confirm == nil || quit {
+		mu.Unlock()
+		b.Close()
+		t.Fatal("quit did not ask before ending the live terminal")
+	}
+	confirm(true)
 	mu.Unlock()
 	if !quit || !b.ending {
 		b.Close()

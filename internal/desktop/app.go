@@ -85,9 +85,11 @@ type App struct {
 	zoomed    bool
 	changes   *changes // the changes pane, beside the panes when open
 	changesP  float32  // the panes' share of the width beside the changes, in percent
-	focusNext *tab     // the tab whose terminal takes the keyboard next frame
-	saved     string   // the state last saved, as JSON
-	saves     int      // how many times the state was saved
+	planP     float32  // the terminal's share beside a plan waiting for review
+	plans     map[string]*planPreview
+	focusNext *tab   // the tab whose terminal takes the keyboard next frame
+	saved     string // the state last saved, as JSON
+	saves     int    // how many times the state was saved
 	// writeMu orders the writes of the saved state, and written is the
 	// number of the save last written, so an older one never lands last;
 	// Close waits for writing.
@@ -130,6 +132,8 @@ type App struct {
 	termTh [2]*terminal.Theme // light, dark
 	notice string
 	host   string
+	// stopHosted is overridden by tests to hold a host close at its reply.
+	stopHosted func(id string) error
 	// git is the branch and changes of each project root, and of each
 	// worktree a session runs in, and ports the ports each session's
 	// programs listen on, by transcript path (see metaLoop).
@@ -189,6 +193,7 @@ type App struct {
 	about        func(mygo.AboutPanelOptions) // shows the About panel
 	menuSaid     string
 	openExternal func(url string)
+	showSettings func()
 	// post posts a notification a command asked for, and raise brings
 	// the window forward (see Run).
 	post  func(title, body string)
@@ -215,9 +220,12 @@ type tab struct {
 	// command it was given, "" for the shell; and alerted is when its
 	// program last rang or posted a notification while you looked
 	// elsewhere.
-	cmd     []string
-	run     string
-	alerted time.Time
+	cmd       []string
+	run       string
+	alerted   time.Time
+	program   status.Report // OSC 7501 from a terminal tab's program
+	records   statusRecords
+	programAt time.Time
 	// hosted says the host runs its program, and reattach that the next
 	// run is to attach to it there, not run one (see host.go).
 	hosted, reattach bool
@@ -267,6 +275,8 @@ func New(opts Options) *App {
 		started:      time.Now(),
 		sidebarW:     280,
 		changesP:     60,
+		planP:        55,
+		plans:        map[string]*planPreview{},
 		host:         host,
 	}
 }
@@ -337,6 +347,7 @@ func (a *App) refreshIndex() {
 
 func (a *App) setProjects(ps []session.Project) {
 	a.projects = ps
+	a.refreshPlans(ps)
 	a.convAsked = "" // a session may have said more
 	a.prompts = map[string]string{}
 	a.applyNames()
@@ -552,10 +563,16 @@ func (a *App) openFolder() {
 	}
 }
 
-// openSettings starts larik with its settings open (`larik /config`) in
-// a new tab, in the focused tab's directory, where the project's settings
-// show beside the user's. Closing them leaves a new session there.
+// openSettings opens the desktop's settings window.
 func (a *App) openSettings() {
+	if a.showSettings != nil {
+		a.showSettings()
+	}
+}
+
+// openAdvancedSettings opens larik's full config editor in a terminal tab,
+// preserving its personal and project settings behavior.
+func (a *App) openAdvancedSettings() {
 	if t := a.startTab(a.currentDir(), "", "", "/config"); t != nil {
 		a.activate(t)
 	}
@@ -808,6 +825,9 @@ func (a *App) startTab(dir, id, path string, flags ...string) *tab {
 // run starts larik in t's terminal, resuming the session id unless it is
 // empty, with flags after.
 func (a *App) run(t *tab, id string, flags ...string) bool {
+	if t.shell() && !t.reattach {
+		t.program, t.records = status.Report{}, statusRecords{}
+	}
 	args := []string{a.opts.Bin}
 	if id != "" {
 		args = append(args, "--resume", id)
@@ -828,6 +848,33 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		OnZoom:       func(z terminal.Zoom) bool { a.zoom(z); return true },
 		OnBell:       func() { a.update(func() { a.rang(t) }) },
 		OnNotify:     func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
+		OnStatus: func(payload string) {
+			if t.shell() {
+				a.update(func() {
+					if r, changed := t.records.apply(payload); changed {
+						a.setProgramStatus(t, r)
+					}
+				})
+			}
+		},
+		OnPrompt: func() {
+			if t.shell() {
+				a.update(func() {
+					if r, changed := t.records.dropLive(); changed {
+						a.setProgramStatus(t, r)
+					}
+				})
+			}
+		},
+		OnReset: func() {
+			if t.shell() {
+				a.update(func() {
+					if r, changed := t.records.clearAll(); changed {
+						a.setProgramStatus(t, r)
+					}
+				})
+			}
+		},
 		OnSearch: func(st terminal.SearchStatus) {
 			t.search = st
 			if a.redraw != nil {
@@ -848,7 +895,8 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		// The host's terminal rings and posts, and how it ended is the
 		// host's to say.
 		hc.onBell, hc.onNotify = opts.OnBell, opts.OnNotify
-		opts.OnBell, opts.OnNotify = nil, nil
+		hc.onStatus = func(r status.Report) { a.update(func() { a.setProgramStatus(t, r) }) }
+		opts.OnBell, opts.OnNotify, opts.OnStatus, opts.OnPrompt, opts.OnReset = nil, nil, nil, nil, nil
 		opts.Conn, opts.ResizeByConn = hc, true
 	} else {
 		opts.Command, opts.Dir, opts.Env = args, t.dir, []string{status.TabEnv + "=" + t.id}
@@ -959,6 +1007,9 @@ func (a *App) exited(t *tab, code int) {
 	default:
 	}
 	t.exited, t.code = true, code
+	if t.shell() && !t.hosted {
+		t.program, _ = t.records.dropLive()
+	}
 	if code == 0 {
 		a.closeTab(t)
 	}
@@ -966,15 +1017,21 @@ func (a *App) exited(t *tab, code int) {
 }
 
 // closeTab closes t, ending its larik; the session stays on disk.
-func (a *App) closeTab(t *tab) {
+func (a *App) closeTab(t *tab) <-chan error {
 	i := slices.Index(a.tabs, t)
 	if i < 0 {
-		return
+		return nil
 	}
 	a.tabs = slices.Delete(a.tabs, i, i+1)
 	t.close()
+	var stopped chan error
 	if t.hosted {
-		go closeHostTab(a.opts.DataDir, t.id) // its program ends too
+		stopped = make(chan error, 1)
+		stop := a.stopHosted
+		if stop == nil {
+			stop = func(id string) error { return closeHostTab(a.opts.DataDir, id) }
+		}
+		go func() { stopped <- stop(t.id) }() // its program ends too
 	}
 	if t.path != "" {
 		a.closed = append(slices.DeleteFunc(a.closed, func(p string) bool { return p == t.path }), t.path)
@@ -987,6 +1044,7 @@ func (a *App) closeTab(t *tab) {
 		a.closeChanges() // nothing left for them to be beside
 	}
 	a.refreshIndex()
+	return stopped
 }
 
 // closedKept is how many closed tabs reopenClosed can bring back.
@@ -1021,12 +1079,11 @@ func (a *App) moveTab(t, to *tab) {
 	a.tabs = slices.Insert(slices.Delete(a.tabs, i, i+1), j, t)
 }
 
-// askClose closes tabs, first asking when any of them is working, as
-// closing a tab stops its larik mid-turn. keep, when set, is the tab to
-// show after.
+// askClose closes tabs, first asking when a Larik turn or terminal program
+// would be stopped. keep, when set, is the tab to show after.
 func (a *App) askClose(tabs []*tab, keep *tab) {
 	a.closing, a.closeKeep = tabs, keep
-	if len(a.closingWorking()) > 0 {
+	if len(a.closingWorking()) > 0 || len(a.closingTerminals()) > 0 {
 		a.confirming = true
 		return
 	}
@@ -1045,7 +1102,7 @@ func (a *App) closeOthers(keep *tab) {
 }
 
 // windowClosing decides whether the window may close, and with it every
-// tab's larik but those the host runs: at once when none that ends is
+// tab's program but those the host runs: at once when none that ends is
 // working, else after asking.
 func (a *App) windowClosing() bool {
 	if a.leaving || len(a.stopping()) == 0 {
@@ -1055,12 +1112,12 @@ func (a *App) windowClosing() bool {
 	return false
 }
 
-// stopping are the working tabs whose larik leaving the window stops:
+// stopping are the live terminals and working sessions that leaving stops:
 // those the host doesn't run, or all when quitting ends those too.
 func (a *App) stopping() []*tab {
 	var out []*tab
-	for _, t := range a.workingTabs() {
-		if !t.hosted || a.ending {
+	for _, t := range a.tabs {
+		if (!t.hosted || a.ending) && ((t.shell() && !t.exited) || a.tabStatus(t).State == status.Working) {
 			out = append(out, t)
 		}
 	}
@@ -1083,7 +1140,7 @@ func (a *App) quitEnding() {
 func (a *App) workingTabs() []*tab {
 	var working []*tab
 	for _, t := range a.tabs {
-		if a.tabStatus(t).State == status.Working {
+		if !t.shell() && a.tabStatus(t).State == status.Working {
 			working = append(working, t)
 		}
 	}
@@ -1094,11 +1151,24 @@ func (a *App) workingTabs() []*tab {
 func (a *App) closingWorking() []*tab {
 	var working []*tab
 	for _, t := range a.closing {
-		if a.tabStatus(t).State == status.Working {
+		if !t.shell() && a.tabStatus(t).State == status.Working {
 			working = append(working, t)
 		}
 	}
 	return working
+}
+
+// closingTerminals are the terminal tabs whose live shell or command
+// would be ended by closing the tab. The terminal library does not expose
+// whether a shell has a foreground child, so every live shell is covered.
+func (a *App) closingTerminals() []*tab {
+	var terminals []*tab
+	for _, t := range a.closing {
+		if t.shell() && !t.exited {
+			terminals = append(terminals, t)
+		}
+	}
+	return terminals
 }
 
 // closeNow closes the tabs askClose was given.
@@ -1125,6 +1195,9 @@ func (a *App) tabStatus(t *tab) status.Report {
 	if s, _, ok := a.find(t.path); ok {
 		return s.Status
 	}
+	if t.shell() && t.program.State != "" {
+		return t.program
+	}
 	return status.Report{State: status.Idle}
 }
 
@@ -1133,6 +1206,9 @@ func (a *App) tabStatus(t *tab) status.Report {
 func (a *App) tabTitle(t *tab) string {
 	if s, _, ok := a.find(t.path); ok && s.Title != "" {
 		return s.Title
+	}
+	if t.shell() && t.program.Title != "" {
+		return t.program.Title
 	}
 	if t.title != "" {
 		return t.title
