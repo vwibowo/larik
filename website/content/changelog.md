@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.29.0
+
+<p class="release-meta">Local package prepared <time datetime="2026-11-04">November 4, 2026</time>. GitHub assets are pending publication.</p>
+
+### Added
+
+- **A fuller desktop Settings window.** Searchable categories cover Window, Appearance, Terminal, Agent defaults, Agent behavior, Tools, Keyboard, and Advanced. Descriptive rows expose common agent defaults alongside desktop preferences, show a focused project's effective overrides, and explain that changes apply to new sessions. Specialized provider, routing, permission, MCP, hook, sandbox, and `/config` editors remain reachable.
+- **Files tabs.** Explore the focused local session's folder in a split pane, search names, show hidden or Git-ignored items separately, and preview text with line numbers and syntax color or common images. Narrow panes switch between tree and preview. Files tabs return with the window.
+- **Finder-style file menus.** Right-click files and folders to open, reveal, copy paths, rename, duplicate, or move them to the system Trash. Folder menus can create files and folders. Trash requires confirmation; previews remain read-only.
+
+### Changed
+
+- **Compact Files layout.** The explorer puts its folder name, search, refresh, and visibility menu beside a resizable tree. File previews use a compact header with accessible actions and an optional Wrap lines control.
+
+### Compatibility notes
+
+- Files browsing currently works for local folders. An SSH session's folder shows a remote-unavailable state.
+- Website downloads continue to point to the last published release, `v0.28.0`, until the `v0.29.0` GitHub assets are published.
+
 ## v0.28.0
 
 <p class="release-meta"><time datetime="2026-11-04">November 4, 2026</time></p>
