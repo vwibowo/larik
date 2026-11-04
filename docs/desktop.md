@@ -469,13 +469,14 @@ The window showed this machine's sessions only. Now it shows another machine's b
 - **Remote ports**: the host reads each session's listening ports. Clicking one starts a loopback-only `ssh -L` forward and opens a browser tab beside that session. The browser labels the remote host and port, and rebuilds its forward after reconnect. A lost forward is marked disconnected. This covers development services on the remote loopback interface.
 - `larik` needs to be on the `PATH` of a non-interactive shell on the server (`~/.zshenv`, or `~/.bashrc` for bash), or `LARIK_DESKTOP_REMOTE` in the window's environment says how to run it there, a path or a command line (`~/bin/larik`, `XDG_DATA_HOME=/tmp/l ~/bin/larik`); otherwise connecting says so, and a larik too old to know `desktop host ensure` asks for 0.28.0 or newer.
 - **Tried over SSH** against a Linux server: `LARIK_DESKTOP_SSH=<server> go test ./internal/desktop -run SSHLive` connects, reads the index, runs a terminal tab there, and finds it again after disconnecting.
+- **Loopback SSH acceptance**: with a disposable SSH server on this Mac and `LARIK_DESKTOP_SSH_LOOPBACK=1`, `go test ./internal/desktop -run SSHLoopback` exercises an interrupted forward and automatic reattachment of the same running terminal, remote Files and Git/worktree actions, and HTTP and WebSocket traffic through a forwarded port. These tests skip during an ordinary `go test ./...` run.
 - **Tests** stand a second host, with a data folder of its own, in for a server, reached through the same transport (`connector`); the SSH command lines are checked as text.
 
 ## Phase 26: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
-- **Still open**: live SSH interruption and WebSocket smoke tests on a configured remote server, and broader UI validation of remote Git and file flows.
+- **Still open**: repeat the SSH interruption and WebSocket checks against a separate remote machine, and visually validate remote Git and Files flows in the macOS UI.
 
 ## Phase 27: Continuity, browser control and layouts
 
