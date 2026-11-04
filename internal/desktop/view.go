@@ -333,6 +333,7 @@ func (a *App) confirmAsked(c *ui.Context) {
 // that Control keys stay larik's. Shift adds nothing there, so no two
 // shortcuts differ by Shift alone.
 func (a *App) shortcuts(c *ui.Context) {
+	a.tilingShortcuts(c)
 	mod := ui.Ctrl | ui.Shift
 	if runtime.GOOS == "darwin" {
 		mod = ui.Super
@@ -484,6 +485,14 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 				}
 				if m.Item("New Session in Split Below").Chosen() {
 					a.splitNew(true)
+				}
+				if a.split() {
+					m.Separator()
+					for _, cmd := range a.tilingCommands()[:5] { // the layouts
+						if m.Item(cmd.label).Chosen() {
+							cmd.run()
+						}
+					}
 				}
 			})
 			if d, ok := ui.Drop[sessionDrag](split); ok {
@@ -1363,12 +1372,11 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		}
 		term = terminal.View(c.Key(tb.id), tb.term).Grow(1)
 	})
-	if d, ok := ui.Drop[sessionDrag](body); ok {
-		a.dropSession(string(d), p)
-	}
-	if _, ok := ui.DragOver[sessionDrag](body); ok {
-		body.Border(2, t.Accent)
-	} else if a.needsLook(tb) {
+	// A tab, a session or a pane dragged here goes beside this one, at
+	// the edge it's near, or in its place.
+	body.Label("Pane: " + a.tabTitle(tb))
+	a.dropTarget(c, t, body, p)
+	if a.needsLook(tb) {
 		body.Border(2, a.ringColor(t, tb))
 	}
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
@@ -1449,7 +1457,12 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 	if active {
 		background, border = t.Accent.Alpha(0.08), t.Accent.Alpha(0.55)
 	}
-	ui.Row(c).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(background).BorderWidth(0, 0, 2, 0).BorderColor(border).Children(func() {
+	// Dragged by its header, the pane moves: to another pane's edge, or
+	// in its place, swapping the two.
+	head := ui.Row(c.Key("header")).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(background).BorderWidth(0, 0, 2, 0).BorderColor(border).
+		Cursor(ui.CursorGrab).Description("Drag to move this pane")
+	head.Drag(paneDrag{p})
+	head.Children(func() {
 		statusDot(c, t, a.tabStatus(tb))
 		kind, kindIcon := a.tabKind(tb)
 		ui.Icon(c, kindIcon).FontSize(12).TextColor(t.TextMuted).Tooltip(kind)

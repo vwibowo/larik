@@ -111,8 +111,10 @@ func (a *App) menuBar() []menuGroup {
 			{label: "Pane Above", key: "Alt+Cmd+Up", run: func() { a.focusToward(0, -1) }},
 			{label: "Pane Below", key: "Alt+Cmd+Down", run: func() { a.focusToward(0, 1) }},
 			{},
+		}, append(a.tilingCommands(), append([]command{
+			{},
 			{role: mygo.RoleFront},
-		}, a.tabCommands()...)},
+		}, a.tabCommands()...)...)...)},
 		{title: "Help", role: mygo.RoleHelp, items: []command{
 			{label: "Larik Help", run: func() { a.openURL(helpURL) }},
 			{label: "Desktop App Guide", run: func() { a.openURL(guideURL) }},

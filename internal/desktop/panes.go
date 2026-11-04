@@ -107,6 +107,12 @@ func (a *App) show(p *pane, t *tab) {
 // it, which takes the keyboard. A pane already showing t gives it up and
 // closes; with no pane yet, t shows in the first.
 func (a *App) splitPane(p *pane, t *tab, below bool) *pane {
+	return a.splitAt(p, t, below, false)
+}
+
+// splitAt is splitPane with the new pane first, left of p or above it,
+// when before is set.
+func (a *App) splitAt(p *pane, t *tab, below, before bool) *pane {
 	if q := a.paneOf(t); q != nil {
 		if q == p || !a.split() {
 			a.focusPane(q)
@@ -126,6 +132,9 @@ func (a *App) splitPane(p *pane, t *tab, below bool) *pane {
 	a.replace(p, n)
 	added := &pane{tab: t, parent: n}
 	n.first, n.second, p.parent = p, added, n
+	if before {
+		n.first, n.second = added, p
+	}
 	a.focusPane(added)
 	return added
 }
@@ -276,8 +285,16 @@ func (a *App) paneRects() map[*pane]rect {
 // the direction dx, dy (one of them -1 or 1): of those that side, the
 // nearest, then the one most alongside it.
 func (a *App) focusToward(dx, dy int) {
+	if best := a.paneToward(dx, dy); best != nil {
+		a.focusPane(best)
+	}
+}
+
+// paneToward is the pane next to the focused one in the direction dx, dy,
+// as focusToward chooses it, or nil at the edge.
+func (a *App) paneToward(dx, dy int) *pane {
 	if !a.split() || a.focus == nil {
-		return
+		return nil
 	}
 	rects := a.paneRects()
 	from := rects[a.focus]
@@ -306,9 +323,7 @@ func (a *App) focusToward(dx, dy int) {
 			best, bestGap, bestOverlap = p, gap, overlap
 		}
 	}
-	if best != nil {
-		a.focusPane(best)
-	}
+	return best
 }
 
 // activate shows t in the focused pane, or moves the keyboard to the

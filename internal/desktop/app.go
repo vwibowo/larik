@@ -134,6 +134,9 @@ type App struct {
 	// newer is the latest release when it is newer than this larik
 	// ("v0.29.0"), for the sidebar's footer.
 	newer string
+	// drop is where something dragged over a pane was last frame, for
+	// the drop to go there (tiling.go).
+	drop dropping
 	// picked are the sessions chosen together in the sidebar, by
 	// transcript path, in the order chosen; anchor is where a Shift range
 	// starts, and rows are the sessions as the sidebar last listed

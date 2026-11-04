@@ -27,7 +27,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 19 | [Names, archiving and the Trash](#phase-19-names-archiving-and-the-trash) | Done |
 | 20 | [Browser tabs](#phase-20-browser-tabs) | Done |
 | 21 | [New tab chooser](#phase-21-new-tab-chooser) | Done |
-| 22 | [What's next](#phase-22-whats-next) | Planned |
+| 22 | [Tiling](#phase-22-tiling) | Done |
+| 23 | [What's next](#phase-23-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -392,7 +393,18 @@ A new tab started larik, so a terminal or a page beside it took a menu. Now a ne
 - **Settings › New tabs ask what to open** turns it off: a new tab, or a split, starts larik, as before. It's kept with the window's state.
 - `larik desktop list` names a chooser's kind `chooser`.
 
-## Phase 22: What's next
+## Phase 22: Tiling
+
+Panes split from the keyboard and the split button, but a tab couldn't be dragged into one, and the only way to rearrange them was to close and split again. Now they tile as windows do under Rectangle:
+
+- **Drop zones.** Drag a tab from the tab bar, a session from the sidebar, or a pane by its header over a pane, and the part it would take shows tinted in the accent colour: the half at the edge the pointer is near (the outer 30% on each side), which a drop splits off, or the whole pane, from the middle, which it takes (a tab another pane shows swaps with it). A tab shown in another pane leaves it for its new place; a pane dropped on itself does nothing. A screen reader hears where it went.
+- **Dragging a pane by its header** moves it, to an edge of another pane or in its place.
+- **Layouts**, in the Window menu, the command palette and the split button's right-click menu: **Equalize Panes** (`ctrl+cmd+=`) gives every pane the same share each way, and **Lay Out Panes in Columns**, **Rows**, **Grid** or **Main and Stack** (the focused pane at 60%, the others stacked beside it) rebuild the layout from the panes in order, keeping the keyboard where it was. The layout comes back next time, as any does.
+- **`ctrl+cmd` and an arrow** (Window › Move Pane Left, Right, Up, Down) moves the focused pane: it swaps with the pane next to it that way, or, with none, goes to that edge of the window, across the whole of it. Off macOS these have no keys, since `ctrl+shift` is the window's; the menu and the palette have them.
+- MyGo lets an element take one type of dragged value, so tabs, sessions and panes share a `tileable` interface that a pane takes (`internal/desktop/tiling.go`).
+- **Limit:** a browser pane's page is the OS's web view, which takes the pointer itself, so drops there land on its header.
+
+## Phase 23: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
