@@ -2,7 +2,7 @@
 
 ## v0.29.0
 
-<p class="release-meta">Local package prepared <time datetime="2026-11-04">November 4, 2026</time>. GitHub assets are pending publication.</p>
+<p class="release-meta"><time datetime="2026-11-04">November 4, 2026</time></p>
 
 ### Added
 
@@ -17,7 +17,6 @@
 ### Compatibility notes
 
 - Files browsing currently works for local folders. An SSH session's folder shows a remote-unavailable state.
-- Website downloads continue to point to the last published release, `v0.28.0`, until the `v0.29.0` GitHub assets are published.
 
 ## v0.28.0
 
