@@ -132,7 +132,12 @@ func (a *App) watchChanges(ch *changes) {
 	defer tick.Stop()
 	heads := headCache{}
 	for {
-		r := readChanges(ch.dir, heads, int(ch.mode.Load()))
+		var r changesRead
+		if isRemote(ch.dir) {
+			r = a.readRemoteChanges(ch.dir, int(ch.mode.Load()))
+		} else {
+			r = readChanges(ch.dir, heads, int(ch.mode.Load()))
+		}
 		a.update(func() { ch.apply(r) })
 		select {
 		case <-ch.stop:

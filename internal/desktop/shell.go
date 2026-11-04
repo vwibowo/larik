@@ -144,6 +144,8 @@ func (a *App) terminals(c *ui.Context, t *ui.Theme) {
 			}
 			ui.SidebarItem(c, tabKey(tb), iconTerm, a.tabTitle(tb)).Tooltip(tip).Children(func() {
 				switch {
+				case tb.agentOffered:
+					ui.Text(c, "Resume agent").FontSize(11).TextColor(t.Accent)
 				case a.needsLook(tb) && tb.path == "":
 					ui.Icon(c, iconBell).FontSize(13).TextColor(t.Accent).Label("Needs a look")
 				case !a.marker(c, t, a.tabStatus(tb), false):

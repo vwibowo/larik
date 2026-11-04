@@ -190,6 +190,17 @@ func (a *App) hunkDo(ch *changes, f *fileChange, p *diffPart, h editor.DiffHunk,
 		p.diff.SetSelectedLines(editor.DiffLineRange{}, false)
 		busy := map[hunkAction]string{stageHunk: "Staging…", unstageHunk: "Unstaging…", discardHunk: "Discarding…"}[act]
 		a.changesDo(ch, busy, func(ctx context.Context, root string) (string, error) {
+			if isRemote(root) {
+				op := "set-index"
+				if act == discardHunk {
+					op = "write-kept"
+				}
+				if act == unstageHunk && added && text == "" {
+					op = "unstage"
+				}
+				_, err := a.remoteProjectCall(remoteProjectRequest{Op: op, Dir: root, Path: path, Was: was, Text: text})
+				return "", err
+			}
 			if act == discardHunk {
 				return "", writeKept(filepath.Join(root, path), was, text)
 			}

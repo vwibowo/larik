@@ -102,7 +102,7 @@ func TestEvalAndScreenshot(t *testing.T) {
 func TestReadOnly(t *testing.T) {
 	for _, tool := range ToolsWith(nil) {
 		name := tool.Spec().Name
-		if want := name == "desktop_page_snapshot" || name == "desktop_page_screenshot"; tool.ReadOnly() != want {
+		if want := name == "desktop_page_snapshot" || name == "desktop_page_screenshot" || name == "desktop_page_wait" || name == "desktop_page_console"; tool.ReadOnly() != want {
 			t.Errorf("%s read-only %v", name, tool.ReadOnly())
 		}
 		var schema map[string]any

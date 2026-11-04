@@ -33,9 +33,21 @@ const worktreeTimeout = 2 * time.Minute
 // worktreeRoot is where the window's worktrees, and subagents', live.
 func (a *App) worktreeRoot() string { return filepath.Join(a.opts.DataDir, "worktrees") }
 
+func (a *App) worktreeRootFor(dir string) string {
+	name, _, remote := splitRemote(dir)
+	if !remote {
+		return a.worktreeRoot()
+	}
+	if srv := a.serverNamed(name); srv != nil && srv.worktreeRoot != "" {
+		return remotePath(name, srv.worktreeRoot)
+	}
+	return ""
+}
+
 // inWorktree reports whether dir is in one of larik's worktrees.
 func (a *App) inWorktree(dir string) bool {
-	return dir != "" && worktreeName(a.worktreeRoot(), dir) != ""
+	root := a.worktreeRootFor(dir)
+	return root != "" && dir != "" && worktreeName(root, dir) != ""
 }
 
 // worktreeName is the name of the worktree in root that dir is in, or "".
@@ -55,6 +67,16 @@ func worktreeName(root, dir string) string {
 // named for it), of the repository dir is in: off the main thread, as
 // git checks the files out.
 func (a *App) makeWorktree(dir, name string) (*worktree.Worktree, error) {
+	if isRemote(dir) {
+		reply, err := a.remoteProjectCall(remoteProjectRequest{Op: "worktree-create", Dir: dir, Name: name})
+		if err != nil {
+			return nil, err
+		}
+		if reply.Worktree == nil {
+			return nil, errors.New("remote host returned no worktree")
+		}
+		return reply.Worktree, nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), worktreeTimeout)
 	defer cancel()
 	repo, err := worktree.Repo(ctx, dir)
@@ -143,7 +165,7 @@ func (a *App) worktreeMenu(m *ui.Menu, s session.Indexed, root string) {
 	if !a.inWorktree(s.Cwd) {
 		return
 	}
-	if _, err := os.Stat(s.Cwd); err != nil {
+	if _, err := os.Stat(s.Cwd); err != nil && !isRemote(s.Cwd) {
 		return // merged or removed already
 	}
 	m.Separator()
@@ -163,7 +185,7 @@ func (a *App) worktreeMenu(m *ui.Menu, s session.Indexed, root string) {
 // runs in, saying what it has that the checkout doesn't, which git is
 // asked off the main thread.
 func (a *App) askWorktree(s session.Indexed, root string, merge bool) {
-	dir := worktreeDir(a.worktreeRoot(), s.Cwd)
+	dir := worktreeDir(a.worktreeRootFor(s.Cwd), s.Cwd)
 	a.notice = a.worktreeBusy(dir)
 	if a.notice != "" {
 		return
@@ -171,7 +193,19 @@ func (a *App) askWorktree(s session.Indexed, root string, merge bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), worktreeTimeout)
 		defer cancel()
-		info, w, err := openWorktree(ctx, root, dir)
+		var info worktree.Info
+		var w *worktree.Worktree
+		var err error
+		if isRemote(root) {
+			var reply remoteProjectReply
+			reply, err = a.remoteProjectCall(remoteProjectRequest{Op: "worktree-info", Dir: root, Worktree: dir})
+			info, w = worktree.Info{}, reply.Worktree
+			if reply.Info != nil {
+				info = *reply.Info
+			}
+		} else {
+			info, w, err = openWorktree(ctx, root, dir)
+		}
 		a.update(func() {
 			if err != nil {
 				a.notice = "Can't find the worktree: " + err.Error()
@@ -277,7 +311,16 @@ func (a *App) finishWorktree(w *worktree.Worktree, title string, merge bool) {
 		var got worktree.Merged
 		if merge {
 			var err error
-			if got, err = w.Merge(ctx, cmp.Or(title, "Work from "+w.Branch)); err != nil {
+			if isRemote(w.Path) {
+				var reply remoteProjectReply
+				reply, err = a.remoteProjectCall(remoteProjectRequest{Op: "worktree-merge", Dir: w.Repo, Worktree: w.Path, Message: cmp.Or(title, "Work from "+w.Branch)})
+				if reply.Merged != nil {
+					got = *reply.Merged
+				}
+			} else {
+				got, err = w.Merge(ctx, cmp.Or(title, "Work from "+w.Branch))
+			}
+			if err != nil {
 				a.update(func() { a.notice = mergeFailed(w, err) })
 				return
 			}
@@ -311,7 +354,12 @@ func (a *App) finishWorktree(w *worktree.Worktree, title string, merge bool) {
 				return
 			}
 		}
-		err := w.Remove(ctx)
+		var err error
+		if isRemote(w.Path) {
+			_, err = a.remoteProjectCall(remoteProjectRequest{Op: "worktree-remove", Dir: w.Repo, Worktree: w.Path})
+		} else {
+			err = w.Remove(ctx)
+		}
 		a.update(func() {
 			a.refreshIndex()
 			switch {

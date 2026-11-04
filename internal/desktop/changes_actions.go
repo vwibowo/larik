@@ -61,8 +61,24 @@ func (a *App) changesDo(ch *changes, busy string, do func(ctx context.Context, r
 	}()
 }
 
+func (a *App) changesRemoteDo(ch *changes, busy string, req remoteProjectRequest) {
+	a.changesDo(ch, busy, func(_ context.Context, root string) (string, error) {
+		req.Dir = root
+		reply, err := a.remoteProjectCall(req)
+		return reply.Text, err
+	})
+}
+
 // stage stages the file's change, all of it, or unstages it.
 func (a *App) stage(ch *changes, f *fileChange, on bool) {
+	if isRemote(ch.root) {
+		op := "unstage"
+		if on {
+			op = "stage"
+		}
+		a.changesRemoteDo(ch, "Staging…", remoteProjectRequest{Op: op, Path: f.path, From: f.from})
+		return
+	}
 	paths := []string{f.path}
 	if f.from != "" {
 		paths = append(paths, f.from)
@@ -93,6 +109,14 @@ func unstage(ctx context.Context, root string, paths ...string) error {
 
 // stageAll stages every change, or unstages every one.
 func (a *App) stageAll(ch *changes, on bool) {
+	if isRemote(ch.root) {
+		op := "unstage-all"
+		if on {
+			op = "stage-all"
+		}
+		a.changesRemoteDo(ch, "Staging…", remoteProjectRequest{Op: op})
+		return
+	}
 	a.changesDo(ch, "Staging…", func(ctx context.Context, root string) (string, error) {
 		if on {
 			_, err := gitDo(ctx, root, "add", "-A")
@@ -117,6 +141,10 @@ func (a *App) askDiscard(ch *changes, f *fileChange) {
 // discard throws the file's change away: back to the last commit, or
 // gone for a file that's new since.
 func (a *App) discard(ch *changes, f *fileChange) {
+	if isRemote(ch.root) {
+		a.changesRemoteDo(ch, "Discarding…", remoteProjectRequest{Op: "discard", Path: f.path, From: f.from, Code: f.code})
+		return
+	}
 	path, from, code := f.path, f.from, f.code
 	a.changesDo(ch, "Discarding…", func(ctx context.Context, root string) (string, error) {
 		switch {
@@ -144,6 +172,20 @@ func (a *App) commit(ch *changes) {
 		return
 	}
 	all := ch.stagedCount() == 0
+	if isRemote(ch.root) {
+		a.changesDo(ch, "Committing…", func(_ context.Context, root string) (string, error) {
+			reply, err := a.remoteProjectCall(remoteProjectRequest{Op: "commit", Dir: root, Message: msg, All: all})
+			if err == nil {
+				a.update(func() {
+					if strings.TrimSpace(ch.message) == msg {
+						ch.message = ""
+					}
+				})
+			}
+			return reply.Text, err
+		})
+		return
+	}
 	a.changesDo(ch, "Committing…", func(ctx context.Context, root string) (string, error) {
 		if all {
 			if _, err := gitDo(ctx, root, "add", "-A"); err != nil {
@@ -187,7 +229,16 @@ func (ch *changes) canPullRequest() bool {
 func (a *App) askPullRequest(ch *changes) {
 	branch, base := ch.branch, strings.TrimPrefix(ch.base, "origin/")
 	a.changesDo(ch, "Looking for a pull request…", func(ctx context.Context, root string) (string, error) {
-		if url, err := ghDo(ctx, root, "pr", "view", branch, "--json", "url", "--jq", ".url"); err == nil && strings.HasPrefix(url, "http") {
+		var url string
+		var err error
+		if isRemote(root) {
+			var reply remoteProjectReply
+			reply, err = a.remoteProjectCall(remoteProjectRequest{Op: "pr-view", Dir: root, Message: branch})
+			url = reply.Text
+		} else {
+			url, err = ghDo(ctx, root, "pr", "view", branch, "--json", "url", "--jq", ".url")
+		}
+		if err == nil && strings.HasPrefix(url, "http") {
 			a.update(func() {
 				if a.openExternal != nil {
 					a.openExternal(url)
@@ -208,6 +259,17 @@ func (a *App) askPullRequest(ch *changes) {
 // base in the browser.
 func (a *App) pullRequest(ch *changes, branch, base string) {
 	a.changesDo(ch, "Pushing…", func(ctx context.Context, root string) (string, error) {
+		if isRemote(root) {
+			reply, err := a.remoteProjectCall(remoteProjectRequest{Op: "pr-create", Dir: root, Message: branch, From: base})
+			if err == nil && strings.HasPrefix(reply.Text, "http") {
+				a.update(func() {
+					if a.openExternal != nil {
+						a.openExternal(reply.Text)
+					}
+				})
+			}
+			return "Pushed " + branch + ".", err
+		}
 		if _, err := gitDo(ctx, root, "push", "--quiet", "-u", "origin", "HEAD"); err != nil {
 			return "", err
 		}

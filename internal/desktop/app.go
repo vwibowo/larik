@@ -101,18 +101,26 @@ type App struct {
 	// conv finds sessions by what was said in them, off the main thread:
 	// convAsked is the query last asked of it, and convHits what it
 	// found for convQuery, by transcript path, with the passage.
-	conv        convIndex
-	convAsked   string
-	convQuery   string
-	convHits    map[string]string
-	focusSearch bool                 // the search field takes the keyboard next frame
-	restored    bool                 // the last launch's state was read
-	seen        map[string]time.Time // when each session was last looked at
-	started     time.Time            // what's older than this is read
-	sidebarW    float32
-	noSidebar   bool     // the sidebar is hidden
-	closed      []string // the sessions of tabs closed, the last closed last
-	fontSize    float32  // the terminals' text size, 0 for fontSize
+	conv            convIndex
+	convAsked       string
+	convQuery       string
+	convHits        map[string]string
+	focusSearch     bool                 // the search field takes the keyboard next frame
+	restored        bool                 // the last launch's state was read
+	seen            map[string]time.Time // when each session was last looked at
+	started         time.Time            // what's older than this is read
+	sidebarW        float32
+	noSidebar       bool     // the sidebar is hidden
+	closed          []string // the sessions of tabs closed, the last closed last
+	recent          []closedTab
+	recentOpen      bool
+	recentQuery     string
+	focusHistory    []string
+	focusHistoryAt  int
+	navigatingFocus bool
+	layouts         map[string]map[string]projectLayout
+	layoutPick      *layoutPick
+	fontSize        float32 // the terminals' text size, 0 for fontSize
 	// closing are the tabs waiting on confirming, the question whether
 	// to close them while they work, and closeKeep the tab to show after.
 	closing    []*tab
@@ -178,9 +186,10 @@ type App struct {
 	// tab took the answer (see answer.go).
 	answered map[string]pending
 	// asked is the question confirmAsk is putting, while it's up.
-	asked     *confirmation
-	askedOpen bool
-	filesEdit *filesEdit
+	asked        *confirmation
+	askedOpen    bool
+	filesEdit    *filesEdit
+	remoteFolder *remoteFolderPick
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -238,6 +247,7 @@ type App struct {
 	// serversMu guards their dial, read off the main thread.
 	servers   []*server
 	serversMu sync.Mutex
+	forwards  map[remotePortKey]*remoteForward
 	connect   connector
 	// askingServer shows the field Connect to Server… types a server
 	// into, serverName what it holds.
@@ -274,15 +284,20 @@ type tab struct {
 	// command it was given, "" for the shell; and alerted is when its
 	// program last rang or posted a notification while you looked
 	// elsewhere.
-	cmd       []string
-	run       string
-	alerted   time.Time
-	program   status.Report // OSC 7501 from a terminal tab's program
-	records   statusRecords
-	programAt time.Time
+	cmd          []string
+	run          string
+	alerted      time.Time
+	program      status.Report // OSC 7501 from a terminal tab's program
+	records      statusRecords
+	agent        agentResume
+	agentOffered bool
+	programAt    time.Time
 	// hosted says the host runs its program, and reattach that the next
 	// run is to attach to it there, not run one (see host.go).
 	hosted, reattach bool
+	// disconnected distinguishes a lost remote host connection from the
+	// program exiting. The tab stays in its pane until it can reattach.
+	disconnected bool
 
 	// The find bar: open, what it looks for, how the search goes, and
 	// whether its field takes the keyboard next frame.
@@ -308,6 +323,10 @@ type tab struct {
 	download *pageDownload
 	// found is how its find bar's search of its page went.
 	found mygo.FindResult
+	// remotePort identifies an SSH forwarded development service shown
+	// by this browser tab, even while the connection is down.
+	remotePort     remotePortKey
+	remotePortLost bool
 
 	// A chooser tab's (see chooser.go): the kind highlighted.
 	chooser bool
@@ -364,6 +383,7 @@ func New(opts Options) *App {
 		changesP:     60,
 		planP:        55,
 		plans:        map[string]*planPreview{},
+		layouts:      readProjectLayouts(opts.DataDir),
 		host:         host,
 	}
 }
@@ -392,6 +412,11 @@ func (a *App) Close() {
 	}
 	a.saveState() // as it is as the window goes
 	close(a.done)
+	for _, forward := range a.forwards {
+		if forward.stop != nil {
+			forward.stop()
+		}
+	}
 	for _, t := range a.tabs {
 		if t.hosted && a.ending {
 			closeHostTab(a.opts.DataDir, t.id)
@@ -990,6 +1015,7 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		// host's to say.
 		hc.onBell, hc.onNotify = opts.OnBell, opts.OnNotify
 		hc.onStatus = func(r status.Report) { a.update(func() { a.setProgramStatus(t, r) }) }
+		hc.onAgent = func(r agentResume) { a.update(func() { t.agent = agentForTab(t, r) }) }
 		opts.OnBell, opts.OnNotify, opts.OnStatus, opts.OnPrompt, opts.OnReset = nil, nil, nil, nil, nil
 		opts.Conn, opts.ResizeByConn = hc, true
 	} else {
@@ -1001,6 +1027,10 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		}
 		a.update(func() {
 			if t.term == term {
+				if isRemote(t.dir) && t.disconnected && code == -1 {
+					t.exited, t.code = true, -1
+					return
+				}
 				a.exited(t, code)
 			}
 		})
@@ -1107,10 +1137,11 @@ func (a *App) exited(t *tab, code int) {
 	default:
 	}
 	t.exited, t.code = true, code
+	t.agentOffered = t.agent.valid()
 	if t.shell() && !t.hosted {
 		t.program, _ = t.records.dropLive()
 	}
-	if code == 0 {
+	if code == 0 && !t.agent.valid() {
 		a.closeTab(t)
 	}
 	a.refreshIndex()
@@ -1122,8 +1153,10 @@ func (a *App) closeTab(t *tab) <-chan error {
 	if i < 0 {
 		return nil
 	}
+	a.rememberClosed(t)
 	a.tabs = slices.Delete(a.tabs, i, i+1)
 	t.close()
+	a.releaseRemoteForward(t.remotePort)
 	var stopped chan error
 	if t.hosted {
 		stopped = make(chan error, 1)
@@ -1153,6 +1186,13 @@ const closedKept = 20
 // reopenClosed opens the session of the tab closed last, and of the one
 // before on the next call. One that's gone, or open again, is skipped.
 func (a *App) reopenClosed() {
+	for len(a.recent) > 0 {
+		r := a.recent[len(a.recent)-1]
+		a.recent = a.recent[:len(a.recent)-1]
+		if a.reopenRecent(r) {
+			return
+		}
+	}
 	for len(a.closed) > 0 {
 		path := a.closed[len(a.closed)-1]
 		a.closed = a.closed[:len(a.closed)-1]
@@ -1289,6 +1329,9 @@ func (a *App) cancelClose() {
 // tabStatus is what a tab's larik is doing: its session's status, or an
 // error once larik failed.
 func (a *App) tabStatus(t *tab) status.Report {
+	if t.disconnected {
+		return status.Report{State: status.Error, Msg: "Connection lost; reconnecting"}
+	}
 	if t.exited && t.code != 0 {
 		return status.Report{State: status.Error, Msg: fmt.Sprintf("larik exited with status %d", t.code)}
 	}
@@ -1318,6 +1361,8 @@ func (a *App) tabTitle(t *tab) string {
 		return "New Tab"
 	case t.files != nil:
 		return "Files"
+	case t.browser && t.remotePort.port != 0:
+		return fmt.Sprintf("%s:%d", t.remotePort.name, t.remotePort.port)
 	case t.browser && t.url != blankPage:
 		return pageHost(t.url)
 	case t.browser:

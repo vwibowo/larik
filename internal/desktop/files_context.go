@@ -15,7 +15,7 @@ import (
 // preview's current selection. The root itself can be opened and populated,
 // but cannot be renamed or moved from inside its own explorer.
 func (a *App) filesMenu(m *ui.Menu, tb *tab, path string, dir, root bool) {
-	if tb.files == nil || isRemote(tb.files.root) || !filesWithinRoot(tb.files.root, path) {
+	if tb.files == nil || !filesWithinRoot(tb.files.root, path) {
 		return
 	}
 	if dir {
@@ -27,11 +27,13 @@ func (a *App) filesMenu(m *ui.Menu, tb *tab, path string, dir, root bool) {
 		}
 		m.Separator()
 	}
-	if m.Item("Open externally").Chosen() && a.openPath != nil {
-		a.openPath(path)
-	}
-	if m.Item(filesRevealLabel()).Chosen() && a.showFile != nil {
-		a.showFile(path)
+	if !isRemote(tb.files.root) {
+		if m.Item("Open externally").Chosen() && a.openPath != nil {
+			a.openPath(path)
+		}
+		if m.Item(filesRevealLabel()).Chosen() && a.showFile != nil {
+			a.showFile(path)
+		}
 	}
 	if m.Item("Copy Path").Chosen() && a.copyText != nil {
 		a.copyText(path)
@@ -67,6 +69,7 @@ type filesEdit struct {
 	path, kind, name string
 	err              string
 	open, focus      bool
+	busy             bool
 }
 
 func (a *App) beginFilesEdit(tb *tab, path, kind string) {
@@ -82,7 +85,7 @@ func (a *App) filesEditDialog(c *ui.Context) {
 	if e == nil {
 		return
 	}
-	if e.tb.files == nil || isRemote(e.tb.files.root) || !filesWithinRoot(e.tb.files.root, e.path) {
+	if e.tb.files == nil || !filesWithinRoot(e.tb.files.root, e.path) {
 		a.filesEdit = nil
 		return
 	}
@@ -110,7 +113,7 @@ func (a *App) filesEditDialog(c *ui.Context) {
 				if ui.Button(c.Key("cancel"), "Cancel").Clicked() {
 					a.filesEdit = nil
 				}
-				if ui.Button(c.Key("commit"), title).Clicked() {
+				if ui.Button(c.Key("commit"), title).Disabled(e.busy).Clicked() {
 					a.commitFilesEdit(e)
 				}
 			})
@@ -122,7 +125,10 @@ func (a *App) filesEditDialog(c *ui.Context) {
 }
 
 func (a *App) commitFilesEdit(e *filesEdit) {
-	if e.tb.files == nil || isRemote(e.tb.files.root) || !filesWithinRoot(e.tb.files.root, e.path) {
+	if e.busy {
+		return
+	}
+	if e.tb.files == nil || !filesWithinRoot(e.tb.files.root, e.path) {
 		a.filesEdit = nil
 		return
 	}
@@ -146,6 +152,34 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 	}
 	if e.kind == "rename" && dest == e.path {
 		a.filesEdit = nil
+		return
+	}
+	if isRemote(e.tb.files.root) {
+		e.busy = true
+		source := a.remoteFiles(e.tb.files.root)
+		op := map[string]string{"file": "create-file", "folder": "create-folder", "rename": "rename"}[e.kind]
+		root := e.tb.files.root
+		a.filesWork(func() {
+			reply, err := source.call(remoteFileRequest{Op: op, Path: e.path, Name: name})
+			a.filesResult(func() {
+				e.busy = false
+				if a.filesEdit != e || e.tb.files == nil || e.tb.files.root != root {
+					return
+				}
+				if err != nil {
+					e.err = err.Error()
+					return
+				}
+				a.filesEdit = nil
+				a.refreshFiles(e.tb)
+				open := true
+				e.tb.files.open[parent] = &open
+				if e.kind == "folder" {
+					e.tb.files.open[remotePath(source.name, reply.Dest)] = &open
+				}
+				a.selectFile(e.tb, remotePath(source.name, reply.Dest), reply.Dir)
+			})
+		})
 		return
 	}
 	if _, err := os.Lstat(dest); err == nil {
@@ -204,8 +238,23 @@ func (a *App) duplicateFilesEntry(tb *tab, path string) {
 		return
 	}
 	root := tb.files.root
+	remote := isRemote(root)
+	var source remoteFiles
+	if remote {
+		source = a.remoteFiles(root)
+	}
 	a.filesWork(func() {
-		to, err := duplicateFilesPath(path)
+		var to string
+		var dir bool
+		var err error
+		if remote {
+			var reply remoteFileReply
+			reply, err = source.call(remoteFileRequest{Op: "duplicate", Path: path})
+			to, dir = remotePath(source.name, reply.Dest), reply.Dir
+		} else {
+			to, err = duplicateFilesPath(path)
+			dir = isDirectory(to)
+		}
 		a.filesResult(func() {
 			if err != nil {
 				a.notice = "Can't duplicate “" + filepath.Base(path) + "”: " + err.Error()
@@ -214,7 +263,7 @@ func (a *App) duplicateFilesEntry(tb *tab, path string) {
 			if tb.files != nil && tb.files.root == root {
 				a.refreshFiles(tb)
 				if filePathVisible(tb.files, to) {
-					a.selectFile(tb, to, isDirectory(to))
+					a.selectFile(tb, to, dir)
 				}
 			}
 		})
@@ -305,17 +354,29 @@ func (a *App) askTrashFilesEntry(tb *tab, path string) {
 	if tb.files == nil || path == tb.files.root || !filesWithinRoot(tb.files.root, path) {
 		return
 	}
-	if a.trashItem == nil {
+	remote := isRemote(tb.files.root)
+	if a.trashItem == nil && !remote {
 		a.notice = "The system Trash is unavailable."
 		return
 	}
 	name := filepath.Base(path)
 	root := tb.files.root
+	var source remoteFiles
+	message := "You can restore it from the system Trash until the Trash is emptied."
+	if remote {
+		source = a.remoteFiles(root)
+		message = "It moves to the remote Larik trash folder, where you can restore it."
+	}
 	a.confirmAsk(fmt.Sprintf("Move “%s” to the Trash?", name),
-		"You can restore it from the system Trash until the Trash is emptied.",
+		message,
 		"Move to Trash", func() {
 			a.filesWork(func() {
-				err := a.trashItem(path)
+				var err error
+				if remote {
+					_, err = source.call(remoteFileRequest{Op: "trash", Path: path})
+				} else {
+					err = a.trashItem(path)
+				}
 				a.filesResult(func() {
 					if err != nil {
 						a.notice = "Can't move “" + name + "” to the Trash: " + err.Error()

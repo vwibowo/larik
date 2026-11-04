@@ -212,6 +212,10 @@ func (a *App) arrange(l layout) {
 	}
 	a.remember()
 	focused := a.focused()
+	ids := map[*tab]string{}
+	for _, p := range a.panes() {
+		ids[p.tab] = p.id
+	}
 	var tabs []*tab
 	for _, p := range a.panes() {
 		if l == layoutMainStack && p.tab == focused {
@@ -239,6 +243,7 @@ func (a *App) arrange(l layout) {
 	}
 	a.layout.parent, a.zoomed = nil, false
 	for _, p := range a.panes() {
+		p.id = ids[p.tab]
 		if p.tab == focused {
 			a.focusPane(p)
 		}

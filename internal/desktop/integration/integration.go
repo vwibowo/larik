@@ -279,7 +279,7 @@ func hookEvents(agent string) []string {
 
 func openCodePlugin(bin string) string {
 	quoted, _ := json.Marshal(bin)
-	return managedPlugin + "\nimport { spawn } from 'node:child_process'\n\nexport const LarikDesktopStatus = async () => ({\n  event: async ({ event }) => {\n    if (!process.env.LARIK_DESKTOP_TAB) return\n    const child = spawn(" + string(quoted) + ", ['desktop', 'hook', 'opencode', event.type], { stdio: ['pipe', 'ignore', 'ignore'] })\n    child.on('error', () => {})\n    child.stdin.on('error', () => {})\n    child.stdin.end(JSON.stringify(event))\n  },\n})\n"
+	return managedPlugin + "\nimport { spawn } from 'node:child_process'\n\nexport const LarikDesktopStatus = async ({ directory }) => ({\n  event: async ({ event }) => {\n    if (!process.env.LARIK_DESKTOP_TAB) return\n    const child = spawn(" + string(quoted) + ", ['desktop', 'hook', 'opencode', event.type], { stdio: ['pipe', 'ignore', 'ignore'] })\n    child.on('error', () => {})\n    child.stdin.on('error', () => {})\n    child.stdin.end(JSON.stringify({ ...event, cwd: directory }))\n  },\n})\n"
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }

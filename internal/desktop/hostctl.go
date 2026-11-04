@@ -67,7 +67,7 @@ func callHost(dataDir string, req Request) (Response, error) {
 		if err != nil {
 			return fail(err)
 		}
-		conn, _, _, err := askHost(dataDir, hostRequest{Op: "status", ID: t.ID, Status: payload})
+		conn, _, _, err := askHost(dataDir, hostRequest{Op: "status", ID: t.ID, Status: payload, Agent: req.Agent})
 		if err != nil {
 			return fail(err)
 		}

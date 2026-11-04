@@ -62,12 +62,15 @@ func (a *App) controlStatus(req Request) Response {
 		return Response{Error: problem}
 	}
 	if t.hosted {
-		conn, _, _, err := askHost(a.opts.DataDir, hostRequest{Op: "status", ID: t.id, Status: payload})
+		conn, _, _, err := askHost(a.opts.DataDir, hostRequest{Op: "status", ID: t.id, Status: payload, Agent: req.Agent})
 		if err != nil {
 			return Response{Error: err.Error()}
 		}
 		conn.Close()
 	} else if !a.onMain(func() {
+		if req.Agent != nil && req.Agent.valid() && req.Agent.Tab == t.id {
+			t.agent = *req.Agent
+		}
 		report, changed := t.records.apply(payload)
 		if changed {
 			a.setProgramStatus(t, report)

@@ -13,6 +13,7 @@ import (
 	"mime"
 	"os"
 	"strings"
+	"time"
 
 	"larik/internal/clipboard"
 	"larik/internal/desktop"
@@ -47,6 +48,8 @@ func Tools(dataDir string) []tools.Tool {
 func ToolsWith(call Caller) []tools.Tool {
 	return []tools.Tool{
 		Navigate{call}, History{call}, Snapshot{call}, Click{call}, Type{call}, Eval{call}, Screenshot{call},
+		PageAction{call, desktop.PageWait}, PageAction{call, desktop.PageFill}, PageAction{call, desktop.PagePress},
+		PageAction{call, desktop.PageSelect}, PageAction{call, desktop.PageScroll}, PageAction{call, desktop.PageConsole},
 	}
 }
 
@@ -243,4 +246,74 @@ func (t Screenshot) Run(ctx context.Context, _ *tools.Env, input json.RawMessage
 		Display: fmt.Sprintf("%s · %d KB", url, (len(img)+512)/1024),
 		Images:  []llm.Block{{Type: llm.BlockImage, MediaType: mime.TypeByExtension(ext), Data: base64.StdEncoding.EncodeToString(img)}},
 	}
+}
+
+// PageAction is one of the typed browser actions added after the original
+// navigate/snapshot/click/type surface.
+type PageAction struct {
+	Call Caller
+	Op   string
+}
+
+func (t PageAction) ReadOnly() bool { return t.Op == desktop.PageWait || t.Op == desktop.PageConsole }
+
+func (t PageAction) Spec() llm.ToolSpec {
+	switch t.Op {
+	case desktop.PageWait:
+		return spec(Prefix+"wait", "Wait for a page load, exact URL, text, or element state in the visible Desktop browser tab. "+untrusted,
+			`{"type":"object","properties":{"state":{"type":"string","enum":["load","url","text","visible","hidden","enabled"]},"url":{"type":"string"},"text":{"type":"string"},"ref":{"type":"string"},"timeout":{"type":"string","description":"Duration such as 10s, at most 1m"}},"required":["state"]}`)
+	case desktop.PageFill:
+		return spec(Prefix+"fill", "Replace the value of a field by snapshot ref and dispatch input and change events. "+untrusted,
+			`{"type":"object","properties":{"ref":{"type":"string"},"text":{"type":"string"}},"required":["ref","text"]}`)
+	case desktop.PagePress:
+		return spec(Prefix+"press", "Press a named key in the focused element or the element with ref. "+untrusted,
+			`{"type":"object","properties":{"key":{"type":"string"},"ref":{"type":"string"}},"required":["key"]}`)
+	case desktop.PageSelect:
+		return spec(Prefix+"select", "Select an option's value in a select element by snapshot ref. "+untrusted,
+			`{"type":"object","properties":{"ref":{"type":"string"},"value":{"type":"string"}},"required":["ref","value"]}`)
+	case desktop.PageScroll:
+		return spec(Prefix+"scroll", "Scroll the visible page by x and y pixels. "+untrusted,
+			`{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}}}`)
+	default:
+		return spec(Prefix+"console", "Read console errors and uncaught page errors from the current document. "+untrusted,
+			`{"type":"object","properties":{}}`)
+	}
+}
+
+func (t PageAction) Run(ctx context.Context, _ *tools.Env, input json.RawMessage) tools.Result {
+	var in struct {
+		State, URL, Text, Ref, Key, Value, Timeout string
+		X, Y                                       int
+	}
+	if len(input) > 0 {
+		if r := parse(input, &in, "page action arguments"); r != nil {
+			return *r
+		}
+	}
+	req := desktop.Request{Cmd: "page", Op: t.Op, State: in.State, URL: in.URL, Text: in.Text, Ref: in.Ref, X: in.X, Y: in.Y}
+	switch t.Op {
+	case desktop.PageWait:
+		if in.Timeout != "" {
+			var err error
+			req.Timeout, err = time.ParseDuration(in.Timeout)
+			if err != nil {
+				return fail(err)
+			}
+		}
+	case desktop.PagePress:
+		req.Text = in.Key
+	case desktop.PageSelect:
+		req.Text = in.Value
+	}
+	if t.Op == desktop.PageConsole || t.Op == desktop.PageWait {
+		res, err := t.Call(req)
+		if err != nil {
+			return fail(err)
+		}
+		if res.Page == nil {
+			return fail(fmt.Errorf("the window sent no page result"))
+		}
+		return tools.Result{Content: "<web_content>\n" + res.Page.Value + "\n</web_content>"}
+	}
+	return page(t.Call, req, "", 0)
 }

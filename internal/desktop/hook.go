@@ -10,10 +10,13 @@ func HookRequest(agent, event, tab string, input []byte) (Request, bool) {
 		return Request{}, false
 	}
 	var meta struct {
+		SessionID        string `json:"session_id"`
+		Cwd              string `json:"cwd"`
 		NotificationType string `json:"notification_type"`
 		Type             string `json:"type"`
 		Properties       struct {
-			Status struct {
+			SessionID string `json:"sessionID"`
+			Status    struct {
 				Type string `json:"type"`
 			} `json:"status"`
 		} `json:"properties"`
@@ -95,5 +98,14 @@ func HookRequest(agent, event, tab string, input []byte) (Request, bool) {
 	case "working":
 		message = "Working"
 	}
-	return Request{Cmd: "status", Tab: tab, StatusID: agent, State: state, Kind: kind, Title: label, Message: message}, true
+	req := Request{Cmd: "status", Tab: tab, StatusID: agent, State: state, Kind: kind, Title: label, Message: message}
+	id := meta.SessionID
+	if agent == "opencode" {
+		id = meta.Properties.SessionID
+	}
+	r := agentResume{Kind: agent, ID: id, Tab: tab, Dir: meta.Cwd}
+	if r.valid() {
+		req.Agent = &r
+	}
+	return req, true
 }

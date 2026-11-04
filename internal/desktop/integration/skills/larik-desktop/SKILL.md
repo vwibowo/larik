@@ -19,6 +19,7 @@ For an existing tab, use its exact ID from `list --json`. In a Desktop terminal,
 larik desktop open --shell .                    # terminal in this directory
 larik desktop open --run 'opencode' .          # command in a terminal tab
 larik desktop open --url localhost:3000        # browser tab
+larik desktop open --files .                     # Files tab
 larik desktop open --worktree --prompt 'Fix tests' .
 larik desktop list --json
 larik desktop send --tab TAB 'npm test'
@@ -27,6 +28,14 @@ larik desktop wait --tab TAB --state done,error,blocked --timeout 10m
 larik desktop focus --tab TAB
 larik desktop close --tab TAB
 larik desktop notify --title 'Build' 'Ready to review'
+larik desktop pane list --json
+larik desktop pane focus --id PANE
+larik desktop pane move --tab TAB --id PANE
+larik desktop pane layout grid
+larik desktop notifications list --json
+larik desktop notifications clear
+larik desktop project-layout save --project . --name Review
+larik desktop project-layout open --project . --name Review
 ```
 
 `open` prints the new tab ID. `--split` or `--below` places a new tab beside the current pane; `--background` leaves focus where it is. `send` presses Return unless `--no-enter` is given. `read` includes terminal scrollback. A live terminal's program keeps running when the hosted window closes.

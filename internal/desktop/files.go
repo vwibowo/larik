@@ -148,8 +148,13 @@ func (a *App) filesResult(fn func()) {
 
 func (a *App) loadFilesDir(tb *tab, path string) {
 	f := tb.files
-	if f == nil || isRemote(f.root) {
+	if f == nil {
 		return
+	}
+	remote := isRemote(f.root)
+	var source remoteFiles
+	if remote {
+		source = a.remoteFiles(f.root)
 	}
 	d := f.dirs[path]
 	if d == nil {
@@ -161,7 +166,15 @@ func (a *App) loadFilesDir(tb *tab, path string) {
 	}
 	d.loading = true
 	a.filesWork(func() {
-		entries, err := readFilesDir(f.ctx, f.root, path, f.showHidden, f.showIgnored)
+		var entries []fileEntry
+		var err error
+		if remote {
+			var reply remoteFileReply
+			reply, err = source.call(remoteFileRequest{Op: "list", Path: path, Hidden: f.showHidden, Ignored: f.showIgnored})
+			entries = localEntries(reply.Entries, source.name)
+		} else {
+			entries, err = readFilesDir(f.ctx, f.root, path, f.showHidden, f.showIgnored)
+		}
 		a.filesResult(func() {
 			if tb.files != f || f.ctx.Err() != nil {
 				return
@@ -259,8 +272,13 @@ func (a *App) searchFiles(tb *tab) {
 	f.searchSeq++
 	f.search = fileSearch{}
 	query := strings.TrimSpace(f.query)
-	if query == "" || isRemote(f.root) {
+	if query == "" {
 		return
+	}
+	remote := isRemote(f.root)
+	var source remoteFiles
+	if remote {
+		source = a.remoteFiles(f.root)
 	}
 	ctx, cancel := context.WithCancel(f.ctx)
 	f.searchCancel = cancel
@@ -277,7 +295,20 @@ func (a *App) searchFiles(tb *tab) {
 			case <-timer.C:
 			}
 		}
-		result := findFiles(ctx, f.root, query, f.showHidden, f.showIgnored)
+		var result fileSearch
+		if remote {
+			reply, err := source.call(remoteFileRequest{Op: "search", Path: f.root, Query: query, Hidden: f.showHidden, Ignored: f.showIgnored})
+			result = fileSearch{tree: map[string][]fileEntry{}, matches: reply.Matches, more: reply.More}
+			if err != nil {
+				result.err = err.Error()
+			} else {
+				for path, entries := range reply.Tree {
+					result.tree[remotePath(source.name, path)] = localEntries(entries, source.name)
+				}
+			}
+		} else {
+			result = findFiles(ctx, f.root, query, f.showHidden, f.showIgnored)
+		}
 		a.filesResult(func() {
 			if tb.files == f && f.searchSeq == seq && ctx.Err() == nil {
 				f.search = result
@@ -370,8 +401,27 @@ func (a *App) selectFile(tb *tab, path string, dir bool) {
 	}
 	seq := f.previewSeq
 	f.preview = filePreview{path: path, loading: true}
+	remote := isRemote(f.root)
+	var source remoteFiles
+	if remote {
+		source = a.remoteFiles(f.root)
+	}
 	a.filesWork(func() {
-		preview := readFilePreview(path)
+		var preview filePreview
+		if remote {
+			reply, err := source.call(remoteFileRequest{Op: "preview", Path: path})
+			preview = filePreview{path: path, text: reply.Text, note: reply.Note, size: reply.Size}
+			if err != nil {
+				preview.note = "Can't read this file: " + err.Error()
+			} else if len(reply.Image) > 0 {
+				preview.image, err = ui.DecodeBitmap(reply.Image)
+				if err != nil {
+					preview.note = "This image could not be decoded."
+				}
+			}
+		} else {
+			preview = readFilePreview(path)
+		}
 		a.filesResult(func() {
 			if tb.files == f && f.previewSeq == seq && f.ctx.Err() == nil {
 				if preview.note == "" && preview.image == nil {
@@ -447,14 +497,6 @@ func (a *App) filesPane(c *ui.Context, theme *ui.Theme, tb *tab) ui.Element {
 		}
 	}
 	return pane.Children(func() {
-		if isRemote(f.root) {
-			ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
-				ui.Icon(c, iconServer).FontSize(28).TextColor(theme.TextMuted)
-				ui.Text(c, "Remote files are not available yet").Bold()
-				ui.Text(c, "Focus a local session to browse its folder here.").FontSize(12).TextColor(theme.TextMuted)
-			})
-			return
-		}
 		if f.narrow {
 			if f.previewOnly {
 				a.filesPreview(c, theme, tb)
@@ -499,7 +541,7 @@ func filePathVisible(f *filesState, path string) bool {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
-	if _, err := os.Lstat(path); err != nil {
+	if _, err := os.Lstat(path); err != nil && !isRemote(f.root) {
 		return false
 	}
 	for _, name := range strings.Split(rel, string(filepath.Separator)) {
@@ -507,7 +549,7 @@ func filePathVisible(f *filesState, path string) bool {
 			return false
 		}
 	}
-	return f.showIgnored || !gitIgnored(f.ctx, f.root, []string{path})[path]
+	return isRemote(f.root) || f.showIgnored || !gitIgnored(f.ctx, f.root, []string{path})[path]
 }
 
 func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {

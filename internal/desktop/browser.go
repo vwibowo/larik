@@ -32,6 +32,7 @@ const blankPage = "about:blank"
 func webViewOptions(u string) mygo.WebViewOptions {
 	return mygo.WebViewOptions{URL: u, Page: mygo.PageOptions{
 		Session:         browserSession,
+		PreloadScript:   consoleErrorsScript,
 		Untrusted:       true,
 		SwipeNavigation: true,
 		PinchZoom:       true,
@@ -187,6 +188,10 @@ func normalizeURL(s string) (string, bool) {
 // browser tab already on it, or a new one beside the session's pane, or
 // with external in your browser.
 func (a *App) openPort(path string, port int, external bool) {
+	if isRemote(path) {
+		a.openRemotePort(path, port, external)
+		return
+	}
 	u := fmt.Sprintf("http://localhost:%d", port)
 	if external {
 		a.openURL(u)
@@ -280,6 +285,13 @@ func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
 		if tb.loading {
 			ui.Spinner(c).Size(12, 12)
 		}
+		if tb.remotePort.port != 0 {
+			label := fmt.Sprintf("%s:%d", tb.remotePort.name, tb.remotePort.port)
+			if tb.remotePortLost {
+				label += " disconnected"
+			}
+			ui.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+		}
 		a.navButton(c, t, "external", iconExternal, "Open in your browser", tb.url != "" && tb.url != blankPage, func() { a.openURL(tb.url) })
 	})
 }
@@ -299,7 +311,14 @@ func (a *App) browsers(c *ui.Context, t *ui.Theme) {
 	}
 	ui.SidebarSection(c.Key("browsers"), "Browser", nil, func() {
 		for _, tb := range pages {
-			ui.SidebarItem(c, tabKey(tb), iconGlobe, a.tabTitle(tb)).Tooltip(tb.url).Children(func() {
+			tip := tb.url
+			if tb.remotePort.port != 0 {
+				tip = fmt.Sprintf("%s:%d via SSH", tb.remotePort.name, tb.remotePort.port)
+				if tb.remotePortLost {
+					tip += " (disconnected)"
+				}
+			}
+			ui.SidebarItem(c, tabKey(tb), iconGlobe, a.tabTitle(tb)).Tooltip(tip).Children(func() {
 				if tb.loading {
 					ui.Spinner(c).Size(11, 11)
 				} else if tb.url != blankPage {

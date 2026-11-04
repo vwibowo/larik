@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -52,6 +53,7 @@ const (
 	msgBell   = 'B'
 	msgNotify = 'N' // a notification: [title, body], as JSON
 	msgStatus = 'P' // a program status report, as JSON
+	msgAgent  = 'A' // native coding-agent identity, as JSON
 	msgExit   = 'X' // the program ended, with this code; nothing follows
 	// From the window.
 	msgInput  = 'I' // what was typed
@@ -94,11 +96,14 @@ type hostRequest struct {
 	Rows    int      `json:"rows,omitempty"`
 	// Shell and Run say what the tab is to the window, a terminal tab and
 	// the command it was given, for a window that opens to it not knowing.
-	Shell  bool   `json:"shell,omitempty"`
-	Run    string `json:"run,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Enter  bool   `json:"enter,omitempty"`
-	Status string `json:"status,omitempty"` // an OSC 7501 payload from a hook
+	Shell   bool                  `json:"shell,omitempty"`
+	Run     string                `json:"run,omitempty"`
+	Text    string                `json:"text,omitempty"`
+	Enter   bool                  `json:"enter,omitempty"`
+	Status  string                `json:"status,omitempty"` // an OSC 7501 payload from a hook
+	Agent   *agentResume          `json:"agent,omitempty"`
+	File    *remoteFileRequest    `json:"file,omitempty"`
+	Project *remoteProjectRequest `json:"project,omitempty"`
 }
 
 // hostReply is the host's answer.
@@ -109,8 +114,15 @@ type hostReply struct {
 	PID   int           `json:"pid,omitempty"`  // ping's: the host's process
 	// Proto is ping's: the protocol the host speaks, hostProto.
 	Proto int `json:"proto,omitempty"`
+	// Features are optional so a newer window can keep using an older
+	// host's existing operations without assuming it has newer ones.
+	Features     []string `json:"features,omitempty"`
+	WorktreeRoot string   `json:"worktree_root,omitempty"`
 	// Projects are index's: the sessions of the host's data folder.
-	Projects []session.Project `json:"projects,omitempty"`
+	Projects []session.Project   `json:"projects,omitempty"`
+	File     *remoteFileReply    `json:"file,omitempty"`
+	Project  *remoteProjectReply `json:"project,omitempty"`
+	Meta     *remoteMetaReply    `json:"meta,omitempty"`
 }
 
 // hostProto is the protocol the host speaks: 2 added index, for windows
@@ -126,6 +138,7 @@ type hostTabInfo struct {
 	Run     string        `json:"run,omitempty"`
 	Title   string        `json:"title,omitempty"` // what its program set as the terminal's title
 	Status  status.Report `json:"status,omitzero"`
+	Agent   agentResume   `json:"agent,omitzero"`
 	Exited  bool          `json:"exited,omitempty"`
 	Code    int           `json:"code,omitempty"`
 	Windows int           `json:"windows,omitempty"` // connections showing it
@@ -168,6 +181,7 @@ type hostTab struct {
 	started time.Time
 	ended   time.Time
 	records statusRecords
+	agent   agentResume
 }
 
 // hostClient is a window showing a tab: what's to be sent to it.
@@ -357,7 +371,47 @@ func (h *host) handle(conn net.Conn) {
 	}
 	switch req.Op {
 	case "ping":
-		reply(hostReply{PID: os.Getpid(), Proto: hostProto})
+		reply(hostReply{PID: os.Getpid(), Proto: hostProto, Features: []string{"session-index", "program-status", "remote-files", "remote-git", "remote-worktrees", "remote-meta", "agent-check"}, WorktreeRoot: filepath.Join(h.dataDir, "worktrees")})
+	case "meta":
+		meta, err := h.remoteMeta()
+		if err != nil {
+			reply(hostReply{Error: err.Error()})
+			return
+		}
+		reply(hostReply{Meta: &meta})
+	case "agent-check":
+		if req.Agent == nil || !req.Agent.valid() {
+			reply(hostReply{Error: "invalid agent identity"})
+			return
+		}
+		name := req.Agent.Kind
+		if _, err := exec.LookPath(name); err != nil {
+			reply(hostReply{Error: name + " is not installed on this server"})
+			return
+		}
+		reply(hostReply{})
+	case "file":
+		if req.File == nil {
+			reply(hostReply{Error: "missing file request"})
+			return
+		}
+		result, err := h.fileRequest(*req.File)
+		if err != nil {
+			reply(hostReply{Error: err.Error()})
+			return
+		}
+		reply(hostReply{File: &result})
+	case "project":
+		if req.Project == nil {
+			reply(hostReply{Error: "missing project request"})
+			return
+		}
+		result, err := h.projectRequest(*req.Project)
+		if err != nil {
+			reply(hostReply{Error: err.Error()})
+			return
+		}
+		reply(hostReply{Project: &result})
 	case "index":
 		projects, err := session.Index(h.dataDir, session.IndexOptions{Scratch: h.scratch})
 		if err != nil {
@@ -403,6 +457,13 @@ func (h *host) handle(conn net.Conn) {
 			reply(hostReply{Error: "invalid status report"})
 			return
 		}
+		if req.Agent != nil && req.Agent.valid() && req.Agent.Tab == t.id {
+			h.mu.Lock()
+			t.agent = *req.Agent
+			h.mu.Unlock()
+			data, _ := json.Marshal(req.Agent)
+			h.broadcast(t, hostMsg{kind: msgAgent, data: data})
+		}
 		h.statusEvent(t, func(s *statusRecords) (status.Report, bool) { return s.apply(req.Status) })
 		reply(hostReply{})
 	case "close":
@@ -431,7 +492,7 @@ func (h *host) list() []hostTabInfo {
 	defer h.mu.Unlock()
 	out := make([]hostTabInfo, 0, len(h.tabs))
 	for _, t := range h.tabs {
-		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Status: t.records.current(), Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
+		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Status: t.records.current(), Agent: t.agent, Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
 	}
 	return out
 }
@@ -770,7 +831,14 @@ func askHostVia(dial dialer, req hostRequest) (net.Conn, *bufio.Reader, hostRepl
 		return nil, nil, hostReply{}, err
 	}
 	data, _ := json.Marshal(req)
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	deadline := 5 * time.Second
+	if req.File != nil || req.Op == "meta" {
+		deadline = 15 * time.Second
+	}
+	if req.Project != nil {
+		deadline = actionTimeout + 5*time.Second
+	}
+	_ = conn.SetDeadline(time.Now().Add(deadline))
 	if _, err := conn.Write(append(data, '\n')); err != nil {
 		conn.Close()
 		return nil, nil, hostReply{}, err
@@ -838,6 +906,7 @@ type hostConn struct {
 	onBell   func()
 	onNotify func(title, body string)
 	onStatus func(status.Report)
+	onAgent  func(agentResume)
 	// pending is what's left of the frame Read last read; code is how the
 	// program ended, -1 until the host says, as when the host went.
 	pending []byte
@@ -887,6 +956,11 @@ func (c *hostConn) Read(p []byte) (int, error) {
 			var report status.Report
 			if json.Unmarshal(data, &report) == nil && c.onStatus != nil {
 				c.onStatus(report)
+			}
+		case msgAgent:
+			var agent agentResume
+			if json.Unmarshal(data, &agent) == nil && c.onAgent != nil {
+				c.onAgent(agent)
 			}
 		case msgExit:
 			if len(data) == 4 {
@@ -943,6 +1017,7 @@ func (c *hostConn) exitCode() int { return int(c.code.Load()) }
 // session's larik, at path when the window knows it, or a terminal tab's.
 func (a *App) attachTab(h hostTabInfo, path string) *tab {
 	t := &tab{id: h.ID, dir: h.Dir, path: path, reattach: true}
+	t.agent = agentForTab(t, h.Agent)
 	if h.Shell {
 		t.path, t.run, t.cmd = "", h.Run, shellCommand(h.Run)
 	}

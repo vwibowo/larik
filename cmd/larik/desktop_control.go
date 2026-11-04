@@ -22,7 +22,7 @@ import (
 // with what each does, for usage.
 var desktopCommands = []struct{ name, usage, about string }{
 	{"list", "", "list the window's tabs: id, session, state, directory and title"},
-	{"open", "[--session id] [--prompt text] [--shell | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell or --run a terminal tab running your shell or cmd there, or with --url a browser tab on the page; --worktree starts it in a new git worktree of dir's repository, on the branch larik/name; prints the tab's id"},
+	{"open", "[--session id] [--prompt text] [--shell | --files | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell, --files, --run or --url open a terminal, Files, command or browser tab; --worktree starts it in a new git worktree of dir's repository; prints the tab's id"},
 	{"send", "--tab tab [--no-enter] [text | -]", "type text into a tab and press Return; - or no text reads it from stdin"},
 	{"read", "--tab tab [--lines n]", "print the last lines a tab's terminal shows, its scrollback included"},
 	{"wait", "(--tab tab | --session id) [--state done] [--timeout d]", "wait until the session is in a state: done, error, blocked, working or idle, or several comma separated; prints the state"},
@@ -32,7 +32,10 @@ var desktopCommands = []struct{ name, usage, about string }{
 	{"close", "--tab tab [--force]", "close a tab; --force stops one mid-turn"},
 	{"notify", "[--title title] text", "post a notification"},
 	{"status", "[--tab tab] --id source --state idle|working|done|blocked|error|clear [--kind permission|question|auth] [--title text] [--message text]", "report a terminal tab's program status; --tab defaults to $LARIK_DESKTOP_TAB"},
-	{"page", "op [--tab tab] [--ref ref] [--enter] [--out file] [url | text | code | -]", "drive a browser tab's page, the focused one or the one focused last: navigate url (opening a tab beside the focused pane when none is open), back, forward, reload, snapshot (the page's text and its links, buttons and fields, each with a ref), click --ref, type --ref text (--enter submits it), eval code (- reads it from stdin; prints what it returns, as JSON) or screenshot (a PNG, to --out, page.png by default)"},
+	{"page", "op [--tab tab] [--ref ref] [--state condition] [--timeout duration] [--out file] [url | text | code | -]", "drive a browser tab: navigate, back, forward, reload, snapshot, click, type, fill, press, select, scroll, wait, console, eval or screenshot; wait supports load, URL, text and element conditions"},
+	{"pane", "list | focus --id pane | move --tab tab --id pane | layout columns|rows|grid|main-stack", "list panes or focus, move a tab into, or arrange them"},
+	{"notifications", "list | clear", "list or clear Desktop notifications"},
+	{"project-layout", "list|save|open --project dir [--name name]", "list, save or open a named layout for one project"},
 	{"archive", "--session id", "archive a session that isn't running: it leaves the sidebar and /resume for its project's archived ones"},
 	{"unarchive", "--session id", "bring an archived session back"},
 	{"trash", "--session id", "move a session that isn't running, archived or not, to the Trash, with what larik kept beside it"},
@@ -63,6 +66,37 @@ func desktopUsage() string {
 	return b.String()
 }
 
+// parseDesktopFlags accepts flags before or after the operation and directory.
+// The standard flag parser stops at the first positional argument.
+func parseDesktopFlags(fs *flag.FlagSet, args []string) error {
+	var flags, words []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if len(arg) < 2 || arg[0] != '-' || arg == "-" {
+			words = append(words, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name := strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-")
+		f := fs.Lookup(name)
+		if f == nil || strings.Contains(arg, "=") {
+			continue
+		}
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return fs.Parse(append(flags, words...))
+}
+
 // runDesktopCommand sends the open window the command name, with args.
 func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer) error {
 	fs := flag.NewFlagSet("desktop "+name, flag.ContinueOnError)
@@ -78,6 +112,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.BoolVar(&req.Below, "below", false, "open it in a new pane below the focused one")
 		fs.BoolVar(&req.Background, "background", false, "open it in a tab without showing it")
 		fs.BoolVar(&req.Shell, "shell", false, "open a terminal tab running your shell instead of larik")
+		fs.BoolVar(&req.Files, "files", false, "open a Files tab in the directory")
 		fs.StringVar(&req.Run, "run", "", "open a terminal tab running this command through your shell, as lazygit or npm run dev")
 		fs.StringVar(&req.URL, "url", "", "open a browser tab on this web address, as localhost:3000 or github.com")
 		fs.BoolVar(&req.Worktree, "worktree", false, "start it in a new git worktree of the directory's repository, apart from your checkout")
@@ -112,8 +147,19 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	case "page":
 		fs.StringVar(&req.Tab, "tab", "", "the browser tab: its id, or \"focused\"")
 		fs.StringVar(&req.Ref, "ref", "", "the element click or type acts on, as snapshot names it")
+		fs.StringVar(&req.State, "state", "load", "wait condition: load, url, text, visible, hidden or enabled")
+		fs.StringVar(&req.URL, "url", "", "URL to wait for")
+		fs.DurationVar(&req.Timeout, "timeout", 15*time.Second, "page wait timeout, at most 1m")
+		fs.IntVar(&req.X, "x", 0, "horizontal pixels to scroll")
+		fs.IntVar(&req.Y, "y", 0, "vertical pixels to scroll")
 		fs.BoolVar(&req.Enter, "enter", false, "after type, submit, as Return would")
 		fs.StringVar(&pageOut, "out", "page.png", "where screenshot writes its PNG")
+	case "pane":
+		fs.StringVar(&req.Ref, "id", "", "the stable pane ID from pane list")
+		fs.StringVar(&req.Tab, "tab", "", "the tab to move")
+	case "project-layout":
+		fs.StringVar(&req.Project, "project", "", "the project's root directory")
+		fs.StringVar(&req.Name, "name", "", "layout name")
 	}
 	for _, c := range desktopCommands {
 		if c.name == name {
@@ -123,17 +169,10 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 			}
 		}
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseDesktopFlags(fs, args); err != nil {
 		return err
 	}
 	words := fs.Args()
-	if (name == "open" || name == "page") && len(words) > 1 {
-		// Flags after the directory too, as larik desktop open . --split.
-		if err := fs.Parse(words[1:]); err != nil {
-			return err
-		}
-		words = append(words[:1:1], fs.Args()...)
-	}
 	rest := strings.Join(words, " ")
 	switch name {
 	case "open":
@@ -146,11 +185,15 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 					return err
 				}
 			}
-			abs, err := filepath.Abs(dir)
-			if err != nil {
-				return err
+			if strings.HasPrefix(dir, "ssh://") {
+				req.Cwd = dir
+			} else {
+				abs, err := filepath.Abs(dir)
+				if err != nil {
+					return err
+				}
+				req.Cwd = abs
 			}
-			req.Cwd = abs
 		}
 	case "send":
 		req.Text, req.Enter = rest, !noEnter
@@ -165,7 +208,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		req.Body = rest
 	case "page":
 		if len(words) == 0 {
-			return errors.New("page needs an op: navigate, back, forward, reload, snapshot, click, type, eval or screenshot")
+			return errors.New("page needs an op: navigate, back, forward, reload, snapshot, click, type, fill, press, select, scroll, wait, console, eval or screenshot")
 		}
 		req.Op = words[0]
 		arg := strings.Join(words[1:], " ")
@@ -176,10 +219,35 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 			}
 			arg = strings.TrimSuffix(string(data), "\n")
 		}
-		if req.Op == desktop.PageNavigate {
+		if req.Op == desktop.PageNavigate && arg != "" {
 			req.URL = arg
-		} else {
+		} else if arg != "" {
 			req.Text = arg
+		}
+	case "pane":
+		if len(words) == 0 {
+			return errors.New("pane needs list, focus, move or layout")
+		}
+		req.Op = words[0]
+		if req.Op == "layout" && len(words) > 1 {
+			req.State = words[1]
+		}
+	case "notifications":
+		req.Op = "list"
+		if len(words) > 0 {
+			req.Op = words[0]
+		}
+	case "project-layout":
+		if len(words) == 0 {
+			return errors.New("project-layout needs list, save or open")
+		}
+		req.Op = words[0]
+		if req.Project != "" && !strings.HasPrefix(req.Project, "ssh://") {
+			abs, err := filepath.Abs(req.Project)
+			if err != nil {
+				return err
+			}
+			req.Project = abs
 		}
 	case "wait":
 		if req.Tab == "" && req.Session == "" {
@@ -227,6 +295,18 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fmt.Fprintln(w, res.State)
 	case "page":
 		return printPage(w, res, pageOut)
+	case "pane":
+		for _, p := range res.Panes {
+			fmt.Fprintf(w, "%s %s\n", p.ID, p.Tab)
+		}
+	case "notifications":
+		for _, n := range res.Notifications {
+			fmt.Fprintf(w, "%s %s: %s\n", n.At.Format(time.RFC3339), n.Title, n.Body)
+		}
+	case "project-layout":
+		for _, name := range res.Layouts {
+			fmt.Fprintln(w, name)
+		}
 	}
 	return nil
 }

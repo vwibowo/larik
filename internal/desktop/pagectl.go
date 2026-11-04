@@ -33,6 +33,12 @@ const (
 	PageType       = "type"
 	PageEval       = "eval"
 	PageScreenshot = "screenshot"
+	PageWait       = "wait"
+	PageFill       = "fill"
+	PagePress      = "press"
+	PageSelect     = "select"
+	PageScroll     = "scroll"
+	PageConsole    = "console"
 )
 
 // PageResult is what a page op found: the page's outline after it, what
@@ -125,7 +131,11 @@ func (a *App) hasTab(t *tab) bool {
 
 // runPage runs req's op on t's page.
 func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pageLoadWait+10*time.Second)
+	limit := pageLoadWait + 10*time.Second
+	if req.Op == PageWait && req.Timeout > 0 {
+		limit = min(req.Timeout+5*time.Second, time.Minute+5*time.Second)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	p := t.web.Page()
 	settle := func() (*PageResult, error) {
@@ -191,8 +201,40 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 			return nil, err
 		}
 		return &PageResult{PNG: png}, nil
+	case PageWait:
+		if err := waitPageCondition(ctx, p, req); err != nil {
+			return nil, err
+		}
+		return &PageResult{Value: `"ready"`}, nil
+	case PageFill:
+		if err := act(ctx, p, typeScript(req.Ref, req.Text, false)); err != nil {
+			return nil, err
+		}
+		return settle()
+	case PagePress:
+		script, err := pagePressScript(req.Ref, req.Text)
+		if err != nil {
+			return nil, err
+		}
+		if err := act(ctx, p, script); err != nil {
+			return nil, err
+		}
+		return settle()
+	case PageSelect:
+		if err := act(ctx, p, pageSelectScript(req.Ref, req.Text)); err != nil {
+			return nil, err
+		}
+		return settle()
+	case PageScroll:
+		if err := act(ctx, p, pageScrollScript(req.X, req.Y)); err != nil {
+			return nil, err
+		}
+		return settle()
+	case PageConsole:
+		value, err := pageConsoleErrors(ctx, p)
+		return &PageResult{Value: value}, err
 	}
-	return nil, fmt.Errorf("unknown page op %q: navigate, back, forward, reload, snapshot, click, type, eval or screenshot", req.Op)
+	return nil, fmt.Errorf("unknown page op %q", req.Op)
 }
 
 // waitLoad waits for what the page started loading, reporting whether it

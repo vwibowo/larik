@@ -67,15 +67,49 @@ type server struct {
 	stop func()
 	// projects are its sessions, their paths marked; err is why it isn't
 	// connected, and connecting that it's on the way.
-	projects   []session.Project
-	err        string
-	connecting bool
+	projects     []session.Project
+	err          string
+	connecting   bool
+	features     []string
+	worktreeRoot string
+	// epoch invalidates monitors from earlier connections.
+	epoch, retryAttempt uint64
+	retryPending        bool
 }
 
 // connector connects to the server name: over SSH, or in tests to a host
 // here standing in for one. It returns how to reach the server's host,
 // larik's path there, and how to end the connection.
-type connector func(name string) (dial dialer, bin string, stop func(), err error)
+type connector func(name string) (dial dialer, bin string, stop func(), health <-chan error, err error)
+
+func retryDelay(attempt uint64) time.Duration {
+	shift := min(attempt, 5)
+	return min(3*time.Second<<shift, time.Minute)
+}
+
+func (a *App) retryServer(srv *server) {
+	if srv.retryPending || !slices.Contains(a.servers, srv) {
+		return
+	}
+	delay := retryDelay(srv.retryAttempt)
+	srv.retryAttempt++
+	srv.retryPending = true
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-a.done:
+			return
+		case <-timer.C:
+			a.update(func() {
+				srv.retryPending = false
+				if slices.Contains(a.servers, srv) && !srv.connecting && a.dialOf(srv) == nil {
+					a.connectServer(srv.name)
+				}
+			})
+		}
+	}()
+}
 
 // serverNamed is the server called name, or nil.
 func (a *App) serverNamed(name string) *server {
@@ -105,22 +139,33 @@ func (a *App) connectServer(name string) {
 		return
 	}
 	srv.connecting, srv.err = true, ""
+	srv.epoch++
+	epoch := srv.epoch
 	connect := a.connect
 	if connect == nil {
 		connect = sshConnect
 	}
 	go func() {
-		dial, bin, stop, err := connect(name)
+		dial, bin, stop, health, err := connect(name)
+		var features []string
+		var worktreeRoot string
 		if err == nil {
-			err = checkProto(dial, name)
+			features, worktreeRoot, err = probeHost(dial, name)
 			if err != nil {
 				stop()
 			}
 		}
 		a.update(func() {
+			if srv.epoch != epoch {
+				if err == nil {
+					go stop()
+				}
+				return
+			}
 			srv.connecting = false
 			if err != nil {
 				srv.err = err.Error()
+				a.retryServer(srv)
 				return
 			}
 			if !slices.Contains(a.servers, srv) { // disconnected meanwhile
@@ -130,8 +175,31 @@ func (a *App) connectServer(name string) {
 			a.serversMu.Lock()
 			srv.dial, srv.bin, srv.stop = dial, bin, stop
 			a.serversMu.Unlock()
+			srv.features, srv.worktreeRoot, srv.retryAttempt = features, worktreeRoot, 0
+			a.reconnectRemoteTabs(srv)
+			if a.dialOf(srv) == nil {
+				return
+			}
 			a.adoptRemote(srv)
+			a.reconnectRemotePorts(srv)
 			a.refreshIndex()
+			if health != nil {
+				go func() {
+					select {
+					case <-a.done:
+						return
+					case failure, ok := <-health:
+						if !ok || failure == nil {
+							failure = errors.New("SSH forward ended")
+						}
+						a.update(func() {
+							if srv.epoch == epoch && a.dialOf(srv) != nil {
+								a.lostServer(srv, failure)
+							}
+						})
+					}
+				}()
+			}
 		})
 	}()
 }
@@ -139,15 +207,20 @@ func (a *App) connectServer(name string) {
 // checkProto asks the server's host what it speaks, saying when it's
 // older than this window.
 func checkProto(dial dialer, name string) error {
+	_, _, err := probeHost(dial, name)
+	return err
+}
+
+func probeHost(dial dialer, name string) ([]string, string, error) {
 	conn, _, rep, err := askHostVia(dial, hostRequest{Op: "ping"})
 	if err != nil {
-		return fmt.Errorf("can't reach larik on %s: %w", name, err)
+		return nil, "", fmt.Errorf("can't reach larik on %s: %w", name, err)
 	}
 	conn.Close()
 	if rep.Proto < hostProto {
-		return fmt.Errorf("larik on %s is older than this one: update it there (larik update)", name)
+		return nil, "", fmt.Errorf("larik on %s is older than this one: update it there (larik update)", name)
 	}
-	return nil
+	return rep.Features, rep.WorktreeRoot, nil
 }
 
 // dialOf is how to reach srv's host, nil while it isn't connected.
@@ -165,6 +238,8 @@ func (a *App) disconnectServer(name string) {
 	if srv == nil {
 		return
 	}
+	srv.epoch++
+	a.dropRemoteForwards(name)
 	for _, t := range slices.Clone(a.tabs) {
 		if n, _, ok := splitRemote(t.dir); ok && n == name {
 			a.forgetTab(t)
@@ -194,6 +269,7 @@ func (a *App) forgetTab(t *tab) {
 	}
 	a.tabs = slices.DeleteFunc(a.tabs, func(x *tab) bool { return x == t })
 	t.close()
+	a.releaseRemoteForward(t.remotePort)
 	if a.layout == nil && len(a.tabs) > 0 {
 		a.activate(a.tabs[len(a.tabs)-1])
 	}
@@ -219,6 +295,46 @@ func (a *App) adoptRemote(srv *server) {
 		}
 	}
 	a.followSessions()
+}
+
+// reconnectRemoteTabs reuses the visible tab and pane when its host still
+// has the program. A missing program stays visible as failed.
+func (a *App) reconnectRemoteTabs(srv *server) {
+	conn, _, rep, err := askHostVia(srv.dial, hostRequest{Op: "list"})
+	if err != nil {
+		a.lostServer(srv, err)
+		return
+	}
+	conn.Close()
+	live := map[string]hostTabInfo{}
+	for _, h := range rep.Tabs {
+		live[h.ID] = h
+	}
+	for _, t := range a.tabs {
+		name, _, ok := splitRemote(t.dir)
+		if !ok || name != srv.name || !t.disconnected {
+			continue
+		}
+		h, found := live[t.id]
+		if !found || h.Exited {
+			t.disconnected, t.exited = false, true
+			if found {
+				t.code = h.Code
+				t.agent = agentForTab(t, h.Agent)
+			}
+			t.agentOffered = t.agent.valid()
+			continue
+		}
+		t.agent = agentForTab(t, h.Agent)
+		t.reattach = true
+		old := t.term
+		if a.run(t, "") {
+			t.disconnected, t.exited, t.code = false, false, 0
+			if old != nil {
+				old.Close()
+			}
+		}
+	}
 }
 
 // openRemote connects t to its program in the host of the server name,
@@ -250,6 +366,10 @@ func (a *App) openRemote(t *tab, name, dir string, args []string) (*hostConn, er
 
 // lostServer marks srv as no longer connected: its host didn't answer.
 func (a *App) lostServer(srv *server, err error) {
+	if a.dialOf(srv) == nil {
+		return
+	}
+	srv.epoch++
 	a.serversMu.Lock()
 	stop := srv.stop
 	srv.dial, srv.stop = nil, nil
@@ -258,6 +378,13 @@ func (a *App) lostServer(srv *server, err error) {
 		go stop()
 	}
 	srv.err = "lost the connection: " + err.Error()
+	a.dropRemoteForwards(srv.name)
+	for _, t := range a.tabs {
+		if name, _, ok := splitRemote(t.dir); ok && name == srv.name && (!t.exited || t.code == -1) {
+			t.disconnected, t.exited, t.code = true, true, -1
+		}
+	}
+	a.retryServer(srv)
 }
 
 // askServer shows the sidebar's field for a server to connect to.
@@ -359,7 +486,11 @@ func (a *App) serverSection(c *ui.Context, t *ui.Theme, srv *server) {
 		}
 	})
 	if srv.err != "" && !srv.connecting {
-		ui.Text(c.Key("server-err:"+srv.name), srv.err).FontSize(11).TextColor(t.Danger).Padding(0, 8, 4, 8)
+		message := srv.err
+		if srv.retryPending {
+			message += " · retrying"
+		}
+		ui.Text(c.Key("server-err:"+srv.name), message).FontSize(11).TextColor(t.Danger).Padding(0, 8, 4, 8)
 	}
 	if connected && len(srv.projects) == 0 {
 		ui.Text(c.Key("server-empty:"+srv.name), "No sessions there yet: right-click "+srv.name+" to start one.").FontSize(11).TextColor(t.TextMuted).Padding(0, 8, 4, 8)
@@ -520,11 +651,11 @@ func parseEnsure(out string) (socket, bin string, err error) {
 
 // sshConnect connects to the server name over SSH, with the keys and
 // agent ~/.ssh/config gives it: it can't ask for a password.
-func sshConnect(name string) (dialer, string, func(), error) {
+func sshConnect(name string) (dialer, string, func(), <-chan error, error) {
 	out, err := exec.Command("ssh", sshEnsureArgs(name)...).CombinedOutput()
 	remote, bin, perr := parseEnsure(string(out))
 	if err != nil || perr != nil {
-		return nil, "", nil, ensureError(name, string(out), err)
+		return nil, "", nil, nil, ensureError(name, string(out), err)
 	}
 	local := sshSocketPath(name)
 	_ = os.Remove(local)
@@ -532,10 +663,17 @@ func sshConnect(name string) (dialer, string, func(), error) {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
+	var runErr error
+	go func() { runErr = cmd.Wait(); close(exited) }()
+	health := make(chan error, 1)
+	go func() {
+		<-exited
+		health <- runErr
+		close(health)
+	}()
 	stop := func() {
 		_ = cmd.Process.Kill()
 		<-exited
@@ -546,16 +684,16 @@ func sshConnect(name string) (dialer, string, func(), error) {
 		select {
 		case <-exited:
 			_ = os.Remove(local)
-			return nil, "", nil, fmt.Errorf("ssh %s ended: %s", name, firstNonEmpty(strings.TrimSpace(stderr.String()), "the forward failed"))
+			return nil, "", nil, nil, fmt.Errorf("ssh %s ended: %s", name, firstNonEmpty(strings.TrimSpace(stderr.String()), "the forward failed"))
 		default:
 		}
 		if conn, err := dial(); err == nil {
 			conn.Close()
-			return dial, bin, stop, nil
+			return dial, bin, stop, health, nil
 		}
 		if time.Now().After(deadline) {
 			stop()
-			return nil, "", nil, fmt.Errorf("ssh %s: the host's socket didn't come through", name)
+			return nil, "", nil, nil, fmt.Errorf("ssh %s: the host's socket didn't come through", name)
 		}
 	}
 }
@@ -569,6 +707,10 @@ func ensureError(name, out string, err error) error {
 	switch {
 	case strings.Contains(msg, "command not found") || strings.Contains(msg, ": not found"):
 		return fmt.Errorf("larik isn't on the PATH of a non-interactive shell on %s: install it, or add its folder to PATH in ~/.zshenv or ~/.bashrc there", name)
+	case strings.Contains(msg, "Permission denied") || strings.Contains(msg, "publickey"):
+		return fmt.Errorf("SSH authentication failed for %s: check its key, agent and ~/.ssh/config entry", name)
+	case strings.Contains(msg, "Could not resolve hostname"):
+		return fmt.Errorf("SSH can't find %s: check the server name in ~/.ssh/config", name)
 	case err != nil && isSSHFailure(err):
 		return fmt.Errorf("ssh %s: %s", name, firstNonEmpty(msg, err.Error()))
 	}

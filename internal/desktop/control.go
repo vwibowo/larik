@@ -36,11 +36,14 @@ type Request struct {
 	// Shell opens a terminal tab in Cwd, running Run through your shell,
 	// or the shell itself when Run is empty.
 	Shell bool   `json:"shell,omitempty"`
+	Files bool   `json:"files,omitempty"`
 	Run   string `json:"run,omitempty"`
 	// Worktree opens the tab in a new worktree of the repository Cwd is
 	// in, on the branch larik/<Branch>, or one named for it.
 	Worktree bool   `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
+	Project  string `json:"project,omitempty"`
+	Name     string `json:"name,omitempty"`
 	// URL opens a browser tab on the page, as a web address is typed, or
 	// is where page's navigate goes.
 	URL string `json:"url,omitempty"`
@@ -49,6 +52,8 @@ type Request struct {
 	// what type types or eval runs, and Enter submits what was typed.
 	Op  string `json:"op,omitempty"`
 	Ref string `json:"ref,omitempty"`
+	X   int    `json:"x,omitempty"`
+	Y   int    `json:"y,omitempty"`
 	// Background opens a tab without showing it, leaving the panes as
 	// they are.
 	Background bool   `json:"background,omitempty"`
@@ -66,16 +71,20 @@ type Request struct {
 	StatusID string        `json:"status_id,omitempty"` // status record within a terminal tab
 	Kind     string        `json:"kind,omitempty"`      // blocked status kind
 	Message  string        `json:"message,omitempty"`   // status message
+	Agent    *agentResume  `json:"agent,omitempty"`     // native agent identity, when a hook supplies it
 }
 
 // Response is the window's answer.
 type Response struct {
-	Error string      `json:"error,omitempty"`
-	Tabs  []TabInfo   `json:"tabs,omitempty"` // list's
-	Tab   *TabInfo    `json:"tab,omitempty"`  // the tab acted on
-	Text  string      `json:"text,omitempty"` // read's
-	State string      `json:"state,omitempty"`
-	Page  *PageResult `json:"page,omitempty"` // page's
+	Error         string             `json:"error,omitempty"`
+	Tabs          []TabInfo          `json:"tabs,omitempty"` // list's
+	Tab           *TabInfo           `json:"tab,omitempty"`  // the tab acted on
+	Text          string             `json:"text,omitempty"` // read's
+	State         string             `json:"state,omitempty"`
+	Page          *PageResult        `json:"page,omitempty"` // page's
+	Panes         []PaneInfo         `json:"panes,omitempty"`
+	Notifications []NotificationInfo `json:"notifications,omitempty"`
+	Layouts       []string           `json:"layouts,omitempty"`
 }
 
 // TabInfo is a tab as commands see it.
@@ -95,15 +104,16 @@ type TabInfo struct {
 	Ports   []int  `json:"ports,omitempty"`
 	// What its session runs on and has used: Context is how full its
 	// context is, in percent, and CostUSD 0 for a model without a price.
-	Model   string  `json:"model,omitempty"`
-	Mode    string  `json:"mode,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"`
-	Context *int    `json:"context,omitempty"`
-	Tokens  int     `json:"tokens,omitempty"`
-	Shown   bool    `json:"shown,omitempty"`   // in a pane
-	Focused bool    `json:"focused,omitempty"` // has the keyboard
-	Exited  bool    `json:"exited,omitempty"`
-	Code    int     `json:"code,omitempty"`
+	Model        string  `json:"model,omitempty"`
+	Mode         string  `json:"mode,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+	Context      *int    `json:"context,omitempty"`
+	Tokens       int     `json:"tokens,omitempty"`
+	Shown        bool    `json:"shown,omitempty"`   // in a pane
+	Focused      bool    `json:"focused,omitempty"` // has the keyboard
+	Exited       bool    `json:"exited,omitempty"`
+	Code         int     `json:"code,omitempty"`
+	Disconnected bool    `json:"disconnected,omitempty"`
 }
 
 // control answers a request, off the main thread: wait waits there, and
@@ -135,7 +145,7 @@ func (a *App) control(req Request) Response {
 		}
 	case "trash":
 		return a.controlTrash(req)
-	case "list", "send", "read", "focus", "close", "notify", "archive", "unarchive":
+	case "list", "send", "read", "focus", "close", "notify", "archive", "unarchive", "pane", "notifications", "project-layout":
 	default:
 		return Response{Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}
@@ -173,6 +183,12 @@ func (a *App) command(req Request) Response {
 		return Response{Tabs: tabs}
 	case "open":
 		return a.controlOpen(req)
+	case "pane":
+		return a.controlPane(req)
+	case "notifications":
+		return a.controlNotifications(req)
+	case "project-layout":
+		return a.controlProjectLayout(req)
 	case "archive":
 		s, err := a.sessionRef(req.Session)
 		if err != "" {
@@ -278,6 +294,11 @@ func (a *App) controlOpen(req Request) Response {
 				t.term.Send([]byte(req.Prompt + "\r"))
 			}
 		}
+	case req.Files:
+		if req.Cwd == "" {
+			return Response{Error: "open --files needs a directory"}
+		}
+		t = a.startFiles(req.Cwd)
 	case req.URL != "":
 		u, ok := normalizeURL(req.URL)
 		if !ok {
@@ -605,7 +626,7 @@ func (a *App) tabInfo(t *tab) TabInfo {
 		Ports:   a.ports[t.path],
 		Shown:   a.shown(t),
 		Focused: t == a.focused() && slices.Contains(a.tabs, t),
-		Exited:  t.exited, Code: t.code,
+		Exited:  t.exited, Code: t.code, Disconnected: t.disconnected,
 	}
 	if t.shell() {
 		info.Kind = "terminal"

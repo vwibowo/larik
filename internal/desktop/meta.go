@@ -31,7 +31,7 @@ func (a *App) metaLoop() {
 	tick := time.NewTicker(metaEvery)
 	defer tick.Stop()
 	for {
-		dirs, pids := a.metaWanted()
+		dirs, pids, remote := a.metaWanted()
 		gits := map[string]gitMeta{}
 		for _, dir := range dirs {
 			if m, ok := readGit(dir); ok {
@@ -39,7 +39,27 @@ func (a *App) metaLoop() {
 			}
 		}
 		ports := listening(pids)
-		a.update(func() { a.git, a.ports = gits, ports })
+		if ports == nil {
+			ports = map[string][]int{}
+		}
+		remoteSeen := map[string]bool{}
+		for _, src := range remote {
+			meta, err := readRemoteMeta(src)
+			if err != nil {
+				continue
+			}
+			remoteSeen[src.name] = true
+			for dir, m := range meta.Git {
+				gits[remotePath(src.name, dir)] = m
+			}
+			for path, list := range meta.Ports {
+				ports[remotePath(src.name, path)] = list
+			}
+		}
+		a.update(func() {
+			a.git, a.ports = gits, ports
+			a.expireRemoteForwards(ports, remoteSeen)
+		})
 		select {
 		case <-a.done:
 			return
@@ -54,11 +74,12 @@ func (a *App) metaLoop() {
 // worktree has a branch of its own in;
 // and the processes of sessions running in this window's tabs, by
 // transcript path.
-func (a *App) metaWanted() (dirs []string, pids map[string]int) {
+func (a *App) metaWanted() (dirs []string, pids map[string]int, remote []remoteMetaSource) {
 	got := make(chan struct{})
 	a.update(func() {
 		defer close(got)
 		pids = map[string]int{}
+		remote = a.remoteMetaSources()
 		for _, p := range a.projects {
 			if p.Missing || isRemote(p.Root) || a.open[p.Root] == nil || !*a.open[p.Root] {
 				continue
@@ -80,7 +101,7 @@ func (a *App) metaWanted() (dirs []string, pids map[string]int) {
 	case <-got:
 	case <-a.done:
 	}
-	return dirs, pids
+	return dirs, pids, remote
 }
 
 // readGit reads dir's branch and changes, or reports it isn't a checkout.

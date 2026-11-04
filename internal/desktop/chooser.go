@@ -139,10 +139,14 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 		}
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "in "+tildePath(dir)).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
-			if a.pickDir != nil {
+			if a.pickDir != nil || isRemote(dir) {
 				change := ui.Text(c.Key("change"), "Change…").FontSize(12).TextColor(t.Accent).Cursor(ui.CursorPointer).Label("Change the folder")
 				if change.Clicked() {
-					a.pickDir(dir, setDir)
+					if isRemote(dir) {
+						a.askRemoteFolder(dir, setDir)
+					} else {
+						a.pickDir(dir, setDir)
+					}
 				}
 			}
 		})

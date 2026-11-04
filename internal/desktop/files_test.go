@@ -493,7 +493,7 @@ func TestFilesFollowFocusSplitAndRestore(t *testing.T) {
 	}
 	tt := ui.NewTester(next.view, 1240, 800)
 	tt.Frame()
-	if !tt.HasText("Remote files are not available yet") {
+	if !tt.HasText("Can't open folder: not connected to server") {
 		t.Fatalf("remote state missing: %q", tt.Texts())
 	}
 }

@@ -184,6 +184,9 @@ func (a *App) view(c *ui.Context) {
 		a.confirmLeave(c)
 		a.confirmAsked(c)
 		a.filesEditDialog(c)
+		a.remoteFolderDialog(c)
+		a.layoutDialog(c)
+		a.recentDialog(c)
 		a.commandPalette(c, t)
 	})
 	a.saveState()
@@ -377,6 +380,10 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.focusToward(0, -1)
 	case a.keyed(c, "Pane Below", mod|ui.Alt, ui.KeyDown):
 		a.focusToward(0, 1)
+	case a.keyed(c, "Previous Focused Tab", mod|ui.Alt, ui.KeyBracketLeft):
+		a.navigateFocus(-1)
+	case a.keyed(c, "Next Focused Tab", mod|ui.Alt, ui.KeyBracketRight):
+		a.navigateFocus(1)
 	case a.keyed(c, "Open Folder…", mod, ui.KeyO):
 		a.openFolder()
 	case a.keyed(c, "Settings…", mod, ui.KeyComma):
@@ -766,7 +773,13 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if p := a.paneOf(tb); p != nil && a.split() && m.Item("Close Pane").Chosen() {
 		a.closePane(p)
 	}
-	if tb.exited && tb.code != 0 && m.Item("Restart").Chosen() {
+	if tb.agentOffered && m.Item("Resume agent").Chosen() {
+		a.resumeAgent(tb)
+	}
+	if tb.agentOffered && m.Item("Use Terminal").Chosen() {
+		a.declineAgent(tb)
+	}
+	if tb.exited && tb.code != 0 && !tb.agentOffered && m.Item("Restart").Chosen() {
 		a.restart(tb)
 	}
 	if tb.browser && tb.url != blankPage {
@@ -778,8 +791,11 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if len(a.tabs) > 1 && m.Item("Close Other Tabs").Chosen() {
 		a.closeOthers(tb)
 	}
-	if len(a.closed) > 0 && m.Item("Reopen Closed Tab").Chosen() {
+	if (len(a.closed) > 0 || len(a.recent) > 0) && m.Item("Reopen Closed Tab").Chosen() {
 		a.reopenClosed()
+	}
+	if len(a.recent) > 0 && m.Item("Recently Closed…").Chosen() {
+		a.recentOpen, a.recentQuery = true, ""
 	}
 	if tb.path == "" {
 		return
@@ -1006,17 +1022,39 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 
 // projectMenu is what a project's context menu offers.
 func (a *App) projectMenu(m *ui.Menu, p session.Project) {
+	if m.Item("Save Project Layout…").Chosen() {
+		a.askSaveLayout(p.Root)
+	}
+	var names []string
+	for name := range a.layouts[p.Root] {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if m.Item("Open Layout: " + name).Chosen() {
+			if err := a.openProjectLayout(p.Root, name); err != nil {
+				a.notice = err.Error()
+			}
+		}
+	}
+	if len(names) > 0 {
+		m.Separator()
+	}
 	if !p.Missing && m.Item("New Session Here").Chosen() {
 		a.newTab(p.Root, "", "")
 	}
-	if _, err := os.Lstat(filepath.Join(p.Root, ".git")); err == nil && !p.Missing && m.Item("New Session in Worktree").Chosen() {
+	_, gitErr := os.Lstat(filepath.Join(p.Root, ".git"))
+	if isRemote(p.Root) {
+		gitErr = nil
+	}
+	if gitErr == nil && !p.Missing && m.Item("New Session in Worktree").Chosen() {
 		a.newWorktreeSession(p.Root)
 	}
 	open := "Open Folder"
 	if runtime.GOOS == "darwin" {
 		open = "Open in Finder"
 	}
-	if !p.Missing && m.Item(open).Chosen() && a.openPath != nil {
+	if !p.Missing && !isRemote(p.Root) && m.Item(open).Chosen() && a.openPath != nil {
 		a.openPath(p.Root)
 	}
 	if m.Item("Copy Path").Chosen() && a.copyText != nil {
@@ -1168,6 +1206,9 @@ func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root 
 		}
 		for _, port := range ports {
 			url := fmt.Sprintf("http://localhost:%d", port)
+			if name, _, remote := splitRemote(s.Path); remote {
+				url = fmt.Sprintf("%s:%d", name, port)
+			}
 			tip := "Open " + url + " in a browser tab (" + clickMod() + "-click: in your browser)"
 			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip(tip).Label("Open " + url)
 			if link.Clicked() {
@@ -1449,17 +1490,33 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 // exitBar says a tab's larik failed, over what it printed, and offers
 // to run it again.
 func (a *App) exitBar(c *ui.Context, t *ui.Theme, tb *tab) {
-	if !tb.exited || tb.code == 0 {
+	if !tb.agentOffered && (!tb.exited || tb.code == 0) {
+		return
+	}
+	if tb.disconnected {
+		ui.Row(c.Key("disconnected")).Padding(6, 10, 6, 16).Background(t.Danger.Alpha(0.08)).Children(func() {
+			ui.Text(c, "Remote connection lost. Reconnecting…").FontSize(12)
+		})
 		return
 	}
 	ui.Row(c.Key("exit")).Gap(8).Padding(6, 10, 6, 16).AlignItems(ui.Center).Background(t.Danger.Alpha(0.08)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		ui.Icon(c, iconError).FontSize(13).TextColor(t.Danger)
 		what := "larik exited with status " + strconv.Itoa(tb.code)
+		if tb.agentOffered {
+			what = "Resume the previous " + tb.agent.Kind + " session?"
+		}
 		if tb.path != "" {
 			what += "; restarting resumes the session"
 		}
 		ui.Text(c, what).FontSize(12).Grow(1).Shrink(1)
-		if ui.Button(c.Key("restart"), "Restart").Clicked() {
+		if tb.agentOffered {
+			if ui.Button(c.Key("resume-agent"), "Resume agent").Clicked() {
+				a.resumeAgent(tb)
+			}
+			if ui.Button(c.Key("decline-agent"), "Terminal").Clicked() {
+				a.declineAgent(tb)
+			}
+		} else if ui.Button(c.Key("restart"), "Restart").Clicked() {
 			a.restart(tb)
 		}
 	})

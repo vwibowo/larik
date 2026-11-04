@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -42,6 +43,8 @@ func TestRemotePaths(t *testing.T) {
 		"zsh: command not found: larik":       "isn't on the PATH",
 		"bash: line 1: larik: not found":      "isn't on the PATH",
 		"larik: bubbletea: error opening TTY": "0.28.0 or newer",
+		"Permission denied (publickey).":      "authentication failed",
+		"Could not resolve hostname devbox":   "can't find",
 	} {
 		if err := ensureError("devbox", out, errors.New("exit status 1")); !strings.Contains(err.Error(), want) {
 			t.Errorf("ensureError(%q) = %v, want %q", out, err, want)
@@ -82,8 +85,8 @@ func standIn(t *testing.T, data string) (*host, connector) {
 	go h.serve(ln)
 	t.Cleanup(func() { ln.Close(); h.closeAll(); os.Remove(sock) })
 	bin := fakeLarik(t)
-	return h, func(name string) (dialer, string, func(), error) {
-		return func() (net.Conn, error) { return net.Dial("unix", sock) }, bin, func() {}, nil
+	return h, func(name string) (dialer, string, func(), <-chan error, error) {
+		return func() (net.Conn, error) { return net.Dial("unix", sock) }, bin, func() {}, nil, nil
 	}
 }
 
@@ -171,6 +174,53 @@ func TestRemoteServer(t *testing.T) {
 	a.disconnectServer("devbox")
 	if a.startTab(remotePath("devbox", repo), "", "") != nil || !strings.Contains(a.notice, "not connected to devbox") {
 		t.Fatalf("started without a connection: %q", a.notice)
+	}
+}
+
+func TestRemoteReconnectKeepsTabAndPane(t *testing.T) {
+	needTerminal(t)
+	local, _ := fixture(t)
+	remote, repo := fixture(t)
+	h, base := standIn(t, remote)
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: local})
+	defer a.Close()
+	first := make(chan error, 1)
+	connects := 0
+	a.connect = func(name string) (dialer, string, func(), <-chan error, error) {
+		dial, bin, stop, _, err := base(name)
+		connects++
+		if connects == 1 {
+			return dial, bin, stop, first, err
+		}
+		return dial, bin, stop, nil, err
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	mu.Lock()
+	a.connectServer("devbox")
+	mu.Unlock()
+	frameUntil(t, mu, tt, "connected", func() bool { return a.dialOf(a.servers[0]) != nil })
+	mu.Lock()
+	tb := a.startShell(remotePath("devbox", repo), "sleep 30")
+	if tb == nil {
+		mu.Unlock()
+		t.Fatal("remote terminal did not start")
+	}
+	a.activate(tb)
+	oldTerm, oldPane := tb.term, a.paneOf(tb)
+	mu.Unlock()
+	first <- errors.New("link dropped")
+	frameUntil(t, mu, tt, "disconnected", func() bool { return tb.disconnected && a.dialOf(a.servers[0]) == nil })
+	frameUntil(t, mu, tt, "reconnected", func() bool { return !tb.disconnected && a.dialOf(a.servers[0]) != nil })
+	mu.Lock()
+	defer mu.Unlock()
+	if a.tabByID(tb.id) != tb || tb.term == oldTerm || a.paneOf(tb) != oldPane || len(a.tabs) != 1 || len(h.list()) != 1 {
+		t.Fatalf("reconnect duplicated or moved the tab: tabs=%d host=%d", len(a.tabs), len(h.list()))
+	}
+	if connects != 2 {
+		t.Fatalf("got %d connections, want 2", connects)
+	}
+	if retryDelay(0) != 3*time.Second || retryDelay(10) != time.Minute {
+		t.Fatal("retry backoff is outside its bounds")
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 // pane is a pane, showing a tab, or a split of two.
 type pane struct {
+	id  string
 	tab *tab // a pane's
 	// A split's: below puts second under first rather than beside it,
 	// and percent is first's share of the room.
@@ -81,6 +82,9 @@ func (a *App) focused() *tab {
 // focusPane gives p the keyboard, and marks its session read. Moving to
 // a pane the zoom hides shows them all again.
 func (a *App) focusPane(p *pane) {
+	if p != nil && p.tab != nil {
+		a.rememberFocus(p.tab)
+	}
 	if p != a.focus {
 		a.zoomed = false
 	}
@@ -332,6 +336,7 @@ func (a *App) paneToward(dx, dy int) *pane {
 // activate shows t in the focused pane, or moves the keyboard to the
 // pane showing it already, and marks its session read.
 func (a *App) activate(t *tab) {
+	a.rememberFocus(t)
 	if p := a.paneOf(t); p != nil {
 		a.focusPane(p)
 		return
@@ -364,6 +369,7 @@ func (a *App) unshow(t *tab, i int) {
 // savedPane is the panes as the window remembers them: a pane, by its
 // tab's index in savedState.Tabs, or a split of two.
 type savedPane struct {
+	ID      string      `json:"id,omitempty"`
 	Tab     int         `json:"tab"`
 	Below   bool        `json:"below,omitempty"`
 	Percent float32     `json:"percent,omitempty"`
@@ -381,7 +387,7 @@ func savePanes(p *pane, index map[*tab]int) *savedPane {
 		if !ok {
 			return nil
 		}
-		return &savedPane{Tab: i}
+		return &savedPane{ID: p.id, Tab: i}
 	}
 	f, s := savePanes(p.first, index), savePanes(p.second, index)
 	switch {
@@ -405,7 +411,7 @@ func restorePanes(sp *savedPane, opened map[int]*tab, used map[*tab]bool) *pane 
 			return nil
 		}
 		used[t] = true
-		return &pane{tab: t}
+		return &pane{id: sp.ID, tab: t}
 	}
 	f, s := restorePanes(&sp.Panes[0], opened, used), restorePanes(&sp.Panes[1], opened, used)
 	switch {

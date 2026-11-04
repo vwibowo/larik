@@ -9,14 +9,19 @@ import (
 // savedState is what the window remembers across launches: the sessions
 // open as tabs, in order, how the panes showed them, and the sidebar.
 type savedState struct {
-	Tabs []string `json:"tabs"` // transcript paths, "" for a terminal or browser tab
+	Version int         `json:"version,omitempty"`
+	Recent  []closedTab `json:"recent,omitempty"`
+	Tabs    []string    `json:"tabs"` // transcript paths, "" for a terminal or browser tab
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
 	// Browsers are the browser tabs' pages, by their index in Tabs, and
 	// Sites what you let their pages use, or didn't, by siteKey.
-	Browsers map[int]string  `json:"browsers,omitempty"`
-	Files    map[int]string  `json:"files,omitempty"` // Files tab roots by tab index
-	Sites    map[string]bool `json:"sites,omitempty"`
+	Browsers    map[int]string          `json:"browsers,omitempty"`
+	BrowserDirs map[int]string          `json:"browser_dirs,omitempty"`
+	RemotePorts map[int]savedRemotePort `json:"remote_ports,omitempty"`
+	Agents      map[int]agentResume     `json:"agents,omitempty"`
+	Files       map[int]string          `json:"files,omitempty"` // Files tab roots by tab index
+	Sites       map[string]bool         `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
 	Hosted map[int]string `json:"hosted,omitempty"`
@@ -66,6 +71,11 @@ type savedTerminal struct {
 	Run string `json:"run,omitempty"`
 }
 
+type savedRemotePort struct {
+	Name string `json:"name"`
+	Port int    `json:"port"`
+}
+
 func (a *App) statePath() string {
 	return filepath.Join(a.opts.DataDir, "desktop", "state.json")
 }
@@ -73,7 +83,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Version: 2, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
 	for root, open := range a.open {
 		st.Open[root] = *open
 	}
@@ -92,22 +102,39 @@ func (a *App) state() savedState {
 	}
 	index := map[*tab]int{}
 	for _, t := range a.tabs {
-		if isRemote(t.dir) && t.files == nil {
+		if isRemote(t.dir) && t.files == nil && !t.browser {
 			continue // the server's host has it, and the next connection shows it
 		}
 		path := t.path
 		switch {
-		case t.shell() && !t.exited:
+		case t.shell() && (!t.exited || t.agent.valid()):
 			if st.Terminals == nil {
 				st.Terminals = map[int]savedTerminal{}
 			}
 			st.Terminals[len(st.Tabs)] = savedTerminal{Dir: t.dir, Run: t.run}
+			if t.agent.valid() {
+				if st.Agents == nil {
+					st.Agents = map[int]agentResume{}
+				}
+				st.Agents[len(st.Tabs)] = t.agent
+			}
 			path = ""
 		case t.browser:
 			if st.Browsers == nil {
 				st.Browsers = map[int]string{}
 			}
+			if st.BrowserDirs == nil {
+				st.BrowserDirs = map[int]string{}
+			}
+			st.BrowserDirs[len(st.Tabs)] = t.dir
 			st.Browsers[len(st.Tabs)] = t.url
+			if t.remotePort.port != 0 {
+				if st.RemotePorts == nil {
+					st.RemotePorts = map[int]savedRemotePort{}
+				}
+				st.RemotePorts[len(st.Tabs)] = savedRemotePort{t.remotePort.name, t.remotePort.port}
+				st.Browsers[len(st.Tabs)] = blankPage
+			}
 			path = ""
 		case t.files != nil:
 			if st.Files == nil {
@@ -192,6 +219,7 @@ func (a *App) restore() bool {
 		return a.showAdopted(a.adoptHosted(live))
 	}
 	a.saved = string(data)
+	a.recent = st.Recent
 	if st.Width > 0 {
 		a.sidebarW = st.Width
 	}
@@ -236,6 +264,15 @@ func (a *App) restore() bool {
 		if u, ok := st.Browsers[i]; ok {
 			if t := a.startBrowser(u); t != nil {
 				t.focusAddr = false
+				if dir := st.BrowserDirs[i]; dir != "" {
+					t.dir = dir
+				}
+				if remote, ok := st.RemotePorts[i]; ok && remote.Name != "" && remote.Port > 0 && remote.Port <= 65535 {
+					if !isRemote(t.dir) {
+						t.dir = remotePath(remote.Name, "")
+					}
+					t.remotePort, t.remotePortLost = remotePortKey{remote.Name, remote.Port}, true
+				}
 				opened[i] = t
 			}
 			continue
@@ -246,6 +283,12 @@ func (a *App) restore() bool {
 		}
 		if term, ok := st.Terminals[i]; ok {
 			if t := a.startShell(term.Dir, ""); t != nil {
+				if agent := st.Agents[i]; agent.valid() {
+					agent.Tab = t.id
+					if mapped := agentForTab(t, agent); mapped.valid() {
+						t.agent, t.agentOffered = mapped, true
+					}
+				}
 				opened[i] = t
 			}
 			continue
@@ -279,6 +322,11 @@ func (a *App) restore() bool {
 	}
 	a.zoomed = st.Zoomed && a.split()
 	a.focusNext = a.focus.tab
+	for _, srv := range a.servers {
+		if a.dialOf(srv) != nil {
+			a.reconnectRemotePorts(srv)
+		}
+	}
 	if a.focus.tab.files == nil {
 		a.followFiles(a.focus.tab.dir)
 	}
