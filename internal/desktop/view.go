@@ -52,6 +52,8 @@ var (
 	iconReload   = svg(`<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>`)
 	iconExternal = svg(`<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
 	iconBell     = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
+	iconArchive  = svg(`<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>`)
+	iconTrash    = svg(`<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -428,6 +430,11 @@ func (a *App) cycle(by int) {
 // sidebar and the content.
 const toolbarHeight = 52
 
+// trafficLights is where the close button's top-left corner goes: the
+// 14-point buttons centered in the toolbar's height, as far from the
+// window's left edge as from its top, as Finder's.
+var trafficLights = &mygo.Point{X: 20, Y: (toolbarHeight - 14) / 2}
+
 // toolbar is the content's title bar, as macOS draws a unified toolbar:
 // the focused session's title and where it is, and buttons to split,
 // show the changes, and start a session. It moves the window.
@@ -790,6 +797,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		if found := a.matches(); strings.TrimSpace(a.query) != "" && len(found) > 0 {
 			selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
 		}
+		a.rows = a.rows[:0] // sessionItem lists them again
 		sb := ui.Sidebar(c, &selected, func() {
 			if strings.TrimSpace(a.query) != "" {
 				a.results(c, t)
@@ -802,13 +810,41 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				a.project(c, t, p)
 			}
 		}).Grow(1).Background(ui.Transparent) // the rows on the sidebar's material, as macOS draws them
+		// A click with Command or Shift chooses sessions together, and a
+		// Shift+Up or Down takes in the next one; either opens nothing.
+		toggle, extend := multiMods(c.Modifiers())
 		if f := a.focused(); sb.Changed() && selected != "" && (f == nil || f.path != selected && tabKey(f) != selected) {
-			a.selectKey(selected)
+			switch {
+			case extend && slices.Contains(a.rows, selected):
+				a.pickRange(cmp.Or(a.anchor, a.cursor, a.focusedSession()), selected)
+				a.cursor = selected
+				a.announcePicked(c)
+			case toggle:
+			default:
+				a.clearPicked()
+				a.selectKey(selected)
+			}
+		}
+		// While it has the keyboard: Shift+Up and Down take in the next
+		// session, Escape lets go of those chosen, and Command+Delete
+		// (Delete elsewhere) moves them to the Trash.
+		switch {
+		case sb.Shortcut(ui.Shift, ui.KeyDown):
+			a.pickStep(1, selected)
+			a.announcePicked(c)
+		case sb.Shortcut(ui.Shift, ui.KeyUp):
+			a.pickStep(-1, selected)
+			a.announcePicked(c)
+		case len(a.picked) > 0 && sb.Shortcut(0, ui.KeyEscape):
+			a.clearPicked()
+			c.Announce("Selection cleared")
+		case len(a.picked) > 1 && (sb.Shortcut(deleteMods(), ui.KeyBackspace) || sb.Shortcut(0, ui.KeyDelete)):
+			a.trashPicked()
 		}
 		if len(a.projects) == 0 {
 			ui.Text(c, "No sessions yet. Run larik in a project, open a folder ("+keyLabel(false, "O")+"), or drop one here.").TextColor(t.TextMuted).Padding(12)
 		}
-		a.inbox(c, t)
+		a.footer(c, t)
 	})
 	switch {
 	case side.FileDragOver():
@@ -1024,6 +1060,19 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 		tip += "\n" + used
 	}
 	item := ui.SidebarItem(c, s.Path, icon, label).Tooltip(tip)
+	a.rows = append(a.rows, s.Path)
+	picked := len(a.picked) > 1 && slices.Contains(a.picked, s.Path)
+	if picked {
+		// Chosen with others: tinted, as Finder shows a selection, and
+		// told to assistive technology as selected. Drawn over the row's
+		// background, so that the tint stays while the pointer is on it.
+		tint := t.Accent.Alpha(0.28)
+		item.Selected(true).Background(ui.Transparent).TextColor(t.Text).
+			Draw(func(p *ui.Painter, r ui.Rect) { p.Fill(r, tint, t.Radius) })
+	}
+	if item.Clicked() && a.pickClick(s.Path, c.Modifiers()) {
+		a.announcePicked(c)
+	}
 	if a.hidden[s.Path] {
 		item.Opacity(0.55)
 	}
@@ -1040,7 +1089,13 @@ func (a *App) sessionItem(c *ui.Context, t *ui.Theme, s session.Indexed, project
 		if !a.marker(c, t, s.Status, a.unread(s)) && !full {
 			ui.Text(c, age(time.Since(s.Modified))).FontSize(11).TextColor(t.TextMuted).SingleLine().Tooltip(s.Modified.Format("Mon 2 Jan 2006, 15:04"))
 		}
-	}).ContextMenu(func(m *ui.Menu) { a.sessionMenu(m, s) })
+	}).ContextMenu(func(m *ui.Menu) {
+		if picked {
+			a.pickedMenu(m)
+			return
+		}
+		a.sessionMenu(m, s)
+	})
 	return item
 }
 
@@ -1186,56 +1241,6 @@ func age(d time.Duration) string {
 		return fmt.Sprintf("%dw", int(d/(7*24*time.Hour)))
 	}
 	return fmt.Sprintf("%dy", int(d/(365*24*time.Hour)))
-}
-
-// inbox counts what needs attention across every project; a click opens
-// the newest of each.
-func (a *App) inbox(c *ui.Context, t *ui.Theme) {
-	var blocked, failed, done []string
-	for _, p := range a.projects {
-		for _, s := range p.Sessions {
-			switch st := s.Status.State; {
-			case st == status.Blocked:
-				blocked = append(blocked, s.Path)
-			case st == status.Error && a.unread(s):
-				failed = append(failed, s.Path)
-			case st == status.Done && a.unread(s):
-				done = append(done, s.Path)
-			}
-		}
-	}
-	ui.Row(c).Gap(6).Padding(8, 6, 0, 6).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, "Inbox").Bold().FontSize(11).TextColor(t.TextMuted)
-		ui.Spacer(c)
-		if len(blocked)+len(failed)+len(done) == 0 {
-			ui.Text(c, "all clear").FontSize(12).TextColor(t.TextMuted)
-		}
-		for _, g := range []struct {
-			key   string
-			paths []string
-			icon  *ui.SVG
-			color ui.Color
-			label string
-		}{
-			{"blocked", blocked, iconPause, t.Warning, "need you"},
-			{"failed", failed, iconError, t.Danger, "failed"},
-			{"done", done, iconCheck, t.Success, "done"},
-		} {
-			if len(g.paths) == 0 {
-				continue
-			}
-			chip := ui.Row(c.Key(g.key)).Gap(3).Padding(2, 6).Radius(999).Cursor(ui.CursorPointer).Tooltip(fmt.Sprintf("%d %s", len(g.paths), g.label)).Children(func() {
-				ui.Icon(c, g.icon).FontSize(12).TextColor(g.color)
-				ui.Text(c, fmt.Sprint(len(g.paths))).FontSize(12)
-			})
-			if chip.Hovered() {
-				chip.Background(t.SurfaceHover)
-			}
-			if chip.Clicked() {
-				a.reveal(g.paths[0])
-			}
-		}
-	})
 }
 
 // reveal opens the session at path and its project's section.

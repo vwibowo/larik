@@ -380,7 +380,7 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 	// session of its own.
 	tt := ui.NewTester(next.view, 1400, 800)
 	tt.Frame()
-	if tt.HasText("Inbox") {
+	if tt.HasText("larik dev") {
 		t.Fatal("the hidden sidebar shows")
 	}
 	mod := ui.Ctrl | ui.Shift
@@ -389,7 +389,7 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 	}
 	tt.Key(mod, ui.KeyB)
 	tt.Frame()
-	if !tt.HasText("Inbox") {
+	if !tt.HasText("larik dev") {
 		t.Fatalf("%s didn't show the sidebar", keyLabel(false, "B"))
 	}
 	if err := tt.Click("New session in ornith-page"); err != nil {

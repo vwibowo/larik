@@ -93,7 +93,7 @@ func TestSidebarGroupsSessionsByProject(t *testing.T) {
 		"larik-hardness", "ornith-page", // projects
 		"Add OSC 7501 output", "Refactor the parser and run the tests", // sessions
 		"Pick a session in the sidebar, or open a new tab", "Larik Session", "Browser",
-		"Inbox",
+		"larik dev", // the footer's version
 	} {
 		if !tt.HasText(want) {
 			t.Errorf("window lacks %q; texts: %q", want, tt.Texts())

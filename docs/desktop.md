@@ -41,7 +41,7 @@ The reference is [Rex](https://www.superlogical.com/rex), a terminal from Superl
 What we add for Larik:
 
 - **A sidebar of every session from every project**, grouped by the directory it ran in. Rex's session picker shows terminals; ours shows Larik sessions, including ones that ran in a terminal and ones that ran here.
-- **An inbox**: everything blocked on you, failed, or finished and unread, across all projects, at the bottom of the sidebar.
+- **A footer** at the bottom of the sidebar: larik's version, and a newer release when there is one; counts of what's blocked on you, failed, or finished and unread, across all projects, only while there are any; and, while several sessions are selected, what to do with them all.
 
 ```
 ┌ ● ● ●  larik ─ MacBook   ( ⠋ refactor parser │ ⏸ add OSC 7501 │ ✓ release notes )        ⌘  + ┐

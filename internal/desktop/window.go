@@ -78,8 +78,11 @@ func Run(opts Options) error {
 			MinHeight:     480,
 			StateKey:      "main",
 			TitleBarStyle: mygo.TitleBarHidden,
-			Vibrancy:      mygo.VibrancySidebar,
-			Content:       ui.View(a.view),
+			// Centered in the toolbar, as a macOS window with a unified
+			// toolbar puts them: AppKit's default suits a 28-point title bar.
+			TrafficLightPosition: trafficLights,
+			Vibrancy:             mygo.VibrancySidebar,
+			Content:              ui.View(a.view),
 		})
 		fmt.Fprintf(os.Stderr, "larik desktop: notifications %s\n", map[bool]string{true: "on", false: "off (macOS shows them only for an app bundle: larik desktop --install)"}[mygo.NotificationsSupported()])
 		a.update = win.Update
@@ -187,6 +190,7 @@ func Run(opts Options) error {
 			})
 			win.Focus()
 		})
+		go a.versionLoop()
 		go func() {
 			a.Start()
 			// What was handed over while the window opened, once the

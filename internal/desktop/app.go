@@ -131,6 +131,19 @@ type App struct {
 	theme  [2]*ui.Theme       // light, dark
 	termTh [2]*terminal.Theme // light, dark
 	notice string
+	// newer is the latest release when it is newer than this larik
+	// ("v0.29.0"), for the sidebar's footer.
+	newer string
+	// picked are the sessions chosen together in the sidebar, by
+	// transcript path, in the order chosen; anchor is where a Shift range
+	// starts, and rows are the sessions as the sidebar last listed
+	// them, top to bottom.
+	picked []string
+	anchor string
+	rows   []string
+	// cursor is the session the sidebar's keyboard is on while sessions
+	// are chosen, so that Shift+Up and Down go on from it.
+	cursor string
 	host   string
 	// stopHosted is overridden by tests to hold a host close at its reply.
 	stopHosted func(id string) error
