@@ -16,9 +16,17 @@
 - **Plan review beside the session.** While the focused session waits on a plan, a pane beside its terminal shows the plan as Markdown, with **Approve and accept edits**, **Approve, ask each edit** and **Request changes**.
 - **A Settings window.** `cmd+,` opens the window's own preferences, sidebar and text size, with **Open advanced settings…** for `larik /config`.
 - **Terminal tabs report status.** A program in a terminal tab that reports OSC 7501 sets the tab's state, title and message, in the sidebar and the tab bar; closing a live terminal tab asks first.
+- **Tile panes by dragging.** Drag a tab, a sidebar session or a split pane by its header over a pane: the half at the nearest edge splits off, the middle takes its place, with the target tinted while you drag. The Window menu, the palette and the split button's menu equalize panes (`ctrl+cmd+=`) or lay them out in columns, rows, a grid, or main and stack. `ctrl+cmd` and an arrow moves the focused pane, swapping with its neighbour or going to the window's edge, and **Undo Pane Layout** (`ctrl+cmd+z`) takes back the last drops, moves and layouts.
+- **Sessions on another machine.** **File › Connect to Server…** shows a server's projects and sessions in the sidebar, under its name beside **This Mac**, over SSH. Its tabs run on the server, stay there when you disconnect and come back when you connect again. The server needs larik on the `PATH` of a non-interactive shell, or `LARIK_DESKTOP_REMOTE` says how to run it there; `larik desktop host ensure` starts its host.
+- **Answer from the notification.** A session waiting on a permission or a plan review gets its answers as buttons on the system notification (**Allow**, **Always**, **Deny**, or the plan's), typed into its tab while the window stays behind.
+- **Appearance and keys in Settings.** Choose **System**, **Light** or **Dark** and an accent colour, and give any menu command a key of your own, or none.
+- **Select several sessions.** `cmd`-click, `shift`-click and `shift+up`/`down` select several sessions in the sidebar; their menu opens, pins, archives or trashes them together. `escape` deselects and `cmd+delete` trashes.
+- **The sidebar's footer** shows larik's version, and a newer release when one is out, with what's new and the update command. The traffic lights sit in the middle of the toolbar.
 
 ### Compatibility notes
 
+- System notifications get their answer buttons from the Larik app, so run `larik desktop --install` again for them.
+- Connecting to a server needs larik 0.28.0 or newer there, since the window and the server's host now speak version 2 of the host protocol. An older larik says so when you connect.
 - `cmd+t` and `cmd+d` now open the New Tab page rather than a Larik session. To have them start larik as before, turn off **New tabs ask what to open** in Settings (`cmd+,`).
 - To let pages in browser tabs ask for the camera, microphone or location, run `larik desktop --install` again: macOS needs the Larik app to say why it asks, and an app installed before this release doesn't. Until then those requests are refused, with a note saying so.
 - Browser tabs run in the window, not the tabs' host, so they close with it and reopen from their address.
