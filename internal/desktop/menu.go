@@ -69,6 +69,7 @@ func (a *App) menuDefaults() []menuGroup {
 			{label: "New Browser Tab", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
 			{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
+			{label: "Connect to Server…", run: a.askServer},
 			{},
 			{label: "Close Tab", key: "Cmd+W", run: func() {
 				if t := a.focused(); t != nil {

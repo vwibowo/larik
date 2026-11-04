@@ -54,6 +54,8 @@ var (
 	iconBell     = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
 	iconArchive  = svg(`<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>`)
 	iconTrash    = svg(`<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`)
+	iconLaptop   = svg(`<rect width="18" height="12" x="3" y="4" rx="2"/><path d="M2 20h20"/>`)
+	iconServer   = svg(`<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -826,8 +828,16 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 			a.terminals(c, t)
 			a.browsers(c, t)
 			a.pinnedSection(c, t)
+			if len(a.servers) > 0 {
+				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
+			}
 			for _, p := range a.projects {
-				a.project(c, t, p)
+				if !isRemote(p.Root) {
+					a.project(c, t, p)
+				}
+			}
+			for _, srv := range a.servers {
+				a.serverSection(c, t, srv)
 			}
 		}).Grow(1).Background(ui.Transparent) // the rows on the sidebar's material, as macOS draws them
 		// A click with Command or Shift chooses sessions together, and a
@@ -861,6 +871,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		case len(a.picked) > 1 && (sb.Shortcut(deleteMods(), ui.KeyBackspace) || sb.Shortcut(0, ui.KeyDelete)):
 			a.trashPicked()
 		}
+		a.serverField(c, t)
 		if len(a.projects) == 0 {
 			ui.Text(c, "No sessions yet. Run larik in a project, open a folder ("+keyLabel(false, "O")+"), or drop one here.").TextColor(t.TextMuted).Padding(12)
 		}
@@ -1184,6 +1195,15 @@ func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
 	}
 	if m.Item("Open in Split Below").Chosen() {
 		a.openInSplit(s.Path, true)
+	}
+	if isRemote(s.Path) {
+		// Its transcript is on the server: what changes or shows it is
+		// for larik there.
+		m.Separator()
+		if m.Item("Copy Session ID").Chosen() && a.copyText != nil {
+			a.copyText(s.ID)
+		}
+		return
 	}
 	if m.Item("Fork into a New Tab").Chosen() {
 		a.fork(s.Path)

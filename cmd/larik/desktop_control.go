@@ -253,6 +253,7 @@ func short(s string, n int) string {
 var hostCommands = []struct{ name, usage, about string }{
 	{"list", "", "list what the host runs, with how long each has run and whether the window shows it"},
 	{"stop", "[--force]", "end every program the host runs, and the host; --force when any still runs"},
+	{"ensure", "", "start the host unless it runs, and print its socket's path, for a window on another machine to reach over SSH"},
 }
 
 // runDesktopHost runs larik desktop host list or stop.
@@ -272,12 +273,25 @@ func runDesktopHost(args []string, w io.Writer) error {
 		}
 	}
 	if !known {
-		return fmt.Errorf("larik desktop host: unknown command %q: list or stop", name)
+		return fmt.Errorf("larik desktop host: unknown command %q: list, stop or ensure", name)
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	dataDir := config.DataDir()
+	if name == "ensure" {
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		path, err := desktop.EnsureHost(dataDir, func() error { return startDesktopHost(exe) })
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(w, path)
+		fmt.Fprintln(w, exe) // larik here, for the tabs a window there starts
+		return nil
+	}
 	pid, err := desktop.HostPID(dataDir)
 	if name == "stop" && err != nil {
 		// One that doesn't answer may still be there, by its pid.

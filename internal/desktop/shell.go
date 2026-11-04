@@ -49,7 +49,7 @@ func shellCommand(run string) []string {
 // shell, or the shell itself for "", and adds it.
 func (a *App) startShell(dir, run string) *tab {
 	a.notice = ""
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(dir); err != nil && !isRemote(dir) {
 		a.notice = "Can't open a terminal in " + dir + ": " + err.Error()
 		return nil
 	}

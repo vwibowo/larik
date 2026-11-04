@@ -60,7 +60,7 @@ func (a *App) metaWanted() (dirs []string, pids map[string]int) {
 		defer close(got)
 		pids = map[string]int{}
 		for _, p := range a.projects {
-			if p.Missing || a.open[p.Root] == nil || !*a.open[p.Root] {
+			if p.Missing || isRemote(p.Root) || a.open[p.Root] == nil || !*a.open[p.Root] {
 				continue
 			}
 			dirs = append(dirs, p.Root)
@@ -71,7 +71,7 @@ func (a *App) metaWanted() (dirs []string, pids map[string]int) {
 			}
 		}
 		for _, t := range a.tabs {
-			if s, _, ok := a.find(t.path); ok && s.PID > 0 {
+			if s, _, ok := a.find(t.path); ok && s.PID > 0 && !isRemote(s.Path) {
 				pids[s.Path] = s.PID
 			}
 		}

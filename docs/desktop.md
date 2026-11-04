@@ -30,7 +30,8 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 22 | [Tiling](#phase-22-tiling) | Done |
 | 23 | [Answers from the notification](#phase-23-answers-from-the-notification) | Done |
 | 24 | [Appearance and keys](#phase-24-appearance-and-keys) | Done |
-| 25 | [What's next](#phase-25-whats-next) | Planned |
+| 25 | [Remote windows](#phase-25-remote-windows) | Done |
+| 26 | [What's next](#phase-26-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -424,19 +425,24 @@ The window followed the system's appearance and accent colour, and its keys were
 - **Keyboard**: every command of the menu bar with its key, in a field to type another into, as the menus write them (`Ctrl+Cmd+K`; `Option`, `Command`, `⌘` and the arrows' symbols are read too, in any order). Enter gives it; an empty field takes the key away; **Reset** gives the command its own back. A key needs Ctrl, Alt or Cmd (F1 to F12 don't), so typing still types, and one another command has isn't given: the field says which has it. The key given replaces the command's own in the menus, the palette and the window's keys (`keys.go`); `cmd+1`…`cmd+9` stay as they are.
 - Both are kept with the window's state, and the Settings window scrolls.
 
-## Phase 25: What's next
+## Phase 25: Remote windows
+
+The window showed this machine's sessions only. Now it shows another machine's beside them, over SSH, as the first milestone of the plan:
+
+- **File › Connect to Server…** (also in the command palette) asks for a server in the sidebar, offering the hosts `~/.ssh/config` names, or `user@host`. It runs `ssh <server> larik desktop host ensure`, which starts the host there unless it runs and prints its socket and larik's path, then keeps `ssh -N -L` forwarding that socket to one here (`0600`, in the temp folder). Nothing listens on the network; SSH uses your config, keys and agent, and can't ask for a password (`BatchMode`).
+- **The sidebar** names **This Mac** and each server, its projects under it. A server's heading shows a spinner while connecting and **Reconnect** after a failure, which its tooltip and a line under it explain; its menu starts a **New Session** or **New Terminal** there, in the home folder, or disconnects.
+- **A server's sessions** open, resume, show their status, ring, notify and take **Allow**/**Deny**, from the sidebar and the notification, as this machine's do: the window reads the server's index from its host (op `index`, every second or so) and runs their tabs in the server's host, with larik there, never here. A terminal tab there runs the server's own shell. **New session here** under a server's project starts one there.
+- **Paths**: in the window a server's paths are `ssh://<server>/<path>`, so a server with the same user and folders as this Mac never mixes with it; the window looks nothing up on this disk for them (git, ports, transcripts), and a remote session's menu has only what doesn't need its transcript here.
+- **Disconnecting**, or closing the window, leaves a server's programs running in its host; connecting again shows its tabs again, mid-turn, and the window connects to the servers it had when it opens. The saved state keeps the servers, not their tabs, which their hosts keep.
+- **Protocol**: `ping` answers the protocol number, now 2; a server whose larik is older says so and suggests `larik update` there.
+- `larik` needs to be on the `PATH` of a non-interactive shell on the server (`~/.zshenv`, or `~/.bashrc` for bash); otherwise connecting says so.
+- **Tests** stand a second host, with a data folder of its own, in for a server, reached through the same transport (`connector`); the SSH command lines are checked as text.
+
+## Phase 26: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
-- **Remote windows** on another Mac or over SSH, which the host's protocol is the start of (see phase 18). The plan:
-  - **What it is**: the window here shows the sessions and tabs of larik on another machine, beside its own: the sidebar groups projects under **This Mac** and each server, and a remote tab types, shows, rings and answers as a local one does. Nothing listens on the network; everything goes over SSH, with your `~/.ssh/config`, keys and agent.
-  - **Transport**: the host's protocol is a connection per tab over a Unix socket, so it needs no change to cross SSH. **File › Connect to Server…** runs `ssh <host> larik desktop host ensure`, a new subcommand that starts the remote host if it isn't running and prints its socket's path, then keeps one `ssh -N -o ControlMaster=auto -L <local socket>:<remote socket>` open, the local socket in the window's temp folder, `0600`. Each tab's connection is a channel of that one SSH connection. The window takes servers as a transport (`dial(op)`), the local one a plain Unix socket, so the rest of the window doesn't know which it talks to.
-  - **The sidebar**: a new host op, `index`, answers the remote data folder's `session.Index`, polled as the local index is, every second or so, and `search` the conversation search. Status markers, notifications, **Allow**/**Deny** under rows and in notifications all work from it: answers already go through `send`.
-  - **Opening things there**: a remote project's **New session here**, `cmd+t` in a remote tab, and the New Tab chooser start their tab on that host; the chooser's **Change…** lists the server's folders (op `ls`). Saved state names each tab's server, and reopening the window connects again and attaches.
-  - **Version skew**: `ping` answers the host's larik version and protocol number; a window and host that don't match say so and suggest `larik update` on the older one.
-  - **Not at first**: the changes pane, worktrees and `gh` pull requests run `git` here, so they need host ops (`git status`, `diff`, `stage`, `commit`) and are hidden for remote projects until then; browser tabs stay local, and a remote program's ports open through an `ssh -L` forward later; reconnecting after the network drops shows the tabs as disconnected, with **Reconnect**.
-  - **Milestones**: (1) the transport, `host ensure`, `index`, remote tabs and the sidebar; (2) the changes pane and worktrees over host ops; (3) ports, the remote folder picker, and reconnecting.
-  - **Tests** need no SSH: a second data folder and a second host on another socket stand in for a server, reached through the same transport; the SSH command lines are checked as text.
+- **Remote windows, the rest** (see phase 25): the changes pane, worktrees and pull requests over host ops (`git status`, `diff`, `stage`, `commit`); a remote program's ports in a browser tab through an `ssh -L` forward; the New Tab chooser's **Change…** listing the server's folders (op `ls`); and reconnecting by itself after the network drops.
 
 Still open from phase 7: the headless Linux run.
 

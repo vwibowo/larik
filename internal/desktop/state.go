@@ -40,7 +40,10 @@ type savedState struct {
 	// Keys are the keys Settings gave commands, by their menu label, ""
 	// for none.
 	Keys map[string]string `json:"keys,omitempty"`
-	Font float32           `json:"font_size,omitempty"` // the terminals' text size
+	// Servers are the machines connected to, by SSH destination, to
+	// connect to again; their tabs come back from their hosts.
+	Servers []string `json:"servers,omitempty"`
+	Font    float32  `json:"font_size,omitempty"` // the terminals' text size
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -83,8 +86,14 @@ func (a *App) state() savedState {
 	for _, s := range a.pinnedSessions() {
 		st.Pinned = append(st.Pinned, s.Path)
 	}
+	for _, srv := range a.servers {
+		st.Servers = append(st.Servers, srv.name)
+	}
 	index := map[*tab]int{}
 	for _, t := range a.tabs {
+		if isRemote(t.dir) {
+			continue // the server's host has it, and the next connection shows it
+		}
 		path := t.path
 		switch {
 		case t.shell() && !t.exited:
@@ -182,6 +191,9 @@ func (a *App) restore() bool {
 	a.noSidebar = st.Hidden
 	a.noChooser = st.NoChooser
 	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
+	for _, name := range st.Servers {
+		a.connectServer(name)
+	}
 	if a.appearance != "" && a.appear != nil {
 		a.appear(a.appearance)
 	}

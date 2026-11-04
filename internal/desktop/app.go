@@ -231,8 +231,18 @@ type App struct {
 	keys      map[string]string
 	keyDrafts map[string]*string
 	keyError  string
-	emptyPick choice
-	emptyDir  string
+	// servers are the other machines whose larik the window shows, and
+	// connect how it connects to one, SSH unless a test says (remote.go);
+	// serversMu guards their dial, read off the main thread.
+	servers   []*server
+	serversMu sync.Mutex
+	connect   connector
+	// askingServer shows the field Connect to Server… types a server
+	// into, serverName what it holds.
+	askingServer, focusServer bool
+	serverName                string
+	emptyPick                 choice
+	emptyDir                  string
 	// lastBrowser is the browser tab focused last, which page commands go
 	// to when no other is named or focused.
 	lastBrowser *tab
@@ -397,10 +407,14 @@ func (a *App) indexLoop() {
 		case <-a.kick:
 		}
 		projects, err := session.Index(a.opts.DataDir, session.IndexOptions{})
+		remote, failed := a.remoteIndexes()
 		if err == nil {
 			// Saved here too, as frames save it: a window out of sight may
 			// not draw, and the tabs the host runs are to be found again.
-			a.update(func() { a.setProjects(projects); a.saveState() })
+			a.update(func() {
+				a.setIndex(projects, remote, failed)
+				a.saveState()
+			})
 		}
 	}
 }
@@ -878,7 +892,7 @@ func (a *App) startTab(dir, id, path string, flags ...string) *tab {
 	if dir == "" {
 		return nil
 	}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(dir); err != nil && !isRemote(dir) {
 		a.notice = fmt.Sprintf("Can't start larik in %s: %v", dir, err)
 		return nil
 	}
@@ -952,6 +966,9 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 	}
 	hc, err := a.openHosted(t, args)
 	switch {
+	case err != nil && isRemote(t.dir):
+		a.notice = err.Error()
+		return false
 	case err != nil && t.reattach:
 		a.notice = "Can't reach the tab in the host: " + err.Error()
 		return false
