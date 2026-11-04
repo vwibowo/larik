@@ -76,6 +76,7 @@ func (a *App) pageControl(req Request) Response {
 	if err != nil {
 		return Response{Error: err.Error(), Tab: &info}
 	}
+	a.syncPageURL(t, t.web.Page().URL())
 	a.onMain(func() { info = a.tabInfo(t) })
 	return Response{Tab: &info, Page: res}
 }
@@ -142,6 +143,7 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 		res := &PageResult{Loading: !waitLoad(ctx, p)}
 		snap, err := pageSnapshot(ctx, p, "")
 		res.Snapshot = snap
+		a.syncPageURL(t, snap.URL)
 		return res, err
 	}
 	switch req.Op {
@@ -173,6 +175,7 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 	case PageSnapshot:
 		waitLoad(ctx, p)
 		snap, err := pageSnapshot(ctx, p, req.Ref)
+		a.syncPageURL(t, snap.URL)
 		return &PageResult{Snapshot: snap}, err
 	case PageClick:
 		if err := act(ctx, p, clickScript(req.Ref)); err != nil {
@@ -235,6 +238,20 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 		return &PageResult{Value: value}, err
 	}
 	return nil, fmt.Errorf("unknown page op %q", req.Op)
+}
+
+// syncPageURL keeps tab metadata current when a page changes history without
+// a WebView navigation event, as single-page apps often do.
+func (a *App) syncPageURL(t *tab, u string) {
+	if u == "" || u == t.url {
+		return
+	}
+	a.update(func() {
+		if t.addr == t.url {
+			t.addr = u
+		}
+		t.url = u
+	})
 }
 
 // waitLoad waits for what the page started loading, reporting whether it

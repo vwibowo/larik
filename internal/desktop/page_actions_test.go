@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+func TestSyncPageURLAfterClientSideNavigation(t *testing.T) {
+	a := &App{update: func(fn func()) { fn() }}
+	tab := &tab{url: "http://localhost/", addr: "http://localhost/"}
+	a.syncPageURL(tab, "http://localhost/route")
+	if tab.url != "http://localhost/route" || tab.addr != tab.url {
+		t.Fatalf("URL = %q, address = %q", tab.url, tab.addr)
+	}
+	tab.addr = "unfinished address"
+	a.syncPageURL(tab, "http://localhost/another")
+	if tab.url != "http://localhost/another" || tab.addr != "unfinished address" {
+		t.Fatalf("URL = %q, address = %q", tab.url, tab.addr)
+	}
+}
+
 func TestPageWaitAndActionsAreTyped(t *testing.T) {
 	for _, tc := range []struct {
 		req  Request
