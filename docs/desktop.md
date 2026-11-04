@@ -435,7 +435,8 @@ The window showed this machine's sessions only. Now it shows another machine's b
 - **Paths**: in the window a server's paths are `ssh://<server>/<path>`, so a server with the same user and folders as this Mac never mixes with it; the window looks nothing up on this disk for them (git, ports, transcripts), and a remote session's menu has only what doesn't need its transcript here.
 - **Disconnecting**, or closing the window, leaves a server's programs running in its host; connecting again shows its tabs again, mid-turn, and the window connects to the servers it had when it opens. The saved state keeps the servers, not their tabs, which their hosts keep.
 - **Protocol**: `ping` answers the protocol number, now 2; a server whose larik is older says so and suggests `larik update` there.
-- `larik` needs to be on the `PATH` of a non-interactive shell on the server (`~/.zshenv`, or `~/.bashrc` for bash); otherwise connecting says so.
+- `larik` needs to be on the `PATH` of a non-interactive shell on the server (`~/.zshenv`, or `~/.bashrc` for bash), or `LARIK_DESKTOP_REMOTE` in the window's environment says how to run it there, a path or a command line (`~/bin/larik`, `XDG_DATA_HOME=/tmp/l ~/bin/larik`); otherwise connecting says so, and a larik too old to know `desktop host ensure` asks for 0.28.0 or newer.
+- **Tried over SSH** against a Linux server: `LARIK_DESKTOP_SSH=<server> go test ./internal/desktop -run SSHLive` connects, reads the index, runs a terminal tab there, and finds it again after disconnecting.
 - **Tests** stand a second host, with a data folder of its own, in for a server, reached through the same transport (`connector`); the SSH command lines are checked as text.
 
 ## Phase 26: What's next

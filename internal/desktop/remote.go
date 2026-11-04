@@ -469,7 +469,17 @@ func remoteShellCommand(run string) []string {
 // sshEnsureArgs are the arguments of the ssh that starts the server's
 // host and asks where it is.
 func sshEnsureArgs(name string) []string {
-	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", name, "larik desktop host ensure"}
+	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", name, remoteLarik() + " desktop host ensure"}
+}
+
+// remoteLarik is the command that runs larik on a server: larik, from
+// the PATH of a non-interactive shell there, or LARIK_DESKTOP_REMOTE, a
+// path or a command line, as "~/bin/larik" or "XDG_DATA_HOME=/tmp/l larik".
+func remoteLarik() string {
+	if c := strings.TrimSpace(os.Getenv("LARIK_DESKTOP_REMOTE")); c != "" {
+		return c
+	}
+	return "larik"
 }
 
 // sshForwardArgs are the arguments of the ssh that forwards the server's
@@ -512,16 +522,9 @@ func parseEnsure(out string) (socket, bin string, err error) {
 // agent ~/.ssh/config gives it: it can't ask for a password.
 func sshConnect(name string) (dialer, string, func(), error) {
 	out, err := exec.Command("ssh", sshEnsureArgs(name)...).CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if strings.Contains(msg, "command not found") || strings.Contains(msg, "not found") {
-			msg = "larik isn't on the PATH of a non-interactive shell there; install it, or add its folder to PATH in ~/.zshenv or ~/.bashrc"
-		}
-		return nil, "", nil, fmt.Errorf("ssh %s: %s", name, firstNonEmpty(msg, err.Error()))
-	}
-	remote, bin, err := parseEnsure(string(out))
-	if err != nil {
-		return nil, "", nil, err
+	remote, bin, perr := parseEnsure(string(out))
+	if err != nil || perr != nil {
+		return nil, "", nil, ensureError(name, string(out), err)
 	}
 	local := sshSocketPath(name)
 	_ = os.Remove(local)
@@ -555,6 +558,28 @@ func sshConnect(name string) (dialer, string, func(), error) {
 			return nil, "", nil, fmt.Errorf("ssh %s: the host's socket didn't come through", name)
 		}
 	}
+}
+
+// ensureError says why larik desktop host ensure, run on the server
+// name, didn't say where its host is: SSH failed, larik isn't on the
+// PATH there, or it's too old to know the command, and takes the words
+// for a prompt.
+func ensureError(name, out string, err error) error {
+	msg := strings.TrimSpace(out)
+	switch {
+	case strings.Contains(msg, "command not found") || strings.Contains(msg, ": not found"):
+		return fmt.Errorf("larik isn't on the PATH of a non-interactive shell on %s: install it, or add its folder to PATH in ~/.zshenv or ~/.bashrc there", name)
+	case err != nil && isSSHFailure(err):
+		return fmt.Errorf("ssh %s: %s", name, firstNonEmpty(msg, err.Error()))
+	}
+	return fmt.Errorf("larik on %s couldn't start its host: it needs larik 0.28.0 or newer there (larik update)", name)
+}
+
+// isSSHFailure reports whether ssh itself failed, which it says with
+// status 255, rather than the command it ran.
+func isSSHFailure(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 255
 }
 
 func firstNonEmpty(s ...string) string {

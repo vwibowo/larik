@@ -3,6 +3,7 @@ package desktop
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -37,11 +38,24 @@ func TestRemotePaths(t *testing.T) {
 	if _, _, err := parseEnsure("zsh: command not found: larik\n"); err == nil {
 		t.Fatal("parseEnsure took an error for a socket")
 	}
+	for out, want := range map[string]string{
+		"zsh: command not found: larik":       "isn't on the PATH",
+		"bash: line 1: larik: not found":      "isn't on the PATH",
+		"larik: bubbletea: error opening TTY": "0.28.0 or newer",
+	} {
+		if err := ensureError("devbox", out, errors.New("exit status 1")); !strings.Contains(err.Error(), want) {
+			t.Errorf("ensureError(%q) = %v, want %q", out, err, want)
+		}
+	}
 	if got := strings.Join(sshForwardArgs("devbox", "/tmp/l.sock", "/tmp/r.sock"), " "); !strings.Contains(got, "-N") || !strings.HasSuffix(got, "-L /tmp/l.sock:/tmp/r.sock devbox") || !strings.Contains(got, "BatchMode=yes") {
 		t.Fatalf("forward args %q", got)
 	}
 	if got := strings.Join(sshEnsureArgs("devbox"), " "); !strings.HasSuffix(got, "devbox larik desktop host ensure") {
 		t.Fatalf("ensure args %q", got)
+	}
+	t.Setenv("LARIK_DESKTOP_REMOTE", "~/bin/larik")
+	if got := sshEnsureArgs("devbox"); got[len(got)-1] != "~/bin/larik desktop host ensure" {
+		t.Fatalf("ensure args with LARIK_DESKTOP_REMOTE: %q", got)
 	}
 	hosts := parseSSHHosts("Host devbox build-*\n  HostName 10.0.0.2\nhost mini\nHost *\nMatch all\nHost devbox\n")
 	if !slices.Equal(hosts, []string{"devbox", "mini"}) {
@@ -185,4 +199,52 @@ func TestRemoteNeedsNewerHost(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "older") {
 		t.Fatalf("an old host: %v", err)
 	}
+}
+
+// Over real SSH, to the server LARIK_DESKTOP_SSH names, with the larik
+// there LARIK_DESKTOP_REMOTE says, or larik: connecting, the index, a
+// terminal tab there, and the tab again after disconnecting.
+func TestSSHLive(t *testing.T) {
+	name := os.Getenv("LARIK_DESKTOP_SSH")
+	if name == "" {
+		t.Skip("LARIK_DESKTOP_SSH names no server")
+	}
+	needTerminal(t)
+	a, mu := serialApp(Options{DataDir: t.TempDir()})
+	defer a.Close()
+	tt := ui.NewTester(a.view, 1240, 800)
+	mu.Lock()
+	a.connectServer(name)
+	mu.Unlock()
+	frameUntil(t, mu, tt, "connected over SSH", func() bool {
+		if a.servers[0].err != "" {
+			t.Fatalf("connecting: %s", a.servers[0].err)
+		}
+		return a.dialOf(a.servers[0]) != nil
+	})
+	if _, failed := a.remoteIndexes(); len(failed) != 0 {
+		t.Fatalf("index: %v", failed)
+	}
+	mu.Lock()
+	tb := a.startShell(remotePath(name, ""), "echo larik-ssh-ok; uname -s; pwd; sleep 60")
+	if tb == nil {
+		mu.Unlock()
+		t.Fatalf("no tab there: %q", a.notice)
+	}
+	a.activate(tb)
+	id := tb.id
+	mu.Unlock()
+	frameUntil(t, mu, tt, "the shell there", func() bool { return strings.Contains(tb.term.Text(), "larik-ssh-ok") })
+	mu.Lock()
+	t.Logf("the tab there shows %q", strings.TrimSpace(tb.term.Text()))
+	a.disconnectServer(name)
+	a.connectServer(name)
+	mu.Unlock()
+	frameUntil(t, mu, tt, "the tab again", func() bool { return a.tabByID(id) != nil })
+	mu.Lock()
+	defer mu.Unlock()
+	if conn, _, _, err := askHostVia(a.dialOf(a.servers[0]), hostRequest{Op: "close", ID: id}); err == nil {
+		conn.Close()
+	}
+	a.disconnectServer(name)
 }
