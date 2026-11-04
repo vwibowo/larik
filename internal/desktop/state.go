@@ -15,6 +15,7 @@ type savedState struct {
 	// Browsers are the browser tabs' pages, by their index in Tabs, and
 	// Sites what you let their pages use, or didn't, by siteKey.
 	Browsers map[int]string  `json:"browsers,omitempty"`
+	Files    map[int]string  `json:"files,omitempty"` // Files tab roots by tab index
 	Sites    map[string]bool `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
@@ -91,7 +92,7 @@ func (a *App) state() savedState {
 	}
 	index := map[*tab]int{}
 	for _, t := range a.tabs {
-		if isRemote(t.dir) {
+		if isRemote(t.dir) && t.files == nil {
 			continue // the server's host has it, and the next connection shows it
 		}
 		path := t.path
@@ -107,6 +108,12 @@ func (a *App) state() savedState {
 				st.Browsers = map[int]string{}
 			}
 			st.Browsers[len(st.Tabs)] = t.url
+			path = ""
+		case t.files != nil:
+			if st.Files == nil {
+				st.Files = map[int]string{}
+			}
+			st.Files[len(st.Tabs)] = t.dir
 			path = ""
 		case path == "":
 			continue
@@ -233,6 +240,10 @@ func (a *App) restore() bool {
 			}
 			continue
 		}
+		if dir, ok := st.Files[i]; ok {
+			opened[i] = a.startFiles(dir)
+			continue
+		}
 		if term, ok := st.Terminals[i]; ok {
 			if t := a.startShell(term.Dir, ""); t != nil {
 				opened[i] = t
@@ -268,6 +279,9 @@ func (a *App) restore() bool {
 	}
 	a.zoomed = st.Zoomed && a.split()
 	a.focusNext = a.focus.tab
+	if a.focus.tab.files == nil {
+		a.followFiles(a.focus.tab.dir)
+	}
 	return true
 }
 

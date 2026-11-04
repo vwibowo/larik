@@ -91,14 +91,19 @@ func Run(opts Options) error {
 		a.appear = func(v string) { mygo.Theme.SetSource(mygo.ThemeSource(cmp.Or(v, string(mygo.ThemeSystem)))) }
 		a.showSettings = func() {
 			if settingsWin != nil {
+				a.refreshSettings()
 				settingsWin.Show()
 				settingsWin.Focus()
 				return
 			}
 			settingsWin = mygo.NewWindow(mygo.WindowOptions{
-				Title: "Larik Settings", Width: 520, Height: 600,
-				MinWidth: 420, MinHeight: 300, StateKey: "settings",
+				Title: "Larik Settings", Width: 960, Height: 680,
+				MinWidth: 760, MinHeight: 500, StateKey: "settings",
 				Content: ui.View(a.settingsView),
+			})
+			settingsWin.OnFocus(func() {
+				a.refreshSettings()
+				settingsWin.Update(func() {})
 			})
 			settingsWin.OnClosed(func() { settingsWin = nil })
 			settingsWin.Show()

@@ -17,64 +17,7 @@ import (
 // availableEfforts lists distinct levels the selected model's adapter can send.
 // Unknown capabilities stay on provider default rather than guessing support.
 func (m *model) availableEfforts(v pickModel) []llm.Effort {
-	defaultOnly := []llm.Effort{llm.EffortDefault}
-	basic := []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh}
-	kind := providers.EndpointFor(m.opts.Config, v.provider)
-	for _, candidate := range m.modelLists[v.provider].models {
-		if candidate.ID == v.model && len(candidate.Efforts) > 0 {
-			levels := append([]llm.Effort(nil), defaultOnly...)
-			for _, e := range []llm.Effort{llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh, llm.EffortMax} {
-				if slices.Contains(candidate.Efforts, e) {
-					levels = append(levels, e)
-				}
-			}
-			return levels
-		}
-	}
-	switch {
-	case kind.Kind == providers.ClaudeCLI:
-		// Claude Code reports effort support per model, and its smallest
-		// models take none: a listed model that offered no levels above
-		// means exactly that, so don't offer any.
-		for _, candidate := range m.modelLists[v.provider].models {
-			if candidate.ID == v.model && candidate.CapsKnown {
-				return defaultOnly
-			}
-		}
-		return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortMax}
-	case kind.IsOllama():
-		for _, candidate := range m.modelLists[v.provider].models {
-			if candidate.ID == v.model && candidate.CapsKnown && candidate.Thinking {
-				return basic
-			}
-		}
-	case kind.Kind == "gemini":
-		if strings.HasPrefix(v.model, "gemini-3") {
-			return basic // xhigh and max both map to high in the adapter
-		}
-	case kind.Kind == "anthropic":
-		if strings.HasPrefix(v.model, "claude-") {
-			if strings.Contains(v.model, "claude-3") || strings.Contains(v.model, "-4-0") ||
-				strings.Contains(v.model, "-4-1") || strings.Contains(v.model, "-4-5") ||
-				strings.Contains(v.model, "sonnet-4-2") || strings.Contains(v.model, "opus-4-2") {
-				return basic // legacy thinking budgets
-			}
-			if strings.Contains(v.model, "-5") || strings.Contains(v.model, "-4-") {
-				return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortMax}
-			}
-		}
-	case kind.Kind == "openai", kind.Kind == providers.Codex:
-		if strings.Contains(v.model, "chat-latest") {
-			break
-		}
-		if strings.HasPrefix(v.model, "gpt-5") || strings.HasPrefix(v.model, "gpt-6") || strings.Contains(v.model, "codex") {
-			return []llm.Effort{llm.EffortDefault, llm.EffortLow, llm.EffortMedium, llm.EffortHigh, llm.EffortXHigh}
-		}
-		if strings.HasPrefix(v.model, "o1") || strings.HasPrefix(v.model, "o3") || strings.HasPrefix(v.model, "o4") {
-			return basic
-		}
-	}
-	return defaultOnly
+	return providers.AvailableEfforts(m.opts.Config, v.provider, v.model, m.modelLists[v.provider].models)
 }
 
 func (mp *modelPicker) selectedEfforts(m *model) []llm.Effort {

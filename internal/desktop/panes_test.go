@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
 	"larik/internal/session"
@@ -2058,20 +2059,28 @@ func TestSettingsWindowAndAdvancedEditor(t *testing.T) {
 	}
 
 	mu.Lock()
-	settingsUI := ui.NewTester(a.settingsView, 520, 2400)
+	settingsUI := ui.NewTester(a.settingsView, 960, 680)
 	settingsUI.Frame()
 	snapshot(t, settingsUI, "settings-window.png")
-	if !settingsUI.HasText("Show sidebar") || !settingsUI.HasText("13 pt") {
+	if !settingsUI.HasText("Show sidebar") {
 		mu.Unlock()
 		t.Fatal("settings controls missing")
 	}
-	settingsUI.Click("Larger")
+	settingsUI.Click("Show Terminal settings")
+	settingsUI.Frame()
+	if !settingsUI.HasText("13 pt") {
+		mu.Unlock()
+		t.Fatal("terminal size missing")
+	}
+	a.zoom(terminal.Zoom{Steps: 1})
 	settingsUI.Frame()
 	if a.termFont().Size != 14 || !settingsUI.HasText("14 pt") {
 		mu.Unlock()
 		t.Fatalf("terminal font size: %g", a.termFont().Size)
 	}
-	settingsUI.Click("Open advanced settings…")
+	settingsUI.Click("Show Advanced settings")
+	settingsUI.Frame()
+	settingsUI.Click("Open config settings")
 	tab := a.focused()
 	if tab == nil || len(a.tabs) != 1 {
 		mu.Unlock()

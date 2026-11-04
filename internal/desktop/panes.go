@@ -85,6 +85,9 @@ func (a *App) focusPane(p *pane) {
 		a.zoomed = false
 	}
 	a.focus, a.focusNext = p, p.tab
+	if p.tab.files == nil {
+		a.followFiles(p.tab.dir)
+	}
 	if p.tab.browser {
 		a.lastBrowser = p.tab
 	}

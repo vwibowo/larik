@@ -67,6 +67,7 @@ func (a *App) menuDefaults() []menuGroup {
 			{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
 			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
 			{label: "New Browser Tab", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
+			{label: "New Files Tab", run: func() { a.openFiles(a.currentDir()) }},
 			{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
 			{label: "Connect to Server…", run: a.askServer},

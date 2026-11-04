@@ -47,6 +47,9 @@ var (
 	iconZoom     = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
 	iconShrink   = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
 	iconGlobe    = svg(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>`)
+	iconFolder   = svg(`<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
+	iconFilter   = svg(`<path d="M4 7h16M7 12h10M10 17h4"/>`)
+	iconWrap     = svg(`<path d="M4 6h16M4 11h16M4 16h10M17 16h2a2 2 0 0 0 0-4h-2m0 4 2-2m-2 2 2 2"/>`)
 	iconBack     = svg(`<path d="m15 18-6-6 6-6"/>`)
 	iconForward  = svg(`<path d="m9 18 6-6-6-6"/>`)
 	iconReload   = svg(`<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>`)
@@ -180,6 +183,7 @@ func (a *App) view(c *ui.Context) {
 		a.confirmClose(c)
 		a.confirmLeave(c)
 		a.confirmAsked(c)
+		a.filesEditDialog(c)
 		a.commandPalette(c, t)
 	})
 	a.saveState()
@@ -518,7 +522,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		}
 		a.bell(c, t)
 		newButton := ui.Row(c.Key("new")).Gap(3).Padding(5, 7).Radius(6).AlignItems(ui.Center).
-			Label("New tab").Tooltip("New session, worktree session, terminal, or browser tab").Children(func() {
+			Label("New tab").Tooltip("New session, worktree session, terminal, browser, or Files tab").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(15).TextColor(t.Text.Alpha(0.75))
 			ui.Text(c, "New").FontSize(12)
 			ui.Icon(c, iconDown).FontSize(10).TextColor(t.TextMuted)
@@ -554,11 +558,18 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 		inPane()
 		a.openBrowser("")
 	}
+	if m.Item("New Files Tab").Chosen() {
+		inPane()
+		a.openFiles(a.currentDir())
+	}
 }
 
 // where says where a tab's session is and what it's doing: its project
 // and folder, its status, and its model.
 func (a *App) where(tb *tab) string {
+	if tb.files != nil {
+		return tildePath(tb.dir)
+	}
 	if tb.chooser {
 		return tildePath(tb.dir)
 	}
@@ -666,6 +677,9 @@ func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
 	}
 	if tb.browser {
 		return "Browser", iconGlobe
+	}
+	if tb.files != nil {
+		return "Files", iconFolder
 	}
 	if tb.shell() {
 		return "Terminal", iconTerm
@@ -812,7 +826,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		selected := ""
 		if f := a.focused(); f != nil {
 			selected = f.path
-			if (f.shell() || f.browser) && f.path == "" {
+			if (f.shell() || f.browser || f.files != nil) && f.path == "" {
 				selected = tabKey(f)
 			}
 		}
@@ -827,6 +841,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 			}
 			a.terminals(c, t)
 			a.browsers(c, t)
+			a.fileTabs(c, t)
 			a.pinnedSection(c, t)
 			if len(a.servers) > 0 {
 				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
@@ -1385,6 +1400,10 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 			term = a.chooserPane(c, t, tb)
 			return
 		}
+		if tb.files != nil {
+			term = a.filesPane(c, t, tb)
+			return
+		}
 		if tb.browser {
 			a.addressBar(c, t, tb)
 			a.siteBars(c, t, tb)
@@ -1421,6 +1440,9 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		a.focusNext = nil
 	} else if body.FocusWithin() && a.focus != p {
 		a.focus = p
+		if tb.files == nil {
+			a.followFiles(tb.dir)
+		}
 	}
 }
 

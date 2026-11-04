@@ -93,7 +93,11 @@ func TestCustomKeys(t *testing.T) {
 	}
 
 	// Settings lists the commands, and takes a key typed into one.
-	settings := ui.NewTester(a.settingsView, 520, 2400)
+	settings := ui.NewTester(a.settingsView, 960, 680)
+	settings.Frame()
+	if err := settings.Click("Show Keyboard settings"); err != nil {
+		t.Fatal(err)
+	}
 	settings.Frame()
 	for _, want := range []string{"Keyboard", "Toggle Sidebar", "Undo Pane Layout"} {
 		if !settings.HasText(want) {
@@ -118,7 +122,11 @@ func TestAppearanceSettings(t *testing.T) {
 	a := New(Options{DataDir: t.TempDir()})
 	var appeared []string
 	a.appear = func(v string) { appeared = append(appeared, v) }
-	tt := ui.NewTester(a.settingsView, 520, 600)
+	tt := ui.NewTester(a.settingsView, 960, 680)
+	tt.Frame()
+	if err := tt.Click("Show Appearance settings"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	if err := tt.Click("Dark"); err != nil {
 		t.Fatal(err, tt.Texts())

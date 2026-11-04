@@ -387,6 +387,16 @@ func LocalSettingsPath(cwd string) string {
 }
 
 func Load(cwd string) (*Config, error) {
+	return load(cwd, false)
+}
+
+// LoadPersonal reads only the user's defaults. Desktop Settings uses it to
+// distinguish those defaults from the effective values in a project.
+func LoadPersonal() (*Config, error) {
+	return load("", true)
+}
+
+func load(cwd string, personalOnly bool) (*Config, error) {
 	cfg := &Config{
 		MaxTurns:    200,
 		Providers:   map[string]ProviderConfig{},
@@ -395,7 +405,11 @@ func Load(cwd string) (*Config, error) {
 		ApprovedMCP: map[string]string{},
 	}
 	cfg.ConfigDir, cfg.DataDir, cfg.Cwd = configDir(), dataDir(), cwd
-	for _, l := range layers(cfg.ConfigDir, cwd) {
+	files := layers(cfg.ConfigDir, cwd)
+	if personalOnly {
+		files = files[:1]
+	}
+	for _, l := range files {
 		if err := cfg.merge(l.path, l.trusted); err != nil {
 			return nil, err
 		}

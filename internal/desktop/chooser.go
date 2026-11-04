@@ -8,7 +8,7 @@ import (
 
 // A new tab (cmd+t, or a split's cmd+d) shows a chooser first, as a
 // browser's new tab page does, rather than starting larik: a Larik
-// session, one in a new worktree, a terminal or a browser tab, in the
+// session, one in a new worktree, a terminal, a browser or a Files tab, in the
 // folder it names, which Change… picks. Choosing one puts it in the
 // chooser's place, in its pane and in the tab bar; closing the chooser
 // starts nothing. Up and Down move between the kinds and Enter chooses,
@@ -36,6 +36,7 @@ var tabKinds = []tabKind{
 	{ui.KeyW, "Session in a Worktree", "A session on a branch of its own, apart from your checkout", func() *ui.SVG { return iconBranch }},
 	{ui.KeyT, "Terminal", "Your shell, or a dev server, beside the sessions", func() *ui.SVG { return iconTerm }},
 	{ui.KeyB, "Browser", "A web page, such as what the dev server serves", func() *ui.SVG { return iconGlobe }},
+	{ui.KeyF, "Files", "Browse this folder and preview files", func() *ui.SVG { return iconFolder }},
 }
 
 // newChooser opens a chooser tab in dir.
@@ -72,6 +73,8 @@ func (a *App) startKind(i int, dir string) *tab {
 			t.dir = dir
 			return t
 		}
+	case 4:
+		return a.startFiles(dir)
 	}
 	return nil
 }
@@ -189,7 +192,7 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 			chosen = *pick
 		}
 		for i, k := range tabKinds {
-			if c.Shortcut(0, k.key) || c.Shortcut(0, []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4}[i]) {
+			if c.Shortcut(0, k.key) || c.Shortcut(0, []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5}[i]) {
 				chosen = i
 			}
 		}
@@ -211,6 +214,8 @@ func keyName(k ui.Key) string {
 		return "T"
 	case ui.KeyB:
 		return "B"
+	case ui.KeyF:
+		return "F"
 	}
 	return ""
 }

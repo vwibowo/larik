@@ -240,8 +240,31 @@ func (a *App) customShortcuts(c *ui.Context) {
 // keySettings is Settings' Keyboard section: each command with its key,
 // to type another into; Enter gives it, and an empty one takes it away.
 func (a *App) keySettings(c *ui.Context, t *ui.Theme) {
+	a.keySettingsFiltered(c, t, "")
+}
+
+func (a *App) keyboardMatches(query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" || strings.Contains("keyboard shortcuts keys", q) {
+		return true
+	}
+	for _, g := range a.rebindable() {
+		if strings.Contains(strings.ToLower(g.title), q) {
+			return true
+		}
+		for _, cmd := range a.bindKeys([]menuGroup{g})[0].items {
+			if strings.Contains(strings.ToLower(cmd.label+" "+cmd.key), q) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *App) keySettingsFiltered(c *ui.Context, t *ui.Theme, query string) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	all := q == "" || strings.Contains("keyboard shortcuts keys", q)
 	ui.Column(c.Key("keys")).Gap(6).Children(func() {
-		ui.Text(c, "Keyboard").Bold().FontSize(13)
 		ui.Text(c, "Type a key, as Ctrl+Cmd+K, and press Enter; leave it empty for none.").FontSize(12).TextColor(t.TextMuted)
 		if a.keyError != "" {
 			ui.Text(c, a.keyError).FontSize(12).TextColor(t.Danger)
@@ -250,8 +273,24 @@ func (a *App) keySettings(c *ui.Context, t *ui.Theme) {
 			a.keyDrafts = map[string]*string{}
 		}
 		for _, g := range a.rebindable() {
+			groupMatches := all || strings.Contains(strings.ToLower(g.title), q)
+			if !groupMatches {
+				found := false
+				for _, cmd := range a.bindKeys([]menuGroup{g})[0].items {
+					if strings.Contains(strings.ToLower(cmd.label+" "+cmd.key), q) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
 			ui.Text(c, g.title).FontSize(11).Bold().TextColor(t.TextMuted).Padding(6, 0, 0, 0)
 			for _, cmd := range a.bindKeys([]menuGroup{g})[0].items {
+				if !groupMatches && !strings.Contains(strings.ToLower(cmd.label+" "+cmd.key), q) {
+					continue
+				}
 				label := cmd.label
 				draft := a.keyDrafts[label]
 				if draft == nil {

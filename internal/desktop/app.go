@@ -180,6 +180,7 @@ type App struct {
 	// asked is the question confirmAsk is putting, while it's up.
 	asked     *confirmation
 	askedOpen bool
+	filesEdit *filesEdit
 
 	// states is each session's state as of the last index, to see what
 	// changed; alert and badge tell the user, off the window (see Run).
@@ -213,6 +214,7 @@ type App struct {
 	menuSaid     string
 	openExternal func(url string)
 	showSettings func()
+	settings     *settingsState // Settings window navigation, drafts and loaded defaults
 	// newWebView makes a browser tab's web view, loading url (see Run);
 	// sites are what you let pages use, or didn't, by siteKey.
 	newWebView func(url string) (*mygo.WebView, error)
@@ -310,13 +312,20 @@ type tab struct {
 	// A chooser tab's (see chooser.go): the kind highlighted.
 	chooser bool
 	choice  choice
+	// A Files tab's local folder tree and read-only preview.
+	files *filesState
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
 // bar the keyboard again.
 func (a *App) openFind() {
-	if t := a.focused(); t != nil && (t.term != nil || t.browser) {
-		t.finding, t.focusFind = true, true
+	if t := a.focused(); t != nil {
+		if t.files != nil {
+			t.files.previewOnly = false
+			t.files.focusSearch = true
+		} else if t.term != nil || t.browser {
+			t.finding, t.focusFind = true, true
+		}
 	}
 }
 
@@ -1072,6 +1081,9 @@ func (a *App) zoom(z terminal.Zoom) {
 
 // close ends the tab's larik, or leaves the host running it.
 func (t *tab) close() {
+	if t.files != nil {
+		t.files.close()
+	}
 	if t.term != nil {
 		t.term.Close()
 	}
@@ -1304,6 +1316,8 @@ func (a *App) tabTitle(t *tab) string {
 	switch {
 	case t.chooser:
 		return "New Tab"
+	case t.files != nil:
+		return "Files"
 	case t.browser && t.url != blankPage:
 		return pageHost(t.url)
 	case t.browser:

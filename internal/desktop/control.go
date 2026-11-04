@@ -78,7 +78,7 @@ type Response struct {
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
 	ID      string `json:"id"`
-	Kind    string `json:"kind"`              // larik, terminal, browser, or chooser
+	Kind    string `json:"kind"`              // larik, terminal, browser, files, or chooser
 	Run     string `json:"run,omitempty"`     // a terminal tab's program
 	URL     string `json:"url,omitempty"`     // a browser tab's page
 	Session string `json:"session,omitempty"` // its session's id, once it has one
@@ -209,6 +209,9 @@ func (a *App) command(req Request) Response {
 	case "send", "read":
 		if t.browser {
 			return Response{Error: "a browser tab has no terminal"}
+		}
+		if t.files != nil {
+			return Response{Error: "a Files tab has no terminal"}
 		}
 	}
 	switch req.Cmd {
@@ -604,6 +607,9 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	}
 	if t.browser {
 		info.Kind, info.URL = "browser", t.url
+	}
+	if t.files != nil {
+		info.Kind = "files"
 	}
 	if t.chooser {
 		info.Kind = "chooser"
