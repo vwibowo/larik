@@ -746,7 +746,7 @@ func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
 	} else if a.needsLook(tb) {
 		// Its session needs you, or finished, while you look elsewhere.
 		color := a.ringColor(t, tb)
-		cell.Border(2, color).Background(color.Alpha(0.1))
+		cell.Border(1, color.Alpha(0.5)).Background(color.Alpha(0.05))
 	}
 }
 
@@ -1427,7 +1427,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	body.Label("Pane: " + a.tabTitle(tb))
 	a.dropTarget(c, t, body, p)
 	if a.needsLook(tb) {
-		body.Border(2, a.ringColor(t, tb))
+		body.Border(1, a.ringColor(t, tb).Alpha(0.5))
 	}
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
 	// the focused one.

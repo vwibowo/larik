@@ -23,7 +23,7 @@ import (
 // names. HostTabs and StopHost are larik desktop host's.
 
 // noWindowCommands are the commands the host answers with no window open.
-var noWindowCommands = []string{"list", "read", "send", "close", "wait"}
+var noWindowCommands = []string{"list", "read", "send", "close", "wait", "status"}
 
 // callHost answers req from the host, as the window would.
 func callHost(dataDir string, req Request) (Response, error) {
@@ -59,6 +59,20 @@ func callHost(dataDir string, req Request) (Response, error) {
 			return fail(err)
 		}
 		conn.Close()
+	case "status":
+		if t.Kind != "terminal" || t.Exited {
+			return fail(errors.New("status needs a running terminal tab"))
+		}
+		payload, err := statusPayload(req)
+		if err != nil {
+			return fail(err)
+		}
+		conn, _, _, err := askHost(dataDir, hostRequest{Op: "status", ID: t.ID, Status: payload})
+		if err != nil {
+			return fail(err)
+		}
+		conn.Close()
+		return Response{State: req.State}, nil
 	case "close":
 		if !req.Force && t.State == string(status.Working) {
 			return fail(errors.New("the tab is working: close it with --force to stop it mid-turn"))

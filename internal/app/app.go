@@ -20,6 +20,7 @@ import (
 	"larik/internal/checkpoint"
 	"larik/internal/config"
 	"larik/internal/desktoppage"
+	"larik/internal/desktopterminal"
 	"larik/internal/hooks"
 	"larik/internal/llm"
 	"larik/internal/lsp"
@@ -154,6 +155,7 @@ type App struct {
 	ProjectRoot string
 	SessionDir  string
 	Version     string
+	DesktopTab  bool // this process was started in a Larik Desktop terminal tab
 
 	Skills    *skills.Set
 	AgentDefs *subagent.Set
@@ -209,7 +211,7 @@ func Setup(cwd, version string) (*App, error) {
 		projectRoot = cwd
 	}
 	LoadCatwalkCache(cfg.DataDir)
-	a := &App{Cfg: cfg, Cwd: cwd, RepoRoot: gitRoot, ProjectRoot: projectRoot, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, Resolve: providers.Resolve, Debug: cfg.DebugOn()}
+	a := &App{Cfg: cfg, Cwd: cwd, RepoRoot: gitRoot, ProjectRoot: projectRoot, SessionDir: session.Dir(cfg.DataDir, cwd), Version: version, DesktopTab: desktoppage.Available(), Resolve: providers.Resolve, Debug: cfg.DebugOn()}
 	a.SecretEnv, a.SecretPaths = secretEnv(cfg), secretPaths(cfg)
 	// The CLI reads executable MCP configuration here outside the sandbox.
 	// Create it before sandbox setup so Linux can bind it read-only.
@@ -273,8 +275,9 @@ func Setup(cwd, version string) (*App, error) {
 	}
 	// In a larik desktop tab, the window's browser tabs too: the page the
 	// user sees beside the session.
-	if desktoppage.Available() {
+	if a.DesktopTab {
 		baseTools = append(baseTools, desktoppage.Tools(cfg.DataDir)...)
+		baseTools = append(baseTools, desktopterminal.Tools(cfg.DataDir)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))
@@ -321,6 +324,9 @@ func Setup(cwd, version string) (*App, error) {
 func (a *App) SystemPrompt() string {
 	a.Skills.Reload()
 	system := agent.BuildSystemPromptWithRoot(a.Cwd, a.RepoRoot, a.Cfg.ConfigDir) + a.sandboxSection()
+	if a.DesktopTab {
+		system += desktopPromptSection
+	}
 	if idx := a.Skills.Index(); idx != "" {
 		system += "\n\n" + idx
 	}
@@ -331,6 +337,16 @@ func (a *App) SystemPrompt() string {
 	}
 	return system + "\n\n" + agent.DateSection()
 }
+
+const desktopPromptSection = `
+
+<larik_desktop>
+You are running inside a Larik Desktop terminal tab. You can operate the user's Desktop when asked, without needing the user to explain its commands.
+- Use desktop_page_navigate, desktop_page_snapshot, desktop_page_click, desktop_page_type and related tools to browse the visible Desktop browser. Navigation opens a browser tab beside this session if needed.
+- For terminal tabs, use desktop_tabs_list to find exact IDs, desktop_terminal_open to open a shell beside the focused pane, and desktop_terminal_read or desktop_terminal_send to work with it. These tools control Desktop directly; sending text and opening a terminal require user approval.
+- For other tab, session and notification actions, use the larik desktop CLI through bash. The CLI writes Desktop state outside the project: set bash's "sandbox" to false and let the user approve it. Do not use run_in_background for larik desktop: the launcher detaches its window itself.
+- $LARIK_DESKTOP_TAB is this terminal's ID. Use an exact browser tab ID from list when targeting a browser tab explicitly.
+</larik_desktop>`
 
 // sandboxSection describes the bash sandbox, when one is active.
 func (a *App) sandboxSection() string {

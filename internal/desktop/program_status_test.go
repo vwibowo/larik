@@ -83,3 +83,35 @@ func TestTerminalTabShowsProgramStatus(t *testing.T) {
 		t.Fatal("looking at the terminal did not clear its alert")
 	}
 }
+
+func TestStatusCommandUpdatesOnlyTerminalTabs(t *testing.T) {
+	a := New(Options{})
+	defer a.Close()
+	tb := &tab{id: "terminal", dir: "/project", cmd: []string{"sh"}}
+	other := &tab{id: "session", dir: "/project"}
+	a.tabs = []*tab{tb, other}
+	a.activate(other)
+	res := a.control(Request{Cmd: "status", Tab: tb.id, StatusID: "claude", State: "blocked", Kind: "permission", Title: "Claude Code", Message: "Needs permission"})
+	if res.Error != "" || a.tabStatus(tb).State != status.Blocked || a.tabTitle(tb) != "Claude Code" || len(a.events) != 1 {
+		t.Fatalf("status did not update the terminal: %+v %+v", res, a.tabStatus(tb))
+	}
+	res = a.control(Request{Cmd: "status", Tab: tb.id, StatusID: "claude", State: "done"})
+	if res.Error != "" || a.tabStatus(tb).State != status.Done {
+		t.Fatalf("done: %+v %+v", res, a.tabStatus(tb))
+	}
+	res = a.control(Request{Cmd: "status", Tab: tb.id, StatusID: "claude", State: "clear"})
+	if res.Error != "" || a.tabStatus(tb).State != status.Idle {
+		t.Fatalf("clear: %+v %+v", res, a.tabStatus(tb))
+	}
+	for _, ref := range []string{"missing", other.id} {
+		if res := a.control(Request{Cmd: "status", Tab: ref, StatusID: "claude", State: "working"}); res.Error == "" {
+			t.Fatalf("status accepted %s", ref)
+		}
+	}
+	if _, err := statusPayload(Request{StatusID: "bad/id/!", State: "working"}); err == nil {
+		t.Fatal("accepted invalid record ID")
+	}
+	if _, err := statusPayload(Request{StatusID: "claude", State: "blocked", Kind: "wrong"}); err == nil {
+		t.Fatal("accepted invalid blocked kind")
+	}
+}

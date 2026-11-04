@@ -159,6 +159,9 @@ func (a *App) settingsDescription(id, fallback string) string {
 }
 
 func (a *App) settingsValueNote(id string) string {
+	if strings.HasPrefix(id, "integration-") {
+		return a.integrationNote(id)
+	}
 	s := a.settings
 	if s == nil || s.personal == nil {
 		return ""
@@ -338,6 +341,10 @@ func (a *App) allowedEfforts() []llm.Effort {
 }
 
 func (a *App) agentSettingControl(c *ui.Context, t *ui.Theme, id string) {
+	if strings.HasPrefix(id, "integration-") {
+		a.integrationControl(c, id)
+		return
+	}
 	s := a.settings
 	if s.personal == nil && id != "connect" && id != "routing" && id != "permissions" &&
 		id != "mcp" && id != "hooks" && id != "sandbox" && id != "config" {

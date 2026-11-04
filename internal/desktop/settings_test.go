@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"larik/internal/config"
+	"larik/internal/desktop/integration"
 	"larik/internal/llm"
 	"larik/internal/providers"
 )
@@ -31,6 +32,12 @@ func TestSettingsNavigationSearchAndLayouts(t *testing.T) {
 		tt.Frame()
 		if !tt.HasText("Show sidebar") || !tt.HasText("Search settings") {
 			t.Fatalf("window settings missing: %v", tt.Texts())
+		}
+		if row, ok := tt.Find("Show sidebar"); !ok || row.Y >= toolbarHeight {
+			t.Fatalf("settings content starts below an empty header: %+v", row)
+		}
+		if n := settingsTextCount(tt.Texts(), "Settings"); n != 0 {
+			t.Fatalf("sidebar heading remains (%d): %v", n, tt.Texts())
 		}
 		name := "settings-light.png"
 		if dark {
@@ -61,6 +68,9 @@ func TestSettingsNavigationSearchAndLayouts(t *testing.T) {
 		if !tt.HasText("13 pt") {
 			t.Fatalf("terminal size: %v", tt.Texts())
 		}
+		if n := settingsTextCount(tt.Texts(), "Terminal"); n != 2 {
+			t.Fatalf("terminal page title remains (%d instances): %v", n, tt.Texts())
+		}
 		if err := tt.Click("Adjust terminal text size"); err != nil {
 			t.Fatal(err)
 		}
@@ -88,6 +98,72 @@ func TestSettingsNavigationSearchAndLayouts(t *testing.T) {
 			snapshot(t, tt, "settings-minimum-light.png")
 		}
 		a.settings.page = "window"
+	}
+}
+
+func settingsTextCount(texts []string, want string) int {
+	n := 0
+	for _, text := range texts {
+		if text == want {
+			n++
+		}
+	}
+	return n
+}
+
+func TestSettingsCodingAgentsInstallAndRemove(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	a := settingsApp(t)
+	defer a.Close()
+	a.opts.Bin = "/usr/local/bin/larik"
+	tt := ui.NewTester(a.settingsView, 960, 680)
+	tt.Frame()
+	if err := tt.Click("Show Coding agents settings"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("Desktop control skills") || !tt.HasText("Claude Code status") || !tt.HasText("Codex CLI status") || !tt.HasText("OpenCode status") || !tt.HasText("Gemini CLI status") {
+		t.Fatalf("integration controls missing: %v", tt.Texts())
+	}
+	if err := tt.Click("Install skills"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !integration.SkillsInstalled(home) || !tt.HasText("Remove skills") {
+		t.Fatalf("skills install failed: %v", tt.Texts())
+	}
+	for _, agent := range integration.Agents() {
+		if err := tt.Click("Install " + agent); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		installed, err := integration.HookInstalled(home, agent)
+		if err != nil || !installed || !tt.HasText("Remove "+agent) {
+			t.Fatalf("%s install failed: %v %v %v", agent, installed, err, tt.Texts())
+		}
+	}
+	if !tt.HasText("review and trust it in Codex /hooks") {
+		t.Fatalf("Codex trust instruction missing: %v", tt.Texts())
+	}
+	for _, agent := range integration.Agents() {
+		if err := tt.Click("Remove " + agent); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		installed, err := integration.HookInstalled(home, agent)
+		if err != nil || installed {
+			t.Fatalf("%s remove failed: %v %v", agent, installed, err)
+		}
+	}
+	if err := tt.Click("Remove skills"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if integration.SkillsInstalled(home) {
+		t.Fatal("skills were not removed")
 	}
 }
 

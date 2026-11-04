@@ -118,6 +118,9 @@ func (env *Env) runBackground(ctx context.Context, command string, timeout time.
 		case errors.Is(runErr, context.Canceled):
 			return fmt.Sprintf("%s\n[stopped; full output: %s]", out, where), true
 		case errors.As(runErr, &exitErr):
+			if sandboxed && sandboxBlocked(out) {
+				out += "\n" + sandboxFailureHint
+			}
 			return fmt.Sprintf("%s\n[exit code %d; full output: %s]", out, exitErr.ExitCode(), where), true
 		case runErr != nil:
 			return fmt.Sprintf("%s\n[%v]", out, runErr), true

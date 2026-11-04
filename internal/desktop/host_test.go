@@ -66,6 +66,51 @@ func TestHostForwardsProgramStatus(t *testing.T) {
 	}
 }
 
+func TestHostStatusRequestSurvivesWindowReattach(t *testing.T) {
+	needTerminal(t)
+	h := newHost()
+	defer h.closeAll()
+	tb, err := h.tab(hostRequest{Op: "open", ID: "external", Shell: true, Dir: t.TempDir(), Command: []string{"sleep", "30"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := statusPayload(Request{StatusID: "opencode", State: "blocked", Kind: "permission", Title: "OpenCode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	go h.handle(server)
+	if err := json.NewEncoder(client).Encode(hostRequest{Op: "status", ID: tb.id, Status: payload}); err != nil {
+		t.Fatal(err)
+	}
+	var rep hostReply
+	if err := json.NewDecoder(client).Decode(&rep); err != nil || rep.Error != "" {
+		t.Fatalf("report: %+v %v", rep, err)
+	}
+	client.Close()
+	if got := h.list()[0].Status; got.State != status.Blocked || got.Title != "OpenCode" {
+		t.Fatalf("host lost status: %+v", got)
+	}
+	view, hostSide := net.Pipe()
+	defer view.Close()
+	go h.attach(tb, hostSide, bufio.NewReader(hostSide))
+	view.SetReadDeadline(time.Now().Add(3 * time.Second))
+	r := bufio.NewReader(view)
+	for {
+		kind, data, err := readMsg(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == msgStatus {
+			var got status.Report
+			if err := json.Unmarshal(data, &got); err != nil || got.State != status.Blocked {
+				t.Fatalf("reattach: %+v %v", got, err)
+			}
+			break
+		}
+	}
+}
+
 func TestHostMessages(t *testing.T) {
 	var b bytes.Buffer
 	writeMsg(&b, msgFrame, []byte("\x1b[2Jhello"))

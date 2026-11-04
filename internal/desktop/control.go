@@ -57,12 +57,15 @@ type Request struct {
 	Lines      int    `json:"lines,omitempty"` // the last lines read returns, 0 for all
 	// State is what wait waits for: one state or several, comma
 	// separated; done when empty.
-	State   string        `json:"state,omitempty"`
-	Timeout time.Duration `json:"timeout,omitempty"` // how long wait waits, 0 for as long as it takes
-	Force   bool          `json:"force,omitempty"`   // close a tab that's working
-	Always  bool          `json:"always,omitempty"`  // allow answers the prompt's second option
-	Title   string        `json:"title,omitempty"`   // notify's
-	Body    string        `json:"body,omitempty"`    // notify's
+	State    string        `json:"state,omitempty"`
+	Timeout  time.Duration `json:"timeout,omitempty"`   // how long wait waits, 0 for as long as it takes
+	Force    bool          `json:"force,omitempty"`     // close a tab that's working
+	Always   bool          `json:"always,omitempty"`    // allow answers the prompt's second option
+	Title    string        `json:"title,omitempty"`     // notify's
+	Body     string        `json:"body,omitempty"`      // notify's
+	StatusID string        `json:"status_id,omitempty"` // status record within a terminal tab
+	Kind     string        `json:"kind,omitempty"`      // blocked status kind
+	Message  string        `json:"message,omitempty"`   // status message
 }
 
 // Response is the window's answer.
@@ -111,6 +114,8 @@ func (a *App) control(req Request) Response {
 		return a.wait(req)
 	case "page":
 		return a.pageControl(req)
+	case "status":
+		return a.controlStatus(req)
 	case "allow", "deny":
 		return a.controlAnswer(req)
 	case "open":

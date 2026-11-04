@@ -82,3 +82,23 @@ func TestBashBackgroundUnavailable(t *testing.T) {
 		t.Fatalf("without a starter: %+v", r)
 	}
 }
+
+func TestBashBackgroundSandboxDenialSuggestsApprovedRetry(t *testing.T) {
+	env := NewEnv(t.TempDir())
+	env.Sandbox = &fakeSandbox{}
+	start, results, stop := fakeStarter()
+	defer stop()
+	ctx := WithBackground(context.Background(), start)
+	command := `{"command":"echo 'larik: open desktop.log: operation not permitted' >&2; exit 1","run_in_background":true}`
+	if r := (Bash{}).Run(ctx, env, json.RawMessage(command)); r.IsError {
+		t.Fatalf("start: %+v", r)
+	}
+	select {
+	case got := <-results:
+		if !got.failed || !strings.Contains(got.result, `"sandbox": false`) {
+			t.Fatalf("missing approved retry guidance: %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("background command never reported")
+	}
+}

@@ -99,7 +99,9 @@ func Run(opts Options) error {
 			settingsWin = mygo.NewWindow(mygo.WindowOptions{
 				Title: "Larik Settings", Width: 960, Height: 680,
 				MinWidth: 760, MinHeight: 500, StateKey: "settings",
-				Content: ui.View(a.settingsView),
+				TitleBarStyle:        mygo.TitleBarHidden,
+				TrafficLightPosition: trafficLights,
+				Content:              ui.View(a.settingsView),
 			})
 			settingsWin.OnFocus(func() {
 				a.refreshSettings()

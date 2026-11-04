@@ -284,8 +284,7 @@ func (Bash) Run(ctx context.Context, env *Env, input json.RawMessage) Result {
 	case errors.As(runErr, &exitErr):
 		content := fmt.Sprintf("%s\n[exit code %d]", output, exitErr.ExitCode())
 		if sandboxed && sandboxBlocked(output) {
-			hint := "[sandbox: this looks blocked by the sandbox (writes outside the project and temp dirs, and network access, are not allowed). " +
-				"If the command really needs that, run it again with \"sandbox\": false; the user will be asked to approve it.]"
+			hint := sandboxFailureHint
 			content += "\n" + hint
 			notes = append(notes, hint)
 		}
@@ -381,9 +380,13 @@ var sandboxMarkers = []string{
 	"ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "dial tcp", "Failed to establish a new connection",
 }
 
+const sandboxFailureHint = "[sandbox: this looks blocked by the sandbox (writes outside the project and temp dirs, and network access, are not allowed). " +
+	"If the command really needs that, run it again with \"sandbox\": false; the user will be asked to approve it.]"
+
 func sandboxBlocked(output string) bool {
+	output = strings.ToLower(output)
 	for _, m := range sandboxMarkers {
-		if strings.Contains(output, m) {
+		if strings.Contains(output, strings.ToLower(m)) {
 			return true
 		}
 	}

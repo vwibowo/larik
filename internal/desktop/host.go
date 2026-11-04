@@ -94,10 +94,11 @@ type hostRequest struct {
 	Rows    int      `json:"rows,omitempty"`
 	// Shell and Run say what the tab is to the window, a terminal tab and
 	// the command it was given, for a window that opens to it not knowing.
-	Shell bool   `json:"shell,omitempty"`
-	Run   string `json:"run,omitempty"`
-	Text  string `json:"text,omitempty"`
-	Enter bool   `json:"enter,omitempty"`
+	Shell  bool   `json:"shell,omitempty"`
+	Run    string `json:"run,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Enter  bool   `json:"enter,omitempty"`
+	Status string `json:"status,omitempty"` // an OSC 7501 payload from a hook
 }
 
 // hostReply is the host's answer.
@@ -389,6 +390,21 @@ func (h *host) handle(conn net.Conn) {
 			}
 			reply(hostReply{})
 		}
+	case "status":
+		h.mu.Lock()
+		t := h.tabs[req.ID]
+		valid := t != nil && t.shell && !t.exited
+		h.mu.Unlock()
+		if !valid {
+			reply(hostReply{Error: "status needs a running terminal tab"})
+			return
+		}
+		if _, _, _, ok := parseProgramStatus(req.Status); !ok {
+			reply(hostReply{Error: "invalid status report"})
+			return
+		}
+		h.statusEvent(t, func(s *statusRecords) (status.Report, bool) { return s.apply(req.Status) })
+		reply(hostReply{})
 	case "close":
 		h.closeTab(req.ID)
 		reply(hostReply{})

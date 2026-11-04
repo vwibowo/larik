@@ -19,6 +19,7 @@ var settingsPages = []settingsPage{
 	{"agent", "Agent defaults", "Agent"},
 	{"behavior", "Agent behavior", "Agent"},
 	{"tools", "Tools", "Agent"},
+	{"integrations", "Coding agents", "Agent"},
 	{"advanced", "Advanced", "Advanced"},
 }
 
@@ -39,6 +40,11 @@ var settingsItems = []settingsItem{
 	{"token_saver", "behavior", "Shorten command output", "Filter recognized successful command output before sending it to the model."},
 	{"prompt_suggestions", "behavior", "Prompt suggestions", "Suggest a next prompt after a turn; this uses tokens."},
 	{"tool_search", "tools", "Load MCP tools on demand", "Keep large tool lists out of every model request."},
+	{"integration-skills", "integrations", "Desktop control skills", "Install Larik Desktop skills globally for coding agents in every project."},
+	{"integration-claude", "integrations", "Claude Code status", "Show work, permission requests, completion and failures from Claude Code terminal tabs."},
+	{"integration-codex", "integrations", "Codex CLI status", "Show work, permission requests and completion from Codex terminal tabs."},
+	{"integration-opencode", "integrations", "OpenCode status", "Show work, permission requests, completion and errors from OpenCode terminal tabs."},
+	{"integration-gemini", "integrations", "Gemini CLI status", "Show work, permission requests and completion from Gemini CLI terminal tabs."},
 	{"connect", "advanced", "Connect a provider", "Add a cloud, local, or custom model provider."},
 	{"routing", "advanced", "Model routing", "Choose models for subagents, fallbacks, and budgets."},
 	{"permissions", "advanced", "Permission rules", "Edit allow and deny rules for tools and commands."},
@@ -80,8 +86,8 @@ func (a *App) settingsView(c *ui.Context) {
 
 func (a *App) settingsSidebar(c *ui.Context, t *ui.Theme) {
 	s := a.settings
-	ui.Column(c).Width(220).FillHeight().Background(sidebarColor(t)).Padding(16, 12).Gap(12).Children(func() {
-		ui.Text(c, "Settings").Bold().FontSize(19).Padding(2, 8, 4, 8)
+	ui.Column(c).Width(220).FillHeight().Background(sidebarColor(t)).Padding(0, 12, 16, 12).Gap(12).Children(func() {
+		ui.Box(c).Height(max(c.TitleBar().Height, toolbarHeight)).FillWidth().DragWindow()
 		ui.SearchField(c.Key("settings-search"), &s.query).Placeholder("Search settings").Label("Search settings").
 			OnShortcut(0, ui.KeyEscape, func() { s.query = "" })
 		ui.Scroll(c).Fill().Children(func() {
@@ -112,19 +118,11 @@ func (a *App) settingsSidebar(c *ui.Context, t *ui.Theme) {
 func (a *App) settingsContent(c *ui.Context, t *ui.Theme) {
 	s := a.settings
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		title := pageTitle(s.page)
-		if strings.TrimSpace(s.query) != "" {
-			title = "Search results"
-		}
-		ui.Column(c).Padding(28, 28, 18, 28).Gap(5).Children(func() {
-			ui.Text(c, title).Bold().FontSize(22)
-			if s.query == "" && (s.page == "agent" || s.page == "behavior" || s.page == "tools") {
-				ui.Text(c, "Personal defaults for new sessions. Open sessions keep their current settings.").FontSize(12).TextColor(t.TextMuted)
-			}
-		})
-		ui.Box(c).Height(1).Background(t.Border)
-		ui.Scroll(c).Fill().Children(func() {
-			ui.Column(c).Padding(22, 28, 28, 28).Gap(22).Children(func() {
+		ui.Scroll(c.Key("settings-content-" + s.page)).Fill().Children(func() {
+			ui.Column(c).Padding(16, 28, 28, 28).Gap(22).Children(func() {
+				if s.query == "" && (s.page == "agent" || s.page == "behavior" || s.page == "tools") {
+					ui.Text(c, "Personal defaults for new sessions. Open sessions keep their current settings.").FontSize(12).TextColor(t.TextMuted)
+				}
 				if s.loadError != "" {
 					ui.Text(c, "Could not load agent settings: "+s.loadError).TextColor(t.Danger)
 				}

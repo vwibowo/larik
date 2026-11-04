@@ -14,6 +14,7 @@ import (
 
 	"larik/internal/config"
 	"larik/internal/desktop"
+	"larik/internal/status"
 	"larik/internal/termbrowser"
 )
 
@@ -30,6 +31,7 @@ var desktopCommands = []struct{ name, usage, about string }{
 	{"focus", "--tab tab", "show a tab and bring the window forward"},
 	{"close", "--tab tab [--force]", "close a tab; --force stops one mid-turn"},
 	{"notify", "[--title title] text", "post a notification"},
+	{"status", "[--tab tab] --id source --state idle|working|done|blocked|error|clear [--kind permission|question|auth] [--title text] [--message text]", "report a terminal tab's program status; --tab defaults to $LARIK_DESKTOP_TAB"},
 	{"page", "op [--tab tab] [--ref ref] [--enter] [--out file] [url | text | code | -]", "drive a browser tab's page, the focused one or the one focused last: navigate url (opening a tab beside the focused pane when none is open), back, forward, reload, snapshot (the page's text and its links, buttons and fields, each with a ref), click --ref, type --ref text (--enter submits it), eval code (- reads it from stdin; prints what it returns, as JSON) or screenshot (a PNG, to --out, page.png by default)"},
 	{"archive", "--session id", "archive a session that isn't running: it leaves the sidebar and /resume for its project's archived ones"},
 	{"unarchive", "--session id", "bring an archived session back"},
@@ -100,6 +102,13 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.BoolVar(&req.Always, "always", false, "the prompt's second option: don't ask again, or for a plan, approve and ask before each edit")
 	case "notify":
 		fs.StringVar(&req.Title, "title", "Larik", "the notification's title")
+	case "status":
+		fs.StringVar(&req.Tab, "tab", os.Getenv(status.TabEnv), "the terminal tab, defaulting to $LARIK_DESKTOP_TAB")
+		fs.StringVar(&req.StatusID, "id", "", "the status record's source")
+		fs.StringVar(&req.State, "state", "", "idle, working, done, blocked, error or clear")
+		fs.StringVar(&req.Kind, "kind", "", "permission, question or auth for blocked")
+		fs.StringVar(&req.Title, "title", "", "short label for the tab")
+		fs.StringVar(&req.Message, "message", "", "short status message")
 	case "page":
 		fs.StringVar(&req.Tab, "tab", "", "the browser tab: its id, or \"focused\"")
 		fs.StringVar(&req.Ref, "ref", "", "the element click or type acts on, as snapshot names it")
@@ -176,6 +185,10 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		if req.Tab == "" && req.Session == "" {
 			return errors.New("wait needs --tab or --session")
 		}
+	case "status":
+		if req.Tab == "" {
+			return errors.New("status needs --tab or $LARIK_DESKTOP_TAB")
+		}
 	case "archive", "unarchive", "trash":
 		if req.Session == "" {
 			return fmt.Errorf("%s needs --session", name)
@@ -210,7 +223,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fmt.Fprintln(w, res.Tab.ID)
 	case "read":
 		fmt.Fprintln(w, res.Text)
-	case "wait", "allow", "deny":
+	case "wait", "allow", "deny", "status":
 		fmt.Fprintln(w, res.State)
 	case "page":
 		return printPage(w, res, pageOut)

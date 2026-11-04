@@ -303,12 +303,16 @@ func TestBashSandboxRouting(t *testing.T) {
 	if len(fs.calls) != 1 || !strings.Contains(r.Content, `"sandbox": false`) {
 		t.Fatalf("sandboxed failure should hint at the escape hatch: %+v", r)
 	}
+	r = run(t, Bash{}, env, `{"command":"echo 'larik: open desktop.log: operation not permitted' >&2; exit 1"}`)
+	if !strings.Contains(r.Content, `"sandbox": false`) {
+		t.Fatalf("lowercase sandbox denial should hint at the approved retry: %+v", r)
+	}
 	r = run(t, Bash{}, env, `{"command":"echo plain failure; exit 1"}`)
 	if strings.Contains(r.Content, "sandbox:") {
 		t.Error("unrelated failures get no sandbox hint")
 	}
 	run(t, Bash{}, env, `{"command":"echo hi","sandbox":false}`)
-	if len(fs.calls) != 2 {
+	if len(fs.calls) != 3 {
 		t.Errorf("sandbox:false must bypass the sandbox, calls=%v", fs.calls)
 	}
 }
