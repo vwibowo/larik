@@ -240,3 +240,25 @@ func TestAppNotificationClick(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestNotificationActions: the buttons reach the platform, and the one
+// chosen reaches App.OnNotificationAction with the notification's ID,
+// not its click listeners.
+func TestNotificationActions(t *testing.T) {
+	n := showNotification(t, NotificationOptions{ID: "ask:1", Title: "Allow bash?", Actions: []NotificationAction{
+		{ID: "allow", Title: "Allow"}, {ID: "deny", Title: "Deny", Destructive: true},
+	}})
+	shown := fb.Notification(n.ID())
+	if shown == nil || len(shown.Actions) != 2 || shown.Actions[1].ID != "deny" || !shown.Actions[1].Destructive {
+		t.Fatalf("shown %+v", shown)
+	}
+	var got [2]string
+	off := App.OnNotificationAction(func(id, action string) { got = [2]string{id, action} })
+	defer off()
+	clicked := false
+	n.OnClick(func() { clicked = true })
+	onMain(func() { fb.ChooseNotificationAction("ask:1", "deny") })
+	if got != [2]string{"ask:1", "deny"} || clicked {
+		t.Fatalf("action %q, clicked %v", got, clicked)
+	}
+}

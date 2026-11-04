@@ -137,6 +137,9 @@ type App struct {
 	// drop is where something dragged over a pane was last frame, for
 	// the drop to go there (tiling.go).
 	drop dropping
+	// undo are the panes as they were before the last drops, moves and
+	// layouts, the newest last (tiling.go).
+	undo []arrangement
 	// picked are the sessions chosen together in the sidebar, by
 	// transcript path, in the order chosen; anchor is where a Shift range
 	// starts, and rows are the sessions as the sidebar last listed
@@ -217,6 +220,17 @@ type App struct {
 	// noChooser makes a new tab start larik, without the chooser;
 	// emptyPick and emptyDir are the window's own chooser's, with no tab.
 	noChooser bool
+	// appearance is Settings' light or dark, "" for the system's, and
+	// accent its accent colour, as "#rrggbb", "" for the system's;
+	// appear makes the app take an appearance (see Run).
+	appearance, accent string
+	appear             func(string)
+	// keys are the keys Settings gave commands, by label, "" for none;
+	// keyDrafts what its fields hold, and keyError why the last key
+	// typed wasn't taken (keys.go).
+	keys      map[string]string
+	keyDrafts map[string]*string
+	keyError  string
 	emptyPick choice
 	emptyDir  string
 	// lastBrowser is the browser tab focused last, which page commands go

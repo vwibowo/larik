@@ -74,10 +74,17 @@ func (a *App) palette(base *ui.Theme) *ui.Theme {
 	if base.Dark {
 		i = 1
 	}
-	if t := a.theme[i]; t != nil && t.Accent == base.Accent && t.FontSize == base.FontSize {
+	want := base.Accent
+	if a.accent != "" {
+		want = ui.Hex(a.accent)
+	}
+	if t := a.theme[i]; t != nil && t.Accent == want && t.FontSize == base.FontSize {
 		return t
 	}
 	t := *base
+	if a.accent != "" {
+		accented(&t, a.accent)
+	}
 	if t.Dark {
 		t.Background = contentDark
 		t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#323232"), ui.Hex("#3b3b3b"), ui.Hex("#464646")
@@ -333,76 +340,77 @@ func (a *App) confirmAsked(c *ui.Context) {
 // that Control keys stay larik's. Shift adds nothing there, so no two
 // shortcuts differ by Shift alone.
 func (a *App) shortcuts(c *ui.Context) {
+	a.customShortcuts(c)
 	a.tilingShortcuts(c)
 	mod := ui.Ctrl | ui.Shift
 	if runtime.GOOS == "darwin" {
 		mod = ui.Super
 	}
 	switch {
-	case c.Shortcut(mod|ui.Shift, ui.KeyP):
+	case a.keyed(c, paletteLabel, mod|ui.Shift, ui.KeyP):
 		a.openPalette()
-	case c.Shortcut(mod|ui.Alt, ui.KeyT):
+	case a.keyed(c, "New Session in Worktree", mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
-	case c.Shortcut(mod, ui.KeyT):
+	case a.keyed(c, "New Tab", mod, ui.KeyT):
 		a.openNew()
-	case c.Shortcut(mod, ui.KeyW):
+	case a.keyed(c, "Close Tab", mod, ui.KeyW):
 		if t := a.focused(); t != nil {
 			a.askClose([]*tab{t}, nil)
 		}
-	case c.Shortcut(splitBelowMods(), ui.KeyD):
+	case a.keyed(c, "New Tab in Split Below", splitBelowMods(), ui.KeyD):
 		a.splitNew(true)
-	case c.Shortcut(mod, ui.KeyD):
+	case a.keyed(c, "New Tab in Split", mod, ui.KeyD):
 		a.splitRight()
-	case c.Shortcut(mod|ui.Shift, ui.KeyEnter):
+	case a.keyed(c, "Zoom Pane", mod|ui.Shift, ui.KeyEnter):
 		a.toggleZoom()
-	case c.Shortcut(mod|ui.Alt, ui.KeyLeft):
+	case a.keyed(c, "Pane to the Left", mod|ui.Alt, ui.KeyLeft):
 		a.focusToward(-1, 0)
-	case c.Shortcut(mod|ui.Alt, ui.KeyRight):
+	case a.keyed(c, "Pane to the Right", mod|ui.Alt, ui.KeyRight):
 		a.focusToward(1, 0)
-	case c.Shortcut(mod|ui.Alt, ui.KeyUp):
+	case a.keyed(c, "Pane Above", mod|ui.Alt, ui.KeyUp):
 		a.focusToward(0, -1)
-	case c.Shortcut(mod|ui.Alt, ui.KeyDown):
+	case a.keyed(c, "Pane Below", mod|ui.Alt, ui.KeyDown):
 		a.focusToward(0, 1)
-	case c.Shortcut(mod, ui.KeyO):
+	case a.keyed(c, "Open Folder…", mod, ui.KeyO):
 		a.openFolder()
-	case c.Shortcut(mod, ui.KeyComma):
+	case a.keyed(c, "Settings…", mod, ui.KeyComma):
 		a.openSettings()
-	case c.Shortcut(mod|ui.Shift, ui.KeyG):
+	case a.keyed(c, "Toggle Changes", mod|ui.Shift, ui.KeyG):
 		a.toggleChanges()
-	case c.Shortcut(mod, ui.KeyJ):
+	case a.keyed(c, "Next Session Waiting", mod, ui.KeyJ):
 		a.nextWaiting()
-	case c.Shortcut(mod|ui.Shift, ui.KeyU):
+	case a.keyed(c, "Latest Notification", mod|ui.Shift, ui.KeyU):
 		a.latestUnread()
-	case c.Shortcut(mod|ui.Shift, ui.KeyN):
+	case a.keyed(c, "New Terminal", mod|ui.Shift, ui.KeyN):
 		a.openShell()
-	case c.Shortcut(mod|ui.Alt, ui.KeyN):
+	case a.keyed(c, "New Browser Tab", mod|ui.Alt, ui.KeyN):
 		a.openBrowser("")
-	case c.Shortcut(mod, ui.KeyL):
+	case a.keyed(c, "Open Location…", mod, ui.KeyL):
 		a.focusAddress()
-	case c.Shortcut(mod, ui.KeyR):
+	case a.keyed(c, "Reload Page", mod, ui.KeyR):
 		a.browse((*mygo.Page).Reload)
-	case c.Shortcut(mod, ui.KeyK):
+	case a.keyed(c, "Search Sessions…", mod, ui.KeyK):
 		a.focusSearch, a.noSidebar = true, false
-	case c.Shortcut(mod, ui.KeyF):
+	case a.keyed(c, "Find…", mod, ui.KeyF):
 		a.openFind()
-	case c.Shortcut(mod, ui.KeyB):
+	case a.keyed(c, "Toggle Sidebar", mod, ui.KeyB):
 		a.noSidebar = !a.noSidebar
-	case c.Shortcut(mod|ui.Shift, ui.KeyBracketRight):
+	case a.keyed(c, "Show Next Tab", mod|ui.Shift, ui.KeyBracketRight):
 		a.cycle(1)
-	case c.Shortcut(mod|ui.Shift, ui.KeyBracketLeft):
+	case a.keyed(c, "Show Previous Tab", mod|ui.Shift, ui.KeyBracketLeft):
 		a.cycle(-1)
 	}
 	// Off macOS the shortcuts take Shift already: there, the tab menu
 	// reopens a tab.
-	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super|ui.Shift, ui.KeyT) {
+	if runtime.GOOS == "darwin" && a.keyed(c, "Reopen Closed Tab", ui.Super|ui.Shift, ui.KeyT) {
 		a.reopenClosed()
 	}
 	// And a browser tab's back and forward, which differ from showing
 	// the next tab by Shift alone.
-	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super, ui.KeyBracketLeft) {
+	if runtime.GOOS == "darwin" && a.keyed(c, "Back", ui.Super, ui.KeyBracketLeft) {
 		a.browse((*mygo.Page).GoBack)
 	}
-	if runtime.GOOS == "darwin" && c.Shortcut(ui.Super, ui.KeyBracketRight) {
+	if runtime.GOOS == "darwin" && a.keyed(c, "Forward", ui.Super, ui.KeyBracketRight) {
 		a.browse((*mygo.Page).GoForward)
 	}
 	for i, k := range []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7, ui.Key8, ui.Key9} {
@@ -487,8 +495,11 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 					a.splitNew(true)
 				}
 				if a.split() {
-					m.Separator()
-					for _, cmd := range a.tilingCommands()[:5] { // the layouts
+					for _, cmd := range a.tilingCommands() {
+						// Evening out, the layouts, the moves, then undo.
+						if cmd.label == "Equalize Panes" || cmd.label == "Move Pane Left" || cmd.label == "Undo Pane Layout" {
+							m.Separator()
+						}
 						if m.Item(cmd.label).Chosen() {
 							cmd.run()
 						}

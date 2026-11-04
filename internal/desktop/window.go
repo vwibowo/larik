@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -87,6 +88,7 @@ func Run(opts Options) error {
 		fmt.Fprintf(os.Stderr, "larik desktop: notifications %s\n", map[bool]string{true: "on", false: "off (macOS shows them only for an app bundle: larik desktop --install)"}[mygo.NotificationsSupported()])
 		a.update = win.Update
 		a.redraw = func() { win.Update(func() {}) }
+		a.appear = func(v string) { mygo.Theme.SetSource(mygo.ThemeSource(cmp.Or(v, string(mygo.ThemeSystem)))) }
 		a.showSettings = func() {
 			if settingsWin != nil {
 				settingsWin.Show()
@@ -94,7 +96,7 @@ func Run(opts Options) error {
 				return
 			}
 			settingsWin = mygo.NewWindow(mygo.WindowOptions{
-				Title: "Larik Settings", Width: 480, Height: 330,
+				Title: "Larik Settings", Width: 520, Height: 600,
 				MinWidth: 420, MinHeight: 300, StateKey: "settings",
 				Content: ui.View(a.settingsView),
 			})
@@ -109,7 +111,7 @@ func Run(opts Options) error {
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 		a.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
 		a.about = mygo.App.ShowAboutPanel
-		a.alert = func(s session.Indexed) { notify(win, s) }
+		a.alert = func(s session.Indexed) { notify(win, s, a.notifyActions(s)) }
 		a.post = func(title, body string) { post(win, title, body) }
 		a.ping = func(id, title, body string) { notifyText(win, "larik-tab-"+id, title, body, "") }
 		a.raise = func() { raise(win) }
@@ -175,6 +177,11 @@ func Run(opts Options) error {
 				win.Close()
 			}
 		}
+		// A button of a session's notification answers its prompt, and
+		// leaves the window where it is.
+		mygo.App.OnNotificationAction(func(id, action string) {
+			win.Update(func() { a.answerNotification(id, action) })
+		})
 		mygo.App.OnNotificationClick(func(id string) {
 			win.Update(func() {
 				for _, p := range a.projects {
@@ -242,19 +249,20 @@ func post(win *mygo.Window, title, body string) {
 
 // notify tells the user, while the window isn't focused, that a session
 // needs them or finished: a notification where the system allows one (on
-// macOS only in an app bundle, as larik desktop --install makes), and a
-// bounce of the Dock icon.
-func notify(win *mygo.Window, s session.Indexed) {
+// macOS only in an app bundle, as larik desktop --install makes), with
+// buttons that answer a prompt the window can answer, and a bounce of
+// the Dock icon.
+func notify(win *mygo.Window, s session.Indexed, actions []mygo.NotificationAction) {
 	if win.IsFocused() {
 		return
 	}
 	title, body := alertText(s)
-	notifyText(win, "larik-"+s.ID, title, body, s.Cwd)
+	notifyText(win, "larik-"+s.ID, title, body, s.Cwd, actions...)
 }
 
-// notifyText posts a notification with id, while the window isn't
-// focused, and bounces the Dock icon.
-func notifyText(win *mygo.Window, id, title, body, group string) {
+// notifyText posts a notification with id, and actions, while the window
+// isn't focused, and bounces the Dock icon.
+func notifyText(win *mygo.Window, id, title, body, group string, actions ...mygo.NotificationAction) {
 	if win.IsFocused() {
 		return
 	}
@@ -262,7 +270,7 @@ func notifyText(win *mygo.Window, id, title, body, group string) {
 		mygo.App.Dock.Bounce(false)
 	}
 	if mygo.NotificationsSupported() {
-		n := mygo.NewNotification(mygo.NotificationOptions{ID: id, Title: title, Body: body, Group: group})
+		n := mygo.NewNotification(mygo.NotificationOptions{ID: id, Title: title, Body: body, Group: group, Actions: actions})
 		go func() { _ = n.Show() }()
 	}
 }

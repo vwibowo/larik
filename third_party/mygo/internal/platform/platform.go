@@ -172,6 +172,9 @@ type AppHandler interface {
 	NetworkChanged(status NetworkStatus)
 	HotkeyPressed(id int)
 	NotificationClicked(id string)
+	// NotificationActioned reports a notification's button chosen, by the
+	// notification's ID and the action's.
+	NotificationActioned(id, action string)
 	// MediaCommand reports a media key or a remote command for what
 	// NowPlaying shows; position is where MediaSeek asks to go.
 	MediaCommand(cmd MediaCommand, position time.Duration)
@@ -1249,6 +1252,15 @@ type Notification struct {
 	// macOS).
 	Group  string
 	Sender *NotificationSender
+	// Actions are buttons the notification offers (macOS).
+	Actions []NotificationAction
+}
+
+// NotificationAction is a button of a notification: ID is what the
+// handler's NotificationActioned receives, Title its text.
+type NotificationAction struct {
+	ID, Title   string
+	Destructive bool
 }
 
 // NotificationSender describes an incoming direct message's sender.

@@ -2058,7 +2058,7 @@ func TestSettingsWindowAndAdvancedEditor(t *testing.T) {
 	}
 
 	mu.Lock()
-	settingsUI := ui.NewTester(a.settingsView, 480, 330)
+	settingsUI := ui.NewTester(a.settingsView, 520, 2400)
 	settingsUI.Frame()
 	snapshot(t, settingsUI, "settings-window.png")
 	if !settingsUI.HasText("Show sidebar") || !settingsUI.HasText("13 pt") {

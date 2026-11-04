@@ -3,6 +3,7 @@ package desktop
 import (
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"larik/internal/session"
@@ -18,7 +19,9 @@ import (
 // and once more after, to say so when the tab didn't take it: the
 // change's diff open in the tab, or the field for telling larik what to
 // do instead, takes keys before the prompt. A question or a sign-in
-// needs words, so only opening the tab answers those.
+// needs words, so only opening the tab answers those. The system
+// notification offers the answers too, as buttons, so the window can
+// stay behind.
 
 // answer is a reply to a permission prompt.
 type answer int
@@ -78,6 +81,57 @@ func (an answer) button(plan bool) (text, tip string) {
 		return "Keep Planning", "No, keep planning"
 	}
 	return "Deny", "No"
+}
+
+// action is what an's button in a notification is called, for the
+// window to know which was chosen.
+func (an answer) action() string {
+	return [...]string{"allow", "always", "deny", "changes"}[an]
+}
+
+// notifyActions are the buttons a session's notification offers: its
+// prompt's answers, while the window can type them.
+func (a *App) notifyActions(s session.Indexed) []mygo.NotificationAction {
+	if _, ok := a.answerable(s); !ok {
+		return nil
+	}
+	plan := s.Status.ReviewsPlan()
+	var out []mygo.NotificationAction
+	for _, an := range []answer{allowOnce, allowAlways, deny} {
+		out = append(out, mygo.NotificationAction{ID: an.action(), Title: an.label(plan), Destructive: an == deny && !plan})
+	}
+	return out
+}
+
+// answerNotification answers the session whose notification, id, had
+// the button action chosen. The window may be behind, so what goes wrong
+// is said in a notification as well as the notice bar.
+func (a *App) answerNotification(id, action string) {
+	var an answer
+	switch action {
+	case allowOnce.action():
+		an = allowOnce
+	case allowAlways.action():
+		an = allowAlways
+	case deny.action():
+		an = deny
+	default:
+		return
+	}
+	for _, p := range a.projects {
+		for _, s := range p.Sessions {
+			if "larik-"+s.ID != id {
+				continue
+			}
+			if msg := a.answerSession(s.Path, an); msg != "" {
+				a.notice = msg
+				if a.post != nil {
+					a.post(sessionLabel(s), msg)
+				}
+			}
+			return
+		}
+	}
 }
 
 // answerChecked is how long after an answer the window looks whether the

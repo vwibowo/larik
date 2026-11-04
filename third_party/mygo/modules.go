@@ -850,6 +850,18 @@ type NotificationOptions struct {
 	// the communication fails, it shows the ordinary notification.
 	// Other platforms ignore Sender. NewNotification copies it and Avatar.
 	Sender *NotificationSender
+	// Actions are buttons the notification offers, for a reply without
+	// switching to the app: App.OnNotificationAction hears which one is
+	// chosen. macOS shows them, under Options in a banner; other systems
+	// show the notification without them.
+	Actions []NotificationAction
+}
+
+// NotificationAction is a button of a notification. ID is what
+// App.OnNotificationAction receives; Destructive shows it in red.
+type NotificationAction struct {
+	ID, Title   string
+	Destructive bool
 }
 
 // NotificationSender is the sender of an incoming direct message.
@@ -981,6 +993,9 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 			Body:     n.opts.Body,
 			Silent:   n.opts.Silent,
 			Group:    n.opts.Group,
+		}
+		for _, a := range n.opts.Actions {
+			note.Actions = append(note.Actions, platform.NotificationAction{ID: a.ID, Title: a.Title, Destructive: a.Destructive})
 		}
 		if s := n.opts.Sender; s != nil {
 			note.Sender = &platform.NotificationSender{ID: s.ID, Name: s.Name, Avatar: s.Avatar}

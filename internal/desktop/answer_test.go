@@ -157,3 +157,47 @@ func TestAllowCommand(t *testing.T) {
 		t.Fatalf("deny not taken: %v", err)
 	}
 }
+
+// A session's notification offers its prompt's answers as buttons, and
+// one chosen is typed into its tab, as the sidebar's are.
+func TestAnswerFromNotification(t *testing.T) {
+	needTerminal(t)
+	dir := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "prompt")
+	script := "#!/bin/sh\nstty raw -echo\nk=$(dd bs=1 count=1 2>/dev/null)\nstty sane\necho \"got:$k\"\nsleep 30\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	waiting := status.Report{State: status.Blocked, Kind: status.Permission, Msg: status.PlanReview}
+	status.NewWriter(path, "tui").Set(waiting)
+	a, mu := serialApp(Options{Bin: bin})
+	defer a.Close()
+	mu.Lock()
+	tb := a.startTab(dir, "", path)
+	s := session.Indexed{Status: waiting, Running: true}
+	s.ID, s.Path, s.Cwd, s.Title = "s1", path, dir, "Plan the parser"
+	a.setProjects([]session.Project{{Root: dir, Name: "work", Sessions: []session.Indexed{s}}})
+
+	var titles []string
+	for _, act := range a.notifyActions(s) {
+		titles = append(titles, act.Title)
+	}
+	if strings.Join(titles, ",") != "Approve,Approve, Ask Each Edit,Keep Planning" {
+		mu.Unlock()
+		t.Fatalf("buttons %q", titles)
+	}
+	if a.notifyActions(session.Indexed{Status: status.Report{State: status.Done}}) != nil {
+		mu.Unlock()
+		t.Fatal("a finished session's notification has answers")
+	}
+	a.answerNotification("larik-elsewhere", "allow") // not this one
+	a.answerNotification("larik-s1", "always")
+	if a.notice != "" || a.answered[path].sent.IsZero() {
+		mu.Unlock()
+		t.Fatalf("answering: notice %q", a.notice)
+	}
+	mu.Unlock()
+	tt := ui.NewTester(a.view, 1240, 800)
+	frameUntil(t, mu, tt, "the key in the tab", func() bool { return strings.Contains(tb.term.Text(), "got:2") })
+}

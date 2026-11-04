@@ -39,7 +39,11 @@ type menuGroup struct {
 // close the window, every tab with it, and Command+plus and minus to zoom
 // a page the window doesn't have. This one gives those keys the window's
 // meanings, and lists the window's other keys where they can be found.
-func (a *App) menuBar() []menuGroup {
+func (a *App) menuBar() []menuGroup { return a.bindKeys(a.menuDefaults()) }
+
+// menuDefaults is the menu bar with its commands' own keys, before those
+// Settings › Keyboard gave them (see keys.go).
+func (a *App) menuDefaults() []menuGroup {
 	return []menuGroup{
 		// MyGo's app menu, with Settings where Mac apps have it.
 		{role: mygo.RoleAppMenu, items: append([]command{

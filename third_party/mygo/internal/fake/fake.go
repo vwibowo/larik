@@ -495,6 +495,10 @@ func (b *Backend) Notification(id string) *platform.Notification {
 // does. It runs on the main thread, like the backends report it.
 func (b *Backend) ClickNotification(id string) { b.h.NotificationClicked(id) }
 
+// ChooseNotificationAction reports a notification's button chosen, as
+// the platform does, on the main thread.
+func (b *Backend) ChooseNotificationAction(id, action string) { b.h.NotificationActioned(id, action) }
+
 // Window is a fake native window. Scripts evaluated in it are recorded.
 type Window struct {
 	b    *Backend

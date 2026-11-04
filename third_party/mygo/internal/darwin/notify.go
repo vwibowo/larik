@@ -72,10 +72,69 @@ func registerNotificationDelegate() {
 		}),
 		method("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:", func(self id, _ objc.SEL, center, resp id, handler uintptr) {
 			ident := goString(send(send(send(send(resp, "notification"), "request"), "identifier"), "self"))
-			theBackend.runOnMain(func() { theBackend.h.NotificationClicked(ident) })
+			action := goString(send(resp, "actionIdentifier"))
+			theBackend.runOnMain(func() {
+				switch action {
+				case unDefaultAction:
+					theBackend.h.NotificationClicked(ident)
+				case unDismissAction:
+				default:
+					theBackend.h.NotificationActioned(ident, action)
+				}
+			})
 			callBlock(handler)
 		}),
 	})
+}
+
+// The action identifiers of a click on a notification and of its
+// dismissal, UNNotificationDefaultActionIdentifier and
+// UNNotificationDismissActionIdentifier.
+const (
+	unDefaultAction = "com.apple.UNNotificationDefaultActionIdentifier"
+	unDismissAction = "com.apple.UNNotificationDismissActionIdentifier"
+)
+
+// unActionDestructive is UNNotificationActionOptionDestructive.
+const unActionDestructive = 1 << 1
+
+// notificationCategory registers the category offering actions, once
+// per set of them, and returns its identifier: the system shows a
+// notification's buttons from its category, and replaces the categories
+// it has with each set given, so every one so far goes again.
+func (b *Backend) notificationCategory(actions []platform.NotificationAction) string {
+	ident := "mygo"
+	for _, a := range actions {
+		ident += "\x1f" + a.ID + "\x1e" + a.Title
+		if a.Destructive {
+			ident += "!"
+		}
+	}
+	if b.notifyCategories == nil {
+		b.notifyCategories = map[string]id{}
+	}
+	if _, ok := b.notifyCategories[ident]; ok {
+		return ident
+	}
+	buttons := send(class("NSMutableArray"), "array")
+	for _, a := range actions {
+		var opts uintptr
+		if a.Destructive {
+			opts = unActionDestructive
+		}
+		act := send(class("UNNotificationAction"), "actionWithIdentifier:title:options:",
+			uintptr(nsString(a.ID)), uintptr(nsString(a.Title)), opts)
+		send(buttons, "addObject:", uintptr(act))
+	}
+	cat := send(class("UNNotificationCategory"), "categoryWithIdentifier:actions:intentIdentifiers:options:",
+		uintptr(nsString(ident)), uintptr(buttons), uintptr(send(class("NSArray"), "array")), 0)
+	b.notifyCategories[ident] = send(cat, "retain")
+	all := send(class("NSMutableSet"), "set")
+	for _, c := range b.notifyCategories {
+		send(all, "addObject:", uintptr(c))
+	}
+	send(notificationCenter(), "setNotificationCategories:", uintptr(all))
+	return ident
 }
 
 func (b *Backend) NotificationsSupported() bool {
@@ -165,6 +224,9 @@ func (b *Backend) addNotification(n *platform.Notification, done func(error)) {
 		}
 		if n.Group != "" {
 			send(content, "setThreadIdentifier:", uintptr(nsString(n.Group)))
+		}
+		if len(n.Actions) > 0 {
+			send(content, "setCategoryIdentifier:", uintptr(nsString(b.notificationCategory(n.Actions))))
 		}
 		if n.Sender != nil && prepareCommunication != nil && prepareCommunication(b, n, content, done) {
 			return

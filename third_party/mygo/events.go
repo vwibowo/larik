@@ -143,3 +143,10 @@ func fire1[A any](l *listeners[func(A)], a A) {
 		fn(a)
 	}
 }
+
+// fire2 calls listeners of an event with two arguments.
+func fire2[A, B any](l *listeners[func(A, B)], a A, b B) {
+	for _, fn := range l.snapshot() {
+		fn(a, b)
+	}
+}

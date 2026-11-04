@@ -28,7 +28,9 @@ This is a plan, worked through in phases. Each phase is useful on its own and la
 | 20 | [Browser tabs](#phase-20-browser-tabs) | Done |
 | 21 | [New tab chooser](#phase-21-new-tab-chooser) | Done |
 | 22 | [Tiling](#phase-22-tiling) | Done |
-| 23 | [What's next](#phase-23-whats-next) | Planned |
+| 23 | [Answers from the notification](#phase-23-answers-from-the-notification) | Done |
+| 24 | [Appearance and keys](#phase-24-appearance-and-keys) | Done |
+| 25 | [What's next](#phase-25-whats-next) | Planned |
 
 ## The design we're aiming for
 
@@ -399,18 +401,42 @@ Panes split from the keyboard and the split button, but a tab couldn't be dragge
 
 - **Drop zones.** Drag a tab from the tab bar, a session from the sidebar, or a pane by its header over a pane, and the part it would take shows tinted in the accent colour: the half at the edge the pointer is near (the outer 30% on each side), which a drop splits off, or the whole pane, from the middle, which it takes (a tab another pane shows swaps with it). A tab shown in another pane leaves it for its new place; a pane dropped on itself does nothing. A screen reader hears where it went.
 - **Dragging a pane by its header** moves it, to an edge of another pane or in its place.
-- **Layouts**, in the Window menu, the command palette and the split button's right-click menu: **Equalize Panes** (`ctrl+cmd+=`) gives every pane the same share each way, and **Lay Out Panes in Columns**, **Rows**, **Grid** or **Main and Stack** (the focused pane at 60%, the others stacked beside it) rebuild the layout from the panes in order, keeping the keyboard where it was. The layout comes back next time, as any does.
+- **Layouts**, in the Window menu, the command palette and the split button's right-click menu (which has the moves and undo too): **Equalize Panes** (`ctrl+cmd+=`) gives every pane the same share each way, and **Lay Out Panes in Columns**, **Rows**, **Grid** or **Main and Stack** (the focused pane at 60%, the others stacked beside it) rebuild the layout from the panes in order, keeping the keyboard where it was. The layout comes back next time, as any does.
 - **`ctrl+cmd` and an arrow** (Window › Move Pane Left, Right, Up, Down) moves the focused pane: it swaps with the pane next to it that way, or, with none, goes to that edge of the window, across the whole of it. Off macOS these have no keys, since `ctrl+shift` is the window's; the menu and the palette have them.
 - MyGo lets an element take one type of dragged value, so tabs, sessions and panes share a `tileable` interface that a pane takes (`internal/desktop/tiling.go`).
-- **Limit:** a browser pane's page is the OS's web view, which takes the pointer itself, so drops there land on its header.
+- **Undo Pane Layout** (`ctrl+cmd+z`) takes back the last drop, move or layout, up to 20 of them; a tab closed since leaves its pane to its neighbour. It isn't `cmd+z`, which a text field or a browser pane's page undoes with.
+- **Browser panes** take drops as the others do: the page, the OS's web view, sits under the window's drawing, so the tint shows over it, and a drag stays with the window that started it.
 
-## Phase 23: What's next
+## Phase 23: Answers from the notification
+
+A prompt could be answered under its row in the sidebar or in the list of notifications, but the system's notification only brought the window forward. Now it answers too:
+
+- **The notification of a session waiting on a permission or a plan review** has its prompt's answers as buttons, under **Options** in a banner (or as buttons, with notifications set to alerts): **Allow**, **Always Allow** and **Deny**, or **Approve**, **Approve, Ask Each Edit** and **Keep Planning**. Choosing one types it into the tab, as the sidebar's buttons do, and the window stays where it is.
+- **They show while the window can answer**: the session is open in a tab here and its larik runs; otherwise the notification is as before, and a click opens the session.
+- **An answer that doesn't land**, the prompt gone or the tab not taking it, is said in a notification of its own as well as the notice bar, since the window may be behind.
+- MyGo's notifications took no buttons; larik's copy adds `NotificationOptions.Actions` and `App.OnNotificationAction`, from `UNNotificationCategory` actions on macOS (see `third_party/mygo/README-LARIK.md`). Notifications need the app from `larik desktop --install` on macOS, as before.
+
+## Phase 24: Appearance and keys
+
+The window followed the system's appearance and accent colour, and its keys were its own. Settings now has both:
+
+- **Appearance**: **System**, **Light** or **Dark**, for the whole app (`mygo.Theme.SetSource`), its title bar, sidebar material and terminals too, and an **Accent** colour, the system's or one of macOS's own eight, which buttons, selection, focus rings, drop zones and the focused pane take.
+- **Keyboard**: every command of the menu bar with its key, in a field to type another into, as the menus write them (`Ctrl+Cmd+K`; `Option`, `Command`, `⌘` and the arrows' symbols are read too, in any order). Enter gives it; an empty field takes the key away; **Reset** gives the command its own back. A key needs Ctrl, Alt or Cmd (F1 to F12 don't), so typing still types, and one another command has isn't given: the field says which has it. The key given replaces the command's own in the menus, the palette and the window's keys (`keys.go`); `cmd+1`…`cmd+9` stay as they are.
+- Both are kept with the window's state, and the Settings window scrolls.
+
+## Phase 25: What's next
 
 From a review against [Rex](https://www.superlogical.com/updates/public-testing-beginning), cmux and herdr, roughly in order of what each is worth for what it costs:
 
-- **Answers from the system notification itself** for plan and permission prompts.
-- **More window preferences**: customizable keys and theme; sidebar visibility and terminal font size are in the Settings window.
-- **Remote windows** on another Mac or over SSH, which the host's protocol is the start of (see phase 18).
+- **Remote windows** on another Mac or over SSH, which the host's protocol is the start of (see phase 18). The plan:
+  - **What it is**: the window here shows the sessions and tabs of larik on another machine, beside its own: the sidebar groups projects under **This Mac** and each server, and a remote tab types, shows, rings and answers as a local one does. Nothing listens on the network; everything goes over SSH, with your `~/.ssh/config`, keys and agent.
+  - **Transport**: the host's protocol is a connection per tab over a Unix socket, so it needs no change to cross SSH. **File › Connect to Server…** runs `ssh <host> larik desktop host ensure`, a new subcommand that starts the remote host if it isn't running and prints its socket's path, then keeps one `ssh -N -o ControlMaster=auto -L <local socket>:<remote socket>` open, the local socket in the window's temp folder, `0600`. Each tab's connection is a channel of that one SSH connection. The window takes servers as a transport (`dial(op)`), the local one a plain Unix socket, so the rest of the window doesn't know which it talks to.
+  - **The sidebar**: a new host op, `index`, answers the remote data folder's `session.Index`, polled as the local index is, every second or so, and `search` the conversation search. Status markers, notifications, **Allow**/**Deny** under rows and in notifications all work from it: answers already go through `send`.
+  - **Opening things there**: a remote project's **New session here**, `cmd+t` in a remote tab, and the New Tab chooser start their tab on that host; the chooser's **Change…** lists the server's folders (op `ls`). Saved state names each tab's server, and reopening the window connects again and attaches.
+  - **Version skew**: `ping` answers the host's larik version and protocol number; a window and host that don't match say so and suggest `larik update` on the older one.
+  - **Not at first**: the changes pane, worktrees and `gh` pull requests run `git` here, so they need host ops (`git status`, `diff`, `stage`, `commit`) and are hidden for remote projects until then; browser tabs stay local, and a remote program's ports open through an `ssh -L` forward later; reconnecting after the network drops shows the tabs as disconnected, with **Reconnect**.
+  - **Milestones**: (1) the transport, `host ensure`, `index`, remote tabs and the sidebar; (2) the changes pane and worktrees over host ops; (3) ports, the remote folder picker, and reconnecting.
+  - **Tests** need no SSH: a second data folder and a second host on another socket stand in for a server, reached through the same transport; the SSH command lines are checked as text.
 
 Still open from phase 7: the headless Linux run.
 

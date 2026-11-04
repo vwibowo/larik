@@ -69,7 +69,8 @@ type Application struct {
 	onOpenFile        listeners[func(string)]
 	onWindowCreated   listeners[func(*Window)]
 
-	onNotificationClick listeners[func(string)]
+	onNotificationClick  listeners[func(string)]
+	onNotificationAction listeners[func(string, string)]
 }
 
 // App is the application singleton.
@@ -538,6 +539,15 @@ func (a *Application) OnNotificationClick(fn func(id string)) (off func()) {
 	return a.onNotificationClick.add(fn, false)
 }
 
+// OnNotificationAction is called with the ID of a notification of the
+// app and of the action, NotificationOptions.Actions, whose button the
+// user chooses: the app stays where it is, behind, as the system does
+// not bring it forward for one. Register it before Run to receive the
+// one that launched the app (macOS).
+func (a *Application) OnNotificationAction(fn func(id, action string)) (off func()) {
+	return a.onNotificationAction.add(fn, false)
+}
+
 // OnWindowCreated is called for every new window.
 func (a *Application) OnWindowCreated(fn func(w *Window)) (off func()) {
 	return a.onWindowCreated.add(fn, false)
@@ -670,5 +680,8 @@ func (appHandler) LocaleChanged()                { App.localeChangedFromSystem()
 func (appHandler) PowerEvent(event string)       { Power.event(event) }
 func (appHandler) HotkeyPressed(id int)          { GlobalShortcut.pressed(id) }
 func (appHandler) NotificationClicked(id string) { notificationClicked(id) }
+func (appHandler) NotificationActioned(id, action string) {
+	fire2(&App.onNotificationAction, id, action)
+}
 
 func (appHandler) NetworkChanged(s platform.NetworkStatus) { Network.changed(networkStatus(s)) }

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -269,4 +270,48 @@ func TestDragTabToPaneEdge(t *testing.T) {
 		t.Fatalf("after moving the pane by its header: %s", got)
 	}
 	snapshot(t, tt, "tiled.png")
+
+	// The split button's menu moves panes and takes a change back too.
+	if err := tt.RightClick(splitTip()); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []string{"Equalize Panes", "Lay Out Panes in Grid", "Move Pane Left", "Undo Pane Layout"} {
+		if !slices.Contains(tt.Menu(), item) {
+			t.Errorf("the split button's menu lacks %q: %q", item, tt.Menu())
+		}
+	}
+	if err := tt.ChooseMenuItem("Undo Pane Layout"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if got := shape(a.layout); got != "("+parser.id+"|"+site.id+")" {
+		t.Fatalf("after undoing the header drag: %s", got)
+	}
+}
+
+func TestUndoLayout(t *testing.T) {
+	a, tabs := fourPanes(t) // (1|((2/3)|4)), four focused
+	before := shape(a.layout)
+	a.arrange(layoutGrid)
+	a.movePane(-1, 0)
+	if !a.undoLayout() || shape(a.layout) != "((1|2)/(3|4))" {
+		t.Fatalf("one back: %s", shape(a.layout))
+	}
+	if !a.undoLayout() || shape(a.layout) != before || a.focused() != tabs[3] {
+		t.Fatalf("two back: %s, focused %s", shape(a.layout), a.focused().id)
+	}
+	parents(t, a.layout)
+	if a.undoLayout() {
+		t.Fatal("undid past the first change")
+	}
+
+	// A tab closed since leaves its pane to its neighbour.
+	a.dropTab(tabs[1], a.paneOf(tabs[0]), zoneTop)
+	a.equalize()
+	a.tabs = slices.DeleteFunc(a.tabs, func(tb *tab) bool { return tb == tabs[2] })
+	a.removePane(a.paneOf(tabs[2]))
+	if !a.undoLayout() || shape(a.layout) != "((2/1)|4)" {
+		t.Fatalf("with three closed: %s", shape(a.layout))
+	}
+	parents(t, a.layout)
 }

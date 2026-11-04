@@ -3,6 +3,7 @@ package desktop
 import (
 	"math"
 	"runtime"
+	"slices"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -13,7 +14,8 @@ import (
 // half at the edge it's near, which a drop splits off, or the whole pane,
 // which it takes. The Window menu lays every pane out at once, in
 // columns, rows, a grid, or one main pane beside a stack, and evens
-// them; Control+Command and an arrow moves the focused pane that way.
+// them; Control+Command and an arrow moves the focused pane that way,
+// and Control+Command+Z takes back the last of these.
 
 // zone is where on a pane something dragged over it goes.
 type zone int
@@ -102,6 +104,7 @@ func (a *App) dropTab(t *tab, p *pane, z zone) bool {
 	if t == nil || p == nil || p.tab == t {
 		return false // a pane can't take, or split by, its own tab
 	}
+	a.remember()
 	below, before, ok := z.split()
 	if !ok {
 		a.show(p, t)
@@ -132,6 +135,7 @@ func (a *App) movePane(dx, dy int) {
 	if p == nil || !a.split() {
 		return
 	}
+	a.remember()
 	if q := a.paneToward(dx, dy); q != nil {
 		p.tab, q.tab = q.tab, p.tab
 		a.focusPane(q)
@@ -153,6 +157,10 @@ func (a *App) movePane(dx, dy int) {
 // equalize gives every pane the same share of the room along each
 // split, counting the panes on each side of it that way.
 func (a *App) equalize() {
+	if !a.split() {
+		return
+	}
+	a.remember()
 	var even func(p *pane)
 	even = func(p *pane) {
 		if p == nil || !p.split() {
@@ -202,6 +210,7 @@ func (a *App) arrange(l layout) {
 	if !a.split() {
 		return
 	}
+	a.remember()
 	focused := a.focused()
 	var tabs []*tab
 	for _, p := range a.panes() {
@@ -256,6 +265,64 @@ func chain(panes []*pane, below bool) *pane {
 	return n
 }
 
+// arrangement is the panes as they were before a drop, a move or a
+// layout changed them, for Undo Pane Layout to bring back.
+type arrangement struct {
+	layout *pane
+	focus  *tab
+	zoomed bool
+}
+
+// undoDepth is how many arrangements Undo Pane Layout goes back through.
+const undoDepth = 20
+
+// remember keeps the panes as they are, before a change to them.
+func (a *App) remember() {
+	if a.layout == nil {
+		return
+	}
+	a.undo = append(a.undo, arrangement{clonePanes(a.layout, nil), a.focused(), a.zoomed})
+	if len(a.undo) > undoDepth {
+		a.undo = a.undo[len(a.undo)-undoDepth:]
+	}
+}
+
+// undoLayout brings back the panes as they were before the last drop,
+// move or layout. A tab closed since leaves its pane to its neighbour;
+// an arrangement with none of its tabs left is skipped.
+func (a *App) undoLayout() bool {
+	for len(a.undo) > 0 {
+		last := a.undo[len(a.undo)-1]
+		a.undo = a.undo[:len(a.undo)-1]
+		a.layout, a.focus = last.layout, nil
+		for _, p := range a.panes() {
+			if !slices.Contains(a.tabs, p.tab) {
+				a.removePane(p)
+			}
+		}
+		if a.layout == nil {
+			continue
+		}
+		focus := a.panes()[0]
+		if q := a.paneOf(last.focus); q != nil {
+			focus = q
+		}
+		a.focusPane(focus)
+		a.zoomed = last.zoomed && a.split()
+		return true
+	}
+	return false
+}
+
+// clonePanes copies the tree at p, under parent.
+func clonePanes(p, parent *pane) *pane {
+	n := &pane{tab: p.tab, below: p.below, percent: p.percent, parent: parent}
+	if p.split() {
+		n.first, n.second = clonePanes(p.first, n), clonePanes(p.second, n)
+	}
+	return n
+}
+
 // tilingKey is a tiling command's key on macOS, Control+Command and a
 // key, free there and beside Rectangle's Control+Option ones; elsewhere
 // the window's keys take Control+Shift already, and these have none.
@@ -280,6 +347,7 @@ func (a *App) tilingCommands() []command {
 		command{label: "Move Pane Right", key: tilingKey("Right"), run: func() { a.movePane(1, 0) }},
 		command{label: "Move Pane Up", key: tilingKey("Up"), run: func() { a.movePane(0, -1) }},
 		command{label: "Move Pane Down", key: tilingKey("Down"), run: func() { a.movePane(0, 1) }},
+		command{label: "Undo Pane Layout", key: tilingKey("Z"), run: func() { a.undoLayout() }},
 	)
 }
 
@@ -290,17 +358,21 @@ func (a *App) tilingShortcuts(c *ui.Context) {
 	}
 	mods := ui.Super | ui.Ctrl
 	switch {
-	case c.Shortcut(mods, ui.KeyEqual):
+	case a.keyed(c, "Equalize Panes", mods, ui.KeyEqual):
 		a.equalize()
 		c.Announce("Panes evened out")
-	case c.Shortcut(mods, ui.KeyLeft):
+	case a.keyed(c, "Move Pane Left", mods, ui.KeyLeft):
 		a.movePane(-1, 0)
-	case c.Shortcut(mods, ui.KeyRight):
+	case a.keyed(c, "Move Pane Right", mods, ui.KeyRight):
 		a.movePane(1, 0)
-	case c.Shortcut(mods, ui.KeyUp):
+	case a.keyed(c, "Move Pane Up", mods, ui.KeyUp):
 		a.movePane(0, -1)
-	case c.Shortcut(mods, ui.KeyDown):
+	case a.keyed(c, "Move Pane Down", mods, ui.KeyDown):
 		a.movePane(0, 1)
+	case a.keyed(c, "Undo Pane Layout", mods, ui.KeyZ):
+		if a.undoLayout() {
+			c.Announce("Pane layout undone")
+		}
 	}
 }
 

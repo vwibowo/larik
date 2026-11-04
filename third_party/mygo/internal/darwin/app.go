@@ -41,6 +41,9 @@ type Backend struct {
 	notifyAnswered  bool
 	notifyWaiting   []waitingNotification
 	notifyPreparing map[string]func()
+	// notifyCategories are the categories registered for notifications'
+	// actions, by identifier (see notificationCategory).
+	notifyCategories map[string]id
 
 	stepping       int
 	quitAfterModal bool

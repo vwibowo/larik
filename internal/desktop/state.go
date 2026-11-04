@@ -32,8 +32,15 @@ type savedState struct {
 	Width  float32 `json:"sidebar,omitempty"` // the sidebar's width
 	Hidden bool    `json:"no_sidebar,omitempty"`
 	// NoChooser makes a new tab start larik rather than ask what to open.
-	NoChooser bool    `json:"no_chooser,omitempty"`
-	Font      float32 `json:"font_size,omitempty"` // the terminals' text size
+	NoChooser bool `json:"no_chooser,omitempty"`
+	// Appearance is "light" or "dark", and Accent an accent colour,
+	// "#rrggbb"; none follows the system.
+	Appearance string `json:"appearance,omitempty"`
+	Accent     string `json:"accent,omitempty"`
+	// Keys are the keys Settings gave commands, by their menu label, ""
+	// for none.
+	Keys map[string]string `json:"keys,omitempty"`
+	Font float32           `json:"font_size,omitempty"` // the terminals' text size
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -62,7 +69,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
 	for root, open := range a.open {
 		st.Open[root] = *open
 	}
@@ -174,6 +181,10 @@ func (a *App) restore() bool {
 	}
 	a.noSidebar = st.Hidden
 	a.noChooser = st.NoChooser
+	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
+	if a.appearance != "" && a.appear != nil {
+		a.appear(a.appearance)
+	}
 	for _, path := range st.HiddenSessions {
 		a.hidden[path] = true
 	}
