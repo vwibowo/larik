@@ -1437,6 +1437,15 @@ func (q *inputQueue) run(w io.Writer) {
 		}
 		item := q.queue[0]
 		q.queue = q.queue[1:]
+		// A burst of typed keys would otherwise make one framed host/PTY
+		// write per character. Keep callback boundaries in their order.
+		if item.done == nil && len(item.p) > 0 {
+			item.p = append([]byte(nil), item.p...)
+			for len(q.queue) > 0 && q.queue[0].done == nil && len(q.queue[0].p) > 0 && len(item.p)+len(q.queue[0].p) <= 4096 {
+				item.p = append(item.p, q.queue[0].p...)
+				q.queue = q.queue[1:]
+			}
+		}
 		q.mu.Unlock()
 		if len(item.p) == 0 {
 			// Only something to run, in its place among the writes.

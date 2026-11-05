@@ -1655,6 +1655,36 @@ func TestMacCommandArrowsReachShell(t *testing.T) {
 	}
 }
 
+type writeFunc func([]byte) (int, error)
+
+func (f writeFunc) Write(p []byte) (int, error) { return f(p) }
+
+func TestInputQueueBatchesRapidKeys(t *testing.T) {
+	var q inputQueue
+	for range 200 {
+		q.push([]byte("x"))
+	}
+	writes := make(chan string, 2)
+	ended := make(chan struct{})
+	go func() {
+		q.run(writeFunc(func(p []byte) (int, error) {
+			writes <- string(p)
+			return len(p), nil
+		}))
+		close(ended)
+	}()
+	select {
+	case got := <-writes:
+		if got != strings.Repeat("x", 200) {
+			t.Fatalf("batched input = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued input was not written")
+	}
+	q.close()
+	<-ended
+}
+
 // TestOnScrollTakesTheWheel: Options.OnScroll sees the wheel's whole rows
 // before the scrollback moves, unless a program takes the wheel: as the
 // mouse, or as the arrows of a full-screen program.

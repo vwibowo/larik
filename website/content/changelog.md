@@ -5,6 +5,7 @@
 ### Fixed
 
 - In macOS Desktop terminals, Command+Left and Command+Right reach the shell as Home and End, so they can move within an editable command line.
+- Rapidly queued terminal input is sent to the Desktop host in bounded batches, reducing per-character writes while preserving input order.
 
 ## v0.30.0
 
