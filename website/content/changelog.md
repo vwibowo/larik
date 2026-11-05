@@ -19,7 +19,6 @@
 ### Compatibility notes
 
 - Remote Files, Git, and port actions require an updated Larik host; older remote hosts continue to serve their existing session and terminal functions.
-- Website downloads continue to point to the published v0.29.0 assets until v0.30.0 is published by hand.
 
 ## v0.29.0
 
