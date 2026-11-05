@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- In macOS Desktop terminals, Command+Left and Command+Right reach the shell as Home and End, so they can move within an editable command line.
+
 ## v0.30.0
 
 <p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>

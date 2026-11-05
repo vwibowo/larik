@@ -1631,6 +1631,30 @@ func TestOnKeyTakesAKey(t *testing.T) {
 	}
 }
 
+func TestMacCommandArrowsReachShell(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Command key")
+	}
+	loadLib(t)
+	conn := newPipe()
+	term, err := New(Options{Conn: conn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	tt.Frame()
+	tt.Key(ui.Cmd, ui.KeyLeft)
+	tt.Key(ui.Cmd, ui.KeyRight)
+	for range 200 {
+		tt.Type("x")
+	}
+	tt.Frame()
+	if got := conn.take(term); got != "\x1b[H\x1b[F"+strings.Repeat("x", 200) {
+		t.Fatalf("Command arrows and following text sent %q", got)
+	}
+}
+
 // TestOnScrollTakesTheWheel: Options.OnScroll sees the wheel's whole rows
 // before the scrollback moves, unless a program takes the wheel: as the
 // mouse, or as the arrows of a full-screen program.

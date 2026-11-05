@@ -648,6 +648,19 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 		}
 	}
 	if mods&ui.Super != 0 {
+		if mac && mods == ui.Super && (key == ui.KeyLeft || key == ui.KeyRight) {
+			move := vt.KeyHome
+			if key == ui.KeyRight {
+				move = vt.KeyEnd
+			}
+			action := vt.KeyPress
+			if ev.Repeat {
+				action = vt.KeyRepeat
+			}
+			v.sendKey(vt.KeyEvent{Action: action, Key: move})
+			v.pending = nil
+			return true
+		}
 		return false // the app's shortcuts
 	}
 	k, unshifted := vtKey(key)
