@@ -1,12 +1,25 @@
 # Changelog
 
-## Unreleased
+## v0.31.0
+
+<p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>
+
+### Added
+
+- Desktop Settings › Terminal now controls terminal background opacity without fading text or browser and Files panes; the solid default is preserved for existing installations.
 
 ### Fixed
 
-- In macOS Desktop terminals, Command+Left and Command+Right reach the shell as Home and End, so they can move within an editable command line.
+- In macOS Desktop terminals, Command+Left and Command+Right send Control+A and Control+E, moving within zsh's editable command line even when Home and End are unbound.
+- Holding a letter in Larik Desktop repeats it instead of opening the macOS accent picker, while input-method composition remains available in terminals and text fields. Option follows Ghostty's layout-aware Alt default in terminal tabs.
+
+### Performance
+
 - Rapidly queued terminal input is sent to the Desktop host in bounded batches, reducing per-character writes while preserving input order.
-- Holding a letter in a macOS Desktop terminal repeats it instead of opening the accent picker. This disables input-method composition inside terminal tabs only.
+
+### Compatibility notes
+
+- On macOS, held characters repeat throughout Larik Desktop instead of opening the accent picker; input-method composition remains available.
 
 ## v0.30.0
 

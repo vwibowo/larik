@@ -1,3 +1,24 @@
+# Larik v0.31.0
+
+_November 5, 2026 · Previous release: v0.30.0._
+
+### Added
+
+- **Terminal background opacity.** Set it from 0–100% in Desktop Settings › Terminal. Terminal text stays solid, the setting applies to every terminal pane, and existing installations remain opaque until you change it.
+
+### Fixed
+
+- **macOS command-line navigation.** Command+Left and Command+Right send Control+A and Control+E, so they work at a zsh prompt even when Home and End are unbound.
+- **Held keys and language input.** Letters repeat instead of opening the macOS accent picker, while input-method composition remains available. Option behaves as Alt on U.S. Standard and U.S. International layouts and types layout characters on others.
+
+### Performance
+
+- Rapidly queued terminal input reaches the Desktop host in bounded batches, preserving input order with fewer writes.
+
+### Compatibility
+
+- The macOS accent picker is disabled across Larik Desktop so held keys repeat in terminals and other text fields. Existing session and Desktop state files remain compatible.
+
 # Larik v0.28.0
 
 _November 4, 2026 · Previous release: v0.27.0._
