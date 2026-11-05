@@ -43,12 +43,6 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	e.Cursor(cursor)
 	e.HandleInput(v.input)
 	e.TextCaret(v.caret())
-	if runtime.GOOS == "darwin" {
-		// AppKit's press-and-hold accent picker consumes repeated letters
-		// while an NSTextInputClient interprets keys. A terminal needs the
-		// raw repeated characters; other app text inputs keep their IME.
-		e.InputMethod(false)
-	}
 	e.Draw(v.paint)
 	e.ContextMenu(v.menu)
 	return e
@@ -655,15 +649,17 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	}
 	if mods&ui.Super != 0 {
 		if mac && mods == ui.Super && (key == ui.KeyLeft || key == ui.KeyRight) {
-			move := vt.KeyHome
+			// Shell line editors bind Control+A/E even when they leave the
+			// terminal's Home/End escape sequences unbound (macOS zsh does).
+			move := vt.KeyA
 			if key == ui.KeyRight {
-				move = vt.KeyEnd
+				move = vt.KeyE
 			}
 			action := vt.KeyPress
 			if ev.Repeat {
 				action = vt.KeyRepeat
 			}
-			v.sendKey(vt.KeyEvent{Action: action, Key: move})
+			v.sendKey(vt.KeyEvent{Action: action, Key: move, Mods: vt.ModCtrl})
 			v.pending = nil
 			return true
 		}
@@ -673,7 +669,7 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	if k == vt.KeyUnidentified {
 		return false
 	}
-	altMeta := mods&ui.Alt != 0 && (!mac || t.opts.OptionAsAlt)
+	altMeta := mods&ui.Alt != 0 && (!mac || t.optionAsAlt())
 	// AltGr types text on Windows, where it is Control and Alt.
 	altGr := runtime.GOOS == "windows" && mods&(ui.Ctrl|ui.Alt) == ui.Ctrl|ui.Alt
 	if typesText(key) && (mods&(ui.Ctrl|ui.Alt) == 0 || mods&ui.Alt != 0 && !altMeta && mods&ui.Ctrl == 0 || altGr) {
@@ -876,7 +872,7 @@ func (v *view) encodeKey(k vt.KeyEvent, press bool) bool {
 			return false
 		}
 	}
-	v.keys.Sync(t.term, t.opts.OptionAsAlt)
+	v.keys.Sync(t.term, t.optionAsAlt())
 	b := v.keys.Encode(k)
 	if len(b) == 0 {
 		return false

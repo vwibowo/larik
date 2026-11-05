@@ -1644,7 +1644,7 @@ func TestMacCommandArrowsReachShell(t *testing.T) {
 	defer term.Close()
 	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
 	tt.Frame()
-	if active, noIME := tt.TextInputActive(); !active || !noIME {
+	if active, noIME := tt.TextInputActive(); !active || noIME {
 		t.Fatalf("terminal text input: active=%v noIME=%v", active, noIME)
 	}
 	tt.Key(ui.Cmd, ui.KeyLeft)
@@ -1653,8 +1653,103 @@ func TestMacCommandArrowsReachShell(t *testing.T) {
 		tt.Type("x")
 	}
 	tt.Frame()
-	if got := conn.take(term); got != "\x1b[H\x1b[F"+strings.Repeat("x", 200) {
+	if got := conn.take(term); got != "\x01\x05"+strings.Repeat("x", 200) {
 		t.Fatalf("Command arrows and following text sent %q", got)
+	}
+}
+
+func TestMacCommandArrowsEditZshLine(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Command key")
+	}
+	if _, err := os.Stat("/bin/zsh"); err != nil {
+		t.Skip("zsh is unavailable")
+	}
+	loadLib(t)
+	term := shell(t, Options{Command: []string{"/bin/zsh", "-f", "-i"}})
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 480, 240)
+	waitFor(t, tt, "the zsh prompt", func() bool { return strings.Contains(term.Text(), "$") })
+	tt.Type("wrong")
+	tt.Key(ui.Cmd, ui.KeyLeft)
+	tt.Type("echo ")
+	tt.Key(0, ui.KeyEnter)
+	waitFor(t, tt, "the edited zsh command", func() bool { return strings.Contains(term.Text(), "\nwrong\n") })
+	tt.Type("echo hi")
+	tt.Key(ui.Cmd, ui.KeyLeft)
+	tt.Type(" ")
+	tt.Key(ui.Cmd, ui.KeyRight)
+	tt.Type(" there")
+	tt.Key(0, ui.KeyEnter)
+	waitFor(t, tt, "the right-arrow edit", func() bool { return strings.Contains(term.Text(), "\nhi there\n") })
+}
+
+func TestMacHeldKeyRepeatsWithInputMethod(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS input method")
+	}
+	loadLib(t)
+	conn := newPipe()
+	term, err := New(Options{Conn: conn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+	if active, noIME := tt.TextInputActive(); !active || noIME {
+		t.Fatalf("terminal text input: active=%v noIME=%v", active, noIME)
+	}
+	for i := range 100 {
+		term.v.input(ui.InputEvent{Kind: ui.InputKeyDown, Key: ui.KeyA, Repeat: i > 0})
+		term.v.input(ui.InputEvent{Kind: ui.InputText, Text: "a"})
+	}
+	term.v.input(ui.InputEvent{Kind: ui.InputKeyUp, Key: ui.KeyA})
+	if got := conn.take(term); got != strings.Repeat("a", 100) {
+		t.Fatalf("held key sent %q", got)
+	}
+}
+
+func TestOptionAsAltLayoutDefaults(t *testing.T) {
+	for id, want := range map[string]bool{
+		"com.apple.keylayout.US":              true,
+		"com.apple.keylayout.USInternational": true,
+		"com.apple.keylayout.ABC":             false,
+		"com.apple.keylayout.British":         false,
+		"":                                    false,
+	} {
+		if got := usOptionAsAlt(id); got != want {
+			t.Errorf("layout %q: Option as Alt = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestMacOptionTextAndAltSequence(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Option key")
+	}
+	loadLib(t)
+	for _, tc := range []struct {
+		alt  bool
+		text string
+		want string
+	}{
+		{alt: false, text: "∫", want: "∫"},
+		{alt: true, want: "\x1bb"},
+	} {
+		conn := newPipe()
+		term, err := New(Options{Conn: conn, OptionAsAlt: tc.alt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
+		if tc.text == "" {
+			tt.Key(ui.Alt, ui.KeyB)
+		} else {
+			tt.TypeKey(ui.Alt, ui.KeyB, tc.text)
+		}
+		if got := conn.take(term); got != tc.want {
+			t.Errorf("OptionAsAlt=%v sent %q, want %q", tc.alt, got, tc.want)
+		}
+		term.Close()
 	}
 }
 

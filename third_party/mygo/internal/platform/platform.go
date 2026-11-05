@@ -135,6 +135,8 @@ type Backend interface {
 // AppOptions configures Backend.Init.
 type AppOptions struct {
 	Name string
+	// DisablePressAndHold disables macOS's accent picker for this application.
+	DisablePressAndHold bool
 	// ActivationPolicy is "regular" (default), "accessory" or "prohibited".
 	// Only meaningful on macOS.
 	ActivationPolicy string

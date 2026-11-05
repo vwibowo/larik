@@ -31,6 +31,7 @@ var settingsItems = []settingsItem{
 	{"appearance", "appearance", "Appearance", "Follow your system, or use light or dark colors for Larik."},
 	{"accent", "appearance", "Accent color", "Use your system accent or choose a color for selection and focus."},
 	{"font", "terminal", "Terminal text size", "Size of text in every terminal tab and split pane."},
+	{"terminal-opacity", "terminal", "Terminal background opacity", "Let the desktop show through terminal backgrounds while text stays solid."},
 	{"model", "agent", "Default model", "Model used when you start a new Larik session."},
 	{"effort", "agent", "Reasoning effort", "How much reasoning the default model uses when available."},
 	{"mode", "agent", "Permission mode", "What a new session may do before asking you."},
@@ -236,6 +237,21 @@ func (a *App) settingsControl(c *ui.Context, t *ui.Theme, id string) {
 			reset.Disabled(a.fontSize == 0)
 			if reset.Clicked() {
 				a.zoom(terminal.Zoom{Reset: true})
+				a.settingsChanged()
+			}
+		})
+	case "terminal-opacity":
+		v := float64(a.terminalOpacity) * 100
+		ui.Row(c).Gap(9).AlignItems(ui.Center).Children(func() {
+			if ui.Slider(c.Key("opacity"), &v, 0, 100).Width(140).Label("Adjust terminal background opacity").Changed() {
+				a.terminalOpacity = float32(math.Round(v) / 100)
+				a.settingsChanged()
+			}
+			ui.Text(c, fmt.Sprintf("%d%%", int(math.Round(v)))).MinWidth(40)
+			reset := ui.Button(c.Key("opacity-reset"), "Reset").Label("Reset terminal background opacity")
+			reset.Disabled(a.terminalOpacity == 1)
+			if reset.Clicked() {
+				a.terminalOpacity = 1
 				a.settingsChanged()
 			}
 		})

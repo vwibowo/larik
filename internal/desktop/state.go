@@ -48,8 +48,9 @@ type savedState struct {
 	Keys map[string]string `json:"keys,omitempty"`
 	// Servers are the machines connected to, by SSH destination, to
 	// connect to again; their tabs come back from their hosts.
-	Servers []string `json:"servers,omitempty"`
-	Font    float32  `json:"font_size,omitempty"` // the terminals' text size
+	Servers         []string `json:"servers,omitempty"`
+	Font            float32  `json:"font_size,omitempty"`        // the terminals' text size
+	TerminalOpacity *float32 `json:"terminal_opacity,omitempty"` // nil is the old solid default
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -84,6 +85,9 @@ func (a *App) statePath() string {
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
 	st := savedState{Version: 2, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	if a.terminalOpacity != 1 {
+		st.TerminalOpacity = &a.terminalOpacity
+	}
 	for root, open := range a.open {
 		st.Open[root] = *open
 	}
@@ -225,6 +229,9 @@ func (a *App) restore() bool {
 	}
 	a.noSidebar = st.Hidden
 	a.noChooser = st.NoChooser
+	if st.TerminalOpacity != nil {
+		a.terminalOpacity = min(max(*st.TerminalOpacity, 0), 1)
+	}
 	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
 	for _, name := range st.Servers {
 		a.connectServer(name)

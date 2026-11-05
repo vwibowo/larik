@@ -30,6 +30,9 @@ func Prepare() error {
 // Run opens the window and returns once it has been closed, after its
 // tabs' larik processes have ended.
 func Run(opts Options) error {
+	if runtime.GOOS == "darwin" {
+		mygo.App.DisablePressAndHold()
+	}
 	if err := Prepare(); err != nil {
 		return err
 	}
@@ -82,6 +85,7 @@ func Run(opts Options) error {
 			// Centered in the toolbar, as a macOS window with a unified
 			// toolbar puts them: AppKit's default suits a 28-point title bar.
 			TrafficLightPosition: trafficLights,
+			Transparent:          true,
 			Vibrancy:             mygo.VibrancySidebar,
 			Content:              ui.View(a.view),
 		})

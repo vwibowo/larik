@@ -192,6 +192,10 @@ term, err := terminal.New(terminal.Options{
   ```
 - `OptionAsAlt` makes Option on macOS the Alt key of programs (Meta),
   instead of the key typing accented letters.
+- `OptionAsAltAuto` follows Ghostty's layout-aware macOS default: Option
+  is Alt for U.S. Standard and U.S. International layouts, and otherwise
+  types the layout's characters. It follows input source changes while a
+  terminal is open. `OptionAsAlt: true` still forces Alt on every layout.
 - `CopyOnSelect: terminal.CopyOnSelectClipboard` copies the selection to
   the clipboard as the pointer ends it, and as Select All makes it, as
   Ghostty's `copy-on-select = clipboard`. Ghostty's `primary`, Linux's

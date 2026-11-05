@@ -160,16 +160,21 @@ func (a *App) view(c *ui.Context) {
 	// window's material, and beside it the content, opaque, under a
 	// toolbar and the tabs.
 	vib := c.Vibrancy()
-	if vib {
+	seeThrough := a.terminalOpacity < 1
+	if vib || seeThrough {
 		c.Root().Background(ui.Transparent)
 	}
 	shell := ui.Themed(c, t).Fill()
-	if vib {
+	if vib || seeThrough {
 		shell.Background(ui.Transparent) // the material shows through the sidebar
 	}
 	shell.Children(func() {
 		content := func() {
-			ui.Column(c).Fill().Background(t.Background).Children(func() {
+			background := t.Background
+			if seeThrough {
+				background = ui.Transparent
+			}
+			ui.Column(c).Fill().Background(background).Children(func() {
 				a.toolbar(c, t)
 				a.tabBar(c, t)
 				a.main(c, t)
@@ -466,7 +471,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 	if a.noSidebar {
 		start = bar.Left + 10
 	}
-	ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(start).PaddingEnd(bar.Right+10).Gap(4).AlignItems(ui.Center).
+	ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(start).PaddingEnd(bar.Right+10).Gap(4).AlignItems(ui.Center).Background(t.Background).
 		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).DragWindow().Children(func() {
 		if a.noSidebar {
 			a.sidebarButton(c, t)
@@ -1403,7 +1408,11 @@ func splitTip() string {
 // over the other, with the divider between them to drag.
 func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
 	if !p.split() {
-		a.card(c, t, func() { a.pane(c, t, p) })
+		if p.tab != nil && p.tab.term != nil && a.terminalOpacity < 1 {
+			ui.Column(c).Fill().Background(t.Background.Alpha(a.terminalOpacity)).Clip().Children(func() { a.pane(c, t, p) })
+		} else {
+			a.card(c, t, func() { a.pane(c, t, p) })
+		}
 		return
 	}
 	first, second := func() { a.paneTree(c, t, p.first) }, func() { a.paneTree(c, t, p.second) }

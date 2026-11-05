@@ -111,6 +111,49 @@ func settingsTextCount(texts []string, want string) int {
 	return n
 }
 
+func TestTerminalBackgroundOpacitySetting(t *testing.T) {
+	a := settingsApp(t)
+	defer a.Close()
+	if a.terminalOpacity != 1 || a.state().TerminalOpacity != nil {
+		t.Fatal("existing Desktop state should remain opaque")
+	}
+	tt := ui.NewTester(a.settingsView, 960, 680)
+	if err := tt.Click("Show Terminal settings"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Adjust terminal background opacity"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyLeft)
+	if a.terminalOpacity >= 1 || a.state().TerminalOpacity == nil {
+		t.Fatalf("opacity slider did not change saved state: %g", a.terminalOpacity)
+	}
+	if err := tt.Click("Reset terminal background opacity"); err != nil {
+		t.Fatal(err)
+	}
+	if a.terminalOpacity != 1 || a.state().TerminalOpacity != nil {
+		t.Fatalf("reset did not restore the solid background: %g", a.terminalOpacity)
+	}
+	for _, tc := range []struct {
+		value string
+		want  float32
+	}{{"0", 0}, {"0.45", 0.45}} {
+		data := []byte(`{"version":2,"active":-1,"terminal_opacity":` + tc.value + `}`)
+		if err := os.MkdirAll(filepath.Dir(a.statePath()), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(a.statePath(), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		next := New(a.opts)
+		next.restore()
+		if got := next.terminalOpacity; got != tc.want {
+			t.Errorf("restored opacity %g, want %s", got, tc.value)
+		}
+		next.Close()
+	}
+}
+
 func TestSettingsCodingAgentsInstallAndRemove(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

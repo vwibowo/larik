@@ -48,6 +48,17 @@ func TestTerminalTabs(t *testing.T) {
 	if a.focused() != sh || a.needsLook(sh) || a.unreadEvents() != 0 {
 		t.Fatalf("chosen: focused %s, unread %d", a.focused().id, a.unreadEvents())
 	}
+	tt.Frame()
+	opaque := tt.Image().RGBAAt(900, 700)
+	toolbar := tt.Image().RGBAAt(900, 20)
+	a.terminalOpacity = 0.5
+	tt.Frame()
+	if translucent := tt.Image().RGBAAt(900, 700); translucent == opaque {
+		t.Fatalf("terminal background stayed opaque: %v", translucent)
+	}
+	if got := tt.Image().RGBAAt(900, 20); got != toolbar {
+		t.Errorf("toolbar faded with the terminal: %v, was %v", got, toolbar)
+	}
 	// It comes back as a shell there, not running the program again.
 	a.restored = true
 	a.saveState()

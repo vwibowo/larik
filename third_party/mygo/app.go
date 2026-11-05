@@ -30,17 +30,19 @@ const (
 // Application controls the event loop and the lifecycle of the process.
 // Use the App singleton.
 type Application struct {
-	mu        sync.Mutex
-	name      string
-	version   string
-	policy    ActivationPolicy
-	running   bool
-	ready     bool
-	readyCh   chan struct{}
-	whenReady []func()
-	menu      *Menu
-	menuSet   bool
-	paths     map[PathName]string
+	mu      sync.Mutex
+	name    string
+	version string
+	policy  ActivationPolicy
+	// disablePressAndHold lets held keys repeat while input methods remain active.
+	disablePressAndHold bool
+	running             bool
+	ready               bool
+	readyCh             chan struct{}
+	whenReady           []func()
+	menu                *Menu
+	menuSet             bool
+	paths               map[PathName]string
 	// stateStore is the WindowStateStore, or nil for the file.
 	stateStore WindowStateStore
 	finished   sync.Once
@@ -105,8 +107,9 @@ func (a *Application) Run() error {
 
 	b := backend()
 	if err := b.Init(appHandler{}, platform.AppOptions{
-		Name:             a.Name(),
-		ActivationPolicy: string(a.ActivationPolicy()),
+		Name:                a.Name(),
+		ActivationPolicy:    string(a.ActivationPolicy()),
+		DisablePressAndHold: a.disablePressAndHold,
 	}); err != nil {
 		return err
 	}
@@ -123,6 +126,14 @@ func (a *Application) Run() error {
 	err := b.Run()
 	a.finish()
 	return err
+}
+
+// DisablePressAndHold makes held keys repeat instead of opening macOS's
+// accent picker. Input method composition remains available. Call before Run.
+func (a *Application) DisablePressAndHold() {
+	a.mu.Lock()
+	a.disablePressAndHold = true
+	a.mu.Unlock()
 }
 
 // needsApp panics when main calls something that needs the running app

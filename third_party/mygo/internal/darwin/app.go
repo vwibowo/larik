@@ -116,6 +116,12 @@ func (b *Backend) Init(h platform.AppHandler, opts platform.AppOptions) error {
 	// NSAutoFillHeuristicsEnabled, and without it starts Safari's AutoFill
 	// helper as soon as a view takes text input.
 	no := nsBool(false)
+	if opts.DisablePressAndHold {
+		// Register an application default, leaving the user's global setting alone.
+		// AppKit still interprets keys for IME composition.
+		send(send(class("NSUserDefaults"), "standardUserDefaults"), "registerDefaults:",
+			uintptr(send(class("NSDictionary"), "dictionaryWithObject:forKey:", uintptr(no), uintptr(nsString("ApplePressAndHoldEnabled")))))
+	}
 	send(send(class("NSUserDefaults"), "standardUserDefaults"), "registerDefaults:",
 		uintptr(send(class("NSDictionary"), "dictionaryWithObjects:forKeys:",
 			uintptr(nsArray(no, no)),

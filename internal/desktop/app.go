@@ -121,6 +121,7 @@ type App struct {
 	layouts         map[string]map[string]projectLayout
 	layoutPick      *layoutPick
 	fontSize        float32 // the terminals' text size, 0 for fontSize
+	terminalOpacity float32 // terminal pane background; 1 is opaque
 	// closing are the tabs waiting on confirming, the question whether
 	// to close them while they work, and closeKeep the tab to show after.
 	closing    []*tab
@@ -364,27 +365,28 @@ func (a *App) closeFind(t *tab) {
 func New(opts Options) *App {
 	host, _ := os.Hostname()
 	return &App{
-		opts:         opts,
-		update:       func(fn func()) { fn() },
-		done:         make(chan struct{}),
-		kick:         make(chan struct{}, 1),
-		open:         map[string]*bool{},
-		showAll:      map[string]bool{},
-		hidden:       map[string]bool{},
-		prompts:      map[string]string{},
-		showHidden:   map[string]bool{},
-		showArchived: map[string]bool{},
-		seen:         map[string]time.Time{},
-		looked:       map[string]time.Time{},
-		answered:     map[string]pending{},
-		states:       map[string]status.State{},
-		started:      time.Now(),
-		sidebarW:     280,
-		changesP:     60,
-		planP:        55,
-		plans:        map[string]*planPreview{},
-		layouts:      readProjectLayouts(opts.DataDir),
-		host:         host,
+		opts:            opts,
+		update:          func(fn func()) { fn() },
+		done:            make(chan struct{}),
+		kick:            make(chan struct{}, 1),
+		open:            map[string]*bool{},
+		showAll:         map[string]bool{},
+		hidden:          map[string]bool{},
+		prompts:         map[string]string{},
+		showHidden:      map[string]bool{},
+		showArchived:    map[string]bool{},
+		seen:            map[string]time.Time{},
+		looked:          map[string]time.Time{},
+		answered:        map[string]pending{},
+		states:          map[string]status.State{},
+		started:         time.Now(),
+		sidebarW:        280,
+		terminalOpacity: 1,
+		changesP:        60,
+		planP:           55,
+		plans:           map[string]*planPreview{},
+		layouts:         readProjectLayouts(opts.DataDir),
+		host:            host,
 	}
 }
 
@@ -955,15 +957,17 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 	// The terminal's own end, not one a restart replaced.
 	var term *terminal.Terminal
 	opts := terminal.Options{
-		Font:         a.termFont(),
-		Theme:        a.terminalTheme(false),
-		DarkTheme:    a.terminalTheme(true),
-		Padding:      terminal.Padding{X: 14, Y: 10},
-		PaddingColor: terminal.PaddingExtend,
-		OnTitle:      func(title string) { a.update(func() { t.title = title }) },
-		OnZoom:       func(z terminal.Zoom) bool { a.zoom(z); return true },
-		OnBell:       func() { a.update(func() { a.rang(t) }) },
-		OnNotify:     func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
+		Font:            a.termFont(),
+		Theme:           a.terminalTheme(false),
+		DarkTheme:       a.terminalTheme(true),
+		Padding:         terminal.Padding{X: 14, Y: 10},
+		PaddingColor:    terminal.PaddingExtend,
+		Transparent:     true,
+		OptionAsAltAuto: true,
+		OnTitle:         func(title string) { a.update(func() { t.title = title }) },
+		OnZoom:          func(z terminal.Zoom) bool { a.zoom(z); return true },
+		OnBell:          func() { a.update(func() { a.rang(t) }) },
+		OnNotify:        func(title, body string) { a.update(func() { a.programNotify(t, title, body) }) },
 		OnStatus: func(payload string) {
 			if t.shell() {
 				a.update(func() {

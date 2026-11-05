@@ -134,6 +134,10 @@ type Options struct {
 	// OptionAsAlt makes Option on macOS the Alt key of programs (Meta),
 	// rather than the key that types accented letters and symbols.
 	OptionAsAlt bool
+	// OptionAsAltAuto follows Ghostty's macOS default: Option is Alt for
+	// U.S. Standard and U.S. International keyboard layouts. Other layouts
+	// keep Option's text input behavior. It is checked on each key event.
+	OptionAsAltAuto bool
 	// CopyOnSelect copies what the pointer selects as the selection
 	// ends, and what Select All selects: CopyOnSelectClipboard to the
 	// clipboard, as Ghostty's copy-on-select = clipboard. Ghostty's
