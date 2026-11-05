@@ -1644,6 +1644,9 @@ func TestMacCommandArrowsReachShell(t *testing.T) {
 	defer term.Close()
 	tt := ui.NewTester(func(c *ui.Context) { View(c, term).Fill().AutoFocus() }, 400, 200)
 	tt.Frame()
+	if active, noIME := tt.TextInputActive(); !active || !noIME {
+		t.Fatalf("terminal text input: active=%v noIME=%v", active, noIME)
+	}
 	tt.Key(ui.Cmd, ui.KeyLeft)
 	tt.Key(ui.Cmd, ui.KeyRight)
 	for range 200 {

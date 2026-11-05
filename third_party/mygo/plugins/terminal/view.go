@@ -43,6 +43,12 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	e.Cursor(cursor)
 	e.HandleInput(v.input)
 	e.TextCaret(v.caret())
+	if runtime.GOOS == "darwin" {
+		// AppKit's press-and-hold accent picker consumes repeated letters
+		// while an NSTextInputClient interprets keys. A terminal needs the
+		// raw repeated characters; other app text inputs keep their IME.
+		e.InputMethod(false)
+	}
 	e.Draw(v.paint)
 	e.ContextMenu(v.menu)
 	return e
