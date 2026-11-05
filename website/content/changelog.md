@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.30.0
+
+<p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>
+
+### Added
+
+- **Reliable remote Desktop sessions.** An interrupted SSH forward reconnects automatically while keeping the same remote tabs and pane positions. The sidebar explains connection failures and offers immediate reconnection.
+- **Remote project tools.** Files tabs browse, search, preview, and manage files on the remote host; Changes supports remote staging, hunks, commits, and worktree actions. A remote folder can be selected when opening a tab.
+- **Remote development servers.** Ports shown under remote sessions open through loopback SSH forwarding in a Desktop browser tab, with HTTP and WebSocket support.
+- **Agent continuity.** Claude Code, Codex CLI, OpenCode, and Gemini CLI status hooks record native session identities and offer an explicit resume action after an agent exits. Desktop integration adds status controls and agent-facing Desktop tools.
+- **Browser testing and recovery.** Desktop page controls gain waits, form actions, scrolling, and console errors. Recently closed tabs, focus history, and named project layouts make work easier to recover. The Desktop CLI can arrange panes, open Files tabs, inspect notifications, and save or open layouts.
+
+### Fixed
+
+- Browser tab metadata follows single-page app navigation triggered through Desktop page controls.
+
+### Compatibility notes
+
+- Remote Files, Git, and port actions require an updated Larik host; older remote hosts continue to serve their existing session and terminal functions.
+- Website downloads continue to point to the published v0.29.0 assets until v0.30.0 is published by hand.
+
 ## v0.29.0
 
 <p class="release-meta"><time datetime="2026-11-04">November 4, 2026</time></p>
