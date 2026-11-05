@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"math"
 	"runtime"
 	"time"
 
@@ -82,6 +83,9 @@ func (a *App) focused() *tab {
 // focusPane gives p the keyboard, and marks its session read. Moving to
 // a pane the zoom hides shows them all again.
 func (a *App) focusPane(p *pane) {
+	if p == nil {
+		return
+	}
 	if p != nil && p.tab != nil {
 		a.rememberFocus(p.tab)
 	}
@@ -101,11 +105,14 @@ func (a *App) focusPane(p *pane) {
 	a.lookTab(p.tab)
 }
 
-// show shows t in p. A tab shows in one pane at a time: when another
-// shows it, the two swap.
+// show moves an existing item to p, swapping the two panes. A newly
+// opened item gets another pane so p's item is never hidden.
 func (a *App) show(p *pane, t *tab) {
 	if q := a.paneOf(t); q != nil && q != p {
 		q.tab = p.tab
+	} else if q == nil && p.tab != nil {
+		a.splitPane(p, t, false)
+		return
 	}
 	p.tab = t
 }
@@ -120,6 +127,7 @@ func (a *App) splitPane(p *pane, t *tab, below bool) *pane {
 // splitAt is splitPane with the new pane first, left of p or above it,
 // when before is set.
 func (a *App) splitAt(p *pane, t *tab, below, before bool) *pane {
+	existing := a.paneOf(t) != nil
 	if q := a.paneOf(t); q != nil {
 		if q == p || !a.split() {
 			a.focusPane(q)
@@ -129,6 +137,9 @@ func (a *App) splitAt(p *pane, t *tab, below, before bool) *pane {
 	}
 	if p == nil || a.paneOf(p.tab) != p {
 		p = a.focus
+	}
+	if !a.restoring && !existing && p != nil && a.overflow != nil && a.panesTooSmall(len(a.panes())+1) && a.overflow(t) {
+		return nil
 	}
 	if p == nil {
 		a.layout = &pane{tab: t}
@@ -187,10 +198,10 @@ func (a *App) removePane(p *pane) {
 	}
 }
 
-// closePane closes p, while there's another; its tab stays open.
+// closePane closes the item in p, confirming first if its program is busy.
 func (a *App) closePane(p *pane) {
-	if p != nil && a.split() {
-		a.removePane(p)
+	if p != nil && p.tab != nil {
+		a.askClose([]*tab{p.tab}, nil)
 	}
 }
 
@@ -235,6 +246,10 @@ func (a *App) splitRight() { a.splitNew(false) }
 // showInSplit shows an open tab in a new pane beside the focused one, or
 // moves the keyboard to it when a pane shows it already.
 func (a *App) showInSplit(t *tab, below bool) {
+	if p := a.paneOf(t); p != nil {
+		a.focusPane(p)
+		return
+	}
 	if a.focus == nil {
 		a.activate(t)
 		return
@@ -333,36 +348,52 @@ func (a *App) paneToward(dx, dy int) *pane {
 	return best
 }
 
-// activate shows t in the focused pane, or moves the keyboard to the
-// pane showing it already, and marks its session read.
+// activate focuses an existing pane or tiles a new one beside the focused
+// pane. An open item is never left hidden behind another item.
 func (a *App) activate(t *tab) {
+	if t == nil {
+		return
+	}
 	a.rememberFocus(t)
 	if p := a.paneOf(t); p != nil {
 		a.focusPane(p)
 		return
 	}
-	if a.focus == nil {
-		a.layout = &pane{tab: t}
-		a.focus = a.layout
+	if a.splitPane(a.focus, t, false) == nil {
+		return
 	}
-	a.focus.tab = t
-	a.focusPane(a.focus)
+	if len(a.panes()) >= 3 {
+		a.arrange(layoutGrid)
+	}
 }
 
-// unshow takes t, closing, out of the panes: its pane closes, or, as the
-// only one, shows the tab beside it in the tab bar, at i now, or none.
+// panesTooSmall checks the next automatic grid against a useful terminal
+// size. Explicit split and layout commands may still use smaller panes.
+func (a *App) panesTooSmall(count int) bool {
+	if count < 2 || a.contentSize == nil {
+		return false
+	}
+	w, h := a.contentSize()
+	if w <= 0 || h <= 0 {
+		return false // the native window has not been measured yet
+	}
+	if !a.noSidebar {
+		w -= int(a.sidebarW)
+	}
+	if a.changes != nil {
+		w = int(float32(w) * a.changesP / 100)
+	}
+	h -= int(toolbarHeight)
+	cols := int(math.Ceil(math.Sqrt(float64(count))))
+	rows := (count + cols - 1) / cols
+	return w/cols < 360 || h/rows < 240
+}
+
+// unshow removes a closing item's pane.
 func (a *App) unshow(t *tab, i int) {
 	p := a.paneOf(t)
-	switch {
-	case p == nil:
-	case a.split():
+	if p != nil {
 		a.removePane(p)
-	case len(a.tabs) > 0:
-		next := a.tabs[min(i, len(a.tabs)-1)]
-		p.tab = next
-		a.focusPane(p)
-	default:
-		a.layout, a.focus, a.zoomed = nil, nil, false
 	}
 }
 

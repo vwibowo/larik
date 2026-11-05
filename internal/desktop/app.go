@@ -45,6 +45,18 @@ type Options struct {
 // goroutines change it through update.
 type App struct {
 	opts Options
+	// A Desktop process can own several OS windows. Each window has its
+	// own App and saved pane tree; the host and command socket are shared.
+	windowID       string
+	windowKeys     func() []string
+	contentSize    func() (int, int)
+	overflow       func(*tab) bool
+	backgroundOpen bool
+	activateWindow func()
+	navigateWindow func(int)
+	windowPosition func() (int, int)
+	skipAdoption   bool
+	ownedHostTabs  map[string]bool
 	// update runs fn on the main thread and draws a new frame, without
 	// waiting.
 	update func(fn func())
@@ -107,6 +119,7 @@ type App struct {
 	convHits        map[string]string
 	focusSearch     bool                 // the search field takes the keyboard next frame
 	restored        bool                 // the last launch's state was read
+	restoring       bool                 // saved panes are being rebuilt in this window
 	seen            map[string]time.Time // when each session was last looked at
 	started         time.Time            // what's older than this is read
 	sidebarW        float32
@@ -135,11 +148,12 @@ type App struct {
 	leaving         bool
 	// ending says quitting ends the programs the host runs too, which
 	// otherwise go on (see quitEnding).
-	ending bool
-	leave  func(quit bool)
-	theme  [2]*ui.Theme       // light, dark
-	termTh [2]*terminal.Theme // light, dark
-	notice string
+	ending  bool
+	quitAll func()
+	leave   func(quit bool)
+	theme   [2]*ui.Theme       // light, dark
+	termTh  [2]*terminal.Theme // light, dark
+	notice  string
 	// newer is the latest release when it is newer than this larik
 	// ("v0.29.0"), for the sidebar's footer.
 	newer string
@@ -396,7 +410,7 @@ func (a *App) Start() {
 	projects, _ := session.Index(a.opts.DataDir, session.IndexOptions{})
 	a.update(func() {
 		a.setProjects(projects)
-		if !a.restore() {
+		if !a.restore() && a.windowID == "" && (a.windowKeys == nil || len(a.windowKeys()) == 0) {
 			a.selectStart()
 		}
 	})
@@ -835,7 +849,7 @@ func (a *App) dropSession(path string, p *pane) {
 		return
 	}
 	a.show(p, t)
-	a.focusPane(p)
+	a.focusPane(a.paneOf(t))
 }
 
 // windowTitle names the window after the focused tab's session, for the
@@ -1008,10 +1022,10 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		a.notice = err.Error()
 		return false
 	case err != nil && t.reattach:
-		a.notice = "Can't reach the tab in the host: " + err.Error()
+		a.notice = "Can't reach the pane in the host: " + err.Error()
 		return false
 	case err != nil:
-		a.notice = "The host isn't running, so this tab's program ends with the window: " + err.Error()
+		a.notice = "The host isn't running, so this pane's program ends with the window: " + err.Error()
 	}
 	t.reattach = false
 	if hc != nil {
@@ -1132,8 +1146,7 @@ func newTabID() string {
 	return hex.EncodeToString(b)
 }
 
-// exited handles a tab's larik ending: a clean exit closes the tab, as
-// it would close a terminal's; a failure stays, for what it printed.
+// exited keeps the pane in place so the result and its output remain visible.
 func (a *App) exited(t *tab, code int) {
 	select {
 	case <-a.done:
@@ -1144,9 +1157,6 @@ func (a *App) exited(t *tab, code int) {
 	t.agentOffered = t.agent.valid()
 	if t.shell() && !t.hosted {
 		t.program, _ = t.records.dropLive()
-	}
-	if code == 0 && !t.agent.valid() {
-		a.closeTab(t)
 	}
 	a.refreshIndex()
 }
@@ -1205,7 +1215,7 @@ func (a *App) reopenClosed() {
 			return
 		}
 	}
-	a.notice = "No closed tab to reopen."
+	a.notice = "No closed pane to reopen."
 }
 
 // listed reports whether the sidebar lists s under its project: unless
@@ -1362,7 +1372,7 @@ func (a *App) tabTitle(t *tab) string {
 	}
 	switch {
 	case t.chooser:
-		return "New Tab"
+		return "New Pane"
 	case t.files != nil:
 		return "Files"
 	case t.browser && t.remotePort.port != 0:
@@ -1370,7 +1380,7 @@ func (a *App) tabTitle(t *tab) string {
 	case t.browser && t.url != blankPage:
 		return pageHost(t.url)
 	case t.browser:
-		return "New browser tab"
+		return "New browser pane"
 	case t.run != "":
 		return t.run
 	case t.shell():

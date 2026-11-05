@@ -68,7 +68,6 @@ var (
 	contentLight, contentDark   = ui.Hex("#ffffff"), ui.Hex("#1e1e1e")
 	labelLight, labelDark       = ui.Hex("#262626"), ui.Hex("#dfdfdf")
 	sidebarLight, sidebarDark   = ui.Hex("#ebebeb"), ui.Hex("#2a2a2a")
-	tabsLight, tabsDark         = ui.Hex("#e6e6e6"), ui.Hex("#151515")
 	selectedLight, selectedDark = ui.Hex("#b3d7ff"), ui.Hex("#3f638b")
 )
 
@@ -158,7 +157,7 @@ func (a *App) view(c *ui.Context) {
 	a.shortcuts(c)
 	// As a macOS window draws it: the sidebar full height, in the
 	// window's material, and beside it the content, opaque, under a
-	// toolbar and the tabs.
+	// toolbar and the panes.
 	vib := c.Vibrancy()
 	seeThrough := a.terminalOpacity < 1
 	if vib || seeThrough {
@@ -176,7 +175,6 @@ func (a *App) view(c *ui.Context) {
 			}
 			ui.Column(c).Fill().Background(background).Children(func() {
 				a.toolbar(c, t)
-				a.tabBar(c, t)
 				a.main(c, t)
 			})
 		}
@@ -216,10 +214,10 @@ func (a *App) confirmClose(c *ui.Context) {
 			if len(terminals) > 0 {
 				msg = "This terminal is still running. Closing it ends its shell or command."
 			} else {
-				msg = "larik is working in this tab. Closing it stops the turn; the session stays, so you can resume it."
+				msg = "Larik is working in this pane. Closing it stops the turn; the session stays, so you can resume it."
 			}
 		} else {
-			title = fmt.Sprintf("Close %d tabs?", len(a.closing))
+			title = fmt.Sprintf("Close %d panes?", len(a.closing))
 			msg = fmt.Sprintf("Closing ends %d running terminals and stops %d working sessions. The sessions stay, so you can resume them.", len(terminals), len(working))
 			if len(terminals) == 0 {
 				msg = fmt.Sprintf("%d of them are working. Closing stops their turns; the sessions stay, so you can resume them.", len(working))
@@ -269,14 +267,14 @@ func (a *App) confirmLeave(c *ui.Context) {
 				sessions++
 			}
 		}
-		msg = fmt.Sprintf("Leaving ends %d running terminals and stops %d working sessions. The sessions stay and their tabs open again next time.", terminals, sessions)
+		msg = fmt.Sprintf("Leaving ends %d running terminals and stops %d working sessions. The sessions stay and their panes open again next time.", terminals, sessions)
 		if terminals == 0 {
-			msg = fmt.Sprintf("%d sessions are working. Leaving stops their turns; the sessions stay, and their tabs open again next time.", sessions)
+			msg = fmt.Sprintf("%d sessions are working. Leaving stops their turns; the sessions stay, and their panes open again next time.", sessions)
 			if sessions == 1 {
-				msg = fmt.Sprintf("“%s” is working. Leaving stops its turn; the session stays, and its tab opens again next time.", a.tabTitle(stopping[0]))
+				msg = fmt.Sprintf("“%s” is working. Leaving stops its turn; the session stays, and its pane opens again next time.", a.tabTitle(stopping[0]))
 			}
 		} else if terminals == 1 && sessions == 0 {
-			msg = fmt.Sprintf("“%s” is still running. Leaving ends its shell or command; the tab opens again next time.", a.tabTitle(stopping[0]))
+			msg = fmt.Sprintf("“%s” is still running. Leaving ends its shell or command; the pane opens again next time.", a.tabTitle(stopping[0]))
 		}
 	}
 	leave := func(yes bool) {
@@ -365,15 +363,15 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.openPalette()
 	case a.keyed(c, "New Session in Worktree", mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
-	case a.keyed(c, "New Tab", mod, ui.KeyT):
+	case a.keyed(c, "New Pane", mod, ui.KeyT):
 		a.openNew()
-	case a.keyed(c, "Close Tab", mod, ui.KeyW):
+	case a.keyed(c, "Close Pane", mod, ui.KeyW):
 		if t := a.focused(); t != nil {
 			a.askClose([]*tab{t}, nil)
 		}
-	case a.keyed(c, "New Tab in Split Below", splitBelowMods(), ui.KeyD):
+	case a.keyed(c, "New Pane Below", splitBelowMods(), ui.KeyD):
 		a.splitNew(true)
-	case a.keyed(c, "New Tab in Split", mod, ui.KeyD):
+	case a.keyed(c, "New Pane Beside", mod, ui.KeyD):
 		a.splitRight()
 	case a.keyed(c, "Zoom Pane", mod|ui.Shift, ui.KeyEnter):
 		a.toggleZoom()
@@ -385,9 +383,9 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.focusToward(0, -1)
 	case a.keyed(c, "Pane Below", mod|ui.Alt, ui.KeyDown):
 		a.focusToward(0, 1)
-	case a.keyed(c, "Previous Focused Tab", mod|ui.Alt, ui.KeyBracketLeft):
+	case a.keyed(c, "Previous Focused Pane", mod|ui.Alt, ui.KeyBracketLeft):
 		a.navigateFocus(-1)
-	case a.keyed(c, "Next Focused Tab", mod|ui.Alt, ui.KeyBracketRight):
+	case a.keyed(c, "Next Focused Pane", mod|ui.Alt, ui.KeyBracketRight):
 		a.navigateFocus(1)
 	case a.keyed(c, "Open Folder…", mod, ui.KeyO):
 		a.openFolder()
@@ -401,7 +399,7 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.latestUnread()
 	case a.keyed(c, "New Terminal", mod|ui.Shift, ui.KeyN):
 		a.openShell()
-	case a.keyed(c, "New Browser Tab", mod|ui.Alt, ui.KeyN):
+	case a.keyed(c, "New Browser Pane", mod|ui.Alt, ui.KeyN):
 		a.openBrowser("")
 	case a.keyed(c, "Open Location…", mod, ui.KeyL):
 		a.focusAddress()
@@ -413,14 +411,30 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.openFind()
 	case a.keyed(c, "Toggle Sidebar", mod, ui.KeyB):
 		a.noSidebar = !a.noSidebar
-	case a.keyed(c, "Show Next Tab", mod|ui.Shift, ui.KeyBracketRight):
+	case a.keyed(c, "Focus Next Pane", mod|ui.Shift, ui.KeyBracketRight):
 		a.cycle(1)
-	case a.keyed(c, "Show Previous Tab", mod|ui.Shift, ui.KeyBracketLeft):
+	case a.keyed(c, "Focus Previous Pane", mod|ui.Shift, ui.KeyBracketLeft):
 		a.cycle(-1)
+	case runtime.GOOS == "darwin" && a.keyed(c, "Focus Next Window", ui.Super, ui.KeyBackquote):
+		if a.navigateWindow != nil {
+			a.navigateWindow(1)
+		}
+	case runtime.GOOS == "darwin" && a.keyed(c, "Focus Previous Window", ui.Super|ui.Shift, ui.KeyBackquote):
+		if a.navigateWindow != nil {
+			a.navigateWindow(-1)
+		}
+	case runtime.GOOS != "darwin" && a.keyed(c, "Focus Next Window", ui.Ctrl|ui.Alt|ui.Shift, ui.KeyPageDown):
+		if a.navigateWindow != nil {
+			a.navigateWindow(1)
+		}
+	case runtime.GOOS != "darwin" && a.keyed(c, "Focus Previous Window", ui.Ctrl|ui.Alt|ui.Shift, ui.KeyPageUp):
+		if a.navigateWindow != nil {
+			a.navigateWindow(-1)
+		}
 	}
 	// Off macOS the shortcuts take Shift already: there, the tab menu
 	// reopens a tab.
-	if runtime.GOOS == "darwin" && a.keyed(c, "Reopen Closed Tab", ui.Super|ui.Shift, ui.KeyT) {
+	if runtime.GOOS == "darwin" && a.keyed(c, "Reopen Closed Pane", ui.Super|ui.Shift, ui.KeyT) {
 		a.reopenClosed()
 	}
 	// And a browser tab's back and forward, which differ from showing
@@ -480,13 +494,19 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		title, where := "Larik", a.host
 		f := a.focused()
 		if f != nil {
-			title, where = a.tabTitle(f), a.where(f)
+			title = "Workspace"
+			where = fmt.Sprintf("%d pane", len(a.panes()))
+			if a.split() {
+				where = fmt.Sprintf("%d panes", len(a.panes()))
+			}
 		}
-		head := ui.Column(c).Gap(1).Shrink(1).MinWidth(0).Children(func() {
+		if a.windowPosition != nil {
+			if index, total := a.windowPosition(); total > 1 {
+				title = fmt.Sprintf("Window %d of %d", index, total)
+			}
+		}
+		ui.Column(c).Gap(1).Shrink(1).MinWidth(0).Children(func() {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				if f != nil {
-					statusDot(c, t, a.tabStatus(f))
-				}
 				ui.Text(c, title).Bold().FontSize(13).SingleLine().Shrink(1)
 			})
 			sub := ui.Text(c, where).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
@@ -494,36 +514,24 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 				sub.Tooltip(tildePath(f.dir))
 			}
 		})
-		// The title is the focused tab's: its menu is the tab's, which with
-		// one tab has no tab bar to show it.
-		if f != nil {
-			head.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, f) })
-			if len(a.tabs) == 1 {
-				head.Label(title + " tab")
-			}
-		}
 		ui.Spacer(c)
 		if a.layout != nil {
 			split := a.iconButton(c, t, "split", iconSplit, splitTip(), false, a.splitRight)
-			split.ContextMenu(func(m *ui.Menu) {
-				if m.Item("New Session in Split").Chosen() {
-					a.splitNew(false)
-				}
-				if m.Item("New Session in Split Below").Chosen() {
-					a.splitNew(true)
-				}
-				if a.split() {
-					for _, cmd := range a.tilingCommands() {
-						// Evening out, the layouts, the moves, then undo.
-						if cmd.label == "Equalize Panes" || cmd.label == "Move Pane Left" || cmd.label == "Undo Pane Layout" {
-							m.Separator()
-						}
-						if m.Item(cmd.label).Chosen() {
-							cmd.run()
-						}
-					}
-				}
+			split.ContextMenu(func(m *ui.Menu) { a.splitMenu(m) })
+			options := ui.Row(c.Key("split-options")).Padding(5, 4).Radius(6).AlignItems(ui.Center).
+				Label("Pane options").Tooltip("Open a new pane or arrange panes").Children(func() {
+				ui.Icon(c, iconDown).FontSize(11).TextColor(t.TextMuted)
 			})
+			options.Menu(func(m *ui.Menu) { a.splitMenu(m) })
+			if options.Hovered() {
+				options.Background(t.Text.Alpha(0.06))
+			}
+			if a.zoomed {
+				ui.Text(c, fmt.Sprintf("Zoomed · %d panes", len(a.panes()))).FontSize(11).TextColor(t.Accent)
+				if ui.Button(c.Key("show-all-panes"), "Show All Panes").Clicked() {
+					a.toggleZoom()
+				}
+			}
 			if d, ok := ui.Drop[sessionDrag](split); ok {
 				a.openInSplit(string(d), false)
 			}
@@ -534,7 +542,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		}
 		a.bell(c, t)
 		newButton := ui.Row(c.Key("new")).Gap(3).Padding(5, 7).Radius(6).AlignItems(ui.Center).
-			Label("New tab").Tooltip("New session, worktree session, terminal, browser, or Files tab").Children(func() {
+			Label("New pane").Tooltip("New session, worktree session, terminal, browser, or Files pane").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(15).TextColor(t.Text.Alpha(0.75))
 			ui.Text(c, "New").FontSize(12)
 			ui.Icon(c, iconDown).FontSize(10).TextColor(t.TextMuted)
@@ -544,6 +552,25 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		}
 		newButton.Menu(func(m *ui.Menu) { a.creationMenu(m, nil) })
 	})
+}
+
+func (a *App) splitMenu(m *ui.Menu) {
+	if m.Item("New Pane Beside (" + keyLabel(false, "D") + ")").Chosen() {
+		a.splitNew(false)
+	}
+	if m.Item("New Pane Below (" + keyText(splitBelowKey()) + ")").Chosen() {
+		a.splitNew(true)
+	}
+	if a.split() {
+		for _, cmd := range a.tilingCommands() {
+			if cmd.label == "Equalize Panes" || cmd.label == "Move Pane Left" || cmd.label == "Undo Pane Layout" {
+				m.Separator()
+			}
+			if m.Item(cmd.label).Chosen() {
+				cmd.run()
+			}
+		}
+	}
 }
 
 // creationMenu offers the four kinds of tab in the focused pane, or in
@@ -566,11 +593,11 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 		inPane()
 		a.openShell()
 	}
-	if m.Item("New Browser Tab").Chosen() {
+	if m.Item("New Browser Pane").Chosen() {
 		inPane()
 		a.openBrowser("")
 	}
-	if m.Item("New Files Tab").Chosen() {
+	if m.Item("New Files Pane").Chosen() {
 		inPane()
 		a.openFiles(a.currentDir())
 	}
@@ -638,54 +665,9 @@ func (a *App) sidebarButton(c *ui.Context, t *ui.Theme) {
 	a.iconButton(c, t, "sidebar", iconPanel, tip, false, func() { a.noSidebar = !a.noSidebar })
 }
 
-// tabBar keeps the active tab visible and puts overflow in a menu.
-func (a *App) tabBar(c *ui.Context, t *ui.Theme) {
-	if len(a.tabs) < 2 {
-		return
-	}
-	bg := tabsLight
-	if t.Dark {
-		bg = tabsDark
-	}
-	ui.Row(c).Height(28).AlignItems(ui.Stretch).Background(bg).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		// A copy: closing a tab from its close button or menu changes a.tabs.
-		visible := a.visibleTabs()
-		for i, tb := range visible {
-			a.tab(c, t, tb, i > 0)
-		}
-		if hidden := len(a.tabs) - len(visible); hidden > 0 {
-			more := ui.Box(c.Key("tab-overflow")).Padding(0, 12).Label("All tabs").Tooltip("Show all tabs").
-				BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
-				ui.Text(c, fmt.Sprintf("%d more", hidden)).FontSize(11).TextColor(t.TextMuted)
-			})
-			more.Menu(func(m *ui.Menu) {
-				for i, tb := range slices.Clone(a.tabs) {
-					if m.Item(fmt.Sprintf("%d. %s", i+1, a.tabTitle(tb))).Checked(tb == a.focused()).Chosen() {
-						a.activate(tb)
-					}
-				}
-			})
-		}
-	})
-}
-
-const visibleTabLimit = 5
-
-func (a *App) visibleTabs() []*tab {
-	if len(a.tabs) <= visibleTabLimit {
-		return slices.Clone(a.tabs)
-	}
-	active := slices.Index(a.tabs, a.focused())
-	if active < 0 {
-		active = 0
-	}
-	start := min(max(active-visibleTabLimit/2, 0), len(a.tabs)-visibleTabLimit)
-	return slices.Clone(a.tabs[start : start+visibleTabLimit])
-}
-
 func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
 	if tb.chooser {
-		return "New tab", iconPlus
+		return "New pane", iconPlus
 	}
 	if tb.browser {
 		return "Browser", iconGlobe
@@ -702,80 +684,12 @@ func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
 	return "Larik session", iconChat
 }
 
-// tab is a session's tab, with a dot in its status colour and a close
-// button that shows over it.
-func (a *App) tab(c *ui.Context, t *ui.Theme, tb *tab, divider bool) {
-	active := tb == a.focused()
-	shown := a.shown(tb)
-	kind, kindIcon := a.tabKind(tb)
-	cell := ui.Row(c.Key(tb.id)).Label(a.tabTitle(tb)+" tab").Grow(1).Basis(0).MinWidth(0).Gap(6).Padding(0, 8).AlignItems(ui.Center)
-	if divider {
-		cell.BorderWidth(0, 0, 0, 1).BorderColor(t.Border)
-	}
-	hover := cell.Hovered()
-	switch {
-	case active:
-		cell.Background(t.Background)
-	case hover:
-		cell.Background(t.Text.Alpha(0.04))
-	}
-	closing := false
-	cell.Children(func() {
-		x := ui.Box(c.Key("close")).Padding(2).Radius(4).Label("Close tab").Tooltip("Close tab").Children(func() {
-			ui.Icon(c, iconClose).FontSize(11).TextColor(t.TextMuted)
-		})
-		if !hover {
-			x.Opacity(0)
-		}
-		if x.Hovered() {
-			x.Background(t.Text.Alpha(0.08))
-		}
-		if x.Clicked() {
-			closing = true
-			a.askClose([]*tab{tb}, nil)
-		}
-		ui.Spacer(c)
-		statusDot(c, t, a.tabStatus(tb))
-		ui.Icon(c, kindIcon).FontSize(12).TextColor(t.TextMuted).Tooltip(kind)
-		label := ui.Text(c, a.tabTitle(tb)).FontSize(12).SingleLine().Shrink(1)
-		if !active && !shown {
-			label.TextColor(t.TextMuted)
-		}
-		ui.Spacer(c)
-		ui.Box(c).Width(19) // as wide as the close button, to center the title
-	})
-	if cell.Clicked() && !closing {
-		a.activate(tb)
-	}
-	cell.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
-	// A tab dragged onto another takes its place.
-	cell.Drag(tb)
-	if from, ok := ui.Drop[*tab](cell); ok {
-		a.moveTab(from, tb)
-	}
-	if from, ok := ui.DragOver[*tab](cell); ok && from != tb {
-		cell.Background(t.Accent.Alpha(0.15))
-	} else if a.needsLook(tb) {
-		// Its session needs you, or finished, while you look elsewhere.
-		color := a.ringColor(t, tb)
-		cell.Border(1, color.Alpha(0.5)).Background(color.Alpha(0.05))
-	}
-}
-
 // tabMenu is what a tab's context menu offers.
 func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if s, _, ok := a.find(tb.path); ok {
 		a.answerMenu(m, s)
 	}
-	if !a.shown(tb) {
-		if m.Item("Open in Split").Chosen() {
-			a.showInSplit(tb, false)
-		}
-		if m.Item("Open in Split Below").Chosen() {
-			a.showInSplit(tb, true)
-		}
-	}
-	if p := a.paneOf(tb); p != nil && a.split() && m.Item("Close Pane").Chosen() {
+	if p := a.paneOf(tb); p != nil && m.Item("Close Pane").Chosen() {
 		a.closePane(p)
 	}
 	if tb.agentOffered && m.Item("Resume agent").Chosen() {
@@ -790,13 +704,10 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if tb.browser && tb.url != blankPage {
 		a.pageMenu(m, tb)
 	}
-	if m.Item("Close Tab").Chosen() {
-		a.askClose([]*tab{tb}, nil)
-	}
-	if len(a.tabs) > 1 && m.Item("Close Other Tabs").Chosen() {
+	if len(a.tabs) > 1 && m.Item("Close Other Panes").Chosen() {
 		a.closeOthers(tb)
 	}
-	if (len(a.closed) > 0 || len(a.recent) > 0) && m.Item("Reopen Closed Tab").Chosen() {
+	if (len(a.closed) > 0 || len(a.recent) > 0) && m.Item("Reopen Closed Pane").Chosen() {
 		a.reopenClosed()
 	}
 	if len(a.recent) > 0 && m.Item("Recently Closed…").Chosen() {
@@ -846,10 +757,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		}
 		selected := ""
 		if f := a.focused(); f != nil {
-			selected = f.path
-			if (f.shell() || f.browser || f.files != nil) && f.path == "" {
-				selected = tabKey(f)
-			}
+			selected = tabKey(f)
 		}
 		if found := a.matches(); strings.TrimSpace(a.query) != "" && len(found) > 0 {
 			selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
@@ -860,9 +768,6 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				a.results(c, t)
 				return
 			}
-			a.terminals(c, t)
-			a.browsers(c, t)
-			a.fileTabs(c, t)
 			a.pinnedSection(c, t)
 			if len(a.servers) > 0 {
 				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
@@ -932,7 +837,8 @@ func (a *App) pinnedSection(c *ui.Context, t *ui.Theme) {
 	// further down.
 	dragging := a.dragging
 	a.dragging = false
-	pinned := a.pinnedSessions()
+	var pinned []session.Indexed
+	pinned = append(pinned, a.pinnedSessions()...)
 	if len(pinned) == 0 && !dragging {
 		return
 	}
@@ -1214,7 +1120,7 @@ func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root 
 			if name, _, remote := splitRemote(s.Path); remote {
 				url = fmt.Sprintf("%s:%d", name, port)
 			}
-			tip := "Open " + url + " in a browser tab (" + clickMod() + "-click: in your browser)"
+			tip := "Open " + url + " in a browser pane (" + clickMod() + "-click: in your browser)"
 			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip(tip).Label("Open " + url)
 			if link.Clicked() {
 				a.openPort(s.Path, port, c.Modifiers()&(ui.Super|ui.Ctrl) != 0)
@@ -1266,7 +1172,7 @@ func (a *App) sessionMenu(m *ui.Menu, s session.Indexed) {
 		}
 		return
 	}
-	if m.Item("Fork into a New Tab").Chosen() {
+	if m.Item("Fork into a New Pane").Chosen() {
 		a.fork(s.Path)
 	}
 	if m.Item("Rename…").Chosen() {
@@ -1360,7 +1266,7 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 			a.noticeBar(c, t)
 			empty := ui.Column(c).Fill().Children(func() {
 				dir := cmp.Or(a.emptyDir, a.currentDir())
-				a.chooser(c, t, "No Session Open", "Pick a session in the sidebar, or open a new tab", &a.emptyPick, dir, func(d string) { a.emptyDir = d }, func(i int) {
+				a.chooser(c, t, "No Session Open", "Pick a session in the sidebar, or open a new pane", &a.emptyPick, dir, func(d string) { a.emptyDir = d }, func(i int) {
 					if tb := a.startKind(i, dir); tb != nil {
 						a.activate(tb)
 					}
@@ -1401,7 +1307,7 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 
 // splitTip is the split button's tooltip.
 func splitTip() string {
-	return "Split: a new tab beside this one (" + keyLabel(false, "D") + "), or below it (" + keyText(splitBelowKey()) + "); or drop a session here"
+	return "New pane beside this one (" + keyLabel(false, "D") + ")"
 }
 
 // paneTree draws p: a pane, or a split's two, beside each other or one
@@ -1470,7 +1376,11 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		if tb.finding {
 			a.findBar(c, t, tb)
 		}
-		term = terminal.View(c.Key(tb.id), tb.term).Grow(1)
+		if tb.term != nil {
+			term = terminal.View(c.Key(tb.id), tb.term).Grow(1)
+		} else {
+			term = ui.Box(c.Key(tb.id)).Grow(1)
+		}
 	})
 	// A tab, a session or a pane dragged here goes beside this one, at
 	// the edge it's near, or in its place.
@@ -1563,13 +1473,8 @@ func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 	})
 }
 
-// header names each pane's session while the window is split, the
-// focused one's in bold, with buttons to zoom the pane and to close it.
-// The toolbar names the session otherwise.
+// header names the item shown in each pane, including the sole pane.
 func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
-	if !a.split() {
-		return
-	}
 	tb := p.tab
 	active := tb == a.focused()
 	background, border := t.Text.Alpha(0.03), t.Border
@@ -1581,6 +1486,7 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 	head := ui.Row(c.Key("header")).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(background).BorderWidth(0, 0, 2, 0).BorderColor(border).
 		Cursor(ui.CursorGrab).Description("Drag to move this pane")
 	head.Drag(paneDrag{p})
+	head.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
 	head.Children(func() {
 		statusDot(c, t, a.tabStatus(tb))
 		kind, kindIcon := a.tabKind(tb)
@@ -1591,23 +1497,25 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 		}
 		ui.Text(c, a.where(tb)).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
 		ui.Spacer(c)
-		newButton := ui.Box(c.Key("new-pane")).Padding(4).Radius(5).Label("New in this pane").
-			Tooltip("New session, worktree session, or terminal in this pane").Children(func() {
+		newButton := ui.Box(c.Key("new-pane")).Padding(4).Radius(5).Label("New pane beside this one").
+			Tooltip("Open a new pane beside this one").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(12).TextColor(t.TextMuted)
 		})
 		if newButton.Hovered() {
 			newButton.Background(t.Text.Alpha(0.06))
 		}
 		newButton.Menu(func(m *ui.Menu) { a.creationMenu(m, p) })
-		if a.zoomed {
-			a.smallButton(c, t, "zoom", iconShrink, "Show every pane ("+keyText("Shift+Cmd+Enter")+")", a.toggleZoom)
-		} else {
-			a.smallButton(c, t, "zoom", iconZoom, "Zoom: this pane alone ("+keyText("Shift+Cmd+Enter")+")", func() {
-				a.focusPane(p)
-				a.toggleZoom()
-			})
+		if a.split() {
+			if a.zoomed {
+				a.smallButton(c, t, "zoom", iconShrink, "Show every pane ("+keyText("Shift+Cmd+Enter")+")", a.toggleZoom)
+			} else {
+				a.smallButton(c, t, "zoom", iconZoom, "Zoom: this pane alone ("+keyText("Shift+Cmd+Enter")+")", func() {
+					a.focusPane(p)
+					a.toggleZoom()
+				})
+			}
 		}
-		a.closeButton(c, t, "Close pane (the tab stays open)", func() { a.closePane(p) })
+		a.closeButton(c, t, "Close pane", func() { a.closePane(p) })
 	})
 }
 

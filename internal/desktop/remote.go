@@ -290,7 +290,7 @@ func (a *App) adoptRemote(srv *server) {
 			continue
 		}
 		h.Dir = remotePath(srv.name, h.Dir)
-		if t := a.attachTab(h, ""); t != nil && a.layout == nil {
+		if t := a.attachTab(h, ""); t != nil {
 			a.activate(t)
 		}
 	}

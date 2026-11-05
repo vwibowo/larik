@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func fourPanes(t *testing.T) (*App, []*tab) {
 	t.Helper()
 	a := New(Options{Cwd: "/start"})
 	tabs := []*tab{{id: "1", dir: "/one"}, {id: "2", dir: "/two"}, {id: "3", dir: "/three"}, {id: "4", dir: "/four"}}
-	a.tabs = tabs
+	a.tabs = slices.Clone(tabs)
 	a.activate(tabs[0])
 	a.showInSplit(tabs[1], false)
 	a.showInSplit(tabs[2], true)
@@ -88,12 +89,14 @@ func TestPaneTree(t *testing.T) {
 		t.Fatal("moving to another pane unzooms")
 	}
 
-	// Closing a pane gives its room to its neighbour, and the keyboard
-	// goes to the pane beside it; its tab stays open.
+	// Closing a pane also closes its item and gives room to its neighbour.
+	for _, tb := range tabs {
+		tb.exited = true
+	}
 	a.focusPane(a.paneOf(tabs[1]))
 	a.closePane(a.focus)
-	if a.shown(tabs[1]) || len(a.tabs) != 4 || a.focused() != tabs[2] || len(a.panes()) != 3 {
-		t.Fatalf("closing two: focused %v, %d panes", a.focused().id, len(a.panes()))
+	if a.shown(tabs[1]) || len(a.tabs) != 3 || a.focused() != tabs[2] || len(a.panes()) != 3 {
+		t.Fatalf("closing two: focused %v, %d panes, %d items", a.focused().id, len(a.panes()), len(a.tabs))
 	}
 	if p := a.paneOf(tabs[2]); p.parent == nil || p.parent.below || p.parent.first != p {
 		t.Fatal("three takes two's place, beside four")
@@ -103,27 +106,20 @@ func TestPaneTree(t *testing.T) {
 	if len(a.panes()) != 2 || a.shown(tabs[3]) {
 		t.Fatalf("closing four's tab: %d panes", len(a.panes()))
 	}
-	// Splitting with a tab another pane shows moves it.
+	// Opening an already visible item focuses its existing pane.
 	a.focusPane(a.paneOf(tabs[0]))
 	a.showInSplit(tabs[2], true)
-	if len(a.panes()) != 2 || !a.layout.below || a.focused() != tabs[2] {
-		t.Fatalf("moving three below one: %d panes, below %v", len(a.panes()), a.layout.below)
+	if len(a.panes()) != 2 || a.focused() != tabs[2] {
+		t.Fatalf("focused existing pane: %d panes", len(a.panes()))
 	}
-	// The last pane shows the next tab when its tab closes, and the window
-	// none when none is left.
+	// The final pane can close, leaving the window empty.
 	a.closePane(a.paneOf(tabs[2]))
-	a.closePane(a.focus) // the only one: stays
-	if len(a.panes()) != 1 {
-		t.Fatal("the only pane closed")
+	if len(a.panes()) != 1 || a.focused() != tabs[0] {
+		t.Fatal("the neighbouring pane should remain")
 	}
-	a.closeTab(tabs[0])
-	if a.focused() == nil || len(a.panes()) != 1 {
-		t.Fatal("the next tab shows")
-	}
-	a.tabs = nil
-	a.unshow(a.focused(), 0)
-	if a.layout != nil || a.focus != nil || a.focused() != nil {
-		t.Fatal("no tab, no pane")
+	a.closePane(a.focus)
+	if len(a.panes()) != 0 || a.focused() != nil || len(a.tabs) != 0 {
+		t.Fatal("closing the final pane should leave an empty window")
 	}
 }
 
@@ -213,6 +209,12 @@ func TestPanesInTheWindow(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	tt.Frame()
+	if !tt.HasText("Workspace") || !tt.HasText("3 panes") {
+		t.Fatal("split layout needs workspace navigation")
+	}
+	if _, ok := tt.Find("Refactor the parser and run the tests tab"); ok {
+		t.Fatal("split layout repeats a pane title in the tab strip")
+	}
 	snapshot(t, tt, "panes-dark.png")
 	// The keys move between them.
 	tt.Key(mod|ui.Alt, ui.KeyUp)

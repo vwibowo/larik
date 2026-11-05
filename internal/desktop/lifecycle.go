@@ -25,7 +25,7 @@ func (a *App) unmovable(path string) string {
 	case !ok:
 		return "That session isn't there any more."
 	case s.Running && a.tabOf(path) != nil:
-		return fmt.Sprintf("“%s” is open in a tab: close the tab first.", s.Title)
+		return fmt.Sprintf("“%s” is open in a pane: close the pane first.", s.Title)
 	case s.Running:
 		return fmt.Sprintf("“%s” is open in another terminal: end it there first.", s.Title)
 	}

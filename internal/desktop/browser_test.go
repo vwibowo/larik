@@ -43,7 +43,7 @@ func TestNormalizeURL(t *testing.T) {
 
 func TestBrowserTab(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	session := &tab{id: "s", dir: "/work"}
+	session := &tab{id: "s", dir: "/work", chooser: true}
 	a.tabs = []*tab{session}
 	a.activate(session)
 
@@ -52,7 +52,7 @@ func TestBrowserTab(t *testing.T) {
 	if b == nil || !b.browser || b.url != blankPage || b.addr != "" || !b.focusAddr || len(a.tabs) != 2 {
 		t.Fatalf("a new browser tab: %+v", b)
 	}
-	if kind, _ := a.tabKind(b); kind != "Browser" || a.tabTitle(b) != "New browser tab" {
+	if kind, _ := a.tabKind(b); kind != "Browser" || a.tabTitle(b) != "New browser pane" {
 		t.Fatalf("kind %q, title %q", kind, a.tabTitle(b))
 	}
 	// Typed into its address bar, a host goes over https.
@@ -161,17 +161,14 @@ func TestSidebarListsBrowserTabs(t *testing.T) {
 	a.openBrowser("localhost:3000")
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	for _, want := range []string{"Browser", "Example Domain", "example.com", "localhost:3000"} {
+	for _, want := range []string{"2 panes", "Pane: Example Domain", "example.com", "localhost:3000"} {
 		if !tt.HasText(want) {
 			t.Fatalf("no %q in %q", want, tt.Texts())
 		}
 	}
-	if err := tt.Click("Example Domain"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if a.focused() != a.tabs[0] {
-		t.Fatal("choosing a browser tab in the sidebar shows it")
+	a.activate(a.tabs[0])
+	if a.focused() != a.tabs[0] || len(a.panes()) != 2 {
+		t.Fatal("focusing the browser keeps both panes visible")
 	}
 	var copied string
 	a.copyText = func(s string) { copied = s }

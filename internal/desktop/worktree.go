@@ -145,7 +145,7 @@ func (a *App) worktreeTabs(dir string) []*tab {
 func (a *App) worktreeBusy(dir string) string {
 	for _, t := range a.worktreeTabs(dir) {
 		if st := a.tabStatus(t).State; st == status.Working || st == status.Blocked {
-			return fmt.Sprintf("“%s” is %s in the worktree: let it finish, or close its tab, first.", a.tabTitle(t), map[status.State]string{status.Working: "working", status.Blocked: "waiting for you"}[st])
+			return fmt.Sprintf("“%s” is %s in the worktree: let it finish, or close its pane, first.", a.tabTitle(t), map[status.State]string{status.Working: "working", status.Blocked: "waiting for you"}[st])
 		}
 	}
 	for _, p := range a.projects {
@@ -223,7 +223,7 @@ func (a *App) askWorktree(s session.Indexed, root string, merge bool) {
 					msg = "It has nothing that isn't in " + into + " already. "
 				}
 				a.confirmAsk(fmt.Sprintf("Merge “%s” into %s?", w.Branch, into),
-					msg+"Then the worktree and its branch are removed, and its tabs close; its sessions stay.",
+					msg+"Then the worktree and its branch are removed, and its panes close; its sessions stay.",
 					"Merge", func() { a.finishWorktree(w, s.Title, true) })
 				return
 			}
@@ -232,7 +232,7 @@ func (a *App) askWorktree(s session.Indexed, root string, merge bool) {
 				msg = has + are
 			}
 			a.confirmAsk(fmt.Sprintf("Remove “%s”?", w.Branch),
-				msg+"The worktree and its branch are removed, and its tabs close; its sessions stay.",
+				msg+"The worktree and its branch are removed, and its panes close; its sessions stay.",
 				"Remove", func() { a.finishWorktree(w, "", false) })
 		})
 	}()
@@ -344,11 +344,11 @@ func (a *App) finishWorktree(w *worktree.Worktree, title string, merge bool) {
 			select {
 			case err := <-done:
 				if err != nil {
-					a.update(func() { a.notice = "Couldn't stop a tab before removing the worktree: " + err.Error() })
+					a.update(func() { a.notice = "Couldn't stop a pane before removing the worktree: " + err.Error() })
 					return
 				}
 			case <-ctx.Done():
-				a.update(func() { a.notice = "Couldn't stop a tab before removing the worktree: " + ctx.Err().Error() })
+				a.update(func() { a.notice = "Couldn't stop a pane before removing the worktree: " + ctx.Err().Error() })
 				return
 			case <-a.done:
 				return

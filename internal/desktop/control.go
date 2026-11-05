@@ -54,8 +54,7 @@ type Request struct {
 	Ref string `json:"ref,omitempty"`
 	X   int    `json:"x,omitempty"`
 	Y   int    `json:"y,omitempty"`
-	// Background opens a tab without showing it, leaving the panes as
-	// they are.
+	// Background opens a pane without taking focus from the current one.
 	Background bool   `json:"background,omitempty"`
 	Text       string `json:"text,omitempty"`  // what send types
 	Enter      bool   `json:"enter,omitempty"` // send presses Return after
@@ -259,6 +258,9 @@ func (a *App) command(req Request) Response {
 		if a.raise != nil {
 			a.raise()
 		}
+		if a.activateWindow != nil {
+			a.activateWindow()
+		}
 	case "close":
 		if !req.Force && a.tabStatus(t).State == status.Working {
 			return Response{Error: "the tab is working: close it with --force to stop it mid-turn"}
@@ -328,10 +330,25 @@ func (a *App) controlOpen(req Request) Response {
 	}
 	switch {
 	case req.Background:
+		previous := a.focused()
+		a.backgroundOpen = true
+		a.activate(t)
+		a.backgroundOpen = false
+		if previous != nil && previous != t {
+			a.focusPane(a.paneOf(previous))
+		}
 	case req.Split || req.Below:
 		a.showInSplit(t, req.Below)
 	default:
 		a.activate(t)
+	}
+	if !req.Background && slices.Contains(a.tabs, t) {
+		if a.raise != nil {
+			a.raise()
+		}
+		if a.activateWindow != nil {
+			a.activateWindow()
+		}
 	}
 	info := a.tabInfo(t)
 	return Response{Tab: &info}

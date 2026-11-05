@@ -35,8 +35,8 @@ func TestTerminalTabs(t *testing.T) {
 	}
 	tt.Frame()
 	snapshot(t, tt, "terminal-tab-dark.png")
-	if !tt.HasText("Terminals") || !tt.HasText(run) {
-		t.Fatalf("the sidebar lists the terminal: %q", tt.Texts())
+	if !tt.HasText("Pane: New session") || !tt.HasText("Terminal") {
+		t.Fatalf("the terminal has a pane: %q", tt.Texts())
 	}
 	// Saved as a terminal in its folder, beside larik's tabs.
 	st := a.state()

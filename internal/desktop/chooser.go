@@ -121,7 +121,7 @@ func (a *App) replaceTab(old, t *tab) {
 
 // chooserPane is a chooser tab's pane.
 func (a *App) chooserPane(c *ui.Context, t *ui.Theme, tb *tab) ui.Element {
-	return a.chooser(c, t, "New Tab", "", &tb.choice, tb.dir, func(dir string) { tb.dir = dir }, func(i int) { a.choose(tb, i) })
+	return a.chooser(c, t, "New Pane", "", &tb.choice, tb.dir, func(dir string) { tb.dir = dir }, func(i int) { a.choose(tb, i) })
 }
 
 // chooser offers the kinds of tab under title and hint, in dir, which
@@ -150,7 +150,7 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 				}
 			}
 		})
-		list = ui.Column(c.Key("kinds")).Gap(4).Width(380).Shrink(1).Focusable().Label("Kinds of tab").Children(func() {
+		list = ui.Column(c.Key("kinds")).Gap(4).Width(380).Shrink(1).Focusable().Label("Kinds of pane").Children(func() {
 			for i, k := range tabKinds {
 				row := ui.Row(c.Key(k.title)).Gap(12).Padding(10, 14).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(k.title).Children(func() {
 					ui.Icon(c, k.icon()).FontSize(18).TextColor(t.Accent)

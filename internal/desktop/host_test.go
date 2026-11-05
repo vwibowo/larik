@@ -392,7 +392,7 @@ func TestHostedTabsAdopted(t *testing.T) {
 		b.Close()
 		t.Fatalf("adopted %d tabs: %s", len(b.tabs), b.notice)
 	}
-	if b.tabs[0].shell() || !b.tabs[1].shell() || b.tabs[1].run != "echo running; sleep 100" || b.focused() != b.tabs[0] {
+	if b.tabs[0].shell() || !b.tabs[1].shell() || b.tabs[1].run != "echo running; sleep 100" || len(b.panes()) != 2 {
 		mu.Unlock()
 		b.Close()
 		t.Fatalf("adopted as %+v, %+v", b.tabs[0], b.tabs[1])
@@ -403,10 +403,10 @@ func TestHostedTabsAdopted(t *testing.T) {
 	b.leave = func(q bool) { quit = q }
 	var confirm func(bool)
 	b.ask = func(_, _, _ string, then func(bool)) { confirm = then }
-	if !slices.ContainsFunc(b.menuBar()[0].items, func(c command) bool { return c.label == "Quit and End Tabs" }) {
+	if !slices.ContainsFunc(b.menuBar()[0].items, func(c command) bool { return c.label == "Quit and End Panes" }) {
 		mu.Unlock()
 		b.Close()
-		t.Fatal("no Quit and End Tabs")
+		t.Fatal("no Quit and End Panes")
 	}
 	b.quitEnding()
 	ui.NewTester(b.confirmLeave, 600, 300).Frame()

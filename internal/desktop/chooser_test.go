@@ -14,19 +14,19 @@ func TestNewTabAsksWhatToOpen(t *testing.T) {
 
 	a.openNew()
 	ch := a.focused()
-	if ch == nil || !ch.chooser || ch.dir != "/work" || len(a.tabs) != 2 || a.tabTitle(ch) != "New Tab" {
+	if ch == nil || !ch.chooser || ch.dir != "/work" || len(a.tabs) != 2 || a.tabTitle(ch) != "New Pane" {
 		t.Fatalf("cmd+t: %+v", ch)
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.SetDark(true)
 	tt.Frame()
 	snapshot(t, tt, "chooser-dark.png")
-	for _, want := range []string{"New Tab", "in /work", "Larik Session", "Session in a Worktree", "Terminal", "Browser"} {
+	for _, want := range []string{"New Pane", "in /work", "Larik Session", "Session in a Worktree", "Terminal", "Browser"} {
 		if !tt.HasText(want) {
 			t.Fatalf("no %q in %q", want, tt.Texts())
 		}
 	}
-	if !tt.Focused("Kinds of tab") {
+	if !tt.Focused("Kinds of pane") {
 		t.Fatal("the chooser takes the keyboard")
 	}
 	// Down, Down, Down and Enter: a browser tab, in the chooser's place.
@@ -129,7 +129,7 @@ func TestArrowsAfterClickingTheChoosersBackground(t *testing.T) {
 	ch := a.focused()
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	if err := tt.Click("New Tab"); err != nil { // its title, in the tab bar or the pane
+	if err := tt.Click("New Pane"); err != nil {
 		t.Fatal(err)
 	}
 	r, _ := tt.Find("↑ ↓ to choose, Enter to open")
@@ -137,7 +137,7 @@ func TestArrowsAfterClickingTheChoosersBackground(t *testing.T) {
 	tt.Frame()
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
-	if ch.choice.pick != 1 || !tt.Focused("Kinds of tab") {
+	if ch.choice.pick != 1 || !tt.Focused("Kinds of pane") {
 		t.Fatalf("Down after a click in the pane: %d", ch.choice.pick)
 	}
 }

@@ -29,10 +29,10 @@ func TestSplitFollowsFocus(t *testing.T) {
 	if a.focused() != two || a.currentDir() != "/two" {
 		t.Fatalf("the split has the keyboard: %v", a.focused().id)
 	}
-	// A tab chosen while the split is focused opens there.
+	// A third item gets its own pane beside the focused one.
 	a.activate(three)
-	if shownAt(a, 0) != one || shownAt(a, 1) != three {
-		t.Fatalf("chosen into the split: %s | %s", shownAt(a, 0).id, shownAt(a, 1).id)
+	if len(a.panes()) != 3 || a.paneOf(one) == nil || a.paneOf(two) == nil || a.paneOf(three) == nil {
+		t.Fatalf("all three items need panes: %d", len(a.panes()))
 	}
 	// Choosing the first pane's tab moves the keyboard back.
 	a.activate(one)
@@ -41,8 +41,8 @@ func TestSplitFollowsFocus(t *testing.T) {
 	}
 	// Closing the first pane's tab hands its room to the split.
 	a.closeTab(one)
-	if shownAt(a, 0) != three || a.split() || a.focused() != three {
-		t.Fatalf("after closing the first tab: %v %v", shownAt(a, 0), shownAt(a, 1))
+	if len(a.panes()) != 2 || a.paneOf(two) == nil || a.paneOf(three) == nil {
+		t.Fatalf("after closing the first pane: %d", len(a.panes()))
 	}
 	a.showInSplit(two, false)
 	a.closeTab(two)
@@ -295,12 +295,10 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 		t.Error("the new split keeps the keyboard")
 	}
 	snapshot(t, tt, "split-dark.png")
-	if err := tt.Click("Close pane (the tab stays open)"); err != nil {
-		mu.Unlock()
-		t.Fatal(err)
-	}
-	if a.split() || a.shown(main) || !a.shown(right) || len(a.tabs) != 2 {
-		t.Errorf("closing the first pane keeps its tab, and gives the split its room")
+	a.ask = func(_, _, _ string, then func(bool)) { then(true) }
+	a.closePane(a.paneOf(right))
+	if a.split() || a.shown(right) || !a.shown(main) || len(a.tabs) != 1 {
+		t.Errorf("closing the focused pane closes its item and leaves its neighbour")
 	}
 	if err := tt.Click("Changes in this project (" + keyLabel(true, "G") + ")"); err != nil {
 		mu.Unlock()
@@ -317,9 +315,9 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	}
 	snapshot(t, tt, "changes-window-dark.png")
 	// The changes beside a split: both stay.
-	a.showInSplit(main, false)
+	a.splitRight()
 	tt.Frame()
-	if shownAt(a, 1) != main || a.changes != ch || !tt.HasText("notes.md") {
+	if len(a.panes()) != 2 || a.changes != ch || !tt.HasText("notes.md") {
 		t.Errorf("a split beside the changes: right %v, changes %v", shownAt(a, 1) != nil, a.changes != nil)
 	}
 	snapshot(t, tt, "split-changes-dark.png")
@@ -346,11 +344,11 @@ func TestTabsComeBackNextLaunch(t *testing.T) {
 	_, mainProject, _ := first.find(main)
 	*first.open[mainProject.Root] = false
 	first.noSidebar = true
-	first.splitRight()        // focused, so the session chosen next opens there
-	first.selectSession(site) // opens in the focused split
-	if shownAt(first, 1) == nil || shownAt(first, 1).path != site {
+	first.splitRight()
+	first.selectSession(site)
+	if first.paneOf(first.tabOf(site)) == nil || len(first.panes()) != 3 {
 		mu.Unlock()
-		t.Fatalf("split: %+v", shownAt(first, 1))
+		t.Fatalf("every item needs a pane: %d", len(first.panes()))
 	}
 	first.saveState()
 	mu.Unlock()
@@ -543,21 +541,19 @@ func TestTabMenu(t *testing.T) {
 
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	if err := tt.RightClick("Polish the landing copy tab"); err != nil {
-		t.Fatal(err)
+	if !tt.HasText("Workspace") {
+		t.Fatal("multiple tabs should not repeat the focused title in the toolbar")
 	}
-	if err := tt.ChooseMenuItem("Open in Split"); err != nil {
-		t.Fatal(err, tt.Menu())
+	r, ok := tt.Find("Pane: Polish the landing copy")
+	if !ok {
+		t.Fatal("missing site pane")
 	}
-	tt.Frame()
-	if shownAt(a, 1) != siteTab || a.focused() != siteTab {
-		t.Fatalf("open in split: right %v", shownAt(a, 1))
+	tt.RightClickAt(r.X+60, r.Y+14)
+	if a.paneOf(siteTab) == nil || a.paneOf(parserTab) == nil || len(a.panes()) != 3 {
+		t.Fatalf("sessions and terminal each have a pane: %d", len(a.panes()))
 	}
-	if err := tt.RightClick("Polish the landing copy tab"); err != nil {
-		t.Fatal(err)
-	}
-	if menu := strings.Join(tt.Menu(), ","); strings.Contains(menu, "Open in Split") {
-		t.Fatalf("a shown tab offers the split: %s", menu)
+	if menu := strings.Join(tt.Menu(), ","); !strings.Contains(menu, "Close Pane") {
+		t.Fatalf("the pane context menu offers closing: %s", menu)
 	}
 	if err := tt.ChooseMenuItem("Copy Session ID"); err != nil {
 		t.Fatal(err, tt.Menu())
@@ -566,10 +562,12 @@ func TestTabMenu(t *testing.T) {
 	if s, _, _ := a.find(site); copied != s.ID {
 		t.Fatalf("copied %q", copied)
 	}
-	if err := tt.RightClick("Refactor the parser and run the tests tab"); err != nil {
-		t.Fatal(err)
+	r, ok = tt.Find("Pane: Refactor the parser and run the tests")
+	if !ok {
+		t.Fatal("missing parser pane")
 	}
-	if err := tt.ChooseMenuItem("Close Other Tabs"); err != nil {
+	tt.RightClickAt(r.X+60, r.Y+14)
+	if err := tt.ChooseMenuItem("Close Other Panes"); err != nil {
 		t.Fatal(err, tt.Menu())
 	}
 	tt.Frame()
@@ -795,7 +793,7 @@ func TestFindInTheTerminal(t *testing.T) {
 	}
 }
 
-func TestDragTabsToReorder(t *testing.T) {
+func TestEveryOpenItemHasPane(t *testing.T) {
 	needTerminal(t)
 	data, _ := fixture(t)
 	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: data})
@@ -816,36 +814,15 @@ func TestDragTabsToReorder(t *testing.T) {
 
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	drag := func(from, to string) {
-		t.Helper()
-		src, ok := tt.Find(from)
-		dst, ok2 := tt.Find(to)
-		if !ok || !ok2 {
-			t.Fatalf("no %q or %q: %q", from, to, tt.Texts())
-		}
-		tt.Press(src.X+20, src.Y+src.H/2)
-		tt.Move(src.X+40, src.Y+src.H/2)
-		tt.Move(dst.X+20, dst.Y+dst.H/2)
-		tt.Release(dst.X+20, dst.Y+dst.H/2)
-		tt.Frame()
+	if len(a.panes()) != 3 || a.paneOf(site) == nil || a.paneOf(parser) == nil || a.paneOf(fresh) == nil {
+		t.Fatalf("every item needs a pane: %d", len(a.panes()))
 	}
-	drag("Polish the landing copy tab", "New session tab")
-	if !slices.Equal(a.tabs, []*tab{parser, fresh, site}) {
-		t.Fatalf("dragged right: %v", a.tabs)
+	if tt.HasText("Open Items") || tt.HasText("not in pane") {
+		t.Fatalf("old tab navigation remains: %q", tt.Texts())
 	}
-	drag("New session tab", "Refactor the parser and run the tests tab")
-	if !slices.Equal(a.tabs, []*tab{fresh, parser, site}) {
-		t.Fatalf("dragged left: %v", a.tabs)
-	}
-	if a.focused() != fresh {
-		t.Fatal("a drag shouldn't change the tab shown")
-	}
-	if err := tt.Click("Polish the landing copy tab"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if a.focused() != site {
-		t.Fatal("a click on a tab didn't show it")
+	a.activate(site)
+	if a.focused() != site || len(a.panes()) != 3 {
+		t.Fatal("selecting an open item should focus its pane")
 	}
 }
 
@@ -926,7 +903,7 @@ func TestMenuBar(t *testing.T) {
 			byKey[cmd.key] = cmd
 		}
 	}
-	if c := byKey["Cmd+W"]; c.label != "Close Tab" || c.run == nil {
+	if c := byKey["Cmd+W"]; c.label != "Close Pane" || c.run == nil {
 		t.Fatalf("Cmd+W: %+v", c)
 	}
 	if c := byKey["Shift+Cmd+W"]; c.role != mygo.RoleClose {
@@ -987,7 +964,7 @@ func TestProjectMenu(t *testing.T) {
 	if err := tt.RightClick("Polish the landing copy"); err != nil {
 		t.Fatal(err)
 	}
-	if menu := strings.Join(tt.Menu(), ","); !strings.Contains(menu, "Fork into a New Tab") {
+	if menu := strings.Join(tt.Menu(), ","); !strings.Contains(menu, "Fork into a New Pane") {
 		t.Fatalf("session menu: %s", menu)
 	}
 }
@@ -1026,7 +1003,7 @@ func TestLeavingWhileWorkingAsks(t *testing.T) {
 		t.Fatal("closed with a session working")
 	}
 	tt.Frame()
-	if !tt.HasText("Quit Larik?") || !tt.HasText("“Polish the landing copy” is working. Leaving stops its turn; the session stays, and its tab opens again next time.") {
+	if !tt.HasText("Quit Larik?") || !tt.HasText("“Polish the landing copy” is working. Leaving stops its turn; the session stays, and its pane opens again next time.") {
 		t.Fatalf("quit: %q", tt.Texts())
 	}
 	snapshot(t, tt, "quit.png")
@@ -1278,8 +1255,8 @@ func TestOpenDirShowsItsProject(t *testing.T) {
 	}
 	elsewhere := t.TempDir()
 	a.openDir(elsewhere)
-	if shownAt(a, 0).dir != elsewhere || shownAt(a, 0).path != "" {
-		t.Fatalf("a directory with no sessions gets a new one: %+v", shownAt(a, 0))
+	if a.focused().dir != elsewhere || a.focused().path != "" || len(a.panes()) != 2 {
+		t.Fatalf("a directory with no sessions gets a new pane: %+v", a.focused())
 	}
 	home, _ := os.UserHomeDir()
 	n := len(a.tabs)
@@ -1321,21 +1298,19 @@ func TestReopenClosedTabs(t *testing.T) {
 		a.reopenClosed()
 	}
 	tt.Frame()
-	if shownAt(a, 0) == nil || shownAt(a, 0).path != parser {
-		t.Fatalf("reopened first: %v", shownAt(a, 0))
+	if a.focused() == nil || a.focused().path != parser {
+		t.Fatalf("reopened first: %v", a.focused())
 	}
-	if err := tt.RightClick(a.tabTitle(shownAt(a, 0)) + " tab"); err != nil {
+	if err := tt.RightClick(a.tabTitle(a.focused())); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("Reopen Closed Tab"); err != nil {
-		t.Fatal(err, tt.Menu())
-	}
+	a.reopenClosed()
 	tt.Frame()
 	if a.focused() == nil || a.focused().path != site || len(a.tabs) != 2 {
 		t.Fatalf("reopened second: %d tabs, %v", len(a.tabs), a.focused())
 	}
 	a.reopenClosed()
-	if a.notice != "No closed tab to reopen." {
+	if a.notice != "No closed pane to reopen." {
 		t.Fatalf("nothing left: %q", a.notice)
 	}
 }
@@ -1411,8 +1386,8 @@ func TestOpenFolderAndDrops(t *testing.T) {
 		t.Fatal("the sidebar didn't take the drop")
 	}
 	tt.Frame()
-	if len(a.tabs) != n+2 || a.tabs[n].dir != dropped || shownAt(a, 0).dir != other {
-		t.Fatalf("after the drop: %d tabs (had %d), showing %v", len(a.tabs), n, shownAt(a, 0))
+	if len(a.tabs) != n+2 || a.tabs[n].dir != dropped || a.focused().dir != other {
+		t.Fatalf("after the drop: %d panes (had %d), focused %v", len(a.tabs), n, a.focused())
 	}
 }
 
@@ -1433,7 +1408,7 @@ func TestRestartAFailedTab(t *testing.T) {
 	}
 	a.newTab(t.TempDir(), "", "")
 	a.selectSession(site.Path)
-	tb := shownAt(a, 0)
+	tb := a.focused()
 	first := tb.term
 	mu.Unlock()
 
@@ -1450,8 +1425,8 @@ func TestRestartAFailedTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.exited || tb.term == first || len(a.tabs) != 2 || a.tabs[1] != tb || shownAt(a, 0) != tb {
-		t.Fatalf("restarted: exited %v, %d tabs, showing %v", tb.exited, len(a.tabs), shownAt(a, 0))
+	if tb.exited || tb.term == first || len(a.tabs) != 2 || a.tabs[1] != tb || a.focused() != tb {
+		t.Fatalf("restarted: exited %v, %d panes, focused %v", tb.exited, len(a.tabs), a.focused())
 	}
 	if tt.HasText("Restart") {
 		t.Error("the exit bar stays after the restart")
@@ -1473,11 +1448,8 @@ func TestRestartAFailedTab(t *testing.T) {
 	mu.Lock()
 	second := tb.term
 	tt.Frame()
-	if err := tt.RightClick(a.tabTitle(tb) + " tab"); err != nil {
+	if err := tt.Click("Restart"); err != nil {
 		t.Fatal(err)
-	}
-	if err := tt.ChooseMenuItem("Restart"); err != nil {
-		t.Fatal(err, tt.Menu())
 	}
 	tt.Frame()
 	if tb.exited || tb.term == second {
@@ -1519,6 +1491,10 @@ func TestDragSessionsOntoPanes(t *testing.T) {
 		t.Fatalf("after the first drop: %v", shownAt(a, 0))
 	}
 	siteTab := shownAt(a, 0)
+	parser, ok2 = tt.Find("Refactor the parser and run the tests")
+	if !ok2 {
+		t.Fatal("parser session moved in the sidebar")
+	}
 	if titles[len(titles)-1] != "Polish the landing copy — Larik" {
 		t.Errorf("title: %q", titles)
 	}
@@ -1538,6 +1514,10 @@ func TestDragSessionsOntoPanes(t *testing.T) {
 
 	// The split's session onto the main pane swaps the two.
 	parserTab := shownAt(a, 1)
+	parser, ok2 = tt.Find("Refactor the parser and run the tests")
+	if !ok2 {
+		t.Fatal("parser tab moved in the sidebar")
+	}
 	drag(parser, 500, 450)
 	if shownAt(a, 0) != parserTab || shownAt(a, 1) != siteTab || len(a.tabs) != 2 {
 		t.Fatalf("after the swap: main %v, split %v, %d tabs", shownAt(a, 0), shownAt(a, 1), len(a.tabs))
@@ -1872,7 +1852,7 @@ func TestSplitButton(t *testing.T) {
 	if err := tt.RightClick(splitTip()); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.ChooseMenuItem("New Session in Split Below"); err != nil {
+	if err := tt.ChooseMenuItem("New Pane Below (" + keyText(splitBelowKey()) + ")"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -1881,11 +1861,11 @@ func TestSplitButton(t *testing.T) {
 	}
 	// A pane's close button closes it, and its tab stays.
 	first := shownAt(a, 0)
-	if err := tt.Click("Close pane (the tab stays open)"); err != nil {
+	if err := tt.Click("Close pane"); err != nil {
 		t.Fatal(err, tt.Texts())
 	}
 	tt.Frame()
-	if len(a.panes()) != 2 || len(a.tabs) != 3 || a.shown(first) || !a.layout.below {
+	if len(a.panes()) != 2 || len(a.tabs) != 2 || a.shown(first) || !a.layout.below {
 		t.Fatalf("closing a pane: %d panes, %d tabs", len(a.panes()), len(a.tabs))
 	}
 }
@@ -1900,7 +1880,7 @@ func TestNewMenuCreatesEachTabKind(t *testing.T) {
 	tt.Frame()
 	snapshot(t, tt, "new-menu-empty.png")
 	for _, choice := range []string{"New Larik Session", "New Terminal"} {
-		if err := tt.Click("New tab"); err != nil {
+		if err := tt.Click("New pane"); err != nil {
 			mu.Unlock()
 			t.Fatal(err)
 		}
@@ -1914,7 +1894,7 @@ func TestNewMenuCreatesEachTabKind(t *testing.T) {
 		mu.Unlock()
 		t.Fatalf("new menu made %+v", a.tabs)
 	}
-	if err := tt.Click("New tab"); err != nil {
+	if err := tt.Click("New pane"); err != nil {
 		mu.Unlock()
 		t.Fatal(err)
 	}
@@ -1942,7 +1922,7 @@ func TestPaneNewMenuUsesItsPane(t *testing.T) {
 	left, right := shownAt(a, 0), shownAt(a, 1)
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	if err := tt.Click("New in this pane"); err != nil {
+	if err := tt.Click("New pane beside this one"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.ChooseMenuItem("New Terminal"); err != nil {
@@ -1950,7 +1930,7 @@ func TestPaneNewMenuUsesItsPane(t *testing.T) {
 	}
 	tt.Frame()
 	snapshot(t, tt, "new-menu-pane.png")
-	if len(a.tabs) != 3 || !shownAt(a, 0).shell() || shownAt(a, 1) != right || !slices.Contains(a.tabs, left) {
+	if len(a.tabs) != 3 || !a.focused().shell() || a.paneOf(right) == nil || a.paneOf(left) == nil {
 		t.Fatalf("pane menu: %d tabs, left %+v, right %+v", len(a.tabs), shownAt(a, 0), shownAt(a, 1))
 	}
 }
@@ -2093,21 +2073,21 @@ func TestSettingsWindowAndAdvancedEditor(t *testing.T) {
 	})
 }
 
-func TestTabKindsAndOverflow(t *testing.T) {
+func TestEveryItemHasPaneWithoutTabOverflow(t *testing.T) {
 	a := New(Options{DataDir: t.TempDir()})
 	for i := range 9 {
 		a.tabs = append(a.tabs, &tab{id: string(rune('a' + i)), dir: "/project"})
 	}
-	a.activate(a.tabs[7])
-	visible := a.visibleTabs()
-	if len(visible) != visibleTabLimit || !slices.Contains(visible, a.focused()) {
-		t.Fatalf("active tab missing from %d visible tabs", len(visible))
+	for _, item := range a.tabs {
+		a.activate(item)
 	}
-	view := ui.NewTester(func(c *ui.Context) { a.tabBar(c, c.Theme()) }, 900, 100)
-	view.Frame()
-	snapshot(t, view, "tab-overflow.png")
-	if !view.HasText("4 more") {
-		t.Fatal("overflow control missing")
+	if len(a.panes()) != 9 || a.focused() != a.tabs[8] {
+		t.Fatalf("%d panes for %d items", len(a.panes()), len(a.tabs))
+	}
+	for _, r := range a.paneRects() {
+		if r.x1-r.x0 < 0.3 || r.y1-r.y0 < 0.3 {
+			t.Fatalf("automatic grid left a narrow pane: %+v", r)
+		}
 	}
 	if kind, _ := a.tabKind(a.tabs[0]); kind != "Larik session" {
 		t.Fatalf("session kind: %s", kind)

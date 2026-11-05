@@ -170,3 +170,21 @@ func TestSidebarDetails(t *testing.T) {
 		t.Fatalf("Cmd-click opened %q", opened)
 	}
 }
+
+func TestBackgroundOpenKeepsFocusAndShowsPane(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("https://example.com")
+	first := a.focused()
+	raised := 0
+	a.raise = func() { raised++ }
+	res := a.controlOpen(Request{Cmd: "open", URL: "https://example.org", Background: true})
+	if res.Error != "" || res.Tab == nil || !res.Tab.Shown || len(a.panes()) != 2 {
+		t.Fatalf("background open should tile a pane: %+v, %d panes", res, len(a.panes()))
+	}
+	if a.focused() != first {
+		t.Fatal("background open changed focus")
+	}
+	if raised != 0 {
+		t.Fatal("background open raised its window")
+	}
+}

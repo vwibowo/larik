@@ -126,8 +126,8 @@ func (a *App) recentDialog(c *ui.Context) {
 	}
 	ui.Modal(c.Key("recent-tabs"), &a.recentOpen, func() {
 		ui.Column(c).Width(480).Gap(8).Children(func() {
-			ui.Text(c, "Recently Closed Tabs").FontSize(16).Bold()
-			ui.SearchField(c.Key("search"), &a.recentQuery).Placeholder("Search closed tabs").FillWidth()
+			ui.Text(c, "Recently Closed Panes").FontSize(16).Bold()
+			ui.SearchField(c.Key("search"), &a.recentQuery).Placeholder("Search closed panes").FillWidth()
 			shown := 0
 			for i := len(a.recent) - 1; i >= 0 && shown < 20; i-- {
 				r := a.recent[i]
@@ -141,13 +141,13 @@ func (a *App) recentDialog(c *ui.Context) {
 						a.recent = slices.Delete(a.recent, i, i+1)
 						a.recentOpen = false
 					} else {
-						a.notice = "That tab is no longer available."
+						a.notice = "That pane is no longer available."
 					}
 				}
 			}
 			if shown == 0 {
-				ui.Text(c, "No matching closed tabs.").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "No matching closed panes.").FontSize(12).TextColor(c.Theme().TextMuted)
 			}
 		})
-	}).Label("Recently Closed Tabs")
+	}).Label("Recently Closed Panes")
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/ui"
 	"larik/internal/status"
 )
 
@@ -75,9 +74,6 @@ func TestTerminalTabShowsProgramStatus(t *testing.T) {
 	if !a.needsLook(tb) || len(a.events) != 1 || a.events[0].read {
 		t.Fatalf("blocked status did not draw attention: %v, %+v", a.needsLook(tb), a.events)
 	}
-	bar := ui.NewTester(func(c *ui.Context) { a.tabBar(c, c.Theme()) }, 900, 44)
-	bar.Frame()
-	snapshot(t, bar, "terminal-program-status.png")
 	a.activate(tb)
 	if a.needsLook(tb) || !a.events[0].read {
 		t.Fatal("looking at the terminal did not clear its alert")

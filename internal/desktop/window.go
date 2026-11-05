@@ -37,7 +37,8 @@ func Run(opts Options) error {
 		return err
 	}
 	a := New(opts)
-	defer a.Close()
+	group := newWindowGroup(a)
+	defer group.close()
 	var settingsWin *mygo.Window
 	// win is set once the window opens; a directory handed over before
 	// then waits for it.
@@ -61,7 +62,7 @@ func Run(opts Options) error {
 		if !ready {
 			return Response{Error: "larik desktop is still opening: try again in a moment"}
 		}
-		return a.control(req)
+		return group.control(req)
 	})
 	if errors.Is(err, errRunning) {
 		Handover(opts.DataDir, opts.Cwd)
@@ -92,6 +93,12 @@ func Run(opts Options) error {
 		fmt.Fprintf(os.Stderr, "larik desktop: notifications %s\n", map[bool]string{true: "on", false: "off (macOS shows them only for an app bundle: larik desktop --install)"}[mygo.NotificationsSupported()])
 		a.update = win.Update
 		a.redraw = func() { win.Update(func() {}) }
+		a.contentSize = win.ContentSize
+		a.overflow = func(t *tab) bool { return group.overflow(a, t) }
+		a.activateWindow = func() { group.setActive(a) }
+		a.navigateWindow = func(by int) { group.navigateWindow(a, by) }
+		a.windowPosition = func() (int, int) { return group.windowPosition(a) }
+		a.quitAll = group.quitEnding
 		a.appear = func(v string) { mygo.Theme.SetSource(mygo.ThemeSource(cmp.Or(v, string(mygo.ThemeSystem)))) }
 		a.showSettings = func() {
 			if settingsWin != nil {
@@ -122,7 +129,16 @@ func Run(opts Options) error {
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 		a.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
 		a.about = mygo.App.ShowAboutPanel
-		a.alert = func(s session.Indexed) { notify(win, s, a.notifyActions(s)) }
+		a.alert = func(s session.Indexed) {
+			target := group.main
+			for _, app := range group.apps() {
+				if app.tabOf(s.Path) != nil {
+					target = app
+					break
+				}
+			}
+			notify(win, s, target.notifyActions(s))
+		}
 		a.post = func(title, body string) { post(win, title, body) }
 		a.ping = func(id, title, body string) { notifyText(win, "larik-tab-"+id, title, body, "") }
 		a.raise = func() { raise(win) }
@@ -169,17 +185,31 @@ func Run(opts Options) error {
 		}
 		// Quitting closes the window, so its OnClose asks for both; a
 		// quit asked for first knows it's one.
-		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting = true })
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+			group.mu.Lock()
+			group.quitting = true
+			group.mu.Unlock()
+			for _, app := range group.apps() {
+				app.quitting = true
+			}
+		})
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if !a.windowClosing() {
 				e.PreventDefault()
 				win.Update(func() {})
 			}
 		})
+		win.OnFocus(func() {
+			group.setActive(a)
+			if a.setMenu != nil {
+				a.setMenu()
+			}
+		})
 		win.OnClosed(func() {
 			if settingsWin != nil {
 				settingsWin.Close()
 			}
+			mygo.App.Quit()
 		})
 		a.leave = func(quit bool) {
 			if quit {
@@ -191,26 +221,32 @@ func Run(opts Options) error {
 		// A button of a session's notification answers its prompt, and
 		// leaves the window where it is.
 		mygo.App.OnNotificationAction(func(id, action string) {
-			win.Update(func() { a.answerNotification(id, action) })
+			win.Update(func() { group.appForNotification(id).answerNotification(id, action) })
 		})
 		mygo.App.OnNotificationClick(func(id string) {
 			win.Update(func() {
-				for _, p := range a.projects {
+				target := group.appForNotification(id)
+				for _, p := range target.projects {
 					for _, s := range p.Sessions {
 						if "larik-"+s.ID == id {
-							a.reveal(s.Path)
+							target.reveal(s.Path)
 						}
 					}
 				}
-				if t := a.tabByID(strings.TrimPrefix(id, "larik-tab-")); t != nil {
-					a.activate(t)
+				if t := target.tabByID(strings.TrimPrefix(id, "larik-tab-")); t != nil {
+					target.activate(t)
+				}
+				if w := group.windowFor(target); w != nil {
+					w.Focus()
+				} else {
+					win.Focus()
 				}
 			})
-			win.Focus()
 		})
 		go a.versionLoop()
 		go func() {
 			a.Start()
+			win.Update(func() { group.restoreChildren() })
 			// What was handed over while the window opened, once the
 			// first index is in.
 			mu.Lock()

@@ -1032,9 +1032,12 @@ func (a *App) attachTab(h hostTabInfo, path string) *tab {
 // tab for, as those of a window that ended before it saved them, in the
 // order the host started them, and returns them.
 func (a *App) adoptHosted(live map[string]hostTabInfo) []*tab {
+	if a.skipAdoption {
+		return nil
+	}
 	var left []hostTabInfo
 	for id, h := range live {
-		if a.tabByID(id) == nil {
+		if a.tabByID(id) == nil && !a.ownedHostTabs[id] {
 			left = append(left, h)
 		}
 	}
@@ -1055,5 +1058,9 @@ func (a *App) quitEndingCommand() []command {
 	if !a.opts.Host {
 		return nil
 	}
-	return []command{{label: "Quit and End Tabs", key: "Alt+Cmd+Q", run: a.quitEnding}}
+	ending := a.quitEnding
+	if a.quitAll != nil {
+		ending = a.quitAll
+	}
+	return []command{{label: "Quit and End Panes", key: "Alt+Cmd+Q", run: ending}}
 }

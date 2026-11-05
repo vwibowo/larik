@@ -60,7 +60,7 @@ func (a *App) controlPane(req Request) Response {
 			return Response{Error: err}
 		}
 		a.show(p, t)
-		a.focusPane(p)
+		a.focusPane(a.paneOf(t))
 		return Response{Panes: []PaneInfo{{ID: p.id, Tab: t.id, Focused: true}}}
 	case "layout":
 		layouts := map[string]layout{"columns": layoutColumns, "rows": layoutRows, "grid": layoutGrid, "main-stack": layoutMainStack}

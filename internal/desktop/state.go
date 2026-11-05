@@ -10,6 +10,7 @@ import (
 // open as tabs, in order, how the panes showed them, and the sidebar.
 type savedState struct {
 	Version int         `json:"version,omitempty"`
+	Windows []string    `json:"windows,omitempty"` // other OS windows, in creation order
 	Recent  []closedTab `json:"recent,omitempty"`
 	Tabs    []string    `json:"tabs"` // transcript paths, "" for a terminal or browser tab
 	// Terminals are the terminal tabs, by their index in Tabs.
@@ -78,13 +79,19 @@ type savedRemotePort struct {
 }
 
 func (a *App) statePath() string {
+	if a.windowID != "" {
+		return filepath.Join(a.opts.DataDir, "desktop", "state-"+a.windowID+".json")
+	}
 	return filepath.Join(a.opts.DataDir, "desktop", "state.json")
 }
 
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Version: 2, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Version: 4, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	if a.windowKeys != nil {
+		st.Windows = a.windowKeys()
+	}
 	if a.terminalOpacity != 1 {
 		st.TerminalOpacity = &a.terminalOpacity
 	}
@@ -212,6 +219,8 @@ func (a *App) saveState() {
 // any. A session that is gone, or open in another terminal now, is
 // skipped.
 func (a *App) restore() bool {
+	a.restoring = true
+	defer func() { a.restoring = false }()
 	data, err := os.ReadFile(a.statePath())
 	if a.opts.DataDir == "" {
 		err = os.ErrNotExist
@@ -233,6 +242,22 @@ func (a *App) restore() bool {
 		a.terminalOpacity = min(max(*st.TerminalOpacity, 0), 1)
 	}
 	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
+	if st.Version < 3 {
+		for old, renamed := range map[string]string{
+			"New Tab": "New Pane", "New Tab in Split": "New Pane Beside",
+			"New Tab in Split Below": "New Pane Below", "Close Tab": "Close Pane",
+			"Reopen Closed Tab": "Reopen Closed Pane", "New Browser Tab": "New Browser Pane",
+			"New Files Tab": "New Files Pane", "Show Next Tab": "Focus Next Pane",
+			"Show Previous Tab": "Focus Previous Pane",
+		} {
+			if key, ok := a.keys[old]; ok {
+				if _, set := a.keys[renamed]; !set {
+					a.keys[renamed] = key
+				}
+				delete(a.keys, old)
+			}
+		}
+	}
 	for _, name := range st.Servers {
 		a.connectServer(name)
 	}
@@ -323,6 +348,13 @@ func (a *App) restore() bool {
 	if a.layout == nil {
 		a.layout = &pane{tab: a.tabs[0]}
 	}
+	// Older layouts could keep open items outside the pane tree. Give each
+	// one a pane on the first launch with the pane-only model.
+	for _, t := range a.tabs {
+		if a.paneOf(t) == nil {
+			a.splitPane(a.layout.leaves()[len(a.layout.leaves())-1], t, false)
+		}
+	}
 	a.focus = a.paneOf(opened[st.Active])
 	if a.focus == nil {
 		a.focus = a.panes()[0]
@@ -346,6 +378,8 @@ func (a *App) showAdopted(adopted []*tab) bool {
 	if len(adopted) == 0 {
 		return false
 	}
-	a.activate(adopted[0])
+	for _, t := range adopted {
+		a.activate(t)
+	}
 	return true
 }

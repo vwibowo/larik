@@ -92,7 +92,7 @@ func TestSidebarGroupsSessionsByProject(t *testing.T) {
 	for _, want := range []string{
 		"larik-hardness", "ornith-page", // projects
 		"Add OSC 7501 output", "Refactor the parser and run the tests", // sessions
-		"Pick a session in the sidebar, or open a new tab", "Larik Session", "Browser",
+		"Pick a session in the sidebar, or open a new pane", "Larik Session", "Browser",
 		"larik dev", // the footer's version
 	} {
 		if !tt.HasText(want) {
@@ -174,7 +174,7 @@ func TestTabsRunLarik(t *testing.T) {
 	// The New menu starts larik in the same directory, without
 	// --resume; once its status file names the tab, the tab has the
 	// session.
-	if err := tt.Click("New tab"); err != nil {
+	if err := tt.Click("New pane"); err != nil {
 		mu.Unlock()
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestTabsRunLarik(t *testing.T) {
 		mu.Unlock()
 		t.Fatal(err)
 	}
-	fresh := shownAt(a, 0)
+	fresh := a.focused()
 	if len(a.tabs) != 2 || fresh == resumed || fresh.dir != repo {
 		mu.Unlock()
 		t.Fatalf("new tab: %d tabs, dir %q", len(a.tabs), fresh.dir)
@@ -207,12 +207,12 @@ func TestTabsRunLarik(t *testing.T) {
 	}
 	// Choosing a session that has a tab shows that tab.
 	a.selectSession(resumed.path)
-	if shownAt(a, 0) != resumed || len(a.tabs) != 2 {
+	if a.focused() != resumed || len(a.panes()) != 2 {
 		t.Errorf("the session's tab shows again")
 	}
 	mu.Unlock()
 
-	// A failed larik keeps its tab, as an error; a clean exit closes it.
+	// Both failed and clean exits keep their panes for inspection.
 	fresh.term.Send([]byte("3\r"))
 	waitFor(t, mu, "failed tab", func() bool { return fresh.exited })
 	mu.Lock()
@@ -221,11 +221,11 @@ func TestTabsRunLarik(t *testing.T) {
 	}
 	mu.Unlock()
 	resumed.term.Send([]byte("0\r"))
-	waitFor(t, mu, "tab closed", func() bool { return len(a.tabs) == 1 })
+	waitFor(t, mu, "session exited", func() bool { return resumed.exited })
 	mu.Lock()
 	defer mu.Unlock()
-	if shownAt(a, 0) != fresh {
-		t.Errorf("the remaining tab shows")
+	if len(a.panes()) != 2 || a.paneOf(resumed) == nil || a.paneOf(fresh) == nil {
+		t.Errorf("both finished panes remain visible")
 	}
 }
 
@@ -234,13 +234,13 @@ func TestCycleTabs(t *testing.T) {
 	a.tabs = []*tab{{id: "a"}, {id: "b"}, {id: "c"}}
 	a.activate(a.tabs[0])
 	a.cycle(-1)
-	if shownAt(a, 0).id != "c" {
-		t.Fatalf("back from the first: %s", shownAt(a, 0).id)
+	if a.focused().id != "c" {
+		t.Fatalf("back from the first: %s", a.focused().id)
 	}
 	a.cycle(1)
 	a.cycle(1)
-	if shownAt(a, 0).id != "b" {
-		t.Fatalf("on twice: %s", shownAt(a, 0).id)
+	if a.focused().id != "b" {
+		t.Fatalf("on twice: %s", a.focused().id)
 	}
 }
 

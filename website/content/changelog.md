@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.32.0
+
+<p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>
+
+### Added
+
+- **One navigation model in Desktop.** Every open session, terminal, browser page, Files view, and chooser has a visible pane. New panes tile automatically, and Desktop opens another OS window when the grid would make panes too small. Window layouts and their focused panes return on restart.
+- **Cross-window navigation.** The toolbar numbers open windows; the Window menu and command palette offer next and previous window commands. On macOS, Command+Backquote and Shift+Command+Backquote switch between them.
+
+### Fixed
+
+- Background Desktop opens keep the current pane and window focused. Closing an inactive window no longer changes the command target, and pane IDs remain usable after overflow moves a pane to another window.
+- Restoring saved windows no longer redistributes their panes into extra windows.
+
+### Compatibility notes
+
+- Desktop state format is now version 4. The host and CLI retain `tab` identifiers and `--tab` flags for compatibility, while the interface uses panes and windows.
+- Running non-hosted and remote terminal panes stay in their current window when a new pane would be too small; they cannot yet move to another window automatically.
+
 ## v0.31.0
 
 <p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>

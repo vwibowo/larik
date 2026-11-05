@@ -60,7 +60,7 @@ func (a *App) footer(c *ui.Context, t *ui.Theme) {
 func (a *App) versionLabel(c *ui.Context, t *ui.Theme) {
 	current := "larik " + displayVersion(a.opts.Version)
 	if a.newer == "" {
-		ui.Text(c.Key("version"), current).FontSize(11).TextColor(t.TextMuted).SingleLine().Tooltip("The larik these tabs run")
+		ui.Text(c.Key("version"), current).FontSize(11).TextColor(t.TextMuted).SingleLine().Tooltip("The Larik running in these panes")
 		return
 	}
 	update := ui.Row(c.Key("update")).Gap(5).Padding(2, 6).Radius(999).AlignItems(ui.Center).Cursor(ui.CursorPointer).

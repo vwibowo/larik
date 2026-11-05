@@ -75,7 +75,7 @@ func TestDropTabOnEdges(t *testing.T) {
 		{zoneRight, "(1|2)"},
 		{zoneTop, "(2/1)"},
 		{zoneBottom, "(1/2)"},
-		{zoneCenter, "2"},
+		{zoneCenter, "(1|2)"},
 	} {
 		a, tabs := twoTabs()
 		if !a.dropTab(tabs[1], a.layout, tc.z) {
@@ -238,8 +238,8 @@ func TestDragTabToPaneEdge(t *testing.T) {
 			t.Fatalf("no %q or %q: %q", from, to, tt.Texts())
 		}
 		x, y := toX(dst), toY(dst)
-		tt.Press(src.X+20, src.Y+src.H/2)
-		tt.Move(src.X+40, src.Y+src.H/2)
+		tt.Press(src.X+20, src.Y+14)
+		tt.Move(src.X+40, src.Y+14)
 		tt.Move(x, y)
 		tt.Frame()
 		if a.drop.p == nil || a.drop.z != zoneRight {
@@ -251,7 +251,7 @@ func TestDragTabToPaneEdge(t *testing.T) {
 	}
 	right := func(r ui.Rect) float32 { return r.X + r.W - 20 }
 	middle := func(r ui.Rect) float32 { return r.Y + r.H/2 }
-	drag("Polish the landing copy tab", right, middle, "Pane: Refactor the parser and run the tests")
+	drag("Pane: Polish the landing copy", right, middle, "Pane: Refactor the parser and run the tests")
 	if !a.split() || shape(a.layout) != "("+parser.id+"|"+site.id+")" {
 		t.Fatalf("after the drop: split %v, %s", a.split(), shape(a.layout))
 	}

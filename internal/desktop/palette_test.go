@@ -41,7 +41,7 @@ func TestPaletteItems(t *testing.T) {
 
 	// With nothing focused: the menu bar's commands, then the sessions.
 	got := labels(a.paletteItems())
-	for _, want := range []string{"New Tab", "New Larik Session", "Toggle Sidebar", "Next Session Waiting", "Fix the flaky test", "Write the docs"} {
+	for _, want := range []string{"New Pane", "New Larik Session", "Toggle Sidebar", "Next Session Waiting", "Fix the flaky test", "Write the docs"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("no %q in %q", want, got)
 		}
@@ -59,7 +59,7 @@ func TestPaletteItems(t *testing.T) {
 	a.changes = &changes{loaded: true, branch: "larik/fix", base: "main", against: compareCommit,
 		files: []*fileChange{{path: "a.go", code: " M"}, {path: "b.go", code: "M "}}}
 	got = labels(a.paletteItems())
-	if got[0] != "Rename Session…" || got[1] != "Fork into a New Tab" {
+	if got[0] != "Rename Session…" || got[1] != "Fork into a New Pane" {
 		t.Fatalf("the session's first: %q", got)
 	}
 	for _, want := range []string{"Stage All", "Unstage All", "Compare Since main", "Fix the flaky test"} {
@@ -82,7 +82,7 @@ func TestPaletteItems(t *testing.T) {
 		t.Fatalf("site docs: %q", got)
 	}
 	a.paletteQuery = "new"
-	if got := labels(a.paletteMatches()); got[0] != "New Tab" {
+	if got := labels(a.paletteMatches()); got[0] != "New Pane" {
 		t.Fatalf("new: %q", got)
 	}
 	a.paletteQuery = "zzz"

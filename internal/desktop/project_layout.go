@@ -166,6 +166,11 @@ func (a *App) openProjectLayout(root, name string) error {
 	}
 	if panes := restorePanes(layout.Panes, opened, map[*tab]bool{}); panes != nil {
 		a.layout = panes
+		for _, t := range a.tabs {
+			if a.paneOf(t) == nil {
+				a.splitPane(a.layout.leaves()[len(a.layout.leaves())-1], t, false)
+			}
+		}
 		a.focus = a.paneOf(opened[layout.Active])
 		if a.focus == nil {
 			a.focus = panes.leaves()[0]

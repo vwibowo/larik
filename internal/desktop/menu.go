@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -9,6 +10,19 @@ import (
 
 	"larik/internal/status"
 )
+
+func windowNavigationKey(next bool) string {
+	if runtime.GOOS == "darwin" {
+		if next {
+			return "Cmd+`"
+		}
+		return "Shift+Cmd+`"
+	}
+	if next {
+		return "Ctrl+Alt+Shift+PageDown"
+	}
+	return "Ctrl+Alt+Shift+PageUp"
+}
 
 // command is an item of the menu bar: what it says, its key as an
 // accelerator, and what it does, or a role of MyGo's; a zero command is a
@@ -60,25 +74,25 @@ func (a *App) menuDefaults() []menuGroup {
 			{role: mygo.RoleQuit},
 		}, a.quitEndingCommand()...)},
 		{title: "File", items: []command{
-			{label: "New Tab", key: "Cmd+T", run: a.openNew},
-			{label: "New Tab in Split", key: "Cmd+D", run: a.splitRight},
-			{label: "New Tab in Split Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
+			{label: "New Pane", key: "Cmd+T", run: a.openNew},
+			{label: "New Pane Beside", key: "Cmd+D", run: a.splitRight},
+			{label: "New Pane Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
 			{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},
 			{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
 			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
-			{label: "New Browser Tab", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
-			{label: "New Files Tab", run: func() { a.openFiles(a.currentDir()) }},
+			{label: "New Browser Pane", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
+			{label: "New Files Pane", run: func() { a.openFiles(a.currentDir()) }},
 			{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
 			{label: "Connect to Server…", run: a.askServer},
 			{},
-			{label: "Close Tab", key: "Cmd+W", run: func() {
+			{label: "Close Pane", key: "Cmd+W", run: func() {
 				if t := a.focused(); t != nil {
 					a.askClose([]*tab{t}, nil)
 				}
 			}},
 			{label: "Close Window", key: "Shift+Cmd+W", role: mygo.RoleClose},
-			{label: "Reopen Closed Tab", key: "Shift+Cmd+T", run: a.reopenClosed},
+			{label: "Reopen Closed Pane", key: "Shift+Cmd+T", run: a.reopenClosed},
 		}},
 		{title: "Edit", items: []command{
 			{role: mygo.RoleUndo}, {role: mygo.RoleRedo}, {},
@@ -107,11 +121,20 @@ func (a *App) menuDefaults() []menuGroup {
 			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom}, {},
 			{label: "Next Session Waiting", key: "Cmd+J", run: a.nextWaiting},
 			{label: "Latest Notification", key: "Shift+Cmd+U", run: a.latestUnread},
-			{label: "Show Next Tab", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
-			{label: "Show Previous Tab", key: "Shift+Cmd+[", run: func() { a.cycle(-1) }},
+			{label: "Focus Next Pane", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
+			{label: "Focus Previous Pane", key: "Shift+Cmd+[", run: func() { a.cycle(-1) }},
+			{label: "Focus Next Window", key: windowNavigationKey(true), run: func() {
+				if a.navigateWindow != nil {
+					a.navigateWindow(1)
+				}
+			}},
+			{label: "Focus Previous Window", key: windowNavigationKey(false), run: func() {
+				if a.navigateWindow != nil {
+					a.navigateWindow(-1)
+				}
+			}},
 			{},
 			{label: "Zoom Pane", key: "Shift+Cmd+Enter", run: a.toggleZoom, checked: a.zoomed},
-			{label: "Close Pane", run: func() { a.closePane(a.focus) }},
 			{label: "Pane to the Left", key: "Alt+Cmd+Left", run: func() { a.focusToward(-1, 0) }},
 			{label: "Pane to the Right", key: "Alt+Cmd+Right", run: func() { a.focusToward(1, 0) }},
 			{label: "Pane Above", key: "Alt+Cmd+Up", run: func() { a.focusToward(0, -1) }},
@@ -166,7 +189,7 @@ func (a *App) aboutPanel() mygo.AboutPanelOptions {
 	return mygo.AboutPanelOptions{
 		ApplicationName:    "Larik",
 		ApplicationVersion: a.opts.Version,
-		Credits:            "A coding agent for the terminal, in a window of terminal tabs.",
+		Credits:            "A coding agent for the terminal, in a window of tiled panes.",
 		Copyright:          "Copyright © 2026 Vinensius Wibowo. MIT License.",
 	}
 }

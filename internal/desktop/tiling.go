@@ -108,7 +108,7 @@ func (a *App) dropTab(t *tab, p *pane, z zone) bool {
 	below, before, ok := z.split()
 	if !ok {
 		a.show(p, t)
-		a.focusPane(p)
+		a.focusPane(a.paneOf(t))
 		return true
 	}
 	if q := a.paneOf(t); q != nil {

@@ -55,7 +55,7 @@ func (a *App) startBrowser(u string) *tab {
 	if a.newWebView != nil {
 		v, err := a.newWebView(u)
 		if err != nil {
-			a.notice = "Can't open a browser tab: " + err.Error()
+			a.notice = "Can't open a browser pane: " + err.Error()
 			return nil
 		}
 		t.web = v

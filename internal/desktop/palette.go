@@ -74,7 +74,7 @@ func (a *App) paletteItems() []paletteItem {
 				add("Remove Worktree…", title, "", func() { a.askWorktree(s, p.Root, false) })
 			}
 			add("Rename Session…", title, "", func() { a.askRename(s.Path) })
-			add("Fork into a New Tab", title, "", func() { a.fork(s.Path) })
+			add("Fork into a New Pane", title, "", func() { a.fork(s.Path) })
 			if a.copyText != nil {
 				add("Copy Session ID", s.ID, "", func() { a.copyText(s.ID) })
 			}
@@ -126,9 +126,6 @@ func (a *App) paletteItems() []paletteItem {
 		for _, cmd := range cmds {
 			if cmd.run == nil || cmd.label == "" || cmd.label == paletteLabel || cmd.label == "Search Sessions…" {
 				continue
-			}
-			if !a.split() && strings.Contains(cmd.label, "Pane") {
-				continue // nothing to zoom, close or move to
 			}
 			add(cmd.label, menu, keyText(cmd.key), cmd.run)
 		}

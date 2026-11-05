@@ -93,7 +93,7 @@ func needsDevice(perms []mygo.Permission) bool {
 // or nothing yet while the bar asks you.
 func (a *App) permitted(t *tab, req mygo.PermissionRequest) bool {
 	if needsDevice(req.Permissions) && !devicesAllowed() {
-		a.notice = "A page asked for " + permissionText(req.Permissions) + ": run larik desktop --install again to let browser tabs ask macOS for it."
+		a.notice = "A page asked for " + permissionText(req.Permissions) + ": run larik desktop --install again to let browser panes ask macOS for it."
 		return false
 	}
 	all := true

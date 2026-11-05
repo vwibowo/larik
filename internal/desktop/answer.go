@@ -206,7 +206,7 @@ func (a *App) answerSession(path string, an answer) string {
 				delete(a.answered, path)
 			}
 			if !took {
-				a.notice = "\"" + title + "\" didn't take the answer: something in its tab has the keys, as the diff or a reason being typed. Open it to answer there."
+				a.notice = "\"" + title + "\" didn't take the answer: something in its pane has the keys, as the diff or a reason being typed. Open it to answer there."
 			}
 		})
 	}()
