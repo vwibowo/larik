@@ -386,6 +386,10 @@ func LocalSettingsPath(cwd string) string {
 	return filepath.Join(configDir(), "projects", fmt.Sprintf("%s-%x.json", filepath.Base(canonical), hash[:8]))
 }
 
+// DesktopDatabasePath stores Desktop's global connection definitions outside
+// every project. Passwords are supplied through the Desktop environment.
+func DesktopDatabasePath() string { return filepath.Join(configDir(), "desktop-databases.json") }
+
 func Load(cwd string) (*Config, error) {
 	return load(cwd, false)
 }
@@ -1191,7 +1195,7 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 // environment — so writing anywhere inside one also makes the file readable
 // only by its owner.
 var secretSections = map[string]bool{
-	"providers": true, "audio": true, "web": true, "mcp_servers": true, "browser": true, "permissions": true,
+	"providers": true, "audio": true, "web": true, "mcp_servers": true, "browser": true, "permissions": true, "database_connections": true,
 }
 
 // settingPerm is the mode a settings file is written with when path changes:

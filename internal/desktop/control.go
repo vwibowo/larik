@@ -35,9 +35,10 @@ type Request struct {
 	Below bool `json:"below,omitempty"`
 	// Shell opens a terminal tab in Cwd, running Run through your shell,
 	// or the shell itself when Run is empty.
-	Shell bool   `json:"shell,omitempty"`
-	Files bool   `json:"files,omitempty"`
-	Run   string `json:"run,omitempty"`
+	Shell    bool   `json:"shell,omitempty"`
+	Files    bool   `json:"files,omitempty"`
+	Database bool   `json:"database,omitempty"`
+	Run      string `json:"run,omitempty"`
 	// Worktree opens the tab in a new worktree of the repository Cwd is
 	// in, on the branch larik/<Branch>, or one named for it.
 	Worktree bool   `json:"worktree,omitempty"`
@@ -50,10 +51,15 @@ type Request struct {
 	// Op is what page does to a browser tab's page (see pagectl.go), and
 	// Ref the element of its outline it clicks or types into; Text is
 	// what type types or eval runs, and Enter submits what was typed.
-	Op  string `json:"op,omitempty"`
-	Ref string `json:"ref,omitempty"`
-	X   int    `json:"x,omitempty"`
-	Y   int    `json:"y,omitempty"`
+	Op     string `json:"op,omitempty"`
+	SQL    string `json:"sql,omitempty"`
+	Schema string `json:"schema,omitempty"`
+	Table  string `json:"table,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	X      int    `json:"x,omitempty"`
+	Y      int    `json:"y,omitempty"`
 	// Background opens a pane without taking focus from the current one.
 	Background bool   `json:"background,omitempty"`
 	Text       string `json:"text,omitempty"`  // what send types
@@ -81,6 +87,7 @@ type Response struct {
 	Text          string             `json:"text,omitempty"` // read's
 	State         string             `json:"state,omitempty"`
 	Page          *PageResult        `json:"page,omitempty"` // page's
+	Database      *DatabaseResponse  `json:"database,omitempty"`
 	Panes         []PaneInfo         `json:"panes,omitempty"`
 	Notifications []NotificationInfo `json:"notifications,omitempty"`
 	Layouts       []string           `json:"layouts,omitempty"`
@@ -89,7 +96,7 @@ type Response struct {
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
 	ID      string `json:"id"`
-	Kind    string `json:"kind"`              // larik, terminal, browser, files, or chooser
+	Kind    string `json:"kind"`              // larik, terminal, browser, files, database, or chooser
 	Run     string `json:"run,omitempty"`     // a terminal tab's program
 	URL     string `json:"url,omitempty"`     // a browser tab's page
 	Session string `json:"session,omitempty"` // its session's id, once it has one
@@ -123,6 +130,8 @@ func (a *App) control(req Request) Response {
 		return a.wait(req)
 	case "page":
 		return a.pageControl(req)
+	case "database":
+		return a.databaseControl(req)
 	case "status":
 		return a.controlStatus(req)
 	case "allow", "deny":
@@ -233,6 +242,9 @@ func (a *App) command(req Request) Response {
 		if t.files != nil {
 			return Response{Error: "a Files tab has no terminal"}
 		}
+		if t.database != nil {
+			return Response{Error: "a Database tab has no terminal"}
+		}
 	}
 	switch req.Cmd {
 	case "send":
@@ -301,6 +313,11 @@ func (a *App) controlOpen(req Request) Response {
 			return Response{Error: "open --files needs a directory"}
 		}
 		t = a.startFiles(req.Cwd)
+	case req.Database:
+		if req.Cwd == "" {
+			return Response{Error: "open --database needs a directory"}
+		}
+		t = a.startDatabase(req.Cwd)
 	case req.URL != "":
 		u, ok := normalizeURL(req.URL)
 		if !ok {
@@ -653,6 +670,9 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	}
 	if t.files != nil {
 		info.Kind = "files"
+	}
+	if t.database != nil {
+		info.Kind = "database"
 	}
 	if t.chooser {
 		info.Kind = "chooser"

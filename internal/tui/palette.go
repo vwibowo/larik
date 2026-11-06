@@ -56,6 +56,7 @@ var commands = []command{
 	{"/agents", "", "list subagents the model can delegate to", "tools", ""},
 	{"/lsp", "", "language servers and their status", "tools", ""},
 	{"/browser", "[on|off|show|hide|quit]", "browser tools: switch them on/off (fresh context), show or hide the browser beside the conversation (F3), or quit Chrome", "tools", "f3"},
+	{"/db", "", "browse personal SQLite and PostgreSQL profiles, tables, rows and read-only SQL", "tools", ""},
 	{"/sandbox", "", "bash sandbox status", "tools", ""},
 	{"/tasks", "[stop <id>]", "background tasks; cancel one", "tools", ""},
 	{"/worktrees", "[remove <b|all>]", "git worktrees kept by isolated subagents and larik desktop; delete one", "tools", ""},

@@ -10,14 +10,15 @@ import (
 )
 
 type closedTab struct {
-	Kind       string          `json:"kind"`
-	Path       string          `json:"path,omitempty"`
-	Dir        string          `json:"dir,omitempty"`
-	URL        string          `json:"url,omitempty"`
-	RemotePort savedRemotePort `json:"remote_port,omitzero"`
-	Anchor     string          `json:"anchor,omitempty"`
-	Below      bool            `json:"below,omitempty"`
-	Before     bool            `json:"before,omitempty"`
+	Kind       string            `json:"kind"`
+	Path       string            `json:"path,omitempty"`
+	Dir        string            `json:"dir,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	RemotePort savedRemotePort   `json:"remote_port,omitzero"`
+	Database   savedDatabaseView `json:"database,omitzero"`
+	Anchor     string            `json:"anchor,omitempty"`
+	Below      bool              `json:"below,omitempty"`
+	Before     bool              `json:"before,omitempty"`
 }
 
 func (a *App) rememberClosed(t *tab) {
@@ -33,6 +34,9 @@ func (a *App) rememberClosed(t *tab) {
 		r.Kind = "browser"
 	case t.files != nil:
 		r.Kind = "files"
+	case t.database != nil:
+		r.Kind = "database"
+		r.Database = saveDatabaseView(t.database)
 	case t.shell():
 		r.Kind = "terminal"
 	default:
@@ -83,6 +87,12 @@ func (a *App) reopenRecent(r closedTab) bool {
 		}
 	case "files":
 		t = a.startFiles(r.Dir)
+	case "database":
+		t = a.startDatabase(r.Dir)
+		restoreDatabaseView(t.database, r.Database)
+		if t.database.profile != "" {
+			a.loadDatabaseSchema(t)
+		}
 	}
 	if t == nil {
 		return false
@@ -114,6 +124,8 @@ func (r closedTab) label() string {
 		return "Browser · " + r.URL
 	case "files":
 		return "Files · " + r.Dir
+	case "database":
+		return "Database · " + r.Dir
 	case "terminal":
 		return "Terminal · " + r.Dir
 	}

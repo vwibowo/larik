@@ -727,6 +727,11 @@ func (a *App) filesPreview(c *ui.Context, theme *ui.Theme, tb *tab) {
 		case p.image != nil:
 			ui.Image(c, p.image).Grow(1).MinHeight(0).Fit(ui.Contain).Padding(12)
 		case p.code != nil:
+			codeTheme := editor.DefaultTheme(theme)
+			if a.paneOpacity < 1 {
+				codeTheme.Background = theme.Background.Alpha(0)
+			}
+			p.code.Theme = codeTheme
 			editor.View(c.Key("code-preview"), p.code).Grow(1).MinWidth(0).MinHeight(0)
 		default:
 			ui.Text(c, "This file cannot be previewed.").FontSize(12).TextColor(theme.TextMuted).Margin(ui.Auto)

@@ -192,6 +192,25 @@ func (g *windowGroup) controlIn(a *App, req Request) Response {
 }
 
 func (g *windowGroup) control(req Request) Response {
+	if req.Cmd == "database" {
+		if req.Op == "list" {
+			out := Response{Database: &DatabaseResponse{}}
+			for _, a := range g.apps() {
+				res := a.control(req)
+				if res.Database != nil {
+					out.Database.Panes = append(out.Database.Panes, res.Database.Panes...)
+				}
+			}
+			return out
+		}
+		if req.Tab == "" {
+			listed := g.control(Request{Cmd: "database", Op: "list"})
+			if listed.Database == nil || len(listed.Database.Panes) != 1 {
+				return Response{Error: "choose an open, agent-enabled Database pane ID"}
+			}
+			req.Tab = listed.Database.Panes[0].PaneID
+		}
+	}
 	if req.Cmd == "list" {
 		var out Response
 		active := g.activeApp()
@@ -256,6 +275,7 @@ func (g *windowGroup) restoreChildren() {
 
 func (g *windowGroup) create(id string, background bool) *windowEntry {
 	b := New(g.main.opts)
+	b.databaseStore = g.main.databaseStore
 	b.windowID, b.skipAdoption = id, true
 	e := &windowEntry{app: b}
 	win := mygo.NewWindow(mygo.WindowOptions{
@@ -280,6 +300,7 @@ func (g *windowGroup) create(id string, background bool) *windowEntry {
 	b.showSettings = g.main.showSettings
 	b.badge = nil // the primary window owns the app-wide badge
 	b.copyText = func(s string) { _ = mygo.Clipboard.Write(transfer.TextData(s)) }
+	b.saveDatabaseCSV = databaseCSVDialog(win, b)
 	b.showFile, b.trashItem = g.main.showFile, g.main.trashItem
 	b.openPath, b.openExternal = g.main.openPath, g.main.openExternal
 	b.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
@@ -394,6 +415,12 @@ func (g *windowGroup) overflow(src *App, t *tab) bool {
 		}
 	case t.files != nil:
 		opened = b.startFiles(t.dir)
+	case t.database != nil:
+		opened = b.startDatabase(t.dir)
+		restoreDatabaseView(opened.database, saveDatabaseView(t.database))
+		if opened.database.profile != "" {
+			b.loadDatabaseSchema(opened)
+		}
 	case t.hosted:
 		if h, ok := src.hostedTabs()[t.id]; ok {
 			opened = b.attachTab(h, t.path)

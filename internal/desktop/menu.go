@@ -82,6 +82,7 @@ func (a *App) menuDefaults() []menuGroup {
 			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
 			{label: "New Browser Pane", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
 			{label: "New Files Pane", run: func() { a.openFiles(a.currentDir()) }},
+			{label: "New Database Pane", run: func() { a.openDatabase(a.currentDir()) }},
 			{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
 			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
 			{label: "Connect to Server…", run: a.askServer},

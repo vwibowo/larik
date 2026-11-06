@@ -37,6 +37,7 @@ var tabKinds = []tabKind{
 	{ui.KeyT, "Terminal", "Your shell, or a dev server, beside the sessions", func() *ui.SVG { return iconTerm }},
 	{ui.KeyB, "Browser", "A web page, such as what the dev server serves", func() *ui.SVG { return iconGlobe }},
 	{ui.KeyF, "Files", "Browse this folder and preview files", func() *ui.SVG { return iconFolder }},
+	{ui.KeyD, "Database", "Browse databases and run read-only SQL", func() *ui.SVG { return iconDatabase }},
 }
 
 // newChooser opens a chooser tab in dir.
@@ -75,6 +76,8 @@ func (a *App) startKind(i int, dir string) *tab {
 		}
 	case 4:
 		return a.startFiles(dir)
+	case 5:
+		return a.startDatabase(dir)
 	}
 	return nil
 }
@@ -196,7 +199,7 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 			chosen = *pick
 		}
 		for i, k := range tabKinds {
-			if c.Shortcut(0, k.key) || c.Shortcut(0, []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5}[i]) {
+			if c.Shortcut(0, k.key) || c.Shortcut(0, []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6}[i]) {
 				chosen = i
 			}
 		}
@@ -220,6 +223,8 @@ func keyName(k ui.Key) string {
 		return "B"
 	case ui.KeyF:
 		return "F"
+	case ui.KeyD:
+		return "D"
 	}
 	return ""
 }

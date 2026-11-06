@@ -63,9 +63,10 @@ type App struct {
 	done   chan struct{}
 	kick   chan struct{} // asks the index loop to look again now
 
-	projects []session.Project
-	open     map[string]*bool // project root → its sidebar section is open
-	showAll  map[string]bool  // project root → all its sessions show
+	projects      []session.Project
+	databaseStore *databaseStore
+	open          map[string]*bool // project root → its sidebar section is open
+	showAll       map[string]bool  // project root → all its sessions show
 	// hidden are the sessions hidden from the sidebar, by transcript path,
 	// and showHidden the projects showing theirs anyway.
 	hidden     map[string]bool
@@ -134,7 +135,7 @@ type App struct {
 	layouts         map[string]map[string]projectLayout
 	layoutPick      *layoutPick
 	fontSize        float32 // the terminals' text size, 0 for fontSize
-	terminalOpacity float32 // terminal pane background; 1 is opaque
+	paneOpacity     float32 // terminal, Files and Database pane backgrounds; 1 is opaque
 	// closing are the tabs waiting on confirming, the question whether
 	// to close them while they work, and closeKeep the tab to show after.
 	closing    []*tab
@@ -219,9 +220,10 @@ type App struct {
 	redraw func()
 	// copyText, showFile and openPath put text on the clipboard, show a
 	// file in the file manager, and open a folder there (see Run).
-	copyText func(s string)
-	showFile func(path string)
-	openPath func(path string)
+	copyText        func(s string)
+	saveDatabaseCSV func(name string, data []byte, done func(path string, err error))
+	showFile        func(path string)
+	openPath        func(path string)
 	// pickDir asks for a folder, starting in start, and gives it to then
 	// on the window's frame (see Run).
 	pickDir func(start string, then func(dir string))
@@ -348,6 +350,8 @@ type tab struct {
 	choice  choice
 	// A Files tab's local folder tree and read-only preview.
 	files *filesState
+	// A Database tab's local connection browser and read-only query editor.
+	database *databaseState
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
@@ -379,28 +383,29 @@ func (a *App) closeFind(t *tab) {
 func New(opts Options) *App {
 	host, _ := os.Hostname()
 	return &App{
-		opts:            opts,
-		update:          func(fn func()) { fn() },
-		done:            make(chan struct{}),
-		kick:            make(chan struct{}, 1),
-		open:            map[string]*bool{},
-		showAll:         map[string]bool{},
-		hidden:          map[string]bool{},
-		prompts:         map[string]string{},
-		showHidden:      map[string]bool{},
-		showArchived:    map[string]bool{},
-		seen:            map[string]time.Time{},
-		looked:          map[string]time.Time{},
-		answered:        map[string]pending{},
-		states:          map[string]status.State{},
-		started:         time.Now(),
-		sidebarW:        280,
-		terminalOpacity: 1,
-		changesP:        60,
-		planP:           55,
-		plans:           map[string]*planPreview{},
-		layouts:         readProjectLayouts(opts.DataDir),
-		host:            host,
+		opts:          opts,
+		databaseStore: loadDatabaseStore(),
+		update:        func(fn func()) { fn() },
+		done:          make(chan struct{}),
+		kick:          make(chan struct{}, 1),
+		open:          map[string]*bool{},
+		showAll:       map[string]bool{},
+		hidden:        map[string]bool{},
+		prompts:       map[string]string{},
+		showHidden:    map[string]bool{},
+		showArchived:  map[string]bool{},
+		seen:          map[string]time.Time{},
+		looked:        map[string]time.Time{},
+		answered:      map[string]pending{},
+		states:        map[string]status.State{},
+		started:       time.Now(),
+		sidebarW:      280,
+		paneOpacity:   1,
+		changesP:      60,
+		planP:         55,
+		plans:         map[string]*planPreview{},
+		layouts:       readProjectLayouts(opts.DataDir),
+		host:          host,
 	}
 }
 
@@ -1037,7 +1042,7 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		opts.OnBell, opts.OnNotify, opts.OnStatus, opts.OnPrompt, opts.OnReset = nil, nil, nil, nil, nil
 		opts.Conn, opts.ResizeByConn = hc, true
 	} else {
-		opts.Command, opts.Dir, opts.Env = args, t.dir, []string{status.TabEnv + "=" + t.id}
+		opts.Command, opts.Dir, opts.Env = args, t.dir, append([]string{status.TabEnv + "=" + t.id}, a.databaseStore.maskedEnv()...)
 	}
 	opts.OnExit = func(code int) {
 		if hc != nil {
@@ -1131,6 +1136,9 @@ func (a *App) zoom(z terminal.Zoom) {
 func (t *tab) close() {
 	if t.files != nil {
 		t.files.close()
+	}
+	if t.database != nil {
+		t.database.close()
 	}
 	if t.term != nil {
 		t.term.Close()
@@ -1375,6 +1383,8 @@ func (a *App) tabTitle(t *tab) string {
 		return "New Pane"
 	case t.files != nil:
 		return "Files"
+	case t.database != nil:
+		return "Database"
 	case t.browser && t.remotePort.port != 0:
 		return fmt.Sprintf("%s:%d", t.remotePort.name, t.remotePort.port)
 	case t.browser && t.url != blankPage:

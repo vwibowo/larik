@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A TablePlus-inspired read-only Database Manager in Larik Desktop, with saved global connections in the sidebar, a schema browser, SQL editor, result table, and row inspector. Desktop-only agent tools can inspect an open pane after per-connection opt-in.
+- Desktop Database Manager now supports SQL Server and MySQL/MariaDB connections with environment-backed credentials, dialect-aware browsing, and SQL completions.
+
+### Changed
+
+- Database Manager now gives results more room, searches tables, and keeps Data, Query, and Agent results separately. Double-clicking a row or pressing Enter opens its details; a single click selects it for copying. Its compact editor and active result tab restore with the pane.
+- The Database SQL editor now highlights queries and completes read-only SQL terms, tables, and columns from the open schema. The pane uses a denser, theme-aware grid and query toolbar.
+- The Database table browser now follows the Files explorer layout, with collapsible schemas and a compact search row.
+- Database header icons now toggle the table browser on the left and row details on the right.
+- Background opacity now lives in Appearance and applies to terminal, Files, and Database panes; existing terminal opacity values carry over.
+- The Database connection form is now width-constrained and scrollable, with labeled fields, a database type switch, and clear agent access controls.
+- Database results now support selectable cells and rows, TSV copying, CSV export of loaded rows, adjustable Data page size, compact arrow paging, and selectable inspector values.
+
 ## v0.32.0
 
 <p class="release-meta"><time datetime="2026-11-05">November 5, 2026</time></p>

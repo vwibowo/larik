@@ -17,13 +17,14 @@ type projectLayout struct {
 }
 
 type layoutTab struct {
-	ID         string          `json:"id,omitempty"`
-	Kind       string          `json:"kind"`
-	Dir        string          `json:"dir"`
-	Path       string          `json:"path,omitempty"`
-	URL        string          `json:"url,omitempty"`
-	Agent      agentResume     `json:"agent,omitzero"`
-	RemotePort savedRemotePort `json:"remote_port,omitzero"`
+	ID         string            `json:"id,omitempty"`
+	Kind       string            `json:"kind"`
+	Dir        string            `json:"dir"`
+	Path       string            `json:"path,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Agent      agentResume       `json:"agent,omitzero"`
+	RemotePort savedRemotePort   `json:"remote_port,omitzero"`
+	Database   savedDatabaseView `json:"database,omitzero"`
 }
 
 func projectLayoutsPath(dataDir string) string {
@@ -90,6 +91,9 @@ func (a *App) saveProjectLayout(root, name string) error {
 			item.Kind = "browser"
 		case t.files != nil:
 			item.Kind = "files"
+		case t.database != nil:
+			item.Kind = "database"
+			item.Database = saveDatabaseView(t.database)
 		case t.shell():
 			item.Kind = "terminal"
 		default:
@@ -156,6 +160,12 @@ func (a *App) openProjectLayout(root, name string) error {
 			}
 		case "files":
 			t = a.startFiles(item.Dir)
+		case "database":
+			t = a.startDatabase(item.Dir)
+			restoreDatabaseView(t.database, item.Database)
+			if t.database.profile != "" {
+				a.loadDatabaseSchema(t)
+			}
 		}
 		if t != nil {
 			opened[i] = t

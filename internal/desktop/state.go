@@ -17,12 +17,14 @@ type savedState struct {
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
 	// Browsers are the browser tabs' pages, by their index in Tabs, and
 	// Sites what you let their pages use, or didn't, by siteKey.
-	Browsers    map[int]string          `json:"browsers,omitempty"`
-	BrowserDirs map[int]string          `json:"browser_dirs,omitempty"`
-	RemotePorts map[int]savedRemotePort `json:"remote_ports,omitempty"`
-	Agents      map[int]agentResume     `json:"agents,omitempty"`
-	Files       map[int]string          `json:"files,omitempty"` // Files tab roots by tab index
-	Sites       map[string]bool         `json:"sites,omitempty"`
+	Browsers      map[int]string            `json:"browsers,omitempty"`
+	BrowserDirs   map[int]string            `json:"browser_dirs,omitempty"`
+	RemotePorts   map[int]savedRemotePort   `json:"remote_ports,omitempty"`
+	Agents        map[int]agentResume       `json:"agents,omitempty"`
+	Files         map[int]string            `json:"files,omitempty"`     // Files tab roots by tab index
+	Databases     map[int]string            `json:"databases,omitempty"` // Database pane project roots by tab index
+	DatabaseViews map[int]savedDatabaseView `json:"database_views,omitempty"`
+	Sites         map[string]bool           `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
 	Hosted map[int]string `json:"hosted,omitempty"`
@@ -51,7 +53,8 @@ type savedState struct {
 	// connect to again; their tabs come back from their hosts.
 	Servers         []string `json:"servers,omitempty"`
 	Font            float32  `json:"font_size,omitempty"`        // the terminals' text size
-	TerminalOpacity *float32 `json:"terminal_opacity,omitempty"` // nil is the old solid default
+	PaneOpacity     *float32 `json:"pane_opacity,omitempty"`     // nil is the solid default
+	TerminalOpacity *float32 `json:"terminal_opacity,omitempty"` // read older Desktop state
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
 	// Hidden are the sessions hidden from the sidebar.
@@ -78,6 +81,46 @@ type savedRemotePort struct {
 	Port int    `json:"port"`
 }
 
+type savedDatabaseView struct {
+	Profile        string  `json:"profile,omitempty"`
+	BrowserWidth   float32 `json:"browser_width,omitempty"`
+	InspectorWidth float32 `json:"inspector_width,omitempty"`
+	EditorHeight   float32 `json:"editor_height,omitempty"` // legacy percentage
+	EditorHeightPx float32 `json:"editor_height_px,omitempty"`
+	ActiveResult   int     `json:"active_result,omitempty"`
+	PageSize       int     `json:"page_size,omitempty"`
+	ShowBrowser    bool    `json:"show_browser"`
+	ShowDetails    bool    `json:"show_details"`
+}
+
+func saveDatabaseView(d *databaseState) savedDatabaseView {
+	return savedDatabaseView{Profile: d.profile, BrowserWidth: d.browserWidth, InspectorWidth: d.inspectorWidth, EditorHeightPx: d.editorHeight, ActiveResult: d.activeResult, PageSize: d.pageSize, ShowBrowser: d.showBrowser, ShowDetails: d.showDetails}
+}
+func restoreDatabaseView(d *databaseState, v savedDatabaseView) {
+	if v == (savedDatabaseView{}) {
+		return
+	}
+	d.profile = v.Profile
+	if v.BrowserWidth > 0 {
+		d.browserWidth = v.BrowserWidth
+	}
+	if v.InspectorWidth > 0 {
+		d.inspectorWidth = v.InspectorWidth
+	}
+	if v.EditorHeightPx > 0 {
+		d.editorHeight = v.EditorHeightPx
+	} else if v.EditorHeight > 0 {
+		d.legacyEditorPercent = v.EditorHeight
+	}
+	if v.ActiveResult >= databaseData && v.ActiveResult <= databaseAgent {
+		d.activeResult = v.ActiveResult
+	}
+	if v.PageSize == 25 || v.PageSize == 50 || v.PageSize == 100 || v.PageSize == 250 || v.PageSize == 500 {
+		d.pageSize = v.PageSize
+	}
+	d.showBrowser, d.showDetails = v.ShowBrowser, v.ShowDetails
+}
+
 func (a *App) statePath() string {
 	if a.windowID != "" {
 		return filepath.Join(a.opts.DataDir, "desktop", "state-"+a.windowID+".json")
@@ -92,8 +135,8 @@ func (a *App) state() savedState {
 	if a.windowKeys != nil {
 		st.Windows = a.windowKeys()
 	}
-	if a.terminalOpacity != 1 {
-		st.TerminalOpacity = &a.terminalOpacity
+	if a.paneOpacity != 1 {
+		st.PaneOpacity = &a.paneOpacity
 	}
 	for root, open := range a.open {
 		st.Open[root] = *open
@@ -152,6 +195,16 @@ func (a *App) state() savedState {
 				st.Files = map[int]string{}
 			}
 			st.Files[len(st.Tabs)] = t.dir
+			path = ""
+		case t.database != nil:
+			if st.Databases == nil {
+				st.Databases = map[int]string{}
+			}
+			if st.DatabaseViews == nil {
+				st.DatabaseViews = map[int]savedDatabaseView{}
+			}
+			st.Databases[len(st.Tabs)] = t.dir
+			st.DatabaseViews[len(st.Tabs)] = saveDatabaseView(t.database)
 			path = ""
 		case path == "":
 			continue
@@ -238,8 +291,10 @@ func (a *App) restore() bool {
 	}
 	a.noSidebar = st.Hidden
 	a.noChooser = st.NoChooser
-	if st.TerminalOpacity != nil {
-		a.terminalOpacity = min(max(*st.TerminalOpacity, 0), 1)
+	if st.PaneOpacity != nil {
+		a.paneOpacity = min(max(*st.PaneOpacity, 0), 1)
+	} else if st.TerminalOpacity != nil {
+		a.paneOpacity = min(max(*st.TerminalOpacity, 0), 1)
 	}
 	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
 	if st.Version < 3 {
@@ -311,6 +366,16 @@ func (a *App) restore() bool {
 		}
 		if dir, ok := st.Files[i]; ok {
 			opened[i] = a.startFiles(dir)
+			continue
+		}
+		if dir, ok := st.Databases[i]; ok {
+			opened[i] = a.startDatabase(dir)
+			if view, ok := st.DatabaseViews[i]; ok {
+				restoreDatabaseView(opened[i].database, view)
+				if opened[i].database.profile != "" {
+					a.loadDatabaseSchema(opened[i])
+				}
+			}
 			continue
 		}
 		if term, ok := st.Terminals[i]; ok {

@@ -744,7 +744,7 @@ func (a *App) openHosted(t *tab, args []string) (*hostConn, error) {
 	if !a.opts.Host {
 		return nil, nil
 	}
-	req := hostRequest{Op: "open", ID: t.id, Command: args, Dir: t.dir, Env: []string{status.TabEnv + "=" + t.id}, Shell: t.shell(), Run: t.run}
+	req := hostRequest{Op: "open", ID: t.id, Command: args, Dir: t.dir, Env: append([]string{status.TabEnv + "=" + t.id}, a.databaseStore.maskedEnv()...), Shell: t.shell(), Run: t.run}
 	if t.reattach {
 		req.Op = "attach"
 	}

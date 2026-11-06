@@ -30,35 +30,40 @@ func svg(body string) *ui.SVG {
 }
 
 var (
-	iconChat     = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
-	iconTerm     = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
-	iconBranch   = svg(`<circle cx="6" cy="3" r="2"/><path d="M6 5v12a4 4 0 0 0 4 4h4"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M18 8v5a4 4 0 0 1-4 4H8"/>`)
-	iconPlus     = svg(`<path d="M12 5v14M5 12h14"/>`)
-	iconClose    = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
-	iconPause    = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
-	iconCheck    = svg(`<path d="M20 6 9 17l-5-5"/>`)
-	iconError    = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
-	iconDiff     = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
-	iconSplit    = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
-	iconPanel    = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
-	iconUp       = svg(`<path d="m18 15-6-6-6 6"/>`)
-	iconDown     = svg(`<path d="m6 9 6 6 6-6"/>`)
-	iconRight    = svg(`<path d="m9 18 6-6-6-6"/>`)
-	iconZoom     = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
-	iconShrink   = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
-	iconGlobe    = svg(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>`)
-	iconFolder   = svg(`<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
-	iconFilter   = svg(`<path d="M4 7h16M7 12h10M10 17h4"/>`)
-	iconWrap     = svg(`<path d="M4 6h16M4 11h16M4 16h10M17 16h2a2 2 0 0 0 0-4h-2m0 4 2-2m-2 2 2 2"/>`)
-	iconBack     = svg(`<path d="m15 18-6-6 6-6"/>`)
-	iconForward  = svg(`<path d="m9 18 6-6-6-6"/>`)
-	iconReload   = svg(`<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>`)
-	iconExternal = svg(`<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
-	iconBell     = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
-	iconArchive  = svg(`<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>`)
-	iconTrash    = svg(`<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`)
-	iconLaptop   = svg(`<rect width="18" height="12" x="3" y="4" rx="2"/><path d="M2 20h20"/>`)
-	iconServer   = svg(`<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>`)
+	iconChat       = svg(`<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`)
+	iconTerm       = svg(`<path d="m4 17 6-6-6-6M12 19h8"/>`)
+	iconBranch     = svg(`<circle cx="6" cy="3" r="2"/><path d="M6 5v12a4 4 0 0 0 4 4h4"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M18 8v5a4 4 0 0 1-4 4H8"/>`)
+	iconPlus       = svg(`<path d="M12 5v14M5 12h14"/>`)
+	iconClose      = svg(`<path d="M18 6 6 18M6 6l12 12"/>`)
+	iconPause      = svg(`<circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/>`)
+	iconCheck      = svg(`<path d="M20 6 9 17l-5-5"/>`)
+	iconError      = svg(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>`)
+	iconDiff       = svg(`<path d="M12 3v14M5 10h14M5 21h14"/>`)
+	iconSplit      = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>`)
+	iconPanel      = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`)
+	iconPanelRight = svg(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>`)
+	iconUp         = svg(`<path d="m18 15-6-6-6 6"/>`)
+	iconDown       = svg(`<path d="m6 9 6 6 6-6"/>`)
+	iconRight      = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconZoom       = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
+	iconShrink     = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
+	iconGlobe      = svg(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>`)
+	iconFolder     = svg(`<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
+	iconDatabase   = svg(`<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>`)
+	iconFilter     = svg(`<path d="M4 7h16M7 12h10M10 17h4"/>`)
+	iconWrap       = svg(`<path d="M4 6h16M4 11h16M4 16h10M17 16h2a2 2 0 0 0 0-4h-2m0 4 2-2m-2 2 2 2"/>`)
+	iconBack       = svg(`<path d="m15 18-6-6 6-6"/>`)
+	iconForward    = svg(`<path d="m9 18 6-6-6-6"/>`)
+	iconCopy       = svg(`<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>`)
+	iconExport     = svg(`<path d="M12 3v12m-4-4 4 4 4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>`)
+	iconRun        = svg(`<path d="m8 5 11 7-11 7V5z"/>`)
+	iconReload     = svg(`<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>`)
+	iconExternal   = svg(`<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
+	iconBell       = svg(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`)
+	iconArchive    = svg(`<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>`)
+	iconTrash      = svg(`<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`)
+	iconLaptop     = svg(`<rect width="18" height="12" x="3" y="4" rx="2"/><path d="M2 20h20"/>`)
+	iconServer     = svg(`<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>`)
 )
 
 // macOS's colours: the content's background and labels, the sidebar
@@ -159,7 +164,7 @@ func (a *App) view(c *ui.Context) {
 	// window's material, and beside it the content, opaque, under a
 	// toolbar and the panes.
 	vib := c.Vibrancy()
-	seeThrough := a.terminalOpacity < 1
+	seeThrough := a.paneOpacity < 1
 	if vib || seeThrough {
 		c.Root().Background(ui.Transparent)
 	}
@@ -542,7 +547,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		}
 		a.bell(c, t)
 		newButton := ui.Row(c.Key("new")).Gap(3).Padding(5, 7).Radius(6).AlignItems(ui.Center).
-			Label("New pane").Tooltip("New session, worktree session, terminal, browser, or Files pane").Children(func() {
+			Label("New pane").Tooltip("New session, worktree session, terminal, browser, Files, or Database pane").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(15).TextColor(t.Text.Alpha(0.75))
 			ui.Text(c, "New").FontSize(12)
 			ui.Icon(c, iconDown).FontSize(10).TextColor(t.TextMuted)
@@ -601,12 +606,19 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 		inPane()
 		a.openFiles(a.currentDir())
 	}
+	if m.Item("New Database Pane").Chosen() {
+		inPane()
+		a.openDatabase(a.currentDir())
+	}
 }
 
 // where says where a tab's session is and what it's doing: its project
 // and folder, its status, and its model.
 func (a *App) where(tb *tab) string {
 	if tb.files != nil {
+		return tildePath(tb.dir)
+	}
+	if tb.database != nil {
 		return tildePath(tb.dir)
 	}
 	if tb.chooser {
@@ -674,6 +686,9 @@ func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
 	}
 	if tb.files != nil {
 		return "Files", iconFolder
+	}
+	if tb.database != nil {
+		return "Database", iconDatabase
 	}
 	if tb.shell() {
 		return "Terminal", iconTerm
@@ -758,6 +773,9 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		selected := ""
 		if f := a.focused(); f != nil {
 			selected = tabKey(f)
+			if f.database != nil && f.database.profile != "" {
+				selected = "database:" + f.database.profile
+			}
 		}
 		if found := a.matches(); strings.TrimSpace(a.query) != "" && len(found) > 0 {
 			selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
@@ -769,6 +787,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				return
 			}
 			a.pinnedSection(c, t)
+			a.databaseSidebar(c, t)
 			if len(a.servers) > 0 {
 				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
 			}
@@ -786,6 +805,8 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		toggle, extend := multiMods(c.Modifiers())
 		if f := a.focused(); sb.Changed() && selected != "" && (f == nil || f.path != selected && tabKey(f) != selected) {
 			switch {
+			case strings.HasPrefix(selected, "database:"):
+				a.openDatabaseProfile(strings.TrimPrefix(selected, "database:"))
 			case extend && slices.Contains(a.rows, selected):
 				a.pickRange(cmp.Or(a.anchor, a.cursor, a.focusedSession()), selected)
 				a.cursor = selected
@@ -1314,8 +1335,8 @@ func splitTip() string {
 // over the other, with the divider between them to drag.
 func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
 	if !p.split() {
-		if p.tab != nil && p.tab.term != nil && a.terminalOpacity < 1 {
-			ui.Column(c).Fill().Background(t.Background.Alpha(a.terminalOpacity)).Clip().Children(func() { a.pane(c, t, p) })
+		if p.tab != nil && a.paneOpacity < 1 && (p.tab.term != nil || p.tab.files != nil || p.tab.database != nil) {
+			ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(func() { a.pane(c, t, p) })
 		} else {
 			a.card(c, t, func() { a.pane(c, t, p) })
 		}
@@ -1358,6 +1379,10 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		}
 		if tb.files != nil {
 			term = a.filesPane(c, t, tb)
+			return
+		}
+		if tb.database != nil {
+			term = a.databasePane(c, t, tb)
 			return
 		}
 		if tb.browser {
@@ -1522,7 +1547,7 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 func (a *App) iconButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, tip string, on bool, fn func()) ui.Element {
 	// As macOS's toolbar buttons: borderless, a gray face while pressed
 	// in or hovered.
-	b := ui.Box(c.Key(key)).Padding(6).Radius(6).Label(tip).Tooltip(tip).Children(func() {
+	b := ui.Box(c.Key(key)).Size(32, 32).Center().Focusable().Radius(6).Label(tip).Tooltip(tip).Children(func() {
 		ui.Icon(c, icon).FontSize(15).TextColor(t.Text.Alpha(0.75))
 	})
 	switch {

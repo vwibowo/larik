@@ -291,6 +291,9 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 		head.followX = list
 		buildList(c, list, table, s, n, func(i int) {
 			row := coreRow(c).MinHeight(tableRow).AlignItems(Stretch)
+			if s.RowBackground != nil && (c.row == nil || !c.row.chosen) {
+				row.Background(s.RowBackground(i))
+			}
 			// The list's element holding the row is the row.
 			row.Role(RoleNone)
 			if s.Header != nil && s.Header(i) {

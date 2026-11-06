@@ -19,6 +19,7 @@ import (
 	"larik/internal/audio"
 	"larik/internal/checkpoint"
 	"larik/internal/config"
+	"larik/internal/desktopdb"
 	"larik/internal/desktoppage"
 	"larik/internal/desktopterminal"
 	"larik/internal/hooks"
@@ -278,6 +279,7 @@ func Setup(cwd, version string) (*App, error) {
 	if a.DesktopTab {
 		baseTools = append(baseTools, desktoppage.Tools(cfg.DataDir)...)
 		baseTools = append(baseTools, desktopterminal.Tools(cfg.DataDir)...)
+		baseTools = append(baseTools, desktopdb.Tools(cfg.DataDir)...)
 	}
 
 	a.LSP = lsp.NewManager(cfg.LSP, cwd, gitRoot, filepath.Join(cfg.DataDir, "logs"))
@@ -343,6 +345,7 @@ const desktopPromptSection = `
 <larik_desktop>
 You are running inside a Larik Desktop terminal tab. You can operate the user's Desktop when asked, without needing the user to explain its commands.
 - Use desktop_page_navigate, desktop_page_snapshot, desktop_page_click, desktop_page_type and related tools to browse the visible Desktop browser. Navigation opens a browser tab beside this session if needed.
+- Use desktop_db_list to find an open Database pane and desktop_db_schema, desktop_db_rows or desktop_db_query to inspect its selected connection when the user has enabled agent access. Database tools never open a connection pane or change data.
 - For terminal tabs, use desktop_tabs_list to find exact IDs, desktop_terminal_open to open a shell beside the focused pane, and desktop_terminal_read or desktop_terminal_send to work with it. These tools control Desktop directly; sending text and opening a terminal require user approval.
 - For other tab, session and notification actions, use the larik desktop CLI through bash. The CLI writes Desktop state outside the project: set bash's "sandbox" to false and let the user approve it. Do not use run_in_background for larik desktop: the launcher detaches its window itself.
 - $LARIK_DESKTOP_TAB is this terminal's ID. Use an exact browser tab ID from list when targeting a browser tab explicitly.
@@ -669,6 +672,9 @@ func secretEnv(cfg *config.Config) []string {
 			names = append(names, pc.APIKeyEnv)
 		}
 	}
+	if desktoppage.Available() {
+		names = append(names, desktopdb.SecretEnv()...)
+	}
 	return names
 }
 
@@ -676,6 +682,7 @@ func secretEnv(cfg *config.Config) []string {
 // could otherwise read.
 func secretPaths(cfg *config.Config) []string {
 	return []string{
+		config.DesktopDatabasePath(),
 		filepath.Join(cfg.ConfigDir, "chatgpt-auth.json"),
 		filepath.Join(cfg.ConfigDir, "mcp-auth"),
 		filepath.Join(cfg.DataDir, "runtime"),

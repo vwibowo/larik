@@ -93,7 +93,7 @@ func (m *model) command(line string) tea.Cmd {
 	// compaction.
 	if !m.idle() {
 		switch name {
-		case "/model", "/connect", "/providers", "/execution", "/browser", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/execution", "/browser", "/db", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
 			return fail(name + " is unavailable while " + m.busyWhat() + m.interruptHint())
 		}
 	}
@@ -113,6 +113,8 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/providers":
 		return m.openProviders()
+	case "/db":
+		return m.openDatabase()
 
 	case "/permissions":
 		return m.openPermissions()

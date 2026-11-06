@@ -242,6 +242,18 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 	if tb.files.preview.code.Buffer.Language() == nil {
 		t.Fatal("Go preview has no syntax highlighting")
 	}
+	treeOpaque, previewOpaque, toolbarOpaque := tt.Image().RGBAAt(350, 700), tt.Image().RGBAAt(800, 700), tt.Image().RGBAAt(900, 20)
+	a.paneOpacity = 0.45
+	tt.Frame()
+	snapshot(t, tt, "files-opacity.png")
+	if tt.Image().RGBAAt(350, 700) == treeOpaque || tt.Image().RGBAAt(800, 700) == previewOpaque {
+		t.Fatal("Files tree or code preview stayed opaque")
+	}
+	if tt.Image().RGBAAt(900, 20) != toolbarOpaque {
+		t.Fatal("Files opacity changed the toolbar")
+	}
+	a.paneOpacity = 1
+	tt.Frame()
 	if err := tt.Click("Preview main.go"); err != nil {
 		t.Fatal(err)
 	}

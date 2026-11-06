@@ -51,7 +51,7 @@ func TestTerminalTabs(t *testing.T) {
 	tt.Frame()
 	opaque := tt.Image().RGBAAt(900, 700)
 	toolbar := tt.Image().RGBAAt(900, 20)
-	a.terminalOpacity = 0.5
+	a.paneOpacity = 0.5
 	tt.Frame()
 	if translucent := tt.Image().RGBAAt(900, 700); translucent == opaque {
 		t.Fatalf("terminal background stayed opaque: %v", translucent)

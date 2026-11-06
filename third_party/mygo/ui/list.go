@@ -152,6 +152,9 @@ type ListState struct {
 	// columns, by ID: restore it from saved settings, and save it as it
 	// changes.
 	Columns TableLayout
+	// RowBackground colors an unselected Table row. A selected row keeps
+	// the table's selection color; hovering uses the theme's hover color.
+	RowBackground func(row int) Color
 	// RoundRows rounds the corners of a Table's chosen and hovered rows at
 	// the theme's Radius, as a List's are, rather than leaving them square
 	// from edge to edge.

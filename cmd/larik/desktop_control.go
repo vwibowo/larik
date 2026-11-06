@@ -22,7 +22,7 @@ import (
 // with what each does, for usage.
 var desktopCommands = []struct{ name, usage, about string }{
 	{"list", "", "list the window's tabs: id, session, state, directory and title"},
-	{"open", "[--session id] [--prompt text] [--shell | --files | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell, --files, --run or --url open a terminal, Files, command or browser tab; --worktree starts it in a new git worktree of dir's repository; prints the tab's id"},
+	{"open", "[--session id] [--prompt text] [--shell | --files | --database | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell, --files, --database, --run or --url open a terminal, Files, Database, command or browser pane; --worktree starts it in a new git worktree of dir's repository; prints the tab's id"},
 	{"send", "--tab tab [--no-enter] [text | -]", "type text into a tab and press Return; - or no text reads it from stdin"},
 	{"read", "--tab tab [--lines n]", "print the last lines a tab's terminal shows, its scrollback included"},
 	{"wait", "(--tab tab | --session id) [--state done] [--timeout d]", "wait until the session is in a state: done, error, blocked, working or idle, or several comma separated; prints the state"},
@@ -113,6 +113,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		fs.BoolVar(&req.Background, "background", false, "open it in a pane without taking focus")
 		fs.BoolVar(&req.Shell, "shell", false, "open a terminal tab running your shell instead of larik")
 		fs.BoolVar(&req.Files, "files", false, "open a Files tab in the directory")
+		fs.BoolVar(&req.Database, "database", false, "open a Database pane for the directory")
 		fs.StringVar(&req.Run, "run", "", "open a terminal tab running this command through your shell, as lazygit or npm run dev")
 		fs.StringVar(&req.URL, "url", "", "open a browser tab on this web address, as localhost:3000 or github.com")
 		fs.BoolVar(&req.Worktree, "worktree", false, "start it in a new git worktree of the directory's repository, apart from your checkout")

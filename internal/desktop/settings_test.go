@@ -111,44 +111,50 @@ func settingsTextCount(texts []string, want string) int {
 	return n
 }
 
-func TestTerminalBackgroundOpacitySetting(t *testing.T) {
+func TestPaneBackgroundOpacitySetting(t *testing.T) {
 	a := settingsApp(t)
 	defer a.Close()
-	if a.terminalOpacity != 1 || a.state().TerminalOpacity != nil {
+	if a.paneOpacity != 1 || a.state().PaneOpacity != nil {
 		t.Fatal("existing Desktop state should remain opaque")
 	}
 	tt := ui.NewTester(a.settingsView, 960, 680)
-	if err := tt.Click("Show Terminal settings"); err != nil {
+	if err := tt.Click("Show Appearance settings"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("Adjust terminal background opacity"); err != nil {
+	if err := tt.Click("Adjust pane background opacity"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Key(0, ui.KeyLeft)
-	if a.terminalOpacity >= 1 || a.state().TerminalOpacity == nil {
-		t.Fatalf("opacity slider did not change saved state: %g", a.terminalOpacity)
+	if a.paneOpacity >= 1 || a.state().PaneOpacity == nil || a.state().TerminalOpacity != nil {
+		t.Fatalf("opacity slider did not change saved state: %g", a.paneOpacity)
 	}
-	if err := tt.Click("Reset terminal background opacity"); err != nil {
+	if err := tt.Click("Reset pane background opacity"); err != nil {
 		t.Fatal(err)
 	}
-	if a.terminalOpacity != 1 || a.state().TerminalOpacity != nil {
-		t.Fatalf("reset did not restore the solid background: %g", a.terminalOpacity)
+	if a.paneOpacity != 1 || a.state().PaneOpacity != nil {
+		t.Fatalf("reset did not restore the solid background: %g", a.paneOpacity)
 	}
 	for _, tc := range []struct {
-		value string
-		want  float32
-	}{{"0", 0}, {"0.45", 0.45}} {
-		data := []byte(`{"version":2,"active":-1,"terminal_opacity":` + tc.value + `}`)
+		data string
+		want float32
+	}{
+		{`{"version":2,"active":-1,"terminal_opacity":0}`, 0},
+		{`{"version":2,"active":-1,"terminal_opacity":0.45}`, 0.45},
+		{`{"version":4,"active":-1,"pane_opacity":0.6,"terminal_opacity":0.2}`, 0.6},
+	} {
 		if err := os.MkdirAll(filepath.Dir(a.statePath()), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(a.statePath(), data, 0o600); err != nil {
+		if err := os.WriteFile(a.statePath(), []byte(tc.data), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		next := New(a.opts)
 		next.restore()
-		if got := next.terminalOpacity; got != tc.want {
-			t.Errorf("restored opacity %g, want %s", got, tc.value)
+		if got := next.paneOpacity; got != tc.want {
+			t.Errorf("restored opacity %g, want %g", got, tc.want)
+		}
+		if st := next.state(); st.PaneOpacity == nil || *st.PaneOpacity != tc.want || st.TerminalOpacity != nil {
+			t.Errorf("pane opacity was not saved in the new format: %+v", st)
 		}
 		next.Close()
 	}
