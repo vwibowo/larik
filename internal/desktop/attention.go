@@ -206,7 +206,7 @@ func (a *App) bell(c *ui.Context, t *ui.Theme) {
 	if n > 0 {
 		tip = fmt.Sprintf("%d unread notifications (%s opens the newest)", n, keyLabel(true, "U"))
 	}
-	b := ui.Row(c.Key("bell")).Padding(6).Radius(6).Gap(3).AlignItems(ui.Center).Label(tip).Tooltip(tip).Children(func() {
+	b := ui.ButtonBase(c.Key("bell")).Padding(6).Radius(6).Gap(3).AlignItems(ui.Center).Label(tip).Tooltip(tip).Children(func() {
 		ui.Icon(c, iconBell).FontSize(15).TextColor(t.Text.Alpha(0.75))
 		if n > 0 {
 			ui.Text(c, fmt.Sprint(n)).FontSize(10).Bold().TextColor(ui.Hex("#ffffff")).Padding(0, 5).Radius(999).Background(t.Accent)
@@ -234,8 +234,13 @@ func (a *App) eventList(c *ui.Context, t *ui.Theme) {
 		ui.Row(c).Padding(2, 4, 6, 4).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Notifications").Bold().FontSize(13)
 			ui.Spacer(c)
-			if a.unreadEvents() > 0 && ui.Text(c.Key("all-read"), "Mark All Read").FontSize(12).TextColor(t.Accent).Cursor(ui.CursorPointer).Clicked() {
-				a.markAllRead()
+			if a.unreadEvents() > 0 {
+				b := ui.ButtonBase(c.Key("all-read")).Cursor(ui.CursorPointer).Label("Mark All Read").Children(func() {
+					ui.Text(c, "Mark All Read").FontSize(12).TextColor(t.Accent)
+				})
+				if b.Clicked() {
+					a.markAllRead()
+				}
 			}
 		})
 		if len(a.events) == 0 {
@@ -263,7 +268,7 @@ func (a *App) eventList(c *ui.Context, t *ui.Theme) {
 // eventRow is one notification in the list.
 func (a *App) eventRow(c *ui.Context, t *ui.Theme, i int) {
 	e := a.events[i]
-	row := ui.Row(c.Key(fmt.Sprint("event-", i, e.at.UnixNano()))).Gap(8).Padding(6, 6).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(e.title + ": " + e.body).Children(func() {
+	row := ui.ButtonBase(c.Key(fmt.Sprint("event-", i, e.at.UnixNano()))).Gap(8).Padding(6, 6).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(e.title + ": " + e.body).Children(func() {
 		icon, color := iconBell, t.Accent
 		switch e.state {
 		case status.Blocked:

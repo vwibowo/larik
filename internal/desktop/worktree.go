@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -91,21 +93,36 @@ func (a *App) makeWorktree(dir, name string) (*worktree.Worktree, error) {
 
 // newWorktreeSession starts a session in a new worktree of the
 // repository dir is in.
-func (a *App) newWorktreeSession(dir string) { a.newWorktreeSessionThen(dir, nil) }
+func (a *App) newWorktreeSession(dir string) { a.newWorktreeSessionThen(dir, nil, nil) }
 
 // newWorktreeSessionThen starts a session in a new worktree of dir, as
 // newWorktreeSession does, and hands it to then, when set, to show
 // rather than showing it in the focused pane.
-func (a *App) newWorktreeSessionThen(dir string, then func(t *tab)) {
+func (a *App) newWorktreeSessionThen(dir string, chooser *tab, then func(t *tab)) {
 	target := a.focus
-	a.notice = "Making a worktree of " + tildePath(dir) + "…"
+	progress := "Making a worktree of " + tildePath(dir) + "…"
+	a.notice = progress
 	go func() {
 		w, err := a.makeWorktree(dir, "")
-		a.update(func() {
-			a.notice = ""
+		var decision sync.Mutex
+		started := false
+		a.onMain(func() {
+			decision.Lock()
+			defer decision.Unlock()
+			select {
+			case <-a.done:
+				return
+			default:
+			}
+			if a.notice == progress {
+				a.notice = ""
+			}
 			if err != nil {
 				a.notice = "Can't make a worktree: " + err.Error()
 				return
+			}
+			if chooser != nil && (!a.hasTab(chooser) || a.paneOf(chooser) == nil) {
+				return // the user closed the chooser while Git was working
 			}
 			if target != nil && a.paneOf(target.tab) == target {
 				a.focusPane(target)
@@ -115,11 +132,39 @@ func (a *App) newWorktreeSessionThen(dir string, then func(t *tab)) {
 			case t == nil:
 			case then != nil:
 				then(t)
+				started = true
 			default:
 				a.activate(t)
+				started = true
 			}
 		})
+		decision.Lock()
+		unused := !started
+		decision.Unlock()
+		if err == nil && unused {
+			a.removeUnusedWorktree(w)
+		}
 	}()
+}
+
+// removeUnusedWorktree undoes a creation that no longer has a chooser or
+// whose session could not start. It runs off the main thread.
+func (a *App) removeUnusedWorktree(w *worktree.Worktree) {
+	var err error
+	if isRemote(w.Path) {
+		_, err = a.remoteProjectCall(remoteProjectRequest{Op: "worktree-remove", Dir: w.Repo, Worktree: w.Path})
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), worktreeTimeout)
+		defer cancel()
+		err = w.Remove(ctx)
+	}
+	if err != nil {
+		message := fmt.Sprintf("Couldn't remove unused worktree %s: %v", w.Path, err)
+		log.Print("desktop: " + message)
+		a.update(func() {
+			a.notice = message
+		})
+	}
 }
 
 // worktreeTabs are the tabs working in the worktree at dir: larik's,

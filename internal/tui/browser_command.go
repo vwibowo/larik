@@ -13,6 +13,9 @@ import (
 func (m *model) browserCommand(arg string) tea.Cmd {
 	info := func(s string) tea.Cmd { return m.println(m.st.dim.Render(s)) }
 	fail := func(s string) tea.Cmd { return m.println(m.st.err.Render(s)) }
+	if m.opts.App != nil && m.opts.App.DesktopTab {
+		return info("Desktop uses its visible browser tabs and desktop_page_* tools. Headless browser_* tools are available in standalone Larik sessions.")
+	}
 	if arg == "" {
 		switch {
 		case !m.opts.Config.Browser.Enabled:

@@ -148,7 +148,10 @@ func (a *App) recentDialog(c *ui.Context) {
 					continue
 				}
 				shown++
-				if ui.Text(c.Key(strconv.Itoa(i)), label).Cursor(ui.CursorPointer).Clicked() {
+				button := ui.ButtonBase(c.Key(strconv.Itoa(i))).Cursor(ui.CursorPointer).Label(label).Children(func() {
+					ui.Text(c, label)
+				})
+				if button.Clicked() {
 					if a.reopenRecent(r) {
 						a.recent = slices.Delete(a.recent, i, i+1)
 						a.recentOpen = false

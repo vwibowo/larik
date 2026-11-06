@@ -25,20 +25,6 @@ const managedPlugin = "// Managed by Larik Desktop."
 // Agents returns the supported hook adapters in Settings order.
 func Agents() []string { return []string{"claude", "codex", "opencode", "gemini"} }
 
-func Label(agent string) string {
-	switch agent {
-	case "claude":
-		return "Claude Code"
-	case "codex":
-		return "Codex CLI"
-	case "opencode":
-		return "OpenCode"
-	case "gemini":
-		return "Gemini CLI"
-	}
-	return agent
-}
-
 func skillDir(home, name string) string   { return filepath.Join(home, ".agents", "skills", name) }
 func claudeLink(home, name string) string { return filepath.Join(home, ".claude", "skills", name) }
 

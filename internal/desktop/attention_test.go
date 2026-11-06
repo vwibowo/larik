@@ -10,6 +10,57 @@ import (
 	"larik/internal/status"
 )
 
+func focusByTab(t *testing.T, tt *ui.Tester, label string) {
+	t.Helper()
+	for range 150 {
+		if tt.Focused(label) {
+			return
+		}
+		tt.Key(0, ui.KeyTab)
+		tt.Frame()
+	}
+	t.Fatalf("Tab never reached %q", label)
+}
+
+func TestNotificationControlsWorkFromKeyboard(t *testing.T) {
+	a, _ := attentionApp(t)
+	a.record(event{title: "Build", body: "passed"})
+	a.record(event{title: "Tests", body: "finished"})
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	focusByTab(t, tt, "2 unread notifications ("+keyLabel(true, "U")+" opens the newest)")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if !a.showEvents {
+		t.Fatal("Enter did not open notifications")
+	}
+	focusByTab(t, tt, "Tests: finished")
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if a.unreadEvents() != 1 {
+		t.Fatalf("Space did not open the notification: %d unread", a.unreadEvents())
+	}
+	focusByTab(t, tt, "Mark All Read")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if a.unreadEvents() != 0 {
+		t.Fatal("Enter did not mark notifications read")
+	}
+}
+
+func TestPaneCloseButtonWorksFromKeyboard(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("")
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	focusByTab(t, tt, "Close pane")
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if len(a.tabs) != 0 {
+		t.Fatalf("Space did not close the pane: %d tabs", len(a.tabs))
+	}
+}
+
 // attentionApp is a window with two tabs, the first focused, and a func
 // that indexes their sessions as the states say.
 func attentionApp(t *testing.T) (*App, func(one, two status.State)) {

@@ -30,8 +30,6 @@ type limitedProvider struct {
 
 func (p *limitedProvider) Name() string { return "limited" }
 
-func requestTokens(req llm.Request) int { return countTokens(req, 3) }
-
 func countTokens(req llm.Request, perToken int) int {
 	chars := len(req.System)
 	for _, t := range req.Tools {

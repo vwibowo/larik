@@ -23,6 +23,31 @@ func TestBrowserCommandRequiresManagedSession(t *testing.T) {
 	}
 }
 
+func TestBrowserCommandInDesktopUsesVisibleBrowser(t *testing.T) {
+	m := testModel(t)
+	m.opts.App = &app.App{DesktopTab: true}
+	m.command("/browser on")
+	m.command("/browser show")
+	if m.opts.Config.Browser.Enabled {
+		t.Fatal("Desktop must not enable headless browser tools")
+	}
+	if _, err := os.Stat(m.opts.Config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Desktop browser commands must not change the headless browser setting: %v", err)
+	}
+	m.settings = &settingsPanel{}
+	m.buildSettings()
+	found := false
+	for _, item := range m.settings.list.items {
+		if item.value == "browser" {
+			found = strings.Contains(item.note, "standalone CLI/TUI only")
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Desktop settings must explain that headless browser controls apply to standalone sessions")
+	}
+}
+
 func TestBrowserToggleReloadsServices(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))

@@ -82,6 +82,18 @@ type server struct {
 // larik's path there, and how to end the connection.
 type connector func(name string) (dial dialer, bin string, stop func(), health <-chan error, err error)
 
+// remoteSetupError needs a change to SSH or larik on the server before
+// another attempt can succeed. Connection loss and transport errors are
+// left as ordinary errors and retried.
+type remoteSetupError struct{ message string }
+
+func (e *remoteSetupError) Error() string { return e.message }
+
+func retryRemoteError(err error) bool {
+	var setup *remoteSetupError
+	return !errors.As(err, &setup)
+}
+
 func retryDelay(attempt uint64) time.Duration {
 	shift := min(attempt, 5)
 	return min(3*time.Second<<shift, time.Minute)
@@ -94,6 +106,7 @@ func (a *App) retryServer(srv *server) {
 	delay := retryDelay(srv.retryAttempt)
 	srv.retryAttempt++
 	srv.retryPending = true
+	epoch := srv.epoch
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
@@ -102,9 +115,12 @@ func (a *App) retryServer(srv *server) {
 			return
 		case <-timer.C:
 			a.update(func() {
+				if srv.epoch != epoch || !srv.retryPending {
+					return // a manual connection replaced this retry
+				}
 				srv.retryPending = false
 				if slices.Contains(a.servers, srv) && !srv.connecting && a.dialOf(srv) == nil {
-					a.connectServer(srv.name)
+					a.connectServerAttempt(srv.name, true)
 				}
 			})
 		}
@@ -124,6 +140,10 @@ func (a *App) serverNamed(name string) *server {
 // connectServer connects to the server name, adding it, or again when
 // it isn't connected; its sessions show once its index comes.
 func (a *App) connectServer(name string) {
+	a.connectServerAttempt(name, false)
+}
+
+func (a *App) connectServerAttempt(name string, automatic bool) {
 	name = strings.TrimSpace(name)
 	if name == "" || strings.ContainsAny(name, "/ \t") {
 		a.notice = fmt.Sprintf("%q isn't a server: give a host from ~/.ssh/config, or user@host", name)
@@ -138,6 +158,10 @@ func (a *App) connectServer(name string) {
 	if srv.connecting || a.dialOf(srv) != nil {
 		return
 	}
+	if !automatic {
+		srv.retryAttempt = 0
+	}
+	srv.retryPending = false
 	srv.connecting, srv.err = true, ""
 	srv.epoch++
 	epoch := srv.epoch
@@ -165,7 +189,9 @@ func (a *App) connectServer(name string) {
 			srv.connecting = false
 			if err != nil {
 				srv.err = err.Error()
-				a.retryServer(srv)
+				if retryRemoteError(err) {
+					a.retryServer(srv)
+				}
 				return
 			}
 			if !slices.Contains(a.servers, srv) { // disconnected meanwhile
@@ -218,7 +244,7 @@ func probeHost(dial dialer, name string) ([]string, string, error) {
 	}
 	conn.Close()
 	if rep.Proto < hostProto {
-		return nil, "", fmt.Errorf("larik on %s is older than this one: update it there (larik update)", name)
+		return nil, "", &remoteSetupError{fmt.Sprintf("larik on %s is older than this one: update it there (larik update)", name)}
 	}
 	return rep.Features, rep.WorktreeRoot, nil
 }
@@ -706,15 +732,15 @@ func ensureError(name, out string, err error) error {
 	msg := strings.TrimSpace(out)
 	switch {
 	case strings.Contains(msg, "command not found") || strings.Contains(msg, ": not found"):
-		return fmt.Errorf("larik isn't on the PATH of a non-interactive shell on %s: install it, or add its folder to PATH in ~/.zshenv or ~/.bashrc there", name)
+		return &remoteSetupError{fmt.Sprintf("larik isn't on the PATH of a non-interactive shell on %s: install it, or add its folder to PATH in ~/.zshenv or ~/.bashrc there", name)}
 	case strings.Contains(msg, "Permission denied") || strings.Contains(msg, "publickey"):
-		return fmt.Errorf("SSH authentication failed for %s: check its key, agent and ~/.ssh/config entry", name)
+		return &remoteSetupError{fmt.Sprintf("SSH authentication failed for %s: check its key, agent and ~/.ssh/config entry", name)}
 	case strings.Contains(msg, "Could not resolve hostname"):
-		return fmt.Errorf("SSH can't find %s: check the server name in ~/.ssh/config", name)
+		return &remoteSetupError{fmt.Sprintf("SSH can't find %s: check the server name in ~/.ssh/config", name)}
 	case err != nil && isSSHFailure(err):
 		return fmt.Errorf("ssh %s: %s", name, firstNonEmpty(msg, err.Error()))
 	}
-	return fmt.Errorf("larik on %s couldn't start its host: it needs larik 0.28.0 or newer there (larik update)", name)
+	return &remoteSetupError{fmt.Sprintf("larik on %s couldn't start its host: it needs larik 0.28.0 or newer there (larik update)", name)}
 }
 
 // isSSHFailure reports whether ssh itself failed, which it says with

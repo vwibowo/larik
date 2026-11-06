@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,8 +47,8 @@ func TestRemotePaths(t *testing.T) {
 		"Permission denied (publickey).":      "authentication failed",
 		"Could not resolve hostname devbox":   "can't find",
 	} {
-		if err := ensureError("devbox", out, errors.New("exit status 1")); !strings.Contains(err.Error(), want) {
-			t.Errorf("ensureError(%q) = %v, want %q", out, err, want)
+		if err := ensureError("devbox", out, errors.New("exit status 1")); !strings.Contains(err.Error(), want) || retryRemoteError(err) {
+			t.Errorf("ensureError(%q) = %v, want non-retryable %q", out, err, want)
 		}
 	}
 	if got := strings.Join(sshForwardArgs("devbox", "/tmp/l.sock", "/tmp/r.sock"), " "); !strings.Contains(got, "-N") || !strings.HasSuffix(got, "-L /tmp/l.sock:/tmp/r.sock devbox") || !strings.Contains(got, "BatchMode=yes") {
@@ -66,6 +67,42 @@ func TestRemotePaths(t *testing.T) {
 	}
 	if got := remoteShellCommand("make dev"); got[0] != "/bin/sh" || got[len(got)-1] != "make dev" {
 		t.Fatalf("shell %q", got)
+	}
+}
+
+func TestRemoteSetupFailureWaitsForManualReconnect(t *testing.T) {
+	a, mu := serialApp(Options{})
+	defer a.Close()
+	var calls atomic.Int32
+	a.connect = func(string) (dialer, string, func(), <-chan error, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			return nil, "", nil, nil, errors.New("temporary transport failure")
+		}
+		return nil, "", nil, nil, &remoteSetupError{"SSH authentication failed"}
+	}
+	mu.Lock()
+	a.connectServer("devbox")
+	mu.Unlock()
+	waitFor(t, mu, "transient retry", func() bool { return a.servers[0].retryPending })
+	mu.Lock()
+	firstEpoch := a.servers[0].epoch
+	a.connectServer("devbox") // manual attempt supersedes the pending timer
+	mu.Unlock()
+	waitFor(t, mu, "manual setup failure", func() bool {
+		s := a.servers[0]
+		return calls.Load() == 2 && !s.connecting && s.err == "SSH authentication failed"
+	})
+	mu.Lock()
+	s := a.servers[0]
+	if s.retryPending || s.epoch <= firstEpoch || s.retryAttempt != 0 {
+		mu.Unlock()
+		t.Fatalf("manual setup failure still scheduled retries: %+v", s)
+	}
+	mu.Unlock()
+	time.Sleep(retryDelay(0) + 200*time.Millisecond)
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("superseded retry called SSH again: %d calls", got)
 	}
 }
 
@@ -246,7 +283,7 @@ func TestRemoteNeedsNewerHost(t *testing.T) {
 		}
 	}()
 	err = checkProto(func() (net.Conn, error) { return net.Dial("unix", sock) }, "devbox")
-	if err == nil || !strings.Contains(err.Error(), "older") {
+	if err == nil || !strings.Contains(err.Error(), "older") || retryRemoteError(err) {
 		t.Fatalf("an old host: %v", err)
 	}
 }

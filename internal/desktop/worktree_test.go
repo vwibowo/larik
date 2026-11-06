@@ -12,7 +12,75 @@ import (
 
 	"larik/internal/session"
 	"larik/internal/status"
+	"larik/internal/worktree"
 )
+
+func TestChooserClosedDuringWorktreeCreation(t *testing.T) {
+	repo := gitRepo(t)
+	a := New(Options{Cwd: repo, DataDir: t.TempDir()})
+	defer a.Close()
+	updates := make(chan func(), 1)
+	a.update = func(fn func()) { updates <- fn }
+	a.openNew()
+	chooser := a.focused()
+	a.choose(chooser, 1)
+	var finish func()
+	select {
+	case finish = <-updates: // Git created the worktree; hold its UI completion.
+	case <-time.After(5 * time.Second):
+		t.Fatal("worktree creation did not finish")
+	}
+	if got := gitIn(t, repo, "worktree", "list", "--porcelain"); !strings.Contains(got, "larik/session-") {
+		t.Fatalf("worktree was not created: %s", got)
+	}
+	a.closeTab(chooser)
+	a.update = func(fn func()) { fn() }
+	finish()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := gitIn(t, repo, "worktree", "list", "--porcelain"); !strings.Contains(got, "larik/session-") {
+			if len(a.tabs) != 0 {
+				t.Fatalf("canceled chooser started %d tabs", len(a.tabs))
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("canceled chooser left its worktree behind")
+}
+
+func TestChooserWorktreeStillStartsWhenOpen(t *testing.T) {
+	needTerminal(t)
+	repo := gitRepo(t)
+	a := New(Options{Bin: fakeLarik(t), Cwd: repo, DataDir: t.TempDir()})
+	defer a.Close()
+	updates := make(chan func(), 1)
+	a.update = func(fn func()) { updates <- fn }
+	a.openNew()
+	chooser := a.focused()
+	a.choose(chooser, 1)
+	var finish func()
+	select {
+	case finish = <-updates:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worktree creation did not finish")
+	}
+	a.update = func(fn func()) { fn() }
+	finish()
+	if len(a.tabs) != 1 || a.tabs[0] == chooser || !a.inWorktree(a.tabs[0].dir) {
+		t.Fatalf("worktree chooser did not start its session: %+v", a.tabs)
+	}
+}
+
+func TestUnusedWorktreeCleanupFailureReportsPath(t *testing.T) {
+	repo := gitRepo(t)
+	a := New(Options{DataDir: t.TempDir()})
+	missing := filepath.Join(t.TempDir(), "missing")
+	a.removeUnusedWorktree(&worktree.Worktree{Repo: repo, Path: missing, Branch: "larik/missing"})
+	if !strings.Contains(a.notice, missing) || !strings.Contains(a.notice, "Couldn't remove unused worktree") {
+		t.Fatalf("cleanup failure was not reported: %q", a.notice)
+	}
+}
 
 // gitRepo is a repository with one commit, and the user's git config
 // kept out.

@@ -49,37 +49,6 @@ func accented(t *ui.Theme, hex string) {
 	t.Selection, t.Focus = c.Alpha(0.3), c.Alpha(0.55)
 }
 
-// appearanceSettings are Settings' Appearance rows: light, dark or the
-// system's, and the accent colour.
-func (a *App) appearanceSettings(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Gap(8).Children(func() {
-		ui.Text(c, "Appearance").Bold().FontSize(13)
-		i := max(0, indexOf(appearances, a.appearance))
-		if ui.Segmented(c.Key("appearance"), &i, "System", "Light", "Dark").Label("Appearance").AlignSelf(ui.Start).Changed() {
-			a.setAppearance(appearances[i])
-		}
-		ui.Row(c.Key("accents")).Gap(8).AlignItems(ui.Center).Label("Accent colour").Children(func() {
-			ui.Text(c, "Accent").FontSize(12).TextColor(t.TextMuted).MinWidth(48)
-			swatch := func(key, name, hex string, fill ui.Color) {
-				on := a.accent == hex
-				b := ui.Box(c.Key(key)).Size(18, 18).Radius(9).Background(fill).Cursor(ui.CursorPointer).
-					Label("Accent: " + name).Tooltip(name).Selected(on)
-				if on {
-					b.Border(2, t.Text.Alpha(0.6))
-				}
-				if b.Clicked() {
-					a.accent = hex
-					a.settingsChanged()
-				}
-			}
-			swatch("system", "System", "", t.TextMuted.Alpha(0.35))
-			for _, ac := range accents {
-				swatch(ac.name, ac.name, ac.hex, ui.Hex(ac.hex))
-			}
-		})
-	})
-}
-
 func indexOf(list []string, v string) int {
 	for i, s := range list {
 		if s == v {

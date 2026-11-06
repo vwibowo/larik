@@ -90,7 +90,7 @@ func (a *App) choose(ch *tab, i int) {
 	if i == 1 {
 		// Made off the main thread; it shows in the pane the chooser's in,
 		// which the chooser then leaves to it.
-		a.newWorktreeSessionThen(ch.dir, func(t *tab) { a.replaceTab(ch, t) })
+		a.newWorktreeSessionThen(ch.dir, ch, func(t *tab) { a.replaceTab(ch, t) })
 		return
 	}
 	if t := a.startKind(i, ch.dir); t != nil {
@@ -143,7 +143,9 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "in "+tildePath(dir)).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
 			if a.pickDir != nil || isRemote(dir) {
-				change := ui.Text(c.Key("change"), "Change…").FontSize(12).TextColor(t.Accent).Cursor(ui.CursorPointer).Label("Change the folder")
+				change := ui.ButtonBase(c.Key("change")).Cursor(ui.CursorPointer).Label("Change the folder").Children(func() {
+					ui.Text(c, "Change…").FontSize(12).TextColor(t.Accent)
+				})
 				if change.Clicked() {
 					if isRemote(dir) {
 						a.askRemoteFolder(dir, setDir)
@@ -155,7 +157,7 @@ func (a *App) chooser(c *ui.Context, t *ui.Theme, title, hint string, ch *choice
 		})
 		list = ui.Column(c.Key("kinds")).Gap(4).Width(380).Shrink(1).Focusable().Label("Kinds of pane").Children(func() {
 			for i, k := range tabKinds {
-				row := ui.Row(c.Key(k.title)).Gap(12).Padding(10, 14).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(k.title).Children(func() {
+				row := ui.ButtonBase(c.Key(k.title)).Gap(12).Padding(10, 14).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label(k.title).Children(func() {
 					ui.Icon(c, k.icon()).FontSize(18).TextColor(t.Accent)
 					ui.Column(c).Grow(1).Shrink(1).Gap(2).Children(func() {
 						ui.Text(c, k.title).FontSize(13).Bold()

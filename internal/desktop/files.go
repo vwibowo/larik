@@ -755,23 +755,3 @@ func filesRevealLabel() string {
 	}
 	return "Show in file manager"
 }
-
-// fileTabs lists Files tabs with the other non-session tabs in the sidebar.
-func (a *App) fileTabs(c *ui.Context, theme *ui.Theme) {
-	var tabs []*tab
-	for _, tb := range a.tabs {
-		if tb.files != nil {
-			tabs = append(tabs, tb)
-		}
-	}
-	if len(tabs) == 0 {
-		return
-	}
-	ui.SidebarSection(c.Key("files-tabs"), "Files", nil, func() {
-		for _, tb := range tabs {
-			ui.SidebarItem(c, tabKey(tb), iconFolder, "Files").Tooltip(tb.dir).Children(func() {
-				ui.Text(c, filepath.Base(tb.dir)).FontSize(11).TextColor(theme.TextMuted).SingleLine().MaxWidth(110)
-			}).ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
-		}
-	})
-}

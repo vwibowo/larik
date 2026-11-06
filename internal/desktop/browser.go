@@ -296,39 +296,6 @@ func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
 	})
 }
 
-// browsers lists the browser tabs above the projects, under the
-// terminals: each page's title, and its host or a spinner while it
-// loads.
-func (a *App) browsers(c *ui.Context, t *ui.Theme) {
-	var pages []*tab
-	for _, tb := range a.tabs {
-		if tb.browser {
-			pages = append(pages, tb)
-		}
-	}
-	if len(pages) == 0 {
-		return
-	}
-	ui.SidebarSection(c.Key("browsers"), "Browser", nil, func() {
-		for _, tb := range pages {
-			tip := tb.url
-			if tb.remotePort.port != 0 {
-				tip = fmt.Sprintf("%s:%d via SSH", tb.remotePort.name, tb.remotePort.port)
-				if tb.remotePortLost {
-					tip += " (disconnected)"
-				}
-			}
-			ui.SidebarItem(c, tabKey(tb), iconGlobe, a.tabTitle(tb)).Tooltip(tip).Children(func() {
-				if tb.loading {
-					ui.Spinner(c).Size(11, 11)
-				} else if tb.url != blankPage {
-					ui.Text(c, pageHost(tb.url)).FontSize(11).TextColor(t.TextMuted).SingleLine().MaxWidth(110)
-				}
-			}).ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
-		}
-	})
-}
-
 // pageMenu is what a browser tab's menu does with its page.
 func (a *App) pageMenu(m *ui.Menu, tb *tab) {
 	if m.Item("Reload Page").Chosen() && tb.web != nil {

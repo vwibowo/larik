@@ -2,13 +2,10 @@ package desktop
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/egoist/mygo/ui"
 
 	"larik/internal/session"
 	"larik/internal/status"
@@ -124,37 +121,6 @@ func (a *App) tabByID(id string) *tab {
 // tabKey names a terminal or browser tab in the sidebar, where sessions go by
 // their transcripts.
 func tabKey(t *tab) string { return "tab:" + t.id }
-
-// terminals lists the terminal tabs above the projects.
-func (a *App) terminals(c *ui.Context, t *ui.Theme) {
-	var shells []*tab
-	for _, tb := range a.tabs {
-		if tb.shell() {
-			shells = append(shells, tb)
-		}
-	}
-	if len(shells) == 0 {
-		return
-	}
-	ui.SidebarSection(c.Key("terminals"), "Terminals", nil, func() {
-		for _, tb := range shells {
-			tip := tildePath(tb.dir)
-			if tb.run != "" {
-				tip += "\n" + tb.run
-			}
-			ui.SidebarItem(c, tabKey(tb), iconTerm, a.tabTitle(tb)).Tooltip(tip).Children(func() {
-				switch {
-				case tb.agentOffered:
-					ui.Text(c, "Resume agent").FontSize(11).TextColor(t.Accent)
-				case a.needsLook(tb) && tb.path == "":
-					ui.Icon(c, iconBell).FontSize(13).TextColor(t.Accent).Label("Needs a look")
-				case !a.marker(c, t, a.tabStatus(tb), false):
-					ui.Text(c, filepath.Base(tb.dir)).FontSize(11).TextColor(t.TextMuted).SingleLine().MaxWidth(90)
-				}
-			}).ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
-		}
-	})
-}
 
 // selectKey shows what the sidebar's key names: a terminal tab, or a
 // session.

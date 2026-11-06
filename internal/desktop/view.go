@@ -777,13 +777,19 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				selected = "database:" + f.database.profile
 			}
 		}
-		if found := a.matches(); strings.TrimSpace(a.query) != "" && len(found) > 0 {
-			selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
+		searching := strings.TrimSpace(a.query) != ""
+		var found []session.Indexed
+		if searching {
+			a.searchConversations()
+			found = a.matches()
+			if len(found) > 0 {
+				selected = found[min(a.pick, len(found)-1)].Path // the match Enter opens
+			}
 		}
 		a.rows = a.rows[:0] // sessionItem lists them again
 		sb := ui.Sidebar(c, &selected, func() {
-			if strings.TrimSpace(a.query) != "" {
-				a.results(c, t)
+			if searching {
+				a.results(c, t, found)
 				return
 			}
 			a.pinnedSection(c, t)
@@ -938,7 +944,7 @@ func (a *App) project(c *ui.Context, t *ui.Theme, p session.Project) {
 		}
 		a.archived(c, t, p)
 		if !p.Missing {
-			row := ui.Row(c.Key("new")).Gap(6).Padding(4, 12, 4, 14).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("New session in " + p.Name).Children(func() {
+			row := ui.ButtonBase(c.Key("new")).Gap(6).Padding(4, 12, 4, 14).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("New session in " + p.Name).Children(func() {
 				ui.Icon(c, iconPlus).FontSize(12).TextColor(t.TextMuted)
 				ui.Text(c, "New session here").FontSize(12).TextColor(t.TextMuted)
 			})
@@ -996,7 +1002,10 @@ func (a *App) projectMenu(m *ui.Menu, p session.Project) {
 
 // footLink is a quiet link under a project's sessions, reporting a click.
 func (a *App) footLink(c *ui.Context, t *ui.Theme, key, text string) bool {
-	return ui.Text(c.Key(key), text).FontSize(12).TextColor(t.TextMuted).Padding(4, 12, 4, 34).Cursor(ui.CursorPointer).Clicked()
+	b := ui.ButtonBase(c.Key(key)).Padding(4, 12, 4, 34).Cursor(ui.CursorPointer).Label(text).Children(func() {
+		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
+	})
+	return b.Clicked()
 }
 
 // resultsShown is how many sessions a search shows.
@@ -1004,16 +1013,31 @@ const resultsShown = 50
 
 // results lists what the search finds, across every project, each with
 // its project.
-func (a *App) results(c *ui.Context, t *ui.Theme) {
-	a.searchConversations()
-	found := a.matches()
+func (a *App) results(c *ui.Context, t *ui.Theme, found []session.Indexed) {
 	title := fmt.Sprintf("%d found", len(found))
 	if len(found) == 0 {
 		title = "Nothing found"
 	}
+	shown := found[:min(len(found), resultsShown)]
+	wanted := make(map[string]bool, len(shown))
+	for _, s := range shown {
+		wanted[s.Path] = true
+	}
+	projects := make(map[string]*session.Project, len(shown))
+	for i := range a.projects {
+		p := &a.projects[i]
+		for _, s := range p.Sessions {
+			if wanted[s.Path] {
+				projects[s.Path] = p
+			}
+		}
+	}
 	ui.SidebarSection(c, title, nil, func() {
-		for _, s := range found[:min(len(found), resultsShown)] {
-			_, p, _ := a.find(s.Path)
+		for _, s := range shown {
+			p := projects[s.Path]
+			if p == nil {
+				continue
+			}
 			a.sessionItem(c, t, s, p.Name)
 			a.sessionDetail(c, t, s, p.Root)
 			if said := a.saidIn(s.Path); said != "" {
@@ -1142,7 +1166,9 @@ func (a *App) sessionDetail(c *ui.Context, t *ui.Theme, s session.Indexed, root 
 				url = fmt.Sprintf("%s:%d", name, port)
 			}
 			tip := "Open " + url + " in a browser pane (" + clickMod() + "-click: in your browser)"
-			link := ui.Text(c.Key(url), fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent).Cursor(ui.CursorPointer).Tooltip(tip).Label("Open " + url)
+			link := ui.ButtonBase(c.Key(url)).Cursor(ui.CursorPointer).Tooltip(tip).Label("Open " + url).Children(func() {
+				ui.Text(c, fmt.Sprintf(":%d", port)).FontSize(11).TextColor(t.Accent)
+			})
 			if link.Clicked() {
 				a.openPort(s.Path, port, c.Modifiers()&(ui.Super|ui.Ctrl) != 0)
 			}
@@ -1357,13 +1383,20 @@ func (a *App) card(c *ui.Context, t *ui.Theme, fn func()) {
 }
 
 func (a *App) noticeBar(c *ui.Context, t *ui.Theme) {
-	if a.notice == "" {
+	if a.notice == "" && a.saveError == "" {
 		return
 	}
-	ui.Row(c).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Warning.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, a.notice).FontSize(12).Grow(1).Shrink(1)
-		a.closeButton(c, t, "Dismiss", func() { a.notice = "" })
-	})
+	if a.saveError != "" {
+		ui.Row(c.Key("save-error")).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Danger.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+			ui.Text(c, a.saveError).FontSize(12).Grow(1).Shrink(1)
+		})
+	}
+	if a.notice != "" {
+		ui.Row(c.Key("notice")).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Warning.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+			ui.Text(c, a.notice).FontSize(12).Grow(1).Shrink(1)
+			a.closeButton(c, t, "Dismiss", func() { a.notice = "" })
+		})
+	}
 }
 
 // pane is a pane's tab: its header, find bar and terminal.
@@ -1568,7 +1601,7 @@ func (a *App) closeButton(c *ui.Context, t *ui.Theme, label string, fn func()) {
 
 // smallButton is a borderless icon button, as a bar's close button.
 func (a *App) smallButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, label string, fn func()) {
-	b := ui.Box(c.Key(key)).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
+	b := ui.ButtonBase(c.Key(key)).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
 		ui.Icon(c, icon).FontSize(12).TextColor(t.TextMuted)
 	})
 	if b.Hovered() {

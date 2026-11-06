@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,5 +49,46 @@ func TestDesktopTabGetsControlGuidance(t *testing.T) {
 	t.Setenv("LARIK_DESKTOP_TAB", "")
 	if inside.SystemPrompt() != prompt {
 		t.Fatal("Desktop prompt changed after setup")
+	}
+}
+
+func TestDesktopUsesVisibleBrowserWhenHeadlessBrowserIsEnabled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	path := filepath.Join(root, "config", "larik", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"browser":{"enabled":true,"chrome_path":"/missing/chrome"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	toolNamed := func(a *App, name string) bool {
+		for _, tool := range a.tools {
+			if tool.Spec().Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	cwd := t.TempDir()
+	t.Setenv("LARIK_DESKTOP_TAB", "")
+	standalone, err := Setup(cwd, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer standalone.Close()
+	if standalone.Browser == nil || !toolNamed(standalone, "browser_navigate") || toolNamed(standalone, "desktop_page_navigate") {
+		t.Fatal("standalone sessions must retain the headless browser tools")
+	}
+	t.Setenv("LARIK_DESKTOP_TAB", "tab-123")
+	desktop, err := Setup(cwd, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer desktop.Close()
+	if desktop.Browser != nil || desktop.BrowserNote != "" || toolNamed(desktop, "browser_navigate") || !toolNamed(desktop, "desktop_page_navigate") {
+		t.Fatal("Desktop sessions must use only the visible browser tools without probing Chrome")
 	}
 }

@@ -237,12 +237,6 @@ func (a *App) customShortcuts(c *ui.Context) {
 	}
 }
 
-// keySettings is Settings' Keyboard section: each command with its key,
-// to type another into; Enter gives it, and an empty one takes it away.
-func (a *App) keySettings(c *ui.Context, t *ui.Theme) {
-	a.keySettingsFiltered(c, t, "")
-}
-
 func (a *App) keyboardMatches(query string) bool {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" || strings.Contains("keyboard shortcuts keys", q) {

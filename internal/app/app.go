@@ -251,7 +251,9 @@ func Setup(cwd, version string) (*App, error) {
 	if cfg.Audio.Enabled {
 		a.Audio = audio.New(cfg.Audio)
 	}
-	if cfg.Browser.Enabled {
+	// Desktop agents use the visible native webview through desktop_page_*.
+	// Keep the Chrome tools for standalone CLI and TUI sessions only.
+	if cfg.Browser.Enabled && !a.DesktopTab {
 		var location *termbrowser.Location
 		if l := cfg.Browser.Location; l != nil {
 			location = &termbrowser.Location{Latitude: l.Latitude, Longitude: l.Longitude, Accuracy: l.Accuracy}

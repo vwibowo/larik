@@ -1151,6 +1151,9 @@ func (m *model) buildSettings() {
 		default:
 			it.detail = spec.label(v)
 		}
+		if m.opts.App != nil && m.opts.App.DesktopTab && (spec.key == "browser" || strings.HasPrefix(spec.key, "browser_")) {
+			it.note = strings.TrimSpace(it.note + " · standalone CLI/TUI only")
+		}
 		if spec.key == "theme" && v == "auto" {
 			bg := "dark"
 			if !m.termDark {

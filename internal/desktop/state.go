@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // savedState is what the window remembers across launches: the sessions
@@ -242,28 +243,63 @@ func (a *App) saveState() {
 	default:
 	}
 	data, err := json.Marshal(a.state())
-	if err != nil || string(data) == a.saved {
+	if err != nil {
 		return
 	}
-	a.saved = string(data)
+	now, payload := time.Now(), string(data)
+	if payload == a.saved && (a.savePending != 0 || now.Before(a.saveRetryAt)) {
+		return
+	}
+	if payload == a.persisted && a.savePending == 0 {
+		return
+	}
+	a.saved = payload
 	a.saves++
 	n, path := a.saves, a.statePath()
+	a.savePending = n
 	a.writing.Add(1)
 	go func() {
 		defer a.writing.Done()
 		a.writeMu.Lock()
-		defer a.writeMu.Unlock()
+		var err error
 		if n < a.written {
-			return // a newer state was written already
+			// A newer state was written already.
+		} else {
+			err = writeState(path, data)
+			if err == nil {
+				a.written = n
+			}
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return
-		}
-		tmp := path + ".tmp"
-		if os.WriteFile(tmp, data, 0o600) == nil && os.Rename(tmp, path) == nil {
-			a.written = n
-		}
+		a.writeMu.Unlock()
+		a.update(func() {
+			if a.savePending != n {
+				return
+			}
+			a.savePending = 0
+			if err != nil {
+				a.saveError = "Couldn't save Desktop layout: " + err.Error()
+				a.saveRetryAt = time.Now().Add(5 * time.Second)
+				return
+			}
+			a.persisted, a.saveError = payload, ""
+			a.saveRetryAt = time.Time{}
+		})
 	}()
+}
+
+func writeState(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // restore reopens the tabs of the last launch, attaching to those whose
@@ -284,7 +320,7 @@ func (a *App) restore() bool {
 	if err != nil || json.Unmarshal(data, &st) != nil {
 		return a.showAdopted(a.adoptHosted(live))
 	}
-	a.saved = string(data)
+	a.saved, a.persisted = string(data), string(data)
 	a.recent = st.Recent
 	if st.Width > 0 {
 		a.sidebarW = st.Width

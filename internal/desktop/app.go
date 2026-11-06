@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,16 +94,20 @@ type App struct {
 	// layout is the panes showing tabs, nil with none (see panes.go);
 	// focus is the one with the keyboard, which the sidebar, the title bar
 	// and the keys follow, and zoomed shows it alone.
-	layout    *pane
-	focus     *pane
-	zoomed    bool
-	changes   *changes // the changes pane, beside the panes when open
-	changesP  float32  // the panes' share of the width beside the changes, in percent
-	planP     float32  // the terminal's share beside a plan waiting for review
-	plans     map[string]*planPreview
-	focusNext *tab   // the tab whose terminal takes the keyboard next frame
-	saved     string // the state last saved, as JSON
-	saves     int    // how many times the state was saved
+	layout      *pane
+	focus       *pane
+	zoomed      bool
+	changes     *changes // the changes pane, beside the panes when open
+	changesP    float32  // the panes' share of the width beside the changes, in percent
+	planP       float32  // the terminal's share beside a plan waiting for review
+	plans       map[string]*planPreview
+	focusNext   *tab   // the tab whose terminal takes the keyboard next frame
+	saved       string // the state last queued, as JSON
+	persisted   string // the state last written successfully
+	saves       int    // how many times the state was queued
+	savePending int
+	saveRetryAt time.Time
+	saveError   string
 	// writeMu orders the writes of the saved state, and written is the
 	// number of the save last written, so an older one never lands last;
 	// Close waits for writing.
@@ -432,6 +437,7 @@ func (a *App) Close() {
 	default:
 	}
 	a.saveState() // as it is as the window goes
+	finalState := a.saved
 	close(a.done)
 	for _, forward := range a.forwards {
 		if forward.stop != nil {
@@ -447,6 +453,14 @@ func (a *App) Close() {
 		t.close()
 	}
 	a.writing.Wait() // the last state, so quitting doesn't lose it
+	if finalState != "" {
+		path := a.statePath()
+		if data, err := os.ReadFile(path); err != nil || string(data) != finalState {
+			if err := writeState(path, []byte(finalState)); err != nil {
+				log.Printf("desktop: couldn't save window state: %v", err)
+			}
+		}
+	}
 }
 
 // indexLoop reads the index again every second or so, or when kicked:
@@ -707,14 +721,6 @@ func (a *App) openSettings() {
 	}
 }
 
-// openAdvancedSettings opens larik's full config editor in a terminal tab,
-// preserving its personal and project settings behavior.
-func (a *App) openAdvancedSettings() {
-	if t := a.startTab(a.currentDir(), "", "", "/config"); t != nil {
-		a.activate(t)
-	}
-}
-
 // dropDirs starts a session in each folder dropped on the sidebar, or in
 // the folder of a file dropped there, showing the last.
 func (a *App) dropDirs(paths []string) {
@@ -883,6 +889,9 @@ func (a *App) fork(path string) {
 // first.
 func (a *App) matches() []session.Indexed {
 	words := strings.Fields(strings.ToLower(a.query))
+	if len(words) == 0 {
+		return nil
+	}
 	var out, said []session.Indexed
 	for _, p := range a.projects {
 		for _, s := range p.Sessions {
@@ -1232,15 +1241,6 @@ func (a *App) listed(s session.Indexed) bool {
 	return !a.hidden[s.Path] || a.tabOf(s.Path) != nil || s.Status.State == status.Blocked
 }
 
-// moveTab moves t to where to is in the title bar.
-func (a *App) moveTab(t, to *tab) {
-	i, j := slices.Index(a.tabs, t), slices.Index(a.tabs, to)
-	if i < 0 || j < 0 || i == j {
-		return
-	}
-	a.tabs = slices.Insert(slices.Delete(a.tabs, i, i+1), j, t)
-}
-
 // askClose closes tabs, first asking when a Larik turn or terminal program
 // would be stopped. keep, when set, is the tab to show after.
 func (a *App) askClose(tabs []*tab, keep *tab) {
@@ -1296,17 +1296,6 @@ func (a *App) quitEnding() {
 			a.leave(true)
 		}
 	}
-}
-
-// workingTabs are the tabs whose larik is in a turn.
-func (a *App) workingTabs() []*tab {
-	var working []*tab
-	for _, t := range a.tabs {
-		if !t.shell() && a.tabStatus(t).State == status.Working {
-			working = append(working, t)
-		}
-	}
-	return working
 }
 
 // closingWorking are the tabs asked to close whose larik is working.

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -124,30 +126,110 @@ func (a *App) closeChanges() {
 	}
 }
 
-// watchChanges reads the repository every two seconds until the pane
-// closes, which is often enough to follow an agent's edits, and at once
-// after an action.
+// watchChanges checks the repository every two seconds until the pane
+// closes. Local changes get a full read when the fingerprint changes,
+// after an action, and every 30 seconds; remote changes still get a full
+// read on each tick.
 func (a *App) watchChanges(ch *changes) {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	heads := headCache{}
+	var root, indexPath, fingerprint string
+	var lastRead time.Time
+	lastMode := -1
+	force := true
 	for {
-		var r changesRead
-		if isRemote(ch.dir) {
-			r = a.readRemoteChanges(ch.dir, int(ch.mode.Load()))
-		} else {
-			r = readChanges(ch.dir, heads, int(ch.mode.Load()))
+		mode := int(ch.mode.Load())
+		read := true
+		if !isRemote(ch.dir) {
+			if root == "" {
+				root, indexPath = changesRepo(ch.dir)
+			}
+			if root != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				next, err := changesFingerprint(ctx, root, indexPath)
+				cancel()
+				if err == nil && !force && mode == lastMode && next == fingerprint && time.Since(lastRead) < 30*time.Second {
+					read = false
+				}
+				fingerprint = next
+			}
 		}
-		a.update(func() { ch.apply(r) })
+		if read {
+			var r changesRead
+			if isRemote(ch.dir) {
+				r = a.readRemoteChanges(ch.dir, mode)
+			} else {
+				r = readChanges(ch.dir, heads, mode)
+				if r.err != nil {
+					fingerprint = "" // retry a failed read at the next tick
+				}
+			}
+			lastRead, lastMode = time.Now(), mode
+			a.update(func() { ch.apply(r) })
+		}
 		select {
 		case <-ch.stop:
 			return
 		case <-a.done:
 			return
 		case <-tick.C:
+			force = false
 		case <-ch.kick:
+			force = true
 		}
 	}
+}
+
+// changesRepo resolves paths once for the local Changes pane's cheap
+// refresh check. A failed resolution leaves full reads in charge.
+func changesRepo(dir string) (root, indexPath string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := git(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", ""
+	}
+	root = strings.TrimSpace(string(out))
+	out, err = git(ctx, root, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return "", ""
+	}
+	return root, strings.TrimSpace(string(out))
+}
+
+// changesFingerprint checks the current Git status and the contents of
+// changed paths without rebuilding their diffs. A full read still runs
+// every 30 seconds to catch preserved file timestamps and config edits.
+func changesFingerprint(ctx context.Context, root, indexPath string) (string, error) {
+	status, err := git(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return "", err
+	}
+	branch, _ := git(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
+	head, _ := git(ctx, root, "rev-parse", "HEAD")
+	h := sha256.New()
+	h.Write(status)
+	h.Write(branch)
+	h.Write(head)
+	if info, err := os.Stat(indexPath); err == nil {
+		fmt.Fprintf(h, "index:%d:%d:%v\x00", info.Size(), info.ModTime().UnixNano(), info.Mode())
+	} else {
+		fmt.Fprintf(h, "index:%v\x00", err)
+	}
+	for _, entry := range parseStatus(status) {
+		for _, path := range []string{entry.path, entry.from} {
+			if path == "" {
+				continue
+			}
+			if info, err := os.Stat(filepath.Join(root, path)); err == nil {
+				fmt.Fprintf(h, "%s:%d:%d:%v\x00", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+			} else {
+				fmt.Fprintf(h, "%s:%v\x00", path, err)
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // reread asks for a read now.
@@ -590,7 +672,10 @@ func (a *App) commitBox(c *ui.Context, t *ui.Theme, ch *changes) {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			n := ch.stagedCount()
 			link := func(key, text string) bool {
-				return ui.Text(c.Key(key), text).FontSize(12).TextColor(t.Accent).Cursor(ui.CursorPointer).Clicked() && ch.busy == ""
+				b := ui.ButtonBase(c.Key(key)).Cursor(ui.CursorPointer).Label(text).Disabled(ch.busy != "").Children(func() {
+					ui.Text(c, text).FontSize(12).TextColor(t.Accent)
+				})
+				return b.Clicked()
 			}
 			if n < len(ch.files) && link("stage-all", "Stage All") {
 				a.stageAll(ch, true)

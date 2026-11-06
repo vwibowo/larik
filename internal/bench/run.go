@@ -121,18 +121,10 @@ type Options struct {
 	MaxTurns int
 }
 
-// Run sets up task in a fresh temporary directory, gives its prompt to a
-// new agent running provider/model with every tool allowed (the fixture
-// directory is thrown away afterwards, so there is nothing to protect),
-// then verifies the outcome. It never returns an error: a setup or agent
-// failure comes back as a failing Result with Detail explaining why, so a
-// whole run of several models and tasks doesn't stop on one bad model.
-func Run(ctx context.Context, task Task, provider llm.Provider, model string, timeout time.Duration) Result {
-	return RunWith(ctx, task, provider, model, Options{Timeout: timeout})
-}
-
-// RunWith is Run with options: an execution setting, to compare the tool
-// chain with run_code scripts on the same task, and keeping failures.
+// RunWith sets up task in a fresh temporary directory, gives its prompt
+// to an agent with every tool allowed, then verifies the outcome. Options
+// choose the execution setting, timeout and whether to keep failures.
+// Setup and agent failures return a failing Result, so a run can continue.
 func RunWith(ctx context.Context, task Task, provider llm.Provider, model string, o Options) (res Result) {
 	exec, _ := tools.ParseExecution(string(o.Execution))
 	res = Result{Task: task.Name, Model: model, Execution: exec}

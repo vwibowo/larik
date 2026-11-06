@@ -391,6 +391,8 @@ From the command line, `larik -c --fork` or `larik --resume <id> --fork` continu
 
 `cmd+shift+g` opens changes for the focused project beside the panes. `cmd+k` searches sessions, `cmd+j` jumps to the next waiting session, and `cmd+shift+p` opens the command palette. The sidebar also offers permission and plan review actions, session naming, pinning, archiving, worktree creation, and moving sessions to Trash. The toolbar bell and Dock badge show sessions that need attention. Closing the primary window leaves hosted programs running; reopening reconnects their panes and restores the other windows. Closing an overflow window closes its panes. **Quit and End Panes** (`cmd+alt+q`) stops hosted programs across all windows. `larik desktop --install` adds an app launcher, and `larik desktop` from another shell brings the existing window forward. See [the Desktop guide](docs/desktop.md) for the command interface, host, remote sessions, browser controls, and other details.
 
+Closing a new-pane chooser while it makes a worktree cancels that new session and removes the unused worktree. Desktop reports a failed layout save and retries it; closing the window makes a final save attempt. Failed SSH connections retry automatically when transport is interrupted. Authentication, host-name, remote installation, and version errors wait for **Reconnect** after you fix them. The notification bell, its actions, and pane controls can be reached with Tab and activated with Enter or Space.
+
 **Coding agents in Desktop:** Settings › Coding agents installs two Larik Desktop control skills globally, so Larik CLI, Codex CLI, OpenCode, Gemini CLI and Claude Code can use `larik desktop` commands from any project. Separate status-hook controls for Claude Code, Codex CLI, OpenCode and Gemini CLI make agents running in Desktop terminal tabs show working, waiting, finished or error states with the usual tab attention. Hooks do nothing outside Desktop tabs and never send prompts or tool inputs to Desktop. Codex requires reviewing and trusting new hooks in `/hooks`. Start a new agent session after installing hooks; reload skills or start a new session after installing skills. See [Desktop integrations](docs/desktop.md#global-coding-agent-integrations).
 
 **Finding your way in Desktop:** Every open item has a visible pane with its own header. Sessions remain in their project sections in the sidebar; selecting one focuses its pane or opens a new one beside the current pane. The toolbar's split button and **Pane options** menu add and arrange panes. **Close Pane** and `cmd+w` close both the pane and its item. When zoomed, **Show All Panes** restores the full layout.
@@ -568,6 +570,8 @@ You can also set it explicitly:
 ### Browser
 
 For pages that need JavaScript, a sign-in or clicking through, Larik drives a real Chrome, and can show it to you inside the terminal. It's off by default. In the TUI, use `/browser on` or `/browser off` to save the switch and reload with a fresh model context; `/browser` shows the status. The saved session transcript remains available, but the current model context is cleared. You can also turn it on in your personal config:
+
+Inside a Larik Desktop tab, the agent instead uses the visible Browser panes through `desktop_page_*`. The `browser_*` tools and `/browser` controls apply to standalone CLI and TUI sessions; Desktop does not look for or start Chrome for them. Desktop page tools do not yet offer file upload, network capture or visual comparison.
 
 ```json
 { "browser": { "enabled": true } }

@@ -927,7 +927,7 @@ func (a *App) databaseSidebar(c *ui.Context, theme *ui.Theme) {
 				}
 			})
 		}
-		row := ui.Row(c.Key("db-sidebar-add")).Gap(6).Padding(4, 12, 4, 14).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("Add database connection").Children(func() {
+		row := ui.ButtonBase(c.Key("db-sidebar-add")).Gap(6).Padding(4, 12, 4, 14).Radius(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).Label("Add database connection").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(12).TextColor(theme.TextMuted)
 			ui.Text(c, "Add connection").FontSize(12).TextColor(theme.TextMuted)
 		})

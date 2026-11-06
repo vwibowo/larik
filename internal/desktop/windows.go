@@ -496,14 +496,3 @@ func (g *windowGroup) quitEnding() {
 		finish(false)
 	}
 }
-
-func (g *windowGroup) activeWindow() *mygo.Window {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	for _, e := range g.children {
-		if e.app == g.active {
-			return e.win
-		}
-	}
-	return nil
-}
