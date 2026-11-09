@@ -66,11 +66,113 @@ func (a *App) startBrowser(u string) *tab {
 	return t
 }
 
-// openBrowser opens a browser tab on u, blank for "", in the focused pane.
+// openBrowser opens a browser tab on u, blank for "", in a pane.
 func (a *App) openBrowser(u string) {
 	if t := a.startBrowser(u); t != nil {
 		a.activate(t)
 	}
+}
+
+// newBrowserTab adds a page to the focused browser pane, retaining its pane
+// while keeping the inactive page open in the window.
+func (a *App) newBrowserTab() {
+	p := a.focus
+	t := a.startBrowser("")
+	if t == nil {
+		return
+	}
+	if p != nil && p.tab != nil && p.tab.browser {
+		p.tab = t
+		a.focusPane(p)
+		return
+	}
+	a.activate(t)
+}
+
+// cycleBrowserTab selects the browser page before or after the focused one.
+func (a *App) cycleBrowserTab(by int) {
+	current := a.focused()
+	if current == nil || !current.browser {
+		return
+	}
+	var pages []*tab
+	for _, page := range a.tabs {
+		if page.browser {
+			pages = append(pages, page)
+		}
+	}
+	if len(pages) < 2 {
+		return
+	}
+	i := 0
+	for j, page := range pages {
+		if page == current {
+			i = j
+			break
+		}
+	}
+	if p := a.paneOf(current); p != nil {
+		p.tab = pages[(i+by+len(pages))%len(pages)]
+		a.focusPane(p)
+	}
+}
+
+// browserTabs renders the browser pages as a tab strip inside the pane.
+func (a *App) browserTabs(c *ui.Context, t *ui.Theme, current *tab) {
+	firstLast := "Ctrl+Shift+1"
+	if runtime.GOOS == "darwin" {
+		firstLast = "Cmd+1"
+	}
+	firstLastEnd := "Ctrl+Shift+9"
+	if runtime.GOOS == "darwin" {
+		firstLastEnd = "Cmd+9"
+	}
+	pageCount := 0
+	for _, page := range a.tabs {
+		if page.browser {
+			pageCount++
+		}
+	}
+	index := 0
+	ui.Row(c.Key("browser-tabs")).Gap(3).Padding(4, 8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		for _, page := range a.tabs {
+			if !page.browser {
+				continue
+			}
+			page := page
+			pageIndex := index
+			index++
+			label := a.tabTitle(page)
+			tooltip := label
+			if pageIndex == 0 {
+				tooltip += " · First tab (" + keyText(firstLast) + ")"
+			}
+			if pageIndex == pageCount-1 {
+				tooltip += " · Last tab (" + keyText(firstLastEnd) + ")"
+			}
+			ui.Row(c.Key("browser-tab-"+page.id)).Gap(2).AlignItems(ui.Center).Padding(2, 4).Radius(5).Children(func() {
+				b := ui.Box(c.Key("browser-tab-select-"+page.id)).Padding(3, 6).Label("Browser tab: " + label).Tooltip(tooltip).Children(func() { ui.Text(c, label).FontSize(12).Bold().TextColor(t.TextMuted) })
+				if page == current {
+					b.Background(t.Text.Alpha(0.08))
+				} else if b.Hovered() {
+					b.Background(t.Text.Alpha(0.06))
+				}
+				if b.Clicked() && page != current {
+					if p := a.paneOf(page); p != nil {
+						a.focusPane(p)
+					} else if p := a.paneOf(current); p != nil {
+						p.tab = page
+						a.focusPane(p)
+					} else {
+						a.activate(page)
+					}
+				}
+				a.navButton(c, t, "browser-tab-close-"+page.id, iconClose, "Close browser tab", true, func() { a.askClose([]*tab{page}, nil) })
+			})
+		}
+		shortcutHelp := "New Browser Tab (" + keyText("Cmd+T") + ") · Next: Ctrl+Tab · Previous: Ctrl+Shift+Tab · First: " + keyText(firstLast) + " · Last: " + keyText(firstLastEnd)
+		a.navButton(c, t, "new-browser-tab", iconPlus, shortcutHelp, true, a.newBrowserTab)
+	})
 }
 
 // watchPage follows what t's page does: where it went, its title, and
@@ -116,11 +218,26 @@ func (a *App) watchPage(t *tab) {
 		}),
 	)
 	p.SetWindowOpenHandler(func(req mygo.WindowOpenRequest) *mygo.WindowOptions {
-		if req.UserInitiated && req.URL != "" {
-			u := req.URL
-			a.update(func() { a.openBrowser(u) })
-		}
+		a.openBrowserWindow(t, req)
 		return nil
+	})
+}
+
+// openBrowserWindow routes a user-opened page into a browser tab in the
+// originating pane. Script-created popups are ignored.
+func (a *App) openBrowserWindow(from *tab, req mygo.WindowOpenRequest) {
+	if !req.UserInitiated || req.URL == "" {
+		return
+	}
+	a.update(func() {
+		if page := a.startBrowser(req.URL); page != nil {
+			if pane := a.paneOf(from); pane != nil {
+				pane.tab = page
+				a.focusPane(pane)
+			} else {
+				a.activate(page)
+			}
+		}
 	})
 }
 
@@ -137,9 +254,14 @@ func (t *tab) closeBrowser() {
 
 // goTo loads what the address bar says in t.
 func (a *App) goTo(t *tab) {
-	u, ok := normalizeURL(t.addr)
+	address := strings.TrimSpace(t.addr)
+	if address == "" {
+		a.searchWeb(t, "")
+		return
+	}
+	u, ok := normalizeURL(address)
 	if !ok {
-		a.notice = "“" + strings.TrimSpace(t.addr) + "” isn't a web address."
+		a.searchWeb(t, address)
 		return
 	}
 	a.notice = ""
@@ -154,9 +276,30 @@ func (a *App) goTo(t *tab) {
 	}
 }
 
+// searchWeb searches Google for query, or opens its home page when empty.
+func (a *App) searchWeb(t *tab, query string) {
+	searchURL := "https://www.google.com/"
+	if query != "" {
+		searchURL += "search?q=" + url.QueryEscape(query)
+	}
+	if t == nil || !t.browser {
+		return
+	}
+	t.addr, t.url = searchURL, searchURL
+	a.notice = ""
+	if t.web != nil {
+		if err := t.web.Page().LoadURL(searchURL); err != nil {
+			t.pageError = err.Error()
+			a.notice = "Can't search Google: " + err.Error()
+			return
+		}
+		t.web.Focus()
+	}
+}
+
 // normalizeURL makes what's typed in an address bar a URL: one with a
 // scheme as it is, a host and maybe a path over https, or http for this
-// machine's. Words that aren't an address are not one.
+// machine's.
 func normalizeURL(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.ContainsAny(s, " \t\n") {

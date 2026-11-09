@@ -4,12 +4,169 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
+
+func TestBrowserTabsStayInTheirPane(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("one.example")
+	p := a.focus
+	first := p.tab
+	a.newBrowserTab()
+	second := a.focused()
+	if p != a.focus || second == nil || !second.browser || first == second || len(a.tabs) != 2 {
+		t.Fatalf("new browser tab: focus=%p pane=%p tabs=%d", a.focus, p, len(a.tabs))
+	}
+	if a.paneOf(first) != nil || a.paneOf(second) != p {
+		t.Fatal("new page did not take the existing browser pane")
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if !tt.HasText("one.example") || !tt.HasText("New Browser Tab") {
+		t.Fatalf("browser strip missing inactive page or add control: %q", tt.Texts())
+	}
+	if err := tt.Click("Browser tab: one.example"); err != nil {
+		t.Fatal(err)
+	}
+	if a.focused() != first || a.paneOf(first) != p {
+		t.Fatal("selecting a browser tab did not switch the page in place")
+	}
+}
+
+func TestBrowserWindowOpenCreatesTabInSamePane(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("https://example.com")
+	pane := a.focus
+	from := pane.tab
+	a.openBrowserWindow(from, mygo.WindowOpenRequest{URL: "https://example.org/link", UserInitiated: true})
+	opened := a.focused()
+	if opened == from || opened == nil || opened.url != "https://example.org/link" || pane != a.focus || pane.tab != opened {
+		t.Fatalf("opened link should be active in its originating pane: page=%+v pane=%p focus=%p", opened, pane, a.focus)
+	}
+	if len(a.tabs) != 2 {
+		t.Fatalf("opening a link should preserve both pages, got %d tabs", len(a.tabs))
+	}
+	a.openBrowserWindow(from, mygo.WindowOpenRequest{URL: "https://popup.example", UserInitiated: false})
+	if len(a.tabs) != 2 || a.focused() != opened {
+		t.Fatal("script-created popup should not open a browser tab")
+	}
+}
+
+func TestBrowserTabSwitchingShortcuts(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("one.example")
+	first := a.focused()
+	a.newBrowserTab()
+	second := a.focused()
+	a.newBrowserTab()
+	third := a.focused()
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	tt.Key(ui.Ctrl, ui.KeyTab)
+	tt.Frame()
+	if a.focused() != first {
+		t.Fatalf("Ctrl+Tab selected %p, want first browser page %p", a.focused(), first)
+	}
+	tt.Key(ui.Ctrl|ui.Shift, ui.KeyTab)
+	tt.Frame()
+	if a.focused() != third {
+		t.Fatalf("Ctrl+Shift+Tab selected %p, want last browser page %p", a.focused(), third)
+	}
+	tt.Key(ui.Ctrl, ui.KeyTab)
+	tt.Frame()
+	if a.focused() != first {
+		t.Fatalf("Ctrl+Tab did not wrap: got %p, want %p", a.focused(), first)
+	}
+	if a.paneOf(second) != nil {
+		t.Fatal("inactive browser page unexpectedly occupies a pane")
+	}
+}
+
+func TestBrowserTabSwitchShortcutsIgnoreOtherPanes(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	session := &tab{id: "session", dir: "/work", chooser: true}
+	a.tabs = []*tab{session}
+	a.activate(session)
+	a.openBrowser("one.example")
+	a.newBrowserTab()
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	a.activate(session)
+	if a.focused() != session {
+		t.Fatal("setup did not focus session")
+	}
+	for _, mods := range []ui.Modifiers{ui.Ctrl, ui.Ctrl | ui.Shift} {
+		tt.Key(mods, ui.KeyTab)
+		tt.Frame()
+		if a.focused() != session {
+			t.Fatalf("Ctrl+Tab with modifiers %v changed a non-browser pane: focused=%p session=%p browser1=%p browser2=%p", mods, a.focused(), session, a.tabs[1], a.tabs[2])
+		}
+	}
+}
+
+func TestBrowserFirstAndLastTabShortcuts(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("one.example")
+	first := a.focused()
+	a.newBrowserTab()
+	a.newBrowserTab()
+	last := a.focused()
+	mod := ui.Ctrl | ui.Shift
+	if runtime.GOOS == "darwin" {
+		mod = ui.Super
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	tt.Key(mod, ui.Key1)
+	tt.Frame()
+	if a.focused() != first {
+		t.Fatal("Cmd/Ctrl+1 did not select the first browser tab")
+	}
+	tt.Key(mod, ui.Key9)
+	tt.Frame()
+	if a.focused() != last {
+		t.Fatal("Cmd/Ctrl+9 did not select the last browser tab")
+	}
+}
+
+func TestBrowserShortcutTooltipsAreVisible(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	a.openBrowser("one.example")
+	a.newBrowserTab()
+	a.tabs[1].title = "two.example"
+	a.newBrowserTab()
+	a.tabs[2].title = "three.example"
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	firstShortcut, lastShortcut := "Ctrl+Shift+1", "Ctrl+Shift+9"
+	if runtime.GOOS == "darwin" {
+		firstShortcut, lastShortcut = "Cmd+1", "Cmd+9"
+	}
+	checkTooltip := func(element, content string) {
+		t.Helper()
+		r, ok := tt.Find(element)
+		if !ok {
+			t.Fatalf("no UI element %q; texts: %q", element, tt.Texts())
+		}
+		tt.Move(r.X+r.W/2, r.Y+r.H/2)
+		tt.Advance(700 * time.Millisecond)
+		if !tt.HasText(content) {
+			t.Fatalf("tooltip for %q did not show %q; texts: %q", element, content, tt.Texts())
+		}
+		tt.Move(0, 0)
+		tt.Advance(time.Second)
+	}
+	checkTooltip("Browser tab: one.example", "First tab ("+keyText(firstShortcut)+")")
+	checkTooltip("Browser tab: three.example", "Last tab ("+keyText(lastShortcut)+")")
+	plusTooltip := "New Browser Tab (" + keyText("Cmd+T") + ") · Next: Ctrl+Tab · Previous: Ctrl+Shift+Tab · First: " + keyText(firstShortcut) + " · Last: " + keyText(lastShortcut)
+	checkTooltip(plusTooltip, "Previous: Ctrl+Shift+Tab")
+}
 
 func TestNormalizeURL(t *testing.T) {
 	for in, want := range map[string]string{
@@ -71,10 +228,15 @@ func TestBrowserTab(t *testing.T) {
 	if b.url != "https://example.com/docs" || a.tabTitle(b) != "example.com" || a.where(b) != "example.com" {
 		t.Fatalf("after going: url %q, title %q, where %q", b.url, a.tabTitle(b), a.where(b))
 	}
-	b.addr = "not an address"
+	b.addr = "a search query"
 	a.goTo(b)
-	if b.url != "https://example.com/docs" || a.notice == "" {
-		t.Fatalf("words go nowhere: url %q, notice %q", b.url, a.notice)
+	if b.url != "https://www.google.com/search?q=a+search+query" || b.addr != b.url || a.notice != "" {
+		t.Fatalf("words should search Google: url %q, addr %q, notice %q", b.url, b.addr, a.notice)
+	}
+	b.addr = ""
+	a.goTo(b)
+	if b.url != "https://www.google.com/" || b.addr != b.url {
+		t.Fatalf("empty address should open Google: url %q, addr %q", b.url, b.addr)
 	}
 	// It splits beside a session as any tab does.
 	a.activate(session)

@@ -58,8 +58,12 @@ func (a *App) menuBar() []menuGroup { return a.bindKeys(a.menuDefaults()) }
 // menuDefaults is the menu bar with its commands' own keys, before those
 // Settings › Keyboard gave them (see keys.go).
 func (a *App) menuDefaults() []menuGroup {
+	newPane := command{label: "New Pane", key: "Cmd+T", run: a.openNew}
+	if t := a.focused(); t != nil && t.browser {
+		newPane = command{label: "New Browser Tab", key: "Cmd+T", run: a.newBrowserTab}
+	}
 	fileItems := []command{
-		{label: "New Pane", key: "Cmd+T", run: a.openNew},
+		newPane,
 		{label: "New Pane Beside", key: "Cmd+D", run: a.splitRight},
 		{label: "New Pane Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
 		{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},

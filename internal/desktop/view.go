@@ -370,12 +370,20 @@ func (a *App) shortcuts(c *ui.Context) {
 		mod = ui.Super
 	}
 	switch {
+	case a.focused() != nil && a.focused().browser && c.Shortcut(ui.Ctrl, ui.KeyTab):
+		a.cycleBrowserTab(1)
+	case a.focused() != nil && a.focused().browser && c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab):
+		a.cycleBrowserTab(-1)
 	case a.keyed(c, paletteLabel, mod|ui.Shift, ui.KeyP):
 		a.openPalette()
 	case a.keyed(c, "New Session in Worktree", mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
 	case a.keyed(c, "New Pane", mod, ui.KeyT):
-		a.openNew()
+		if t := a.focused(); t != nil && t.browser {
+			a.newBrowserTab()
+		} else {
+			a.openNew()
+		}
 	case a.keyed(c, "Close Pane", mod, ui.KeyW):
 		if t := a.focused(); t != nil {
 			a.askClose([]*tab{t}, nil)
@@ -458,7 +466,22 @@ func (a *App) shortcuts(c *ui.Context) {
 	}
 	for i, k := range []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7, ui.Key8, ui.Key9} {
 		if c.Shortcut(mod, k) && len(a.tabs) > 0 {
-			a.activate(a.tabs[min(i, len(a.tabs)-1)])
+			if current := a.focused(); current != nil && current.browser {
+				var pages []*tab
+				for _, page := range a.tabs {
+					if page.browser {
+						pages = append(pages, page)
+					}
+				}
+				if len(pages) > 0 {
+					if p := a.paneOf(current); p != nil {
+						p.tab = pages[min(i, len(pages)-1)]
+						a.focusPane(p)
+					}
+				}
+			} else {
+				a.activate(a.tabs[min(i, len(a.tabs)-1)])
+			}
 		}
 	}
 }
@@ -1477,6 +1500,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 			return
 		}
 		if tb.browser {
+			a.browserTabs(c, t, tb)
 			a.addressBar(c, t, tb)
 			a.siteBars(c, t, tb)
 			if tb.finding {
