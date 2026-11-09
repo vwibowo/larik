@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"larik/internal/config"
@@ -36,6 +37,52 @@ func databaseFixture(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return project, path
+}
+
+func TestDatabaseCellTooltipVisible(t *testing.T) {
+	project, path := databaseFixture(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := "2026-09-24T17:28:01+00:00"
+	if _, err := db.Exec("UPDATE notes SET body = ? WHERE id = 1", value); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a := New(Options{Cwd: project})
+	defer a.Close()
+	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+		t.Fatal(err)
+	}
+	a.openDatabaseProfile("local")
+	a.paneOpacity = 0.45
+	tt := ui.NewTester(func(c *ui.Context) { c.SetTheme(ui.DarkTheme()); a.view(c) }, 1400, 800)
+	tt.Frame()
+	cell, ok := tt.Find(value)
+	if !ok {
+		t.Fatalf("cell missing: %q", tt.Texts())
+	}
+	tt.Move(cell.X+cell.W/2, cell.Y+cell.H/2)
+	tt.Advance(time.Second)
+	snapshot(t, tt, "database-cell-tooltip.png")
+	if n := settingsTextCount(tt.Texts(), value); n < 2 {
+		t.Fatalf("tooltip missing: %q", tt.Texts())
+	}
+	darkPixels := 0
+	for y := int(cell.Y) - 18; y < int(cell.Y)-7; y++ {
+		for x := int(cell.X) + 15; x < int(cell.X+cell.W)-15; x++ {
+			p := tt.Image().RGBAAt(x, y)
+			if p.R < 100 && p.G < 100 && p.B < 100 {
+				darkPixels++
+			}
+		}
+	}
+	if darkPixels < 10 {
+		t.Fatal("tooltip has no visible dark text on its light fill")
+	}
 }
 
 func TestDatabaseBrowserManyTables(t *testing.T) {

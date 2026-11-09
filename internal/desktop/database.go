@@ -670,6 +670,7 @@ func (a *App) databaseResults(c *ui.Context, theme *ui.Theme, tb *tab) {
 			gridTheme.SurfaceHover = theme.Text.Alpha(0.08)
 			if a.paneOpacity < 1 {
 				gridTheme.Background = theme.Background.Alpha(0)
+				gridTheme.InverseText = theme.Background
 			}
 			ui.Themed(c, &gridTheme).Grow(1).MinWidth(0).Children(func() {
 				grid := ui.Table(c.Key(fmt.Sprintf("db-grid-%d", d.activeResult)), &v.grid, cols, len(r.Rows), func(row, col int) {
