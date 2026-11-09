@@ -39,6 +39,17 @@ func databaseFixture(t *testing.T) (string, string) {
 	return project, path
 }
 
+func TestRefreshFocusedDatabasePaneSkipsWhileLoading(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	tb := &tab{id: "db", dir: "/work", database: &databaseState{loading: true}}
+	a.tabs = []*tab{tb}
+	a.activate(tb)
+	a.refreshFocused()
+	if !tb.database.loading {
+		t.Fatal("refresh should not start another schema load while one is active")
+	}
+}
+
 func TestDatabaseCellTooltipVisible(t *testing.T) {
 	project, path := databaseFixture(t)
 	db, err := sql.Open("sqlite", path)

@@ -16,6 +16,7 @@ import (
 // they appear only when a language server is installed. If a change needs
 // more room, raise the limit in the same change and say why.
 func TestToolDefinitionBudget(t *testing.T) {
+	t.Setenv(status.TabEnv, "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())

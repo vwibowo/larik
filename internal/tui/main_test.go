@@ -9,6 +9,7 @@ import (
 // TestMain points the config and data directories at a temporary one, so a
 // test that saves settings can't write into the developer's own.
 func TestMain(m *testing.M) {
+	_ = os.Setenv("LARIK_DESKTOP_TAB", "") // ordinary TUI tests must not inherit a Desktop pane identity
 	dir, err := os.MkdirTemp("", "larik-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

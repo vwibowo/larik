@@ -2,6 +2,8 @@ package termbrowser
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -211,11 +213,25 @@ func socketPath(dir, name string) (string, error) {
 			return p, nil
 		}
 	}
-	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("larik-%d", os.Getuid()))
+	base := os.TempDir()
+	if len(filepath.Join(base, fmt.Sprintf("larik-%d", os.Getuid()), name)) > maxSocketPath {
+		if _, err := os.Stat("/tmp"); err == nil {
+			base = "/tmp"
+		}
+	}
+	tmp := filepath.Join(base, fmt.Sprintf("larik-%d", os.Getuid()))
+	path := filepath.Join(tmp, name)
+	if len(path) > maxSocketPath {
+		sum := sha256.Sum256([]byte(name))
+		path = filepath.Join(tmp, "larik-"+hex.EncodeToString(sum[:8])+".sock")
+	}
+	if len(path) > maxSocketPath {
+		return "", fmt.Errorf("Unix socket path exceeds %d bytes: %s", maxSocketPath, path)
+	}
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return "", err
 	}
-	return filepath.Join(tmp, name), nil
+	return path, nil
 }
 
 func (s *Session) accept(ln net.Listener) {

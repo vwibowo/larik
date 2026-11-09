@@ -741,7 +741,7 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 		ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			ui.Icon(c, iconDatabase).FontSize(14).TextColor(theme.Accent)
 			ui.Text(c, "Objects").FontSize(12).Bold().Grow(1)
-			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh database objects", false, func() {
+			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh database objects ("+keyText("Cmd+R")+")", false, func() {
 				if !d.loading {
 					a.loadDatabaseSchema(tb)
 				}

@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -22,11 +23,20 @@ import (
 // desktop open and larik desktop wait send it requests on the same
 // socket, as JSON (see control.go).
 
-// socketPath is the window's socket for dataDir: in the temp folder, as
+// socketPath is the window's socket for dataDir: in a short temp directory, as
 // Unix socket paths are limited to about 100 bytes.
 func socketPath(dataDir string) string {
 	sum := sha256.Sum256([]byte(dataDir))
-	return filepath.Join(os.TempDir(), "larik-desktop-"+hex.EncodeToString(sum[:6])+".sock")
+	name := "larik-desktop-" + hex.EncodeToString(sum[:6]) + ".sock"
+	return filepath.Join(shortSocketDir(name), name)
+}
+
+func shortSocketDir(name string) string {
+	dir := os.TempDir()
+	if len(filepath.Join(dir, name)) > 100 && runtime.GOOS != "windows" {
+		dir = "/tmp"
+	}
+	return dir
 }
 
 // Handover gives cwd to the window open for dataDir, and reports whether

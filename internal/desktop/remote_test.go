@@ -112,7 +112,8 @@ func standIn(t *testing.T, data string) (*host, connector) {
 	t.Helper()
 	b := make([]byte, 4)
 	rand.Read(b)
-	sock := filepath.Join(os.TempDir(), "larik-test-"+hex.EncodeToString(b)+".sock")
+	name := "larik-test-" + hex.EncodeToString(b) + ".sock"
+	sock := filepath.Join(shortSocketDir(name), name)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +264,8 @@ func TestRemoteReconnectKeepsTabAndPane(t *testing.T) {
 
 func TestRemoteNeedsNewerHost(t *testing.T) {
 	dir := t.TempDir()
-	sock := filepath.Join(os.TempDir(), "larik-test-old-"+filepath.Base(dir)+".sock")
+	name := "larik-test-old-" + filepath.Base(dir) + ".sock"
+	sock := filepath.Join(shortSocketDir(name), name)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

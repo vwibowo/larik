@@ -352,6 +352,7 @@ type tab struct {
 	remoteBookmarkSuffix string // path to load after an SSH forward reconnects
 	focusAddr            bool
 	loading              bool
+	pageError            string
 	back, fwd            bool
 	off                  []func()
 	// asking is what its page asked to use and waits on you for, and

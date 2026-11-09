@@ -95,7 +95,7 @@ func (a *App) watchPage(t *tab) {
 	t.off = append(t.off,
 		p.OnWillNavigate(func(*mygo.NavigateEvent) {}), // an untrusted page goes nowhere without one
 		p.OnDidNavigate(func(string) {
-			a.update(func() { t.loading = true })
+			a.update(func() { t.loading, t.pageError = true, "" })
 			nav()
 		}),
 		p.OnPageTitleUpdated(func(e *mygo.TitleEvent) {
@@ -107,7 +107,11 @@ func (a *App) watchPage(t *tab) {
 			nav()
 		}),
 		p.OnDidFailLoad(func(err *mygo.LoadError) {
-			a.update(func() { t.loading = false })
+			message := err.Description
+			if message == "" {
+				message = err.Error()
+			}
+			a.update(func() { t.loading, t.pageError = false, message })
 			nav()
 		}),
 	)
@@ -142,6 +146,7 @@ func (a *App) goTo(t *tab) {
 	t.addr, t.url = u, u
 	if t.web != nil {
 		if err := t.web.Page().LoadURL(u); err != nil {
+			t.pageError = err.Error()
 			a.notice = "Can't open " + u + ": " + err.Error()
 			return
 		}
@@ -245,10 +250,30 @@ func (a *App) focusAddress() {
 	a.openBrowser("")
 }
 
-// browse runs fn on the focused tab's page, when it's a browser tab's.
+// browse runs fn on the focused browser tab's page, when it's one.
 func (a *App) browse(fn func(p *mygo.Page)) {
 	if t := a.focused(); t != nil && t.browser && t.web != nil {
 		fn(t.web.Page())
+	}
+}
+
+// refreshFocused refreshes only the pane with the window's focus.
+func (a *App) refreshFocused() {
+	t := a.focused()
+	if t == nil {
+		return
+	}
+	switch {
+	case t.browser:
+		if t.web != nil {
+			a.browse((*mygo.Page).Reload)
+		}
+	case t.files != nil:
+		a.refreshFiles(t)
+	case t.database != nil:
+		if !t.database.loading {
+			a.loadDatabaseSchema(t)
+		}
 	}
 }
 
@@ -268,7 +293,7 @@ func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
 		if tb.loading {
 			a.navButton(c, t, "stop", iconClose, "Stop loading", true, page((*mygo.Page).Stop))
 		} else {
-			a.navButton(c, t, "reload", iconReload, "Reload ("+keyText("Cmd+R")+")", true, page((*mygo.Page).Reload))
+			a.navButton(c, t, "reload", iconReload, "Refresh Pane ("+keyText("Cmd+R")+")", true, page((*mygo.Page).Reload))
 		}
 		field := ui.TextInput(c.Key("field"), &tb.addr).Placeholder("Enter a web address").Label("Address").Grow(1).
 			OnSubmit(func() { a.goTo(tb) }).
@@ -284,9 +309,6 @@ func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
 		if tb.focusAddr {
 			field.Focus()
 			tb.focusAddr = false
-		}
-		if tb.loading {
-			ui.Spinner(c).Size(12, 12)
 		}
 		if tb.remotePort.port != 0 {
 			label := fmt.Sprintf("%s:%d", tb.remotePort.name, tb.remotePort.port)
@@ -315,7 +337,7 @@ func (a *App) pageMenu(m *ui.Menu, tb *tab) {
 			a.toggleBookmark(tb)
 		}
 	}
-	if m.Item("Reload Page").Chosen() && tb.web != nil {
+	if m.Item("Refresh Pane").Chosen() && tb.web != nil {
 		tb.web.Page().Reload()
 	}
 	if m.Item("Copy Address").Chosen() && a.copyText != nil {

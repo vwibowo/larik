@@ -41,6 +41,16 @@ func TestNormalizeURL(t *testing.T) {
 	}
 }
 
+func TestRefreshPaneShortcutIsDiscoverable(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	if menuKey(a, "Refresh Pane") != "Cmd+R" {
+		t.Fatalf("Refresh Pane shortcut: %q", menuKey(a, "Refresh Pane"))
+	}
+	if a.defaultKey("Refresh Pane") != "Cmd+R" {
+		t.Fatalf("default key: %q", a.defaultKey("Refresh Pane"))
+	}
+}
+
 func TestBrowserTab(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
 	session := &tab{id: "s", dir: "/work", chooser: true}
@@ -86,10 +96,36 @@ func TestBrowserTab(t *testing.T) {
 
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	for _, label := range []string{"Address", "Back (" + keyText("Cmd+[") + ")", "Reload (" + keyText("Cmd+R") + ")"} {
+	for _, label := range []string{"Address", "Back (" + keyText("Cmd+[") + ")", "Refresh Pane (" + keyText("Cmd+R") + ")"} {
 		if _, ok := tt.Find(label); !ok {
 			t.Fatalf("no %q in %q", label, tt.Texts())
 		}
+	}
+}
+
+func TestBrowserPageHoverActivatesItsPane(t *testing.T) {
+	a := New(Options{Cwd: "/work"})
+	session := &tab{id: "session", dir: "/work", chooser: true}
+	browser := &tab{id: "browser", dir: "/work", browser: true, url: blankPage}
+	a.tabs = []*tab{session, browser}
+	a.layout = &pane{tab: session}
+	a.focusPane(a.layout)
+	a.splitPane(a.layout, browser, false)
+	a.focusPane(a.paneOf(session))
+	a.focusNext = nil
+
+	tt := ui.NewTester(a.view, 1000, 700)
+	tt.Frame()
+	page, ok := tt.Find("Pane: New browser pane")
+	if !ok {
+		t.Fatal("browser pane is not rendered")
+	}
+	// The bottom of the browser pane is its page area (the test omits the
+	// native WebView, so it renders the same UI element as a placeholder).
+	tt.ClickAt(page.X+page.W/2, page.Y+page.H-20)
+	tt.Frame()
+	if a.focused() != browser {
+		t.Fatalf("hovering the browser page focused %v, want browser pane", a.focused())
 	}
 }
 

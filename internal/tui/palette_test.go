@@ -13,12 +13,14 @@ import (
 	"larik/internal/llm/openaicompat"
 	"larik/internal/permission"
 	"larik/internal/session"
+	"larik/internal/status"
 	"larik/internal/tools"
 )
 
 // testModel is a TUI model around an agent that is never run.
 func testModel(t *testing.T) *model {
 	t.Helper()
+	t.Setenv(status.TabEnv, "")
 	dir := t.TempDir()
 	sess, err := session.Create(filepath.Join(dir, "sessions"), session.Meta{Cwd: dir, Model: "m"})
 	if err != nil {

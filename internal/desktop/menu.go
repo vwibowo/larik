@@ -118,7 +118,7 @@ func (a *App) menuDefaults() []menuGroup {
 			{label: "Smaller Text", key: "Cmd+-", run: func() { a.zoom(terminal.Zoom{Steps: -1}) }},
 			{label: "Actual Size", key: "Cmd+0", run: func() { a.zoom(terminal.Zoom{Reset: true}) }},
 			{},
-			{label: "Reload Page", key: "Cmd+R", run: func() { a.browse((*mygo.Page).Reload) }},
+			{label: "Refresh Pane", key: "Cmd+R", run: a.refreshFocused},
 			{label: "Back", key: "Cmd+[", run: func() { a.browse((*mygo.Page).GoBack) }},
 			{label: "Forward", key: "Cmd+]", run: func() { a.browse((*mygo.Page).GoForward) }},
 			{},

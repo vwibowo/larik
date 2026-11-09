@@ -639,7 +639,7 @@ func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 			}
 			ui.Text(c, name).FontSize(12).Bold().SingleLine().Grow(1).Shrink(1).Tooltip(f.root).Label("Explorer folder " + name).
 				ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, f.root, true, true) })
-			a.iconButton(c, theme, "refresh-files", iconReload, "Refresh files", false, func() { a.refreshFiles(tb) })
+			a.iconButton(c, theme, "refresh-files", iconReload, "Refresh files ("+keyText("Cmd+R")+")", false, func() { a.refreshFiles(tb) })
 			ui.Box(c.Key("file-visibility")).Padding(6).Radius(6).Label("File visibility").Tooltip("File visibility").Children(func() {
 				ui.Icon(c, iconFilter).FontSize(15).TextColor(theme.Text.Alpha(0.75))
 			}).Menu(func(m *ui.Menu) {

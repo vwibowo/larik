@@ -150,7 +150,8 @@ type hostTabInfo struct {
 // the window's is.
 func hostSocketPath(dataDir string) string {
 	sum := sha256.Sum256([]byte(dataDir))
-	return filepath.Join(os.TempDir(), "larik-desktop-host-"+hex.EncodeToString(sum[:6])+".sock")
+	name := "larik-desktop-host-" + hex.EncodeToString(sum[:6]) + ".sock"
+	return filepath.Join(shortSocketDir(name), name)
 }
 
 // host is the running host.

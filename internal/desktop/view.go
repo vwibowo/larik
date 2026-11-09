@@ -414,8 +414,8 @@ func (a *App) shortcuts(c *ui.Context) {
 		a.openBrowser("")
 	case a.keyed(c, "Open Location…", mod, ui.KeyL):
 		a.focusAddress()
-	case a.keyed(c, "Reload Page", mod, ui.KeyR):
-		a.browse((*mygo.Page).Reload)
+	case a.keyed(c, "Refresh Pane", mod, ui.KeyR):
+		a.refreshFocused()
 	case a.keyed(c, "Search Sessions…", mod, ui.KeyK):
 		a.focusSearch, a.noSidebar = true, false
 	case a.keyed(c, "Find…", mod, ui.KeyF):
@@ -1463,6 +1463,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	body := ui.Column(c).Grow(1).Children(func() {
 		a.header(c, t, p)
 		a.exitBar(c, t, tb)
+		a.paneFeedback(c, t, tb)
 		if tb.chooser {
 			term = a.chooserPane(c, t, tb)
 			return
@@ -1513,7 +1514,7 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 			term.Focus()
 		}
 		a.focusNext = nil
-	} else if body.FocusWithin() && a.focus != p {
+	} else if (body.FocusWithin() || tb.browser && term.Hovered()) && a.focus != p {
 		a.focus = p
 		if tb.files == nil {
 			a.followFiles(tb.dir)

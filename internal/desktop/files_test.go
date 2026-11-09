@@ -55,6 +55,23 @@ func filesFixture(t *testing.T) string {
 	return root
 }
 
+func TestRefreshFocusedFilesPane(t *testing.T) {
+	root := filesFixture(t)
+	a := New(Options{Cwd: root})
+	defer a.Close()
+	a.openFiles(root)
+	tb := a.focused()
+	if tb == nil || tb.files == nil {
+		t.Fatal("Files pane not opened")
+	}
+	query := "main.go"
+	tb.files.query = query
+	a.refreshFocused()
+	if tb.files == nil || tb.files.query != query {
+		t.Fatal("refresh should preserve the Files search")
+	}
+}
+
 func TestFilesContextMenuActions(t *testing.T) {
 	root := filesFixture(t)
 	a := New(Options{Cwd: root})

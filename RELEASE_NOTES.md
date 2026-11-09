@@ -13,6 +13,8 @@ Desktop workspaces now keep independent pane layouts while hosted programs conti
 
 ### Changed
 
+- **Refresh Pane shortcut.** `Cmd+R` refreshes the focused Browser, Files, or Database pane; in Database it refreshes schema only and does not rerun SQL. The action is in the View menu and can be rebound in Settings › Keyboard.
+- **Pane operation feedback.** Browser, Files, and Database panes share a visible status strip for active work and failures; browser load errors remain visible until another navigation.
 - Database results support richer paging, cell and row selection, TSV copying, and CSV export. Function objects open in a read-only definition editor, and the SQL editor provides highlighting and schema-aware completion.
 - Desktop workspace tabs use a compact titlebar rail with a clear active state and overflow handling.
 
