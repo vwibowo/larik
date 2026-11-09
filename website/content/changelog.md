@@ -1,24 +1,33 @@
 # Changelog
 
-## Unreleased
+## v0.33.0
+
+<p class="release-meta"><time datetime="2026-11-09">November 9, 2026</time></p>
 
 ### Added
 
+- PostgreSQL Desktop connections now use host, port, database, username, and password environment-variable fields. **Test Connection** verifies access before saving; passwords remain outside Larik settings.
+- Desktop windows now have titlebar workspace tabs, each with its own pane layout. Create, rename, reorder, switch, move panes, and close workspaces from the titlebar, menus, command palette, or `larik desktop workspace`. Running panes continue when switching; saved workspaces return after restart.
 - Hosted shell and command panes can be detached from the File menu, command palette, or pane menu while their programs keep running. **Detached Terminals** in the sidebar reattaches them after a Desktop restart and retains exited screens until **End Terminal**; supported remote hosts work the same way.
 - Browser panes can bookmark pages with an address-bar star. A shared **Browser Bookmarks** sidebar section opens or focuses saved pages across Desktop windows and restores them after restart.
 - A TablePlus-inspired read-only Database Manager in Larik Desktop, with saved global connections in the sidebar, a schema browser, SQL editor, result table, and row inspector. Desktop-only agent tools can inspect an open pane after per-connection opt-in.
 - Desktop Database Manager now supports SQL Server and MySQL/MariaDB connections with environment-backed credentials, dialect-aware browsing, and SQL completions.
+- Files panes can preview PDFs and apply bulk actions to selected files.
 
 ### Changed
 
+- Desktop workspace tabs now use a shared titlebar rail with an outlined active tab, pane icons, and quieter inactive tabs. Narrow windows keep the active tab readable by hiding the workspace summary.
 - Zoomed Desktop panes now use a compact **Show All Panes** toolbar icon, and hosted terminal pane headers have a clickable detach icon.
 - Database Manager now gives results more room, searches tables, and keeps Data, Query, and Agent results separately. Double-clicking a row or pressing Enter opens its details; a single click selects it for copying. Its compact editor and active result tab restore with the pane.
+- The Database schema browser now marks tables, views, and functions with distinct symbols. Selecting a function opens its read-only definition editor; PostgreSQL, MySQL/MariaDB, and SQL Server functions appear alongside tables and views.
+- Database object context menus now open table rows, inspect structure, copy object names, SELECT starters, or creation scripts, and export the selected loaded page as CSV. Function menus open and copy their definitions.
 - The Database SQL editor now highlights queries and completes read-only SQL terms, tables, and columns from the open schema. The pane uses a denser, theme-aware grid and query toolbar.
 - The Database table browser now follows the Files explorer layout, with collapsible schemas and a compact search row.
 - Database header icons now toggle the table browser on the left and row details on the right.
 - Background opacity now lives in Appearance and applies to terminal, Files, and Database panes; existing terminal opacity values carry over.
 - The Database connection form is now width-constrained and scrollable, with labeled fields, a database type switch, and clear agent access controls.
 - Database results now support selectable cells and rows, TSV copying, CSV export of loaded rows, adjustable Data page size, compact arrow paging, and selectable inspector values.
+- Desktop reliability improvements cover session recovery, remote connections, worktrees, and rendering performance.
 
 ## v0.32.0
 

@@ -1,3 +1,29 @@
+# Larik v0.33.0
+
+_November 9, 2026 · Previous release: v0.32.0._
+
+Desktop workspaces now keep independent pane layouts while hosted programs continue running. The Database Manager adds multi-dialect connections, schema-aware inspection and creation scripts; Files panes can preview PDFs and act on multiple selections.
+
+### Added
+
+- **Workspaces.** Switch between named pane layouts in each Desktop window, move panes between workspaces, and restore inactive workspaces and their hosted programs after restart. Use the titlebar, Window menu, command palette, or `larik desktop workspace` commands.
+- **Database Manager.** PostgreSQL, SQL Server, and MySQL/MariaDB connections use structured fields or environment-backed credentials, with a Test Connection action. Schema objects have distinct icons and context menus for opening, inspecting, copying SQL, and exporting the loaded page as CSV.
+- **PDF and bulk file actions.** Preview PDFs in Files panes and apply actions to selected files together.
+- **Detached terminals and browser bookmarks.** Hosted programs can keep running outside the pane grid and reattach later; bookmarked pages are shared across Desktop windows.
+
+### Changed
+
+- Database results support richer paging, cell and row selection, TSV copying, and CSV export. Function objects open in a read-only definition editor, and the SQL editor provides highlighting and schema-aware completion.
+- Desktop workspace tabs use a compact titlebar rail with a clear active state and overflow handling.
+
+### Fixed and performance
+
+- Improved Desktop reliability and rendering performance, including remote-session recovery and pane restoration.
+
+### Compatibility
+
+- Desktop state format is now version 5. Existing version 4 layouts migrate into a single workspace.
+
 # Larik v0.31.0
 
 _November 5, 2026 · Previous release: v0.30.0._
