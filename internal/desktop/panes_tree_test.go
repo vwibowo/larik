@@ -227,14 +227,14 @@ func TestPanesInTheWindow(t *testing.T) {
 	if a.focused() != tabs[0] {
 		t.Fatalf("left: %v", a.tabTitle(a.focused()))
 	}
-	// Zoomed, the focused pane shows alone, with a button to show them all.
+	// Zoomed, the focused pane shows alone, with a compact toolbar action.
 	tt.Key(mod|ui.Shift, ui.KeyEnter)
 	tt.Frame()
-	if !a.zoomed || !tt.HasText("Show every pane ("+keyText("Shift+Cmd+Enter")+")") {
+	if !a.zoomed || !tt.HasText("Show All Panes ("+keyText("Shift+Cmd+Enter")+")") || tt.HasText("Zoomed · 3 panes") {
 		t.Fatalf("zoom: %v %q", a.zoomed, tt.Texts())
 	}
 	snapshot(t, tt, "panes-zoomed-dark.png")
-	if err := tt.Click("Show every pane (" + keyText("Shift+Cmd+Enter") + ")"); err != nil {
+	if err := tt.Click("Show All Panes (" + keyText("Shift+Cmd+Enter") + ")"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

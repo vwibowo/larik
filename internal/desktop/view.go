@@ -47,7 +47,10 @@ var (
 	iconRight      = svg(`<path d="m9 18 6-6-6-6"/>`)
 	iconZoom       = svg(`<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`)
 	iconShrink     = svg(`<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>`)
+	iconDetach     = svg(`<rect x="3" y="3" width="14" height="14" rx="2"/><path d="m11 11 10 10m-6 0h6v-6"/>`)
 	iconGlobe      = svg(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>`)
+	iconStar       = svg(`<path d="m12 2 3.1 6.3 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z"/>`)
+	iconStarFilled = svg(`<path fill="currentColor" d="m12 2 3.1 6.3 7 1-5 4.9 1.2 7-6.3-3.3-6.3 3.3 1.2-7-5-4.9 7-1z"/>`)
 	iconFolder     = svg(`<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
 	iconDatabase   = svg(`<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>`)
 	iconFilter     = svg(`<path d="M4 7h16M7 12h10M10 17h4"/>`)
@@ -534,10 +537,7 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 				options.Background(t.Text.Alpha(0.06))
 			}
 			if a.zoomed {
-				ui.Text(c, fmt.Sprintf("Zoomed · %d panes", len(a.panes()))).FontSize(11).TextColor(t.Accent)
-				if ui.Button(c.Key("show-all-panes"), "Show All Panes").Clicked() {
-					a.toggleZoom()
-				}
+				a.iconButton(c, t, "show-all-panes", iconShrink, "Show All Panes ("+keyText("Shift+Cmd+Enter")+")", false, a.toggleZoom)
 			}
 			if d, ok := ui.Drop[sessionDrag](split); ok {
 				a.openInSplit(string(d), false)
@@ -709,6 +709,19 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if p := a.paneOf(tb); p != nil && m.Item("Close Pane").Chosen() {
 		a.closePane(p)
 	}
+	if tb.shell() && tb.hosted {
+		if a.canDetach(tb) {
+			if m.Item("Detach Pane").Chosen() {
+				a.detachPane(tb)
+			}
+		} else if name, _, remote := splitRemote(tb.dir); remote {
+			label := "Detach Pane — update Larik on " + name
+			if tb.disconnected {
+				label = "Detach Pane — reconnect to " + name
+			}
+			m.Item(label).Disabled(true)
+		}
+	}
 	if tb.agentOffered && m.Item("Resume agent").Chosen() {
 		a.resumeAgent(tb)
 	}
@@ -775,6 +788,9 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		selected := ""
 		if f := a.focused(); f != nil {
 			selected = tabKey(f)
+			if b, ok := bookmarkForTab(f); ok && a.bookmarks.has(b) {
+				selected = "bookmark:" + b.key()
+			}
 			if f.database != nil && f.database.profile != "" {
 				selected = "database:" + f.database.profile
 			}
@@ -795,6 +811,8 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 				return
 			}
 			a.pinnedSection(c, t)
+			a.detachedSection(c, t)
+			a.bookmarksSection(c, t)
 			a.databaseSidebar(c, t)
 			if len(a.servers) > 0 {
 				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
@@ -856,6 +874,24 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 	if files := side.DroppedFiles(); files != nil {
 		a.dropDirs(files)
 	}
+}
+
+func (a *App) bookmarksSection(c *ui.Context, t *ui.Theme) {
+	items := a.bookmarks.all()
+	if len(items) == 0 {
+		return
+	}
+	ui.SidebarSection(c.Key("browser-bookmarks"), "Browser Bookmarks", nil, func() {
+		for _, b := range items {
+			b := b
+			ui.SidebarItem(c, "bookmark:"+b.key(), iconStar, b.label()).Tooltip(b.address()).
+				ContextMenu(func(m *ui.Menu) {
+					if m.Item("Remove Bookmark").Chosen() {
+						a.setBookmark(b, false)
+					}
+				})
+		}
+	})
 }
 
 // pinnedSection lists the pinned sessions above the projects. A session
@@ -1574,6 +1610,9 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 					a.toggleZoom()
 				})
 			}
+		}
+		if a.canDetach(tb) {
+			a.smallButton(c, t, "detach", iconDetach, "Detach pane (keep terminal running)", func() { a.detachPane(tb) })
 		}
 		a.closeButton(c, t, "Close pane", func() { a.closePane(p) })
 	})

@@ -312,7 +312,7 @@ func (a *App) adoptRemote(srv *server) {
 	conn.Close()
 	slices.SortFunc(rep.Tabs, func(x, y hostTabInfo) int { return x.Started.Compare(y.Started) })
 	for _, h := range rep.Tabs {
-		if h.Exited || a.tabByID(h.ID) != nil {
+		if h.Exited || h.Detached || a.tabByID(h.ID) != nil {
 			continue
 		}
 		h.Dir = remotePath(srv.name, h.Dir)

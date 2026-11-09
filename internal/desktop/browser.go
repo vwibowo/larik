@@ -85,6 +85,9 @@ func (a *App) watchPage(t *tab) {
 					t.addr = u
 				}
 				t.url = u
+				if t.remotePort.port != 0 && u != blankPage {
+					t.remoteBookmarkSuffix = bookmarkSuffix(u)
+				}
 			}
 			t.back, t.fwd = back, fwd
 		})
@@ -293,11 +296,25 @@ func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
 			ui.Text(c, label).FontSize(11).TextColor(t.TextMuted)
 		}
 		a.navButton(c, t, "external", iconExternal, "Open in your browser", tb.url != "" && tb.url != blankPage, func() { a.openURL(tb.url) })
+		if b, ok := bookmarkForTab(tb); ok && a.bookmarks.has(b) {
+			a.navButton(c, t, "bookmark", iconStarFilled, "Remove bookmark", true, func() { a.toggleBookmark(tb) })
+		} else {
+			a.navButton(c, t, "bookmark", iconStar, "Bookmark this page", ok, func() { a.toggleBookmark(tb) })
+		}
 	})
 }
 
 // pageMenu is what a browser tab's menu does with its page.
 func (a *App) pageMenu(m *ui.Menu, tb *tab) {
+	if b, ok := bookmarkForTab(tb); ok {
+		label := "Bookmark Page"
+		if a.bookmarks.has(b) {
+			label = "Remove Bookmark"
+		}
+		if m.Item(label).Chosen() {
+			a.toggleBookmark(tb)
+		}
+	}
 	if m.Item("Reload Page").Chosen() && tb.web != nil {
 		tb.web.Page().Reload()
 	}

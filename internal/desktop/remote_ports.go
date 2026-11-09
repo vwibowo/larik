@@ -17,8 +17,31 @@ type remotePortKey struct {
 }
 
 type remoteForward struct {
-	local int
-	stop  func()
+	local   int
+	stop    func()
+	pending []*tab
+}
+
+func (a *App) openRemoteBookmark(b browserBookmark) {
+	key := remotePortKey{b.RemoteName, b.RemotePort}
+	srv := a.serverNamed(key.name)
+	if srv == nil || a.dialOf(srv) == nil {
+		a.notice = "Not connected to " + key.name
+		return
+	}
+	if !slices.Contains(srv.features, "remote-meta") {
+		a.notice = "Update larik on " + key.name + " to open its ports"
+		return
+	}
+	t := a.startBrowser("")
+	if t == nil {
+		return
+	}
+	t.dir = remotePath(key.name, "")
+	t.remotePort, t.remotePortLost = key, true
+	t.remoteBookmarkSuffix = b.RemotePath
+	a.activate(t)
+	a.startRemoteForward(key, false, t, "")
 }
 
 func sshPortForwardArgs(name string, local, remote int) []string {
@@ -111,6 +134,8 @@ func (a *App) startRemoteForward(key remotePortKey, external bool, target *tab, 
 	if f := a.forwards[key]; f != nil {
 		if f.local > 0 {
 			a.showRemotePort(key, f.local, external, target, path)
+		} else if target != nil {
+			f.pending = append(f.pending, target)
 		}
 		return
 	}
@@ -128,11 +153,18 @@ func (a *App) startRemoteForward(key remotePortKey, external bool, target *tab, 
 			}
 			if err != nil {
 				delete(a.forwards, key)
+				for _, pending := range f.pending {
+					pending.remotePortLost = true
+				}
 				a.notice = fmt.Sprintf("Can't open %s:%d: %v", key.name, key.port, err)
 				return
 			}
 			f.local, f.stop = local, stop
 			a.showRemotePort(key, local, external, target, path)
+			for _, pending := range f.pending {
+				a.showRemotePort(key, local, false, pending, "")
+			}
+			f.pending = nil
 			go func() {
 				select {
 				case <-a.done:
@@ -165,6 +197,7 @@ func (a *App) showRemotePort(key remotePortKey, local int, external bool, target
 		if !slices.Contains(a.tabs, target) {
 			return
 		}
+		u += target.remoteBookmarkSuffix
 		target.remotePortLost = false
 		target.url, target.addr = u, u
 		if target.web != nil {

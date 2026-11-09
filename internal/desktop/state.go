@@ -21,6 +21,7 @@ type savedState struct {
 	Browsers      map[int]string            `json:"browsers,omitempty"`
 	BrowserDirs   map[int]string            `json:"browser_dirs,omitempty"`
 	RemotePorts   map[int]savedRemotePort   `json:"remote_ports,omitempty"`
+	RemotePaths   map[int]string            `json:"remote_paths,omitempty"`
 	Agents        map[int]agentResume       `json:"agents,omitempty"`
 	Files         map[int]string            `json:"files,omitempty"`     // Files tab roots by tab index
 	Databases     map[int]string            `json:"databases,omitempty"` // Database pane project roots by tab index
@@ -188,6 +189,12 @@ func (a *App) state() savedState {
 					st.RemotePorts = map[int]savedRemotePort{}
 				}
 				st.RemotePorts[len(st.Tabs)] = savedRemotePort{t.remotePort.name, t.remotePort.port}
+				if t.remoteBookmarkSuffix != "" {
+					if st.RemotePaths == nil {
+						st.RemotePaths = map[int]string{}
+					}
+					st.RemotePaths[len(st.Tabs)] = t.remoteBookmarkSuffix
+				}
 				st.Browsers[len(st.Tabs)] = blankPage
 			}
 			path = ""
@@ -395,6 +402,7 @@ func (a *App) restore() bool {
 						t.dir = remotePath(remote.Name, "")
 					}
 					t.remotePort, t.remotePortLost = remotePortKey{remote.Name, remote.Port}, true
+					t.remoteBookmarkSuffix = st.RemotePaths[i]
 				}
 				opened[i] = t
 			}

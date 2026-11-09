@@ -125,6 +125,18 @@ func tabKey(t *tab) string { return "tab:" + t.id }
 // selectKey shows what the sidebar's key names: a terminal tab, or a
 // session.
 func (a *App) selectKey(key string) {
+	if a.selectDetached(key) {
+		return
+	}
+	if id, ok := strings.CutPrefix(key, "bookmark:"); ok {
+		for _, b := range a.bookmarks.all() {
+			if b.key() == id {
+				a.openSavedBookmark(b)
+				return
+			}
+		}
+		return
+	}
 	if id, ok := strings.CutPrefix(key, "tab:"); ok {
 		if t := a.tabByID(id); t != nil {
 			a.activate(t)

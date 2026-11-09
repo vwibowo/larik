@@ -84,7 +84,7 @@ type hostRequest struct {
 	// "attach", to attach to it only; "list"; "read", for the text its
 	// terminal shows, scrollback and all; "send", to type Text into it,
 	// and Return after with Enter; "close", to end its program and forget
-	// it; "stop", to end every program and exit; "index", for the
+	// it; "detach", to keep a terminal without a pane; "stop", to end every program and exit; "index", for the
 	// sessions of its data folder, as a window on another machine shows
 	// them (remote.go); or "ping".
 	Op      string   `json:"op"`
@@ -131,18 +131,19 @@ const hostProto = 2
 
 // hostTabInfo is a tab the host keeps.
 type hostTabInfo struct {
-	ID      string        `json:"id"`
-	Dir     string        `json:"dir"`
-	Command []string      `json:"command"`
-	Shell   bool          `json:"shell,omitempty"`
-	Run     string        `json:"run,omitempty"`
-	Title   string        `json:"title,omitempty"` // what its program set as the terminal's title
-	Status  status.Report `json:"status,omitzero"`
-	Agent   agentResume   `json:"agent,omitzero"`
-	Exited  bool          `json:"exited,omitempty"`
-	Code    int           `json:"code,omitempty"`
-	Windows int           `json:"windows,omitempty"` // connections showing it
-	Started time.Time     `json:"started"`
+	ID       string        `json:"id"`
+	Dir      string        `json:"dir"`
+	Command  []string      `json:"command"`
+	Shell    bool          `json:"shell,omitempty"`
+	Run      string        `json:"run,omitempty"`
+	Title    string        `json:"title,omitempty"` // what its program set as the terminal's title
+	Status   status.Report `json:"status,omitzero"`
+	Agent    agentResume   `json:"agent,omitzero"`
+	Exited   bool          `json:"exited,omitempty"`
+	Code     int           `json:"code,omitempty"`
+	Windows  int           `json:"windows,omitempty"` // connections showing it
+	Detached bool          `json:"detached,omitempty"`
+	Started  time.Time     `json:"started"`
 }
 
 // hostSocketPath is the host's socket for dataDir, in the temp folder as
@@ -169,19 +170,20 @@ type host struct {
 
 // hostTab is a tab's program and the windows showing it.
 type hostTab struct {
-	id      string
-	dir     string
-	command []string
-	shell   bool
-	run     string
-	term    *terminal.Terminal
-	clients map[*hostClient]bool
-	exited  bool
-	code    int
-	started time.Time
-	ended   time.Time
-	records statusRecords
-	agent   agentResume
+	id       string
+	dir      string
+	command  []string
+	shell    bool
+	run      string
+	term     *terminal.Terminal
+	clients  map[*hostClient]bool
+	detached bool
+	exited   bool
+	code     int
+	started  time.Time
+	ended    time.Time
+	records  statusRecords
+	agent    agentResume
 }
 
 // hostClient is a window showing a tab: what's to be sent to it.
@@ -307,11 +309,7 @@ func (h *host) idleLoop() {
 			return
 		}
 		h.mu.Lock()
-		for id, t := range h.tabs {
-			if t.exited && len(t.clients) == 0 && time.Since(t.ended) > hostKeepExited {
-				delete(h.tabs, id)
-			}
-		}
+		h.expireTabs(time.Now())
 		busy := len(h.tabs) > 0 || h.conns > 0
 		if busy {
 			h.idle = time.Now()
@@ -320,6 +318,16 @@ func (h *host) idleLoop() {
 		h.mu.Unlock()
 		if done {
 			return
+		}
+	}
+}
+
+// expireTabs runs with h.mu held. A detached final screen stays until the
+// user ends it or the host itself stops.
+func (h *host) expireTabs(now time.Time) {
+	for id, t := range h.tabs {
+		if t.exited && !t.detached && len(t.clients) == 0 && now.Sub(t.ended) > hostKeepExited {
+			delete(h.tabs, id)
 		}
 	}
 }
@@ -371,7 +379,7 @@ func (h *host) handle(conn net.Conn) {
 	}
 	switch req.Op {
 	case "ping":
-		reply(hostReply{PID: os.Getpid(), Proto: hostProto, Features: []string{"session-index", "program-status", "remote-files", "remote-git", "remote-worktrees", "remote-meta", "agent-check"}, WorktreeRoot: filepath.Join(h.dataDir, "worktrees")})
+		reply(hostReply{PID: os.Getpid(), Proto: hostProto, Features: []string{"session-index", "program-status", "remote-files", "remote-git", "remote-worktrees", "remote-meta", "agent-check", "detached-terminals"}, WorktreeRoot: filepath.Join(h.dataDir, "worktrees")})
 	case "meta":
 		meta, err := h.remoteMeta()
 		if err != nil {
@@ -469,6 +477,18 @@ func (h *host) handle(conn net.Conn) {
 	case "close":
 		h.closeTab(req.ID)
 		reply(hostReply{})
+	case "detach":
+		h.mu.Lock()
+		t := h.tabs[req.ID]
+		if t != nil && t.shell {
+			t.detached = true
+		}
+		h.mu.Unlock()
+		if t == nil || !t.shell {
+			reply(hostReply{Error: "detach needs a terminal tab"})
+			return
+		}
+		reply(hostReply{})
 	case "stop":
 		reply(hostReply{})
 		h.stopOnce.Do(func() { close(h.stop) })
@@ -481,7 +501,7 @@ func (h *host) handle(conn net.Conn) {
 		if !reply(hostReply{}) {
 			return
 		}
-		h.attach(t, conn, r)
+		h.attach(t, conn, r, req.Op == "attach")
 	default:
 		reply(hostReply{Error: "unknown op " + req.Op})
 	}
@@ -492,7 +512,7 @@ func (h *host) list() []hostTabInfo {
 	defer h.mu.Unlock()
 	out := make([]hostTabInfo, 0, len(h.tabs))
 	for _, t := range h.tabs {
-		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Status: t.records.current(), Agent: t.agent, Exited: t.exited, Code: t.code, Windows: len(t.clients), Started: t.started})
+		out = append(out, hostTabInfo{ID: t.id, Dir: t.dir, Command: t.command, Shell: t.shell, Run: t.run, Title: t.term.Title(), Status: t.records.current(), Agent: t.agent, Exited: t.exited, Code: t.code, Windows: len(t.clients), Detached: t.detached, Started: t.started})
 	}
 	return out
 }
@@ -616,7 +636,7 @@ func (h *host) broadcast(t *hostTab, m hostMsg) {
 // attach shows t to the window on conn until either goes: what the
 // window sends goes to the program, and frames of what it shows come
 // back, starting with all of it.
-func (h *host) attach(t *hostTab, conn net.Conn, r *bufio.Reader) {
+func (h *host) attach(t *hostTab, conn net.Conn, r *bufio.Reader, reattach bool) {
 	m, err := t.term.NewMirror()
 	if err != nil {
 		return
@@ -625,6 +645,11 @@ func (h *host) attach(t *hostTab, conn net.Conn, r *bufio.Reader) {
 	c := &hostClient{send: make(chan hostMsg, 64)}
 	h.mu.Lock()
 	t.clients[c] = true
+	// An initial open can still be establishing its mirror when the user
+	// detaches its pane. Only an explicit attach may clear that marker.
+	if reattach {
+		t.detached = false
+	}
 	current := t.records.current()
 	if current.State != status.Idle {
 		data, _ := json.Marshal(current)
@@ -1037,7 +1062,7 @@ func (a *App) adoptHosted(live map[string]hostTabInfo) []*tab {
 	}
 	var left []hostTabInfo
 	for id, h := range live {
-		if a.tabByID(id) == nil && !a.ownedHostTabs[id] {
+		if !h.Detached && a.tabByID(id) == nil && !a.ownedHostTabs[id] {
 			left = append(left, h)
 		}
 	}

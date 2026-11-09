@@ -58,6 +58,33 @@ func (a *App) menuBar() []menuGroup { return a.bindKeys(a.menuDefaults()) }
 // menuDefaults is the menu bar with its commands' own keys, before those
 // Settings › Keyboard gave them (see keys.go).
 func (a *App) menuDefaults() []menuGroup {
+	fileItems := []command{
+		{label: "New Pane", key: "Cmd+T", run: a.openNew},
+		{label: "New Pane Beside", key: "Cmd+D", run: a.splitRight},
+		{label: "New Pane Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
+		{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},
+		{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
+		{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
+		{label: "New Browser Pane", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
+		{label: "New Files Pane", run: func() { a.openFiles(a.currentDir()) }},
+		{label: "New Database Pane", run: func() { a.openDatabase(a.currentDir()) }},
+		{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
+		{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
+		{label: "Connect to Server…", run: a.askServer},
+		{},
+	}
+	if t := a.focused(); a.canDetach(t) {
+		fileItems = append(fileItems, command{label: "Detach Pane", run: func() { a.detachPane(t) }})
+	}
+	fileItems = append(fileItems,
+		command{label: "Close Pane", key: "Cmd+W", run: func() {
+			if t := a.focused(); t != nil {
+				a.askClose([]*tab{t}, nil)
+			}
+		}},
+		command{label: "Close Window", key: "Shift+Cmd+W", role: mygo.RoleClose},
+		command{label: "Reopen Closed Pane", key: "Shift+Cmd+T", run: a.reopenClosed},
+	)
 	return []menuGroup{
 		// MyGo's app menu, with Settings where Mac apps have it.
 		{role: mygo.RoleAppMenu, items: append([]command{
@@ -73,28 +100,7 @@ func (a *App) menuDefaults() []menuGroup {
 			{},
 			{role: mygo.RoleQuit},
 		}, a.quitEndingCommand()...)},
-		{title: "File", items: []command{
-			{label: "New Pane", key: "Cmd+T", run: a.openNew},
-			{label: "New Pane Beside", key: "Cmd+D", run: a.splitRight},
-			{label: "New Pane Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
-			{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},
-			{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
-			{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
-			{label: "New Browser Pane", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
-			{label: "New Files Pane", run: func() { a.openFiles(a.currentDir()) }},
-			{label: "New Database Pane", run: func() { a.openDatabase(a.currentDir()) }},
-			{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
-			{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
-			{label: "Connect to Server…", run: a.askServer},
-			{},
-			{label: "Close Pane", key: "Cmd+W", run: func() {
-				if t := a.focused(); t != nil {
-					a.askClose([]*tab{t}, nil)
-				}
-			}},
-			{label: "Close Window", key: "Shift+Cmd+W", role: mygo.RoleClose},
-			{label: "Reopen Closed Pane", key: "Shift+Cmd+T", run: a.reopenClosed},
-		}},
+		{title: "File", items: fileItems},
 		{title: "Edit", items: []command{
 			{role: mygo.RoleUndo}, {role: mygo.RoleRedo}, {},
 			{role: mygo.RoleCut}, {role: mygo.RoleCopy}, {role: mygo.RolePaste}, {role: mygo.RoleSelectAll},

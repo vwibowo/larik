@@ -64,10 +64,16 @@ type App struct {
 	done   chan struct{}
 	kick   chan struct{} // asks the index loop to look again now
 
-	projects      []session.Project
-	databaseStore *databaseStore
-	open          map[string]*bool // project root → its sidebar section is open
-	showAll       map[string]bool  // project root → all its sessions show
+	projects            []session.Project
+	databaseStore       *databaseStore
+	bookmarks           *bookmarkStore
+	bookmarksChanged    func()
+	openBookmark        func(browserBookmark)
+	detached            []detachedTerminal
+	detachedChanged     func()
+	openDetachedInGroup func(detachedTerminal)
+	open                map[string]*bool // project root → its sidebar section is open
+	showAll             map[string]bool  // project root → all its sessions show
 	// hidden are the sessions hidden from the sidebar, by transcript path,
 	// and showHidden the projects showing theirs anyway.
 	hidden     map[string]bool
@@ -336,13 +342,14 @@ type tab struct {
 	// window; the address of its page, and what its address bar says;
 	// that the bar takes the keyboard next frame; whether its page loads,
 	// and can go back and forward; and what stops following its page.
-	browser   bool
-	web       *mygo.WebView
-	url, addr string
-	focusAddr bool
-	loading   bool
-	back, fwd bool
-	off       []func()
+	browser              bool
+	web                  *mygo.WebView
+	url, addr            string
+	remoteBookmarkSuffix string // path to load after an SSH forward reconnects
+	focusAddr            bool
+	loading              bool
+	back, fwd            bool
+	off                  []func()
 	// asking is what its page asked to use and waits on you for, and
 	// download its last download (see browser.go).
 	asking   *siteAsk
@@ -394,6 +401,7 @@ func New(opts Options) *App {
 	return &App{
 		opts:          opts,
 		databaseStore: loadDatabaseStore(),
+		bookmarks:     loadBookmarkStore(opts.DataDir),
 		update:        func(fn func()) { fn() },
 		done:          make(chan struct{}),
 		kick:          make(chan struct{}, 1),
@@ -481,10 +489,12 @@ func (a *App) indexLoop() {
 		}
 		projects, err := session.Index(a.opts.DataDir, session.IndexOptions{})
 		remote, failed := a.remoteIndexes()
+		detached := a.readDetached()
 		if err == nil {
 			// Saved here too, as frames save it: a window out of sight may
 			// not draw, and the tabs the host runs are to be found again.
 			a.update(func() {
+				a.detached = detached
 				a.setIndex(projects, remote, failed)
 				a.saveState()
 			})

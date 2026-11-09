@@ -4,11 +4,14 @@
 
 ### Added
 
+- Hosted shell and command panes can be detached from the File menu, command palette, or pane menu while their programs keep running. **Detached Terminals** in the sidebar reattaches them after a Desktop restart and retains exited screens until **End Terminal**; supported remote hosts work the same way.
+- Browser panes can bookmark pages with an address-bar star. A shared **Browser Bookmarks** sidebar section opens or focuses saved pages across Desktop windows and restores them after restart.
 - A TablePlus-inspired read-only Database Manager in Larik Desktop, with saved global connections in the sidebar, a schema browser, SQL editor, result table, and row inspector. Desktop-only agent tools can inspect an open pane after per-connection opt-in.
 - Desktop Database Manager now supports SQL Server and MySQL/MariaDB connections with environment-backed credentials, dialect-aware browsing, and SQL completions.
 
 ### Changed
 
+- Zoomed Desktop panes now use a compact **Show All Panes** toolbar icon, and hosted terminal pane headers have a clickable detach icon.
 - Database Manager now gives results more room, searches tables, and keeps Data, Query, and Agent results separately. Double-clicking a row or pressing Enter opens its details; a single click selects it for copying. Its compact editor and active result tab restore with the pane.
 - The Database SQL editor now highlights queries and completes read-only SQL terms, tables, and columns from the open schema. The pane uses a denser, theme-aware grid and query toolbar.
 - The Database table browser now follows the Files explorer layout, with collapsible schemas and a compact search row.

@@ -32,6 +32,10 @@ type windowEntry struct {
 
 func newWindowGroup(a *App) *windowGroup {
 	g := &windowGroup{main: a, active: a, children: map[string]*windowEntry{}}
+	a.bookmarksChanged = g.refreshWindows
+	a.openBookmark = func(b browserBookmark) { g.openBookmark(a, b) }
+	a.detachedChanged = g.refreshDetached
+	a.openDetachedInGroup = func(d detachedTerminal) { g.openDetached(a, d) }
 	data, err := os.ReadFile(a.statePath())
 	if err == nil {
 		var st savedState
@@ -51,6 +55,50 @@ func newWindowGroup(a *App) *windowGroup {
 		}
 	}
 	return g
+}
+
+func (g *windowGroup) refreshDetached() {
+	for _, a := range g.apps() {
+		a.refreshIndex()
+	}
+}
+
+func (g *windowGroup) openDetached(from *App, d detachedTerminal) {
+	for _, owner := range g.apps() {
+		if t := owner.tabByID(d.ID); t != nil {
+			owner.activate(t)
+			g.setActive(owner)
+			if owner != from && owner.raise != nil {
+				owner.raise()
+			}
+			return
+		}
+	}
+	from.reattachDetached(d)
+	g.setActive(from)
+}
+
+func (g *windowGroup) openBookmark(from *App, b browserBookmark) {
+	for _, owner := range g.apps() {
+		for _, t := range owner.tabs {
+			if tabMatchesBookmark(t, b) {
+				owner.activate(t)
+				if t.remotePortLost {
+					owner.startRemoteForward(t.remotePort, false, t, "")
+				}
+				g.setActive(owner)
+				if owner != from && owner.raise != nil {
+					owner.raise()
+				}
+				return
+			}
+		}
+	}
+	if b.RemotePort != 0 {
+		from.openRemoteBookmark(b)
+	} else {
+		from.openBrowser(b.URL)
+	}
 }
 
 func savedWindowHosted(dataDir, id string) []string {
@@ -276,6 +324,11 @@ func (g *windowGroup) restoreChildren() {
 func (g *windowGroup) create(id string, background bool) *windowEntry {
 	b := New(g.main.opts)
 	b.databaseStore = g.main.databaseStore
+	b.bookmarks = g.main.bookmarks
+	b.bookmarksChanged = g.refreshWindows
+	b.openBookmark = func(bookmark browserBookmark) { g.openBookmark(b, bookmark) }
+	b.detachedChanged = g.refreshDetached
+	b.openDetachedInGroup = func(d detachedTerminal) { g.openDetached(b, d) }
 	b.windowID, b.skipAdoption = id, true
 	e := &windowEntry{app: b}
 	win := mygo.NewWindow(mygo.WindowOptions{

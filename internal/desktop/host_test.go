@@ -47,7 +47,7 @@ func TestHostForwardsProgramStatus(t *testing.T) {
 	}
 	client, server := net.Pipe()
 	defer client.Close()
-	go h.attach(tb, server, bufio.NewReader(server))
+	go h.attach(tb, server, bufio.NewReader(server), false)
 	r := bufio.NewReader(client)
 	client.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
@@ -93,7 +93,7 @@ func TestHostStatusRequestSurvivesWindowReattach(t *testing.T) {
 	}
 	view, hostSide := net.Pipe()
 	defer view.Close()
-	go h.attach(tb, hostSide, bufio.NewReader(hostSide))
+	go h.attach(tb, hostSide, bufio.NewReader(hostSide), true)
 	view.SetReadDeadline(time.Now().Add(3 * time.Second))
 	r := bufio.NewReader(view)
 	for {
