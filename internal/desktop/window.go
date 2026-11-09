@@ -129,6 +129,9 @@ func Run(opts Options) error {
 		a.openPath = func(path string) { _ = mygo.Shell.OpenPath(path) }
 		a.openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 		a.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
+		a.newFileWebView = func() (*mygo.WebView, error) {
+			return win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Untrusted: true}})
+		}
 		a.about = mygo.App.ShowAboutPanel
 		a.alert = func(s session.Indexed) {
 			target := group.main

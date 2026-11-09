@@ -192,6 +192,8 @@ func (a *App) view(c *ui.Context) {
 		a.confirmLeave(c)
 		a.confirmAsked(c)
 		a.filesEditDialog(c)
+		a.filesMoveDialog(c)
+		a.filesConflictDialog(c)
 		a.remoteFolderDialog(c)
 		a.layoutDialog(c)
 		a.recentDialog(c)

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 )
@@ -27,22 +28,24 @@ const (
 // filesState belongs to one Files tab. The background readers only return
 // immutable results; the window's update callback applies them on its frame.
 type filesState struct {
-	root, query, selected string
-	showHidden            bool
-	showIgnored           bool
-	wrap                  bool
-	focusSearch           bool
-	treeW                 float32
-	narrow, previewOnly   bool
-	dirs                  map[string]*fileDirectory
-	open                  map[string]*bool
-	search                fileSearch
-	preview               filePreview
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	searchCancel          context.CancelFunc
-	searchSeq             uint64
-	previewSeq            uint64
+	root, query, selected  string
+	picked, rows, lastRows []string
+	anchor                 string
+	showHidden             bool
+	showIgnored            bool
+	wrap                   bool
+	focusSearch            bool
+	treeW                  float32
+	narrow, previewOnly    bool
+	dirs                   map[string]*fileDirectory
+	open                   map[string]*bool
+	search                 fileSearch
+	preview                filePreview
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	searchCancel           context.CancelFunc
+	searchSeq              uint64
+	previewSeq             uint64
 }
 
 type fileEntry struct {
@@ -69,6 +72,9 @@ type filePreview struct {
 	path, text, note string
 	image            *ui.Bitmap
 	code             *editor.State
+	pdf              bool
+	web              *mygo.WebView
+	webOff           []func()
 	size             int64
 	loading          bool
 }
@@ -81,10 +87,22 @@ func newFilesState(root string) *filesState {
 }
 
 func (f *filesState) close() {
+	f.closePreview()
 	if f.searchCancel != nil {
 		f.searchCancel()
 	}
 	f.cancel()
+}
+
+func (f *filesState) closePreview() {
+	for _, off := range f.preview.webOff {
+		off()
+	}
+	if f.preview.web != nil {
+		f.preview.web.Destroy()
+	}
+	f.preview.webOff = nil
+	f.preview.web = nil
 }
 
 func (a *App) startFiles(dir string) *tab {
@@ -395,6 +413,7 @@ func (a *App) selectFile(tb *tab, path string, dir bool) {
 		f.previewOnly = !dir && path != ""
 	}
 	f.previewSeq++
+	f.closePreview()
 	f.preview = filePreview{}
 	if dir || path == "" {
 		return
@@ -424,7 +443,46 @@ func (a *App) selectFile(tb *tab, path string, dir bool) {
 		}
 		a.filesResult(func() {
 			if tb.files == f && f.previewSeq == seq && f.ctx.Err() == nil {
-				if preview.note == "" && preview.image == nil {
+				if preview.pdf {
+					if runtime.GOOS == "darwin" && a.newFileWebView != nil {
+						web, err := a.newFileWebView()
+						if err == nil {
+							preview.web = web
+							preview.loading = true
+							preview.webOff = append(preview.webOff,
+								web.Page().OnDidNavigate(func(string) {
+									a.filesResult(func() {
+										if tb.files == f && f.previewSeq == seq {
+											f.preview.loading = false
+										}
+									})
+								}),
+								web.Page().OnDidFinishLoad(func() {
+									a.filesResult(func() {
+										if tb.files == f && f.previewSeq == seq {
+											f.preview.loading = false
+										}
+									})
+								}),
+								web.Page().OnDidFailLoad(func(loadErr *mygo.LoadError) {
+									a.filesResult(func() {
+										if tb.files == f && f.previewSeq == seq {
+											f.preview.loading = false
+											f.preview.note = "Can't preview this PDF: " + loadErr.Description
+										}
+									})
+								}),
+							)
+							err = web.Page().LoadFile(path)
+						}
+						if err != nil {
+							preview.loading = false
+							preview.note = "Can't preview this PDF: " + err.Error()
+						}
+					} else {
+						preview.note = "PDF preview is available in local macOS Files tabs. Open it externally to view it."
+					}
+				} else if preview.note == "" && preview.image == nil {
 					buf := editor.NewBuffer(preview.text)
 					buf.SetLanguage(editor.LanguageFor(path))
 					preview.code = &editor.State{Buffer: buf, ReadOnly: true, SoftWrap: f.wrap, NoFolding: true, NoActiveLine: true, NoScrollPastEnd: true, Label: "Preview " + filepath.Base(path)}
@@ -445,6 +503,21 @@ func readFilePreview(path string) filePreview {
 	r.size = info.Size()
 	if !info.Mode().IsRegular() {
 		r.note = "This item cannot be previewed."
+		return r
+	}
+	if runtime.GOOS == "darwin" && strings.EqualFold(filepath.Ext(path), ".pdf") {
+		file, err := os.Open(path)
+		if err != nil {
+			r.note = fmt.Sprintf("Can't read this file: %v", err)
+			return r
+		}
+		defer file.Close()
+		var header [5]byte
+		if _, err := file.Read(header[:]); err != nil || string(header[:]) != "%PDF-" {
+			r.note = "This PDF could not be opened. Open it externally to view it."
+			return r
+		}
+		r.pdf = true
 		return r
 	}
 	image := isPreviewImage(path)
@@ -521,6 +594,8 @@ func (a *App) refreshFiles(tb *tab) {
 	next.showHidden, next.showIgnored, next.wrap = f.showHidden, f.showIgnored, f.wrap
 	next.treeW, next.narrow, next.previewOnly, next.focusSearch = f.treeW, f.narrow, f.previewOnly, f.focusSearch
 	next.query = query
+	next.anchor = f.anchor
+	next.picked = slices.Clone(f.picked)
 	for path, open := range f.open {
 		value := *open
 		next.open[path] = &value
@@ -534,6 +609,7 @@ func (a *App) refreshFiles(tb *tab) {
 	} else {
 		next.previewOnly = false
 	}
+	next.picked = slices.DeleteFunc(next.picked, func(path string) bool { return !filePathVisible(next, path) })
 }
 
 func filePathVisible(f *filesState, path string) bool {
@@ -555,7 +631,7 @@ func filePathVisible(f *filesState, path string) bool {
 func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 	f := tb.files
 	ui.Column(c).Fill().MinWidth(0).Children(func() {
-		ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+		header := ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			ui.Icon(c, iconFolder).FontSize(14).TextColor(theme.Accent)
 			name := filepath.Base(f.root)
 			if name == "." || name == string(filepath.Separator) {
@@ -577,6 +653,14 @@ func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 				}
 			})
 		})
+		if a.filesBulkAvailable(tb) {
+			if _, over := ui.DragOver[filesDrag](header); over {
+				header.Background(theme.Accent.Alpha(0.2))
+			}
+			if drag, ok := ui.Drop[filesDrag](header); ok {
+				a.moveFilesDrop(drag, tb, f.root)
+			}
+		}
 		ui.Row(c).Padding(7, 9).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			field := ui.SearchField(c.Key("file-search"), &f.query).Placeholder("Find files").Label("Search files and folders").Grow(1).MinWidth(0).
 				OnChange(func() { a.searchFiles(tb) }).
@@ -600,11 +684,23 @@ func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 			}
 			ui.Text(c, status).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
 		}
-		ui.Scroll(c).Grow(1).Children(func() {
+		ui.Scroll(c.Key("files-scroll")).Grow(1).Children(func() {
 			if !f.hasQuery() {
 				a.loadFilesDir(tb, f.root)
 			}
-			ui.Tree(c, func() { a.filesTreeChildren(c, tb, f.root, 0) }).Padding(6, 8)
+			f.rows = f.rows[:0]
+			tree := ui.Tree(c.Key("files-tree"), func() { a.filesTreeChildren(c, tb, f.root, 0) }).Padding(6, 8)
+			if a.filesBulkAvailable(tb) {
+				tree.OnShortcut(ui.Super, ui.KeyA, func() {
+					f.picked = slices.Clone(f.rows)
+					if len(f.picked) > 0 {
+						f.anchor = f.picked[0]
+					}
+				}).
+					OnShortcut(0, ui.KeyEscape, func() { f.picked = nil; a.selectFile(tb, "", false) }).
+					OnShortcut(ui.Super, ui.KeyBackspace, func() { a.askTrashFilesEntries(tb, slices.Clone(f.picked)) })
+			}
+			f.lastRows = slices.Clone(f.rows)
 		})
 	})
 }
@@ -634,6 +730,7 @@ func (a *App) filesTreeChildren(c *ui.Context, tb *tab, dir string, depth int) {
 	}
 	for _, entry := range entries {
 		e := entry
+		f.rows = append(f.rows, e.path)
 		if e.dir {
 			open := f.open[e.path]
 			if open == nil {
@@ -646,21 +743,40 @@ func (a *App) filesTreeChildren(c *ui.Context, tb *tab, dir string, depth int) {
 					a.loadFilesDir(tb, e.path)
 				}
 				a.filesTreeChildren(c, tb, e.path, depth+1)
-			}).Selected(f.selected == e.path)
+			}).Selected(a.filePicked(f, e.path))
 			if item.Clicked() {
-				*open = true
-				if !f.hasQuery() {
-					a.loadFilesDir(tb, e.path)
+				toggle, extend := multiMods(item.ClickModifiers())
+				if !a.filesBulkAvailable(tb) || !toggle && !extend {
+					*open = true
+					if !f.hasQuery() {
+						a.loadFilesDir(tb, e.path)
+					}
 				}
-				a.selectFile(tb, e.path, true)
+				a.clickFile(tb, e.path, true, item.ClickModifiers())
+			}
+			if item.RightClicked() {
+				a.filesRightClick(tb, e.path, true)
 			}
 			item.ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, e.path, true, false) })
+			a.filesDragItem(item, tb, e)
+			if a.filesBulkAvailable(tb) {
+				if _, over := ui.DragOver[filesDrag](item); over {
+					item.Background(c.Theme().Accent.Alpha(0.2))
+				}
+				if drag, ok := ui.Drop[filesDrag](item); ok {
+					a.moveFilesDrop(drag, tb, e.path)
+				}
+			}
 		} else {
-			item := ui.TreeItem(c.Key(e.path), filepath.Base(e.path), nil, nil).Selected(f.selected == e.path)
+			item := ui.TreeItem(c.Key(e.path), filepath.Base(e.path), nil, nil).Selected(a.filePicked(f, e.path))
 			if item.Clicked() {
-				a.selectFile(tb, e.path, false)
+				a.clickFile(tb, e.path, false, item.ClickModifiers())
+			}
+			if item.RightClicked() {
+				a.filesRightClick(tb, e.path, false)
 			}
 			item.ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, e.path, false, false) })
+			a.filesDragItem(item, tb, e)
 		}
 	}
 }
@@ -720,12 +836,18 @@ func (a *App) filesPreview(c *ui.Context, theme *ui.Theme, tb *tab) {
 		switch {
 		case p.path == "":
 			ui.Text(c, "Choose a file in this folder to preview it.").FontSize(12).TextColor(theme.TextMuted).Margin(ui.Auto)
-		case p.loading:
-			ui.Text(c, "Loading preview…").FontSize(12).TextColor(theme.TextMuted).Margin(ui.Auto)
 		case p.note != "":
 			ui.Text(c, p.note).FontSize(12).TextColor(theme.TextMuted).Padding(14)
 		case p.image != nil:
 			ui.Image(c, p.image).Grow(1).MinHeight(0).Fit(ui.Contain).Padding(12)
+		case p.web != nil:
+			ui.WebView(c.Key("pdf-preview"), p.web).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
+				if p.loading {
+					ui.Text(c, "Loading preview…").FontSize(12).Padding(6, 10).Radius(6).Background(theme.Background).Absolute().Top(12).Left(12)
+				}
+			})
+		case p.loading:
+			ui.Text(c, "Loading preview…").FontSize(12).TextColor(theme.TextMuted).Margin(ui.Auto)
 		case p.code != nil:
 			codeTheme := editor.DefaultTheme(theme)
 			if a.paneOpacity < 1 {

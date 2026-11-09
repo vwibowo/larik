@@ -5,18 +5,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 )
 
-// Files operations act on the path whose menu was opened, rather than the
-// preview's current selection. The root itself can be opened and populated,
-// but cannot be renamed or moved from inside its own explorer.
+// Files operations act on the menu's path, or on its selection for bulk
+// actions. The root itself can be opened and populated, but cannot be
+// renamed or moved from inside its own explorer.
 func (a *App) filesMenu(m *ui.Menu, tb *tab, path string, dir, root bool) {
 	if tb.files == nil || !filesWithinRoot(tb.files.root, path) {
 		return
+	}
+	bulk := a.filesBulkAvailable(tb) && !root
+	if bulk && !slices.Contains(tb.files.picked, path) {
+		tb.files.picked, tb.files.anchor = []string{path}, path
 	}
 	if dir {
 		if m.Item("New File…").Chosen() {
@@ -39,19 +44,30 @@ func (a *App) filesMenu(m *ui.Menu, tb *tab, path string, dir, root bool) {
 		a.copyText(path)
 	}
 	if !root {
+		paths := []string{path}
+		if bulk {
+			paths = slices.Clone(tb.files.picked)
+		}
 		if m.Item("Copy Relative Path").Chosen() && a.copyText != nil {
 			rel, _ := filepath.Rel(tb.files.root, path)
 			a.copyText(rel)
 		}
 		m.Separator()
-		if m.Item("Rename…").Chosen() {
+		if len(paths) == 1 && m.Item("Rename…").Chosen() {
 			a.beginFilesEdit(tb, path, "rename")
 		}
-		if m.Item("Duplicate").Chosen() {
+		if len(paths) == 1 && m.Item("Duplicate").Chosen() {
 			a.duplicateFilesEntry(tb, path)
 		}
+		if bulk && m.Item("Move To…").Chosen() {
+			a.beginMoveFiles(tb, paths)
+		}
 		if m.Item("Move to Trash…").Chosen() {
-			a.askTrashFilesEntry(tb, path)
+			if bulk {
+				a.askTrashFilesEntries(tb, paths)
+			} else {
+				a.askTrashFilesEntry(tb, path)
+			}
 		}
 	}
 }

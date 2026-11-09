@@ -304,6 +304,9 @@ func (g *windowGroup) create(id string, background bool) *windowEntry {
 	b.showFile, b.trashItem = g.main.showFile, g.main.trashItem
 	b.openPath, b.openExternal = g.main.openPath, g.main.openExternal
 	b.newWebView = func(url string) (*mygo.WebView, error) { return win.NewWebView(webViewOptions(url)) }
+	b.newFileWebView = func() (*mygo.WebView, error) {
+		return win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Untrusted: true}})
+	}
 	b.about = g.main.about
 	b.post, b.ping = g.main.post, g.main.ping
 	b.raise = func() { raise(win) }

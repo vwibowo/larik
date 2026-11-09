@@ -248,8 +248,12 @@ type App struct {
 	settings     *settingsState // Settings window navigation, drafts and loaded defaults
 	// newWebView makes a browser tab's web view, loading url (see Run);
 	// sites are what you let pages use, or didn't, by siteKey.
-	newWebView func(url string) (*mygo.WebView, error)
-	sites      map[string]bool
+	newWebView     func(url string) (*mygo.WebView, error)
+	newFileWebView func() (*mygo.WebView, error)
+	filesMove      *filesMovePicker
+	filesConflict  *filesConflict
+	filesMoving    *filesMoveBatch
+	sites          map[string]bool
 	// noChooser makes a new tab start larik, without the chooser;
 	// emptyPick and emptyDir are the window's own chooser's, with no tab.
 	noChooser bool
