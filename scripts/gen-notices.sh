@@ -54,6 +54,9 @@ trap 'rm -f "$tmp"' EXIT
     done
   done <<< "$modules"
 } > "$tmp"
-mv "$tmp" "$out"
+# Normalize license files that contain trailing spaces so generated notices
+# pass repository whitespace checks without changing their license text.
+sed -E 's/[[:space:]]+$//' "$tmp" > "$tmp.clean"
+mv "$tmp.clean" "$out"
 trap - EXIT
 printf 'notices: wrote %s modules to %s\n' "$(wc -l <<< "$modules" | tr -d ' ')" "$out"
