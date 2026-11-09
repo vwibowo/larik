@@ -136,7 +136,7 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	wide.Frame()
-	if d.draftDriver != "postgres" || !wide.HasText("Connection URL variable") || !wide.HasText("Its URL stays outside Larik settings.") {
+	if d.draftDriver != "postgres" || !wide.HasText("Host") || !wide.HasText("Database name") || !wide.HasText("Username") || !wide.HasText("Password environment variable") {
 		t.Fatalf("PostgreSQL form: driver %q, texts %q", d.draftDriver, wide.Texts())
 	}
 	snapshot(t, wide, "database-add-postgres-dark.png")
@@ -156,8 +156,10 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 	if err := narrow.Click("Save connection"); err != nil {
 		t.Fatal(err)
 	}
+	narrow.Frame()
 	if d.editing || d.profile != "local" {
-		t.Fatalf("form did not save the connection: %+v", d)
+		button, _ := narrow.Find("Save connection")
+		t.Fatalf("form did not save the connection: editing=%v profile=%q status=%q driver=%q path=%q button=%+v", d.editing, d.profile, d.status, d.draftDriver, d.draftValue, button)
 	}
 }
 
@@ -299,7 +301,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if dataTab.Y-queryHeader.Y < 140 || dataTab.Y-queryHeader.Y > 240 {
 		t.Fatalf("editor is not compact: SQL y=%v, results y=%v", queryHeader.Y, dataTab.Y)
 	}
-	for _, want := range []string{"local", "Tables", "SQL query", "main.notes", "hello", "Find tables"} {
+	for _, want := range []string{"local", "Objects", "SQL query", "main.notes", "hello", "Find database objects"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tt.Texts())
 		}
@@ -329,7 +331,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if open := tb.database.schemaOpen["main"]; open == nil || *open {
 		t.Fatal("schema tree did not collapse with the Files panel keyboard behavior")
 	}
-	if err := tt.Click("Find tables"); err != nil {
+	if err := tt.Click("Find database objects"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Type("notes")
@@ -388,12 +390,12 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if tb.database.activeResult != databaseData || !tt.HasText("hello") || len(tb.database.results[databaseQuery].result.Rows) != 1 {
 		t.Fatalf("Data/Query result isolation: %q", tt.Texts())
 	}
-	if err := tt.Click("Find tables"); err != nil {
+	if err := tt.Click("Find database objects"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Type("missing")
 	tt.Frame()
-	if !tt.HasText("No tables match this search.") || !tt.HasText("0 of 1 tables and views") {
+	if !tt.HasText("No objects match this search.") || !tt.HasText("0 of 1 objects") {
 		t.Fatalf("table search: %q", tt.Texts())
 	}
 	tt.Key(0, ui.KeyEscape)

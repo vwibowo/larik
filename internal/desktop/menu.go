@@ -126,6 +126,16 @@ func (a *App) menuDefaults() []menuGroup {
 		}},
 		{title: "Window", items: append([]command{
 			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom}, {},
+			{label: "New Workspace", run: func() { a.newWorkspace("") }},
+			{label: "Rename Workspace…", run: func() { a.askRenameWorkspace(a.activeWorkspace) }},
+			{label: "Close Workspace", run: func() {
+				if err := a.closeWorkspace(a.activeWorkspace); err != nil {
+					a.notice = err.Error()
+				}
+			}},
+			{label: "Next Workspace", run: func() { a.cycleWorkspace(1) }},
+			{label: "Previous Workspace", run: func() { a.cycleWorkspace(-1) }},
+			{},
 			{label: "Next Session Waiting", key: "Cmd+J", run: a.nextWaiting},
 			{label: "Latest Notification", key: "Shift+Cmd+U", run: a.latestUnread},
 			{label: "Focus Next Pane", key: "Shift+Cmd+]", run: func() { a.cycle(1) }},
@@ -147,15 +157,30 @@ func (a *App) menuDefaults() []menuGroup {
 			{label: "Pane Above", key: "Alt+Cmd+Up", run: func() { a.focusToward(0, -1) }},
 			{label: "Pane Below", key: "Alt+Cmd+Down", run: func() { a.focusToward(0, 1) }},
 			{},
-		}, append(a.tilingCommands(), append([]command{
+		}, append(a.workspaceCommands(), append(a.tilingCommands(), append([]command{
 			{},
 			{role: mygo.RoleFront},
-		}, a.tabCommands()...)...)...)},
+		}, a.tabCommands()...)...)...)...)},
 		{title: "Help", role: mygo.RoleHelp, items: []command{
 			{label: "Larik Help", run: func() { a.openURL(helpURL) }},
 			{label: "Desktop App Guide", run: func() { a.openURL(guideURL) }},
 		}},
 	}
+}
+
+func (a *App) workspaceCommands() []command {
+	var out []command
+	for _, w := range a.workspaces {
+		w := w
+		out = append(out, command{label: "Switch to " + w.name, run: func() { a.switchWorkspace(w) }, checked: w == a.activeWorkspace})
+		if w != a.activeWorkspace && a.focused() != nil {
+			out = append(out, command{label: "Move Pane to " + w.name, run: func() { _ = a.movePaneToWorkspace(a.focused(), w) }})
+		}
+	}
+	if len(out) > 0 {
+		out = append(out, command{})
+	}
+	return out
 }
 
 // tabCommands list the open tabs at the end of the Window menu, as
@@ -180,6 +205,11 @@ func (a *App) tabCommands() []command {
 // when it changes.
 func (a *App) menuTabs() string {
 	var b strings.Builder
+	if len(a.workspaces) > 1 || len(a.workspaces) == 1 && a.workspaces[0].name != "Workspace 1" {
+		for _, w := range a.workspaces {
+			fmt.Fprintf(&b, "workspace %v %s\n", w == a.activeWorkspace, w.name)
+		}
+	}
 	if a.zoomed {
 		b.WriteString("zoomed\n") // Zoom Pane's check
 	}

@@ -23,7 +23,10 @@ type Request struct {
 	// Tab is the tab a command acts on: its id, as LARIK_DESKTOP_TAB
 	// says it in the tab, or the id of the session it has open, or
 	// enough of one to tell. "focused" is the tab with the keyboard.
-	Tab string `json:"tab,omitempty"`
+	Tab       string `json:"tab,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Window    string `json:"window,omitempty"`
+	Position  int    `json:"position,omitempty"`
 	// Session is the session open opens, or wait waits on when it runs
 	// outside the window, by id or enough of one to tell.
 	Session string `json:"session,omitempty"`
@@ -91,23 +94,25 @@ type Response struct {
 	Panes         []PaneInfo         `json:"panes,omitempty"`
 	Notifications []NotificationInfo `json:"notifications,omitempty"`
 	Layouts       []string           `json:"layouts,omitempty"`
+	Workspaces    []WorkspaceInfo    `json:"workspaces,omitempty"`
 }
 
 // TabInfo is a tab as commands see it.
 type TabInfo struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`              // larik, terminal, browser, files, database, or chooser
-	Run     string `json:"run,omitempty"`     // a terminal tab's program
-	URL     string `json:"url,omitempty"`     // a browser tab's page
-	Session string `json:"session,omitempty"` // its session's id, once it has one
-	Path    string `json:"path,omitempty"`    // its session's transcript
-	Dir     string `json:"dir"`
-	Title   string `json:"title"`
-	State   string `json:"state"`
-	Wants   string `json:"wants,omitempty"` // what a blocked session waits for
-	Msg     string `json:"msg,omitempty"`
-	Branch  string `json:"branch,omitempty"`
-	Ports   []int  `json:"ports,omitempty"`
+	ID        string `json:"id"`
+	Workspace string `json:"workspace,omitempty"`
+	Kind      string `json:"kind"`              // larik, terminal, browser, files, database, or chooser
+	Run       string `json:"run,omitempty"`     // a terminal tab's program
+	URL       string `json:"url,omitempty"`     // a browser tab's page
+	Session   string `json:"session,omitempty"` // its session's id, once it has one
+	Path      string `json:"path,omitempty"`    // its session's transcript
+	Dir       string `json:"dir"`
+	Title     string `json:"title"`
+	State     string `json:"state"`
+	Wants     string `json:"wants,omitempty"` // what a blocked session waits for
+	Msg       string `json:"msg,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	Ports     []int  `json:"ports,omitempty"`
 	// What its session runs on and has used: Context is how full its
 	// context is, in percent, and CostUSD 0 for a model without a price.
 	Model        string  `json:"model,omitempty"`
@@ -153,7 +158,7 @@ func (a *App) control(req Request) Response {
 		}
 	case "trash":
 		return a.controlTrash(req)
-	case "list", "send", "read", "focus", "close", "notify", "archive", "unarchive", "pane", "notifications", "project-layout":
+	case "list", "send", "read", "focus", "close", "notify", "archive", "unarchive", "pane", "notifications", "project-layout", "workspace":
 	default:
 		return Response{Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}
@@ -197,6 +202,8 @@ func (a *App) command(req Request) Response {
 		return a.controlNotifications(req)
 	case "project-layout":
 		return a.controlProjectLayout(req)
+	case "workspace":
+		return a.controlWorkspace(req)
 	case "archive":
 		s, err := a.sessionRef(req.Session)
 		if err != "" {
@@ -288,12 +295,23 @@ func (a *App) command(req Request) Response {
 // controlOpen opens a session in a tab: one that exists, by id, or a new
 // one in a directory, starting with a prompt when there is one.
 func (a *App) controlOpen(req Request) Response {
+	var target *workspace
+	if req.Workspace != "" {
+		target = a.workspaceByID(req.Workspace)
+		if target == nil {
+			return Response{Error: "no such workspace"}
+		}
+	}
+	previousWorkspace, previous := a.activeWorkspace, a.focused()
 	var t *tab
 	switch {
 	case req.Session != "":
 		s, err := a.sessionRef(req.Session)
 		if err != "" {
 			return Response{Error: err}
+		}
+		if existing := a.tabOf(s.Path); existing != nil && target != nil && a.workspaceOf(existing) != target {
+			return Response{Error: "pane belongs to another workspace; use workspace move-pane to move it"}
 		}
 		if t = a.tabOf(s.Path); t == nil && req.Prompt != "" {
 			if s.Running && !a.ours(s.Tab) {
@@ -345,14 +363,24 @@ func (a *App) controlOpen(req Request) Response {
 		}
 		return Response{Error: msg}
 	}
+	if target != nil {
+		if owner := a.workspaceOf(t); owner != nil && owner != target {
+			return Response{Error: "pane belongs to another workspace; use workspace move-pane to move it"}
+		}
+		a.switchWorkspace(target)
+	}
 	switch {
 	case req.Background:
-		previous := a.focused()
 		a.backgroundOpen = true
 		a.activate(t)
 		a.backgroundOpen = false
+		if previousWorkspace != a.activeWorkspace {
+			a.switchWorkspace(previousWorkspace)
+		}
 		if previous != nil && previous != t {
-			a.focusPane(a.paneOf(previous))
+			if p := a.paneOf(previous); p != nil {
+				a.focusPane(p)
+			}
 		}
 	case req.Split || req.Below:
 		a.showInSplit(t, req.Below)
@@ -661,6 +689,9 @@ func (a *App) tabInfo(t *tab) TabInfo {
 		Shown:   a.shown(t),
 		Focused: t == a.focused() && slices.Contains(a.tabs, t),
 		Exited:  t.exited, Code: t.code, Disconnected: t.disconnected,
+	}
+	if w := a.workspaceOf(t); w != nil {
+		info.Workspace = w.id
 	}
 	if t.shell() {
 		info.Kind = "terminal"

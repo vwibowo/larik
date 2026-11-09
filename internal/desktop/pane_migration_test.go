@@ -35,7 +35,7 @@ func TestOldHiddenItemsBecomePanes(t *testing.T) {
 	if got := a.keys["New Pane"]; got != "Alt+Cmd+T" {
 		t.Fatalf("shortcut was not migrated: %q", got)
 	}
-	if a.state().Version != 4 {
+	if a.state().Version != 5 || len(a.state().Workspaces) != 1 {
 		t.Fatal("pane state version not saved")
 	}
 }

@@ -32,13 +32,21 @@ larik desktop pane list --json
 larik desktop pane focus --id PANE
 larik desktop pane move --tab TAB --id PANE
 larik desktop pane layout grid
+larik desktop workspace list --json
+larik desktop workspace new --name Review
+larik desktop workspace focus --workspace WORKSPACE
+larik desktop workspace move-pane --tab TAB --workspace WORKSPACE
+larik desktop workspace rename --workspace WORKSPACE --name Build
+larik desktop workspace reorder --workspace WORKSPACE --position 1
+larik desktop workspace close --workspace WORKSPACE
+larik desktop open --workspace WORKSPACE --shell .
 larik desktop notifications list --json
 larik desktop notifications clear
 larik desktop project-layout save --project . --name Review
 larik desktop project-layout open --project . --name Review
 ```
 
-`open` prints the new tab ID. `--split` or `--below` places a new tab beside the current pane; `--background` leaves focus where it is. `send` presses Return unless `--no-enter` is given. `read` includes terminal scrollback. A live terminal's program keeps running when the hosted window closes.
+`open` prints the new tab ID. `--split` or `--below` places a new tab beside the current pane; `--workspace` targets a specific workspace; `--background` leaves focus where it is. Workspace IDs are stable within a window and appear in `list --json`. Switching workspaces leaves panes running. `send` presses Return unless `--no-enter` is given. `read` includes terminal scrollback. A live terminal's program keeps running when the hosted window closes.
 
 `allow` and `deny` answer **Larik session** permission prompts only. Read what is being requested before answering; do not treat a blocked external agent's status as a Larik approval prompt. `close --force` can stop a working tab.
 

@@ -15,11 +15,12 @@ type dialectCall struct {
 	args  []driver.NamedValue
 }
 type dialectRecorder struct {
-	dsn      string
-	readOnly []bool
-	calls    []dialectCall
-	fail     string
-	textMode bool
+	dsn       string
+	readOnly  []bool
+	calls     []dialectCall
+	fail      string
+	textMode  bool
+	functions bool
 }
 type dialectDriver struct{ r *dialectRecorder }
 
@@ -45,15 +46,37 @@ func (c *dialectConn) QueryContext(_ context.Context, q string, args []driver.Na
 		return nil, errors.New(c.r.fail)
 	}
 	switch {
+	case strings.Contains(q, "pg_get_functiondef"):
+		return &dialectRows{cols: []string{"pg_get_functiondef"}, values: [][]driver.Value{{[]byte("CREATE FUNCTION app.calculate() RETURNS integer")}}}, nil
+	case strings.Contains(q, "information_schema.routines"):
+		if c.r.functions {
+			return &dialectRows{cols: []string{"routine_schema", "routine_name", "routine_type"}, values: [][]driver.Value{{"app", "calculate", "FUNCTION"}}}, nil
+		}
+		return &dialectRows{cols: []string{"routine_schema", "routine_name", "routine_type"}}, nil
 	case strings.Contains(q, "information_schema.tables"):
 		return &dialectRows{cols: []string{"table_schema", "table_name", "table_type"}, values: [][]driver.Value{{"app", "order]items", "BASE TABLE"}}}, nil
-	case strings.Contains(q, "information_schema.columns"):
-		return &dialectRows{cols: []string{"column_name", "data_type", "is_nullable"}, values: [][]driver.Value{{"id", "int", "NO"}}}, nil
+	case strings.Contains(q, "information_schema.columns") || strings.Contains(q, "pg_attribute"):
+		return &dialectRows{cols: []string{"column_name", "data_type", "is_nullable", "is_primary_key"}, values: [][]driver.Value{{"id", "int", "NO", true}}}, nil
 	default:
 		if c.r.textMode {
 			return &dialectRows{cols: []string{"name"}, kinds: []string{"VARCHAR"}, values: [][]driver.Value{{[]byte("hello")}}}, nil
 		}
 		return &dialectRows{cols: []string{"id"}, values: [][]driver.Value{{int64(1)}, {int64(2)}}}, nil
+	}
+}
+
+func TestFunctionDefinitionReturnsText(t *testing.T) {
+	r := &dialectRecorder{functions: true}
+	sql.Register("larik-test-postgres-function-definition", dialectDriver{r})
+	t.Setenv("LARIK_TEST_POSTGRES_URL", "postgres://reader:secret@localhost:5432/app")
+	m, err := New(map[string]ConnectionConfig{"pg": {Driver: "postgres", URLEnv: "LARIK_TEST_POSTGRES_URL"}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.openPostgres = func(dsn string) (*sql.DB, error) { return sql.Open("larik-test-postgres-function-definition", dsn) }
+	got, err := m.FunctionDefinition(context.Background(), "pg", "app", "calculate", false)
+	if err != nil || got != "CREATE FUNCTION app.calculate() RETURNS integer" {
+		t.Fatalf("FunctionDefinition() = %q, %v", got, err)
 	}
 }
 
@@ -91,7 +114,7 @@ func TestMySQLDialectAndReadOnly(t *testing.T) {
 	}
 	m.openMySQL = func(dsn string) (*sql.DB, error) { return sql.Open("larik-test-mysql-dialect", dsn) }
 	tables, err := m.Schema(context.Background(), "my", true)
-	if err != nil || len(tables) != 1 || tables[0].Columns[0].Name != "id" {
+	if err != nil || len(tables) != 1 || tables[0].Columns[0].Name != "id" || !tables[0].Columns[0].PrimaryKey {
 		t.Fatalf("schema: %+v %v", tables, err)
 	}
 	result, err := m.Rows(context.Background(), "my", "app", "order]items", 3, 1, true)

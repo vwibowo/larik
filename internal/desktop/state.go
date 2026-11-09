@@ -29,8 +29,10 @@ type savedState struct {
 	Sites         map[string]bool           `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
 	// index in Tabs, to attach to again (see host.go).
-	Hosted map[int]string `json:"hosted,omitempty"`
-	Active int            `json:"active"` // the focused pane's tab, by index into Tabs, -1 for none
+	Hosted          map[int]string   `json:"hosted,omitempty"`
+	Workspaces      []savedWorkspace `json:"workspaces,omitempty"`
+	ActiveWorkspace string           `json:"active_workspace,omitempty"`
+	Active          int              `json:"active"` // the focused pane's tab, by index into Tabs, -1 for none
 	// Panes are how the panes show the tabs, and Zoomed that the focused
 	// one shows alone.
 	Panes  *savedPane `json:"panes,omitempty"`
@@ -67,6 +69,14 @@ type savedState struct {
 	// path, as earlier versions kept them, read once to put them beside
 	// the transcripts (session.SetName).
 	Names map[string]string `json:"names,omitempty"`
+}
+
+type savedWorkspace struct {
+	ID     string     `json:"id"`
+	Name   string     `json:"name"`
+	Panes  *savedPane `json:"panes,omitempty"`
+	Active int        `json:"active"`
+	Zoomed bool       `json:"zoomed,omitempty"`
 }
 
 // savedTerminal is a terminal tab as the window remembers it: where it
@@ -133,7 +143,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Version: 4, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Version: 5, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
 	if a.windowKeys != nil {
 		st.Windows = a.windowKeys()
 	}
@@ -230,6 +240,17 @@ func (a *App) state() savedState {
 		st.Tabs = append(st.Tabs, path)
 	}
 	st.Panes = savePanes(a.layout, index)
+	a.currentWorkspace()
+	st.ActiveWorkspace = a.activeWorkspace.id
+	for _, w := range a.workspaces {
+		sw := savedWorkspace{ID: w.id, Name: w.name, Panes: savePanes(w.layout, index), Active: -1, Zoomed: w.zoomed}
+		if w.focus != nil {
+			if i, ok := index[w.focus.tab]; ok {
+				sw.Active = i
+			}
+		}
+		st.Workspaces = append(st.Workspaces, sw)
+	}
 	if len(a.sites) > 0 {
 		st.Sites = a.sites
 	}
@@ -443,6 +464,54 @@ func (a *App) restore() bool {
 		}
 	}
 	adopted := a.adoptHosted(live)
+	if len(st.Workspaces) > 0 {
+		a.workspaces = nil
+		used := map[*tab]bool{}
+		for _, sw := range st.Workspaces {
+			if sw.ID == "" {
+				continue
+			}
+			w := &workspace{id: sw.ID, name: sw.Name}
+			if w.name == "" {
+				w.name = "Workspace"
+			}
+			w.layout = restorePanes(sw.Panes, opened, used)
+			w.focus = paneOfTree(w.layout, opened[sw.Active])
+			if w.focus == nil && w.layout != nil {
+				w.focus = w.layout.leaves()[0]
+			}
+			w.zoomed = sw.Zoomed && w.layout != nil && w.layout.split()
+			a.workspaces = append(a.workspaces, w)
+		}
+		if len(a.workspaces) == 0 {
+			a.activeWorkspace = nil
+			a.ensureWorkspace()
+		} else {
+			a.activeWorkspace = a.workspaceByID(st.ActiveWorkspace)
+			if a.activeWorkspace == nil {
+				a.activeWorkspace = a.workspaces[0]
+			}
+		}
+		w := a.activeWorkspace
+		a.layout, a.focus, a.zoomed, a.undo = w.layout, w.focus, w.zoomed, nil
+		for _, t := range a.tabs {
+			if a.workspaceOf(t) == nil {
+				a.splitPane(a.focus, t, false)
+			}
+		}
+		if a.focus != nil {
+			a.focusNext = a.focus.tab
+			if a.focus.tab.files == nil {
+				a.followFiles(a.focus.tab.dir)
+			}
+		}
+		for _, srv := range a.servers {
+			if a.dialOf(srv) != nil {
+				a.reconnectRemotePorts(srv)
+			}
+		}
+		return len(a.tabs) > 0 || len(adopted) > 0
+	}
 	if len(opened) == 0 {
 		return a.showAdopted(adopted)
 	}

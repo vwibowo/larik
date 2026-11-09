@@ -99,8 +99,8 @@ func New(profiles map[string]ConnectionConfig, cwd string) (*Manager, error) {
 				return nil, fmt.Errorf("database profile %q needs only path", name)
 			}
 		case "postgres":
-			if p.Path != "" || p.DSNEnv != "" || p.Host != "" || !envName.MatchString(p.URLEnv) {
-				return nil, fmt.Errorf("database profile %q needs only url_env", name)
+			if p.Path != "" || p.DSNEnv != "" || p.URLEnv == "" && (strings.TrimSpace(p.Host) == "" || p.Host != strings.TrimSpace(p.Host) || strings.ContainsAny(p.Host, "/@?#\\") || strings.Contains(p.Host, ":") && net.ParseIP(p.Host) == nil || p.Port < 1 || p.Port > 65535 || strings.TrimSpace(p.Database) == "" || strings.TrimSpace(p.User) == "" || !envName.MatchString(p.PasswordEnv)) || p.URLEnv != "" && (!envName.MatchString(p.URLEnv) || p.Host != "" || p.PasswordEnv != "") {
+				return nil, fmt.Errorf("database profile %q needs PostgreSQL host, port, database, user, and password_env", name)
 			}
 		case "mysql":
 			if p.Path != "" || p.URLEnv != "" || p.Host != "" || !envName.MatchString(p.DSNEnv) {
@@ -185,12 +185,24 @@ func (m *Manager) connection(ctx context.Context, p ConnectionConfig) (*sql.DB, 
 		var err error
 		switch p.Driver {
 		case "postgres":
-			secret := os.Getenv(p.URLEnv)
-			if secret == "" {
-				return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.URLEnv)
+			var dsn string
+			if p.URLEnv != "" { // saved URL profiles remain supported
+				dsn = os.Getenv(p.URLEnv)
+				if dsn == "" {
+					return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.URLEnv)
+				}
+				secrets = append(secrets, dsn)
+			} else {
+				password := os.Getenv(p.PasswordEnv)
+				if password == "" {
+					return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.PasswordEnv)
+				}
+				secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))
+				u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(p.Host, strconv.Itoa(p.Port)), User: url.UserPassword(p.User, password), Path: "/" + p.Database}
+				dsn = u.String()
+				secrets = append(secrets, dsn)
 			}
-			secrets = append(secrets, secret)
-			db, err = m.openPostgres(secret)
+			db, err = m.openPostgres(dsn)
 		case "mysql":
 			secret := os.Getenv(p.DSNEnv)
 			if secret == "" {
@@ -507,6 +519,156 @@ func quoteFor(driver, s string) string {
 	}
 }
 
+// SelectStatement returns a starter query for a schema-qualified table or view.
+func SelectStatement(driver, schema, object string) string {
+	return "SELECT * FROM " + quoteFor(driver, schema) + "." + quoteFor(driver, object) + ";"
+}
+
+func tableCreationStatement(driver, schema string, object Table) (string, error) {
+	if len(object.Columns) == 0 {
+		return "", errors.New("table structure is unavailable")
+	}
+	var definitions []string
+	var primaryKey []string
+	for _, column := range object.Columns {
+		if strings.TrimSpace(column.Type) == "" {
+			return "", errors.New("table column type is unavailable")
+		}
+		definition := quoteFor(driver, column.Name) + " " + column.Type
+		if !column.Nullable && !column.PrimaryKey {
+			definition += " NOT NULL"
+		}
+		definitions = append(definitions, "  "+definition)
+		if column.PrimaryKey {
+			primaryKey = append(primaryKey, quoteFor(driver, column.Name))
+		}
+	}
+	if len(primaryKey) > 0 {
+		definitions = append(definitions, "  PRIMARY KEY ("+strings.Join(primaryKey, ", ")+")")
+	}
+	return "CREATE TABLE " + quoteFor(driver, schema) + "." + quoteFor(driver, object.Name) + " (\n" + strings.Join(definitions, ",\n") + "\n);", nil
+}
+
+// CreationStatement returns a database creation script for a table or view.
+// Engines with native DDL inspection return their stored definition. Other
+// engines compose a table statement from the visible columns and primary key.
+func (m *Manager) CreationStatement(ctx context.Context, name, schema, objectName string, agent bool) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	p, err := m.profile(name, agent)
+	if err != nil {
+		return "", err
+	}
+	objects, err := m.Schema(ctx, name, agent)
+	if err != nil {
+		return "", err
+	}
+	var object Table
+	for _, candidate := range objects {
+		if candidate.Schema == schema && candidate.Name == objectName && !IsFunction(candidate.Type) {
+			object = candidate
+			break
+		}
+	}
+	if object.Name == "" {
+		return "", errors.New("table or view not found")
+	}
+	isView := strings.EqualFold(object.Type, "VIEW")
+	if p.Driver == "postgres" && !isView || p.Driver == "sqlserver" && !isView {
+		return tableCreationStatement(p.Driver, schema, object)
+	}
+	_, conn, tx, finish, err := m.connection(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	var statement string
+	var args []any
+	preferredColumn := ""
+	switch p.Driver {
+	case "sqlite":
+		typ := "table"
+		if isView {
+			typ = "view"
+		}
+		statement = `SELECT sql FROM sqlite_master WHERE type=? AND name=?`
+		args = []any{typ, object.Name}
+	case "mysql":
+		preferredColumn = "create"
+		if isView {
+			statement = `SHOW CREATE VIEW ` + quoteFor(p.Driver, schema) + `.` + quoteFor(p.Driver, object.Name)
+		} else {
+			statement = `SHOW CREATE TABLE ` + quoteFor(p.Driver, schema) + `.` + quoteFor(p.Driver, object.Name)
+		}
+	case "postgres":
+		statement = `SELECT pg_get_viewdef(c.oid,true) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind='v'`
+		args = []any{schema, object.Name}
+	case "sqlserver":
+		statement = `SELECT OBJECT_DEFINITION(OBJECT_ID(QUOTENAME(@p1) + '.' + QUOTENAME(@p2)))`
+		args = []any{schema, object.Name}
+	default:
+		return "", finish(errors.New("creation script is not available for this database"))
+	}
+	rows, err := queryContext(ctx, conn, tx, statement, args...)
+	if err != nil {
+		return "", finish(err)
+	}
+	definition, err := firstTextColumn(rows, preferredColumn)
+	if err != nil {
+		return "", finish(err)
+	}
+	if p.Driver == "postgres" {
+		definition = "CREATE OR REPLACE VIEW " + quoteFor(p.Driver, schema) + "." + quoteFor(p.Driver, object.Name) + " AS\n" + strings.TrimSuffix(strings.TrimSpace(definition), ";") + ";"
+	}
+	return definition, finish(nil)
+}
+
+func firstTextColumn(rows *sql.Rows, preferred string) (string, error) {
+	if !rows.Next() {
+		err := rows.Err()
+		rows.Close()
+		if err != nil {
+			return "", err
+		}
+		return "", errors.New("creation script is not available")
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		rows.Close()
+		return "", err
+	}
+	values := make([]any, len(columns))
+	dest := make([]any, len(columns))
+	for i := range values {
+		dest[i] = &values[i]
+	}
+	if err := rows.Scan(dest...); err != nil {
+		rows.Close()
+		return "", err
+	}
+	rows.Close()
+	index := 0
+	if preferred != "" {
+		index = -1
+		for i, column := range columns {
+			if strings.Contains(strings.ToLower(column), preferred) {
+				index = i
+				break
+			}
+		}
+	}
+	if index < 0 || index >= len(values) || values[index] == nil {
+		return "", errors.New("creation script is not available")
+	}
+	switch value := values[index].(type) {
+	case []byte:
+		return string(value), nil
+	case string:
+		return value, nil
+	default:
+		return fmt.Sprint(value), nil
+	}
+}
+
 func (m *Manager) Schema(ctx context.Context, name string, agent bool) ([]Table, error) {
 	p, err := m.profile(name, agent)
 	if err != nil {
@@ -557,17 +719,55 @@ func (m *Manager) Schema(ctx context.Context, name string, agent bool) ([]Table,
 	if err != nil {
 		return nil, finish(err)
 	}
+	// Functions are schema objects too, even though they do not have table
+	// columns or browsable rows. Keep them in the same list so the desktop can
+	// identify them alongside tables and views.
+	var routines string
+	switch p.Driver {
+	case "postgres":
+		routines = `SELECT DISTINCT routine_schema,routine_name,routine_type FROM information_schema.routines WHERE routine_schema NOT IN ('pg_catalog','information_schema') AND routine_type='FUNCTION' ORDER BY routine_schema,routine_name`
+	case "mysql":
+		routines = `SELECT routine_schema,routine_name,routine_type FROM information_schema.routines WHERE routine_schema=DATABASE() AND routine_type='FUNCTION' ORDER BY routine_schema,routine_name`
+	case "sqlserver":
+		routines = `SELECT routine_schema,routine_name,routine_type FROM information_schema.routines WHERE routine_schema NOT IN ('sys','INFORMATION_SCHEMA') AND routine_type='FUNCTION' ORDER BY routine_schema,routine_name`
+	}
+	if routines != "" && len(out) < 500 {
+		functionRows, queryErr := queryContext(ctx, conn, tx, routines)
+		if queryErr != nil {
+			return nil, finish(queryErr)
+		}
+		for functionRows.Next() {
+			var function Table
+			if err = functionRows.Scan(&function.Schema, &function.Name, &function.Type); err != nil {
+				break
+			}
+			out = append(out, function)
+			if len(out) >= 500 {
+				break
+			}
+		}
+		if err == nil {
+			err = functionRows.Err()
+		}
+		functionRows.Close()
+		if err != nil {
+			return nil, finish(err)
+		}
+	}
 	for i := range out {
+		if IsFunction(out[i].Type) {
+			continue
+		}
 		var cr *sql.Rows
 		switch p.Driver {
 		case "sqlite":
 			cr, err = queryContext(ctx, conn, tx, `SELECT name,type,"notnull",pk FROM pragma_table_info(?)`, out[i].Name)
 		case "postgres":
-			cr, err = queryContext(ctx, conn, tx, `SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2 ORDER BY ordinal_position`, out[i].Schema, out[i].Name)
+			cr, err = queryContext(ctx, conn, tx, `SELECT a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END,EXISTS (SELECT 1 FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_catalog=tc.constraint_catalog AND kcu.constraint_schema=tc.constraint_schema AND kcu.constraint_name=tc.constraint_name WHERE tc.constraint_type='PRIMARY KEY' AND kcu.table_schema=n.nspname AND kcu.table_name=c.relname AND kcu.column_name=a.attname) FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`, out[i].Schema, out[i].Name)
 		case "mysql":
-			cr, err = queryContext(ctx, conn, tx, `SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema=? AND table_name=? ORDER BY ordinal_position`, out[i].Schema, out[i].Name)
+			cr, err = queryContext(ctx, conn, tx, `SELECT column_name,data_type,is_nullable,CASE WHEN column_key='PRI' THEN 1 ELSE 0 END FROM information_schema.columns WHERE table_schema=? AND table_name=? ORDER BY ordinal_position`, out[i].Schema, out[i].Name)
 		case "sqlserver":
-			cr, err = queryContext(ctx, conn, tx, `SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema=@p1 AND table_name=@p2 ORDER BY ordinal_position`, out[i].Schema, out[i].Name)
+			cr, err = queryContext(ctx, conn, tx, `SELECT c.column_name,CASE WHEN c.data_type IN ('char','varchar','nchar','nvarchar','binary','varbinary') THEN c.data_type+'('+CASE WHEN c.character_maximum_length=-1 THEN 'max' ELSE CONVERT(varchar(10),c.character_maximum_length) END+')' WHEN c.data_type IN ('decimal','numeric') THEN c.data_type+'('+CONVERT(varchar(10),c.numeric_precision)+','+CONVERT(varchar(10),c.numeric_scale)+')' WHEN c.data_type IN ('time','datetime2','datetimeoffset') AND c.datetime_precision IS NOT NULL THEN c.data_type+'('+CONVERT(varchar(10),c.datetime_precision)+')' ELSE c.data_type END,c.is_nullable,CAST(CASE WHEN EXISTS (SELECT 1 FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_catalog=tc.constraint_catalog AND kcu.constraint_schema=tc.constraint_schema AND kcu.constraint_name=tc.constraint_name WHERE tc.constraint_type='PRIMARY KEY' AND kcu.table_schema=c.table_schema AND kcu.table_name=c.table_name AND kcu.column_name=c.column_name) THEN 1 ELSE 0 END AS bit) FROM information_schema.columns c WHERE c.table_schema=@p1 AND c.table_name=@p2 ORDER BY c.ordinal_position`, out[i].Schema, out[i].Name)
 		}
 		if err != nil {
 			return nil, finish(err)
@@ -577,11 +777,11 @@ func (m *Manager) Schema(ctx context.Context, name string, agent bool) ([]Table,
 			if p.Driver == "sqlite" {
 				var notnull, pk int
 				err = cr.Scan(&c.Name, &c.Type, &notnull, &pk)
-				c.Nullable = notnull == 0
 				c.PrimaryKey = pk > 0
+				c.Nullable = notnull == 0 && !c.PrimaryKey
 			} else {
 				var nullable string
-				err = cr.Scan(&c.Name, &c.Type, &nullable)
+				err = cr.Scan(&c.Name, &c.Type, &nullable, &c.PrimaryKey)
 				c.Nullable = nullable == "YES"
 			}
 			if err != nil {
@@ -598,6 +798,101 @@ func (m *Manager) Schema(ctx context.Context, name string, agent bool) ([]Table,
 		}
 	}
 	return out, finish(nil)
+}
+
+func IsFunction(kind string) bool {
+	return strings.EqualFold(kind, "FUNCTION")
+}
+
+// FunctionDefinition returns the source definition for a function exposed by
+// Schema. It is a read-only inspection operation, like Rows.
+func (m *Manager) FunctionDefinition(ctx context.Context, name, schema, function string, agent bool) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	p, err := m.profile(name, agent)
+	if err != nil {
+		return "", err
+	}
+	objects, err := m.Schema(ctx, name, agent)
+	if err != nil {
+		return "", err
+	}
+	found := false
+	for _, object := range objects {
+		if object.Schema == schema && object.Name == function && IsFunction(object.Type) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", errors.New("function not found")
+	}
+	_, conn, tx, finish, err := m.connection(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	var statement string
+	var args []any
+	switch p.Driver {
+	case "postgres":
+		statement = `SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname=$2 AND p.prokind='f' ORDER BY pg_get_function_identity_arguments(p.oid) LIMIT 1`
+		args = []any{schema, function}
+	case "mysql":
+		statement = `SHOW CREATE FUNCTION ` + quoteFor(p.Driver, schema) + `.` + quoteFor(p.Driver, function)
+	case "sqlserver":
+		statement = `SELECT OBJECT_DEFINITION(OBJECT_ID(QUOTENAME(@p1) + '.' + QUOTENAME(@p2)))`
+		args = []any{schema, function}
+	default:
+		return "", finish(errors.New("function definitions are not available for this database"))
+	}
+	rows, err := queryContext(ctx, conn, tx, statement, args...)
+	if err != nil {
+		return "", finish(err)
+	}
+	if !rows.Next() {
+		rowErr := rows.Err()
+		rows.Close()
+		if rowErr != nil {
+			return "", finish(rowErr)
+		}
+		return "", finish(errors.New("function definition is not available"))
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		rows.Close()
+		return "", finish(err)
+	}
+	values := make([]any, len(columns))
+	dest := make([]any, len(columns))
+	for i := range values {
+		dest[i] = &values[i]
+	}
+	if err := rows.Scan(dest...); err != nil {
+		rows.Close()
+		return "", finish(err)
+	}
+	rows.Close()
+	definitionIndex := 0
+	if p.Driver == "mysql" {
+		definitionIndex = -1
+		for i, column := range columns {
+			if strings.HasPrefix(strings.ToLower(column), "create function") {
+				definitionIndex = i
+				break
+			}
+		}
+	}
+	if definitionIndex < 0 || definitionIndex >= len(values) || values[definitionIndex] == nil {
+		return "", finish(errors.New("function definition is not available"))
+	}
+	switch definition := values[definitionIndex].(type) {
+	case []byte:
+		return string(definition), finish(nil)
+	case string:
+		return definition, finish(nil)
+	default:
+		return fmt.Sprint(definition), finish(nil)
+	}
 }
 
 func (m *Manager) Rows(ctx context.Context, name, schema, table string, offset, limit int, agent bool) (Result, error) {
@@ -617,6 +912,9 @@ func (m *Manager) Rows(ctx context.Context, name, schema, table string, offset, 
 	found := false
 	for _, t := range tables {
 		if t.Schema == schema && t.Name == table {
+			if IsFunction(t.Type) {
+				return Result{}, errors.New("functions cannot be browsed as table rows")
+			}
 			found = true
 			break
 		}

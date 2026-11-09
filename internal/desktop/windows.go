@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -240,6 +241,30 @@ func (g *windowGroup) controlIn(a *App, req Request) Response {
 }
 
 func (g *windowGroup) control(req Request) Response {
+	if req.Cmd == "workspace" && req.Op == "list" {
+		var out Response
+		for _, a := range g.apps() {
+			out.Workspaces = append(out.Workspaces, a.control(req).Workspaces...)
+		}
+		return out
+	}
+	if req.Workspace != "" {
+		for _, a := range g.apps() {
+			var found bool
+			if a.onMain(func() { found = a.workspaceByID(req.Workspace) != nil }) && found {
+				return g.controlIn(a, req)
+			}
+		}
+		return Response{Error: "no such workspace"}
+	}
+	if req.Cmd == "workspace" && req.Op == "new" && req.Window != "" {
+		for _, a := range g.apps() {
+			if cmp.Or(a.windowID, "main") == req.Window {
+				return g.controlIn(a, req)
+			}
+		}
+		return Response{Error: "no such window"}
+	}
 	if req.Cmd == "database" {
 		if req.Op == "list" {
 			out := Response{Database: &DatabaseResponse{}}

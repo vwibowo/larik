@@ -286,19 +286,10 @@ func (a *App) disconnectServer(name string) {
 // forgetTab takes t out of the window without ending its program, which
 // a host runs.
 func (a *App) forgetTab(t *tab) {
-	if p := a.paneOf(t); p != nil {
-		if a.split() {
-			a.removePane(p)
-		} else {
-			a.layout, a.focus = nil, nil
-		}
-	}
+	a.unshow(t, 0)
 	a.tabs = slices.DeleteFunc(a.tabs, func(x *tab) bool { return x == t })
 	t.close()
 	a.releaseRemoteForward(t.remotePort)
-	if a.layout == nil && len(a.tabs) > 0 {
-		a.activate(a.tabs[len(a.tabs)-1])
-	}
 }
 
 // adoptRemote shows the tabs srv's host runs that the window has none

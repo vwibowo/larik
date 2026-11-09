@@ -23,6 +23,11 @@ type databaseState struct {
 	schemaOpen                                     map[string]*bool
 	schema, table                                  string
 	sql                                            *editor.State
+	functionEditor                                 *editor.State
+	functionStatus                                 string
+	showFunctionDefinition                         bool
+	showStructure                                  bool
+	exportSeq                                      uint64
 	search                                         string
 	pageSize                                       int
 	results                                        [3]databaseResultView
@@ -32,8 +37,10 @@ type databaseState struct {
 	editing, deleting                              bool
 	oldName, draftName, draftDriver, draftValue    string
 	draftHost, draftPort, draftDatabase, draftUser string
+	draftPasswordEnv                               string
 	draftTrust                                     bool
 	draftAgent                                     bool
+	testingConnection                              bool
 	browserWidth, inspectorWidth, editorHeight     float32
 	legacyEditorPercent                            float32
 	showBrowser, showDetails                       bool
@@ -171,17 +178,194 @@ func (a *App) loadDatabaseSchema(tb *tab) {
 			}
 			oldSchema, oldTable := d.schema, d.table
 			d.tables, d.schema, d.table, d.status = tables, "", "", ""
+			d.showStructure = false
 			if len(tables) > 0 {
 				d.schema, d.table = tables[0].Schema, tables[0].Name
+				for _, table := range tables {
+					if !database.IsFunction(table.Type) {
+						d.schema, d.table = table.Schema, table.Name
+						break
+					}
+				}
 				for _, table := range tables {
 					if table.Schema == oldSchema && table.Name == oldTable {
 						d.schema, d.table = oldSchema, oldTable
 						break
 					}
 				}
-				d.results[databaseData].offset = 0
-				a.loadDatabaseRows(tb, false)
+				if database.IsFunction(findDatabaseObjectType(tables, d.schema, d.table)) {
+					d.showFunctionDefinition = true
+					a.loadDatabaseFunction(tb)
+				} else {
+					d.showFunctionDefinition = false
+					d.results[databaseData].offset = 0
+					a.loadDatabaseRows(tb, false)
+				}
 			}
+		})
+	})
+}
+
+func findDatabaseObjectType(objects []database.Table, schema, name string) string {
+	for _, object := range objects {
+		if object.Schema == schema && object.Name == name {
+			return object.Type
+		}
+	}
+	return ""
+}
+
+func findDatabaseObject(objects []database.Table, schema, name string) (database.Table, bool) {
+	for _, object := range objects {
+		if object.Schema == schema && object.Name == name {
+			return object, true
+		}
+	}
+	return database.Table{}, false
+}
+
+func databaseObjectMarker(kind string) string {
+	switch {
+	case database.IsFunction(kind):
+		return "ƒ"
+	case strings.EqualFold(kind, "VIEW"):
+		return "◫"
+	default:
+		return "▦"
+	}
+}
+
+func (a *App) openDatabaseObject(tb *tab, object database.Table) {
+	d := tb.database
+	d.schema, d.table = object.Schema, object.Name
+	d.showStructure = false
+	if database.IsFunction(object.Type) {
+		d.showFunctionDefinition = true
+		a.loadDatabaseFunction(tb)
+		return
+	}
+	d.showFunctionDefinition = false
+	d.results[databaseData].offset = 0
+	a.loadDatabaseRows(tb, true)
+}
+
+func (a *App) openDatabaseStructure(tb *tab, object database.Table) {
+	d := tb.database
+	d.schema, d.table = object.Schema, object.Name
+	d.showFunctionDefinition = false
+	d.showStructure = true
+}
+
+func (a *App) databaseObjectMenu(m *ui.Menu, tb *tab, object database.Table) {
+	isFunction := database.IsFunction(object.Type)
+	if isFunction {
+		if m.Item("Open Definition").Chosen() {
+			a.openDatabaseObject(tb, object)
+		}
+	} else {
+		if m.Item("Open").Chosen() {
+			a.openDatabaseObject(tb, object)
+		}
+		if m.Item("Open Structure").Chosen() {
+			a.openDatabaseStructure(tb, object)
+		}
+	}
+	m.Separator()
+	if m.Item("Copy Name").Chosen() && a.copyText != nil {
+		a.copyText(object.Name)
+	}
+	m.Submenu("Copy Script As", func(sub *ui.Menu) {
+		if isFunction {
+			if sub.Item("Function Definition").Chosen() {
+				a.copyDatabaseFunctionDefinition(tb, object)
+			}
+			return
+		}
+		if sub.Item("SELECT statement").Chosen() && a.copyText != nil {
+			a.copyText(database.SelectStatement(tb.database.driver, object.Schema, object.Name))
+		}
+		if sub.Item("Creation").Chosen() {
+			a.copyDatabaseCreationStatement(tb, object)
+		}
+	})
+	if !isFunction {
+		m.Submenu("Export", func(sub *ui.Menu) {
+			if sub.Item("CSV").Chosen() {
+				a.exportDatabaseObject(tb, object)
+			}
+		})
+	}
+}
+
+func (a *App) copyDatabaseCreationStatement(tb *tab, object database.Table) {
+	d := tb.database
+	if d == nil || d.profile == "" || a.databaseStore.manager == nil || a.copyText == nil {
+		return
+	}
+	copyText := a.copyText
+	profile := d.profile
+	a.databaseWork(func() {
+		statement, err := a.databaseStore.manager.CreationStatement(d.ctx, profile, object.Schema, object.Name, false)
+		a.update(func() {
+			if tb.database != d || d.ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				d.status = err.Error()
+				return
+			}
+			copyText(statement)
+			d.status = "Copied creation script"
+		})
+	})
+}
+
+func (a *App) copyDatabaseFunctionDefinition(tb *tab, object database.Table) {
+	d := tb.database
+	if d == nil || d.profile == "" || a.databaseStore.manager == nil || a.copyText == nil {
+		return
+	}
+	copyText := a.copyText
+	profile := d.profile
+	a.databaseWork(func() {
+		definition, err := a.databaseStore.manager.FunctionDefinition(d.ctx, profile, object.Schema, object.Name, false)
+		a.update(func() {
+			if tb.database != d || d.ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				d.status = err.Error()
+				return
+			}
+			copyText(definition)
+			d.status = "Copied function definition"
+		})
+	})
+}
+
+func (a *App) loadDatabaseFunction(tb *tab) {
+	d := tb.database
+	if d == nil || d.profile == "" || a.databaseStore.manager == nil {
+		return
+	}
+	d.seq++
+	seq, profile, schema, function := d.seq, d.profile, d.schema, d.table
+	d.loading, d.functionStatus, d.functionEditor = true, "Loading function definition…", nil
+	a.databaseWork(func() {
+		definition, err := a.databaseStore.manager.FunctionDefinition(d.ctx, profile, schema, function, false)
+		a.update(func() {
+			if tb.database != d || d.ctx.Err() != nil || d.seq != seq {
+				return
+			}
+			d.loading = false
+			if err != nil {
+				d.functionStatus = err.Error()
+				return
+			}
+			buffer := editor.NewBuffer(definition)
+			buffer.SetLanguage(editor.LanguageNamed("sql"))
+			d.functionEditor = &editor.State{Buffer: buffer, ReadOnly: true, NoFolding: true, NoActiveLine: true, NoScrollPastEnd: true, Label: "Function definition"}
+			d.functionStatus = ""
 		})
 	})
 }
@@ -256,13 +440,19 @@ func (a *App) beginDatabaseProfile(tb *tab, name string) {
 	d.editing, d.deleting, d.oldName, d.draftName = true, false, name, name
 	d.draftDriver, d.draftValue, d.draftAgent, d.status = "sqlite", "", false, ""
 	d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = "", "1433", "", "", false
+	d.draftPasswordEnv = ""
 	if p, ok := a.databaseStore.get(name); ok {
 		d.draftDriver, d.draftAgent = p.Driver, p.AgentAccess
 		switch p.Driver {
 		case "sqlite":
 			d.draftValue = p.Path
 		case "postgres":
-			d.draftValue = p.URLEnv
+			d.draftPasswordEnv = p.PasswordEnv
+			if p.URLEnv == "" {
+				d.draftHost, d.draftPort, d.draftDatabase, d.draftUser = p.Host, strconv.Itoa(p.Port), p.Database, p.User
+			} else {
+				d.draftValue = p.URLEnv // legacy environment-backed URL
+			}
 		case "mysql":
 			d.draftValue = p.DSNEnv
 		case "sqlserver":
@@ -272,11 +462,72 @@ func (a *App) beginDatabaseProfile(tb *tab, name string) {
 	}
 }
 
+func (a *App) draftDatabaseConfig(d *databaseState) (database.ConnectionConfig, error) {
+	p := database.ConnectionConfig{Driver: d.draftDriver, AgentAccess: d.draftAgent}
+	value := strings.TrimSpace(d.draftValue)
+	switch p.Driver {
+	case "sqlite":
+		p.Path = value
+	case "postgres":
+		if value != "" { // preserve an existing URL-based profile
+			p.URLEnv = value
+			break
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(d.draftPort))
+		if err != nil {
+			return p, fmt.Errorf("enter a valid PostgreSQL port")
+		}
+		p.Host, p.Port, p.Database, p.User, p.PasswordEnv = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), strings.TrimSpace(d.draftPasswordEnv)
+	case "mysql":
+		p.DSNEnv = value
+	case "sqlserver":
+		port, err := strconv.Atoi(strings.TrimSpace(d.draftPort))
+		if err != nil {
+			return p, fmt.Errorf("enter a valid SQL Server port")
+		}
+		p.Host, p.Port, p.Database, p.User, p.PasswordEnv, p.TrustServerCertificate = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), value, d.draftTrust
+	}
+	if _, err := database.New(map[string]database.ConnectionConfig{"connection-test": p}, "/"); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func (a *App) testDatabaseConnection(tb *tab) {
+	d := tb.database
+	p, err := a.draftDatabaseConfig(d)
+	if err != nil {
+		d.status = err.Error()
+		return
+	}
+	d.testingConnection, d.status = true, "Testing connection…"
+	a.databaseWork(func() {
+		manager, err := database.New(map[string]database.ConnectionConfig{"connection-test": p}, "/")
+		if err == nil {
+			_, err = manager.Schema(context.Background(), "connection-test", false)
+		}
+		if err != nil {
+			err = fmt.Errorf("Connection failed: %w", err)
+		}
+		a.update(func() {
+			if tb.database != d || d.ctx.Err() != nil {
+				return
+			}
+			d.testingConnection = false
+			if err != nil {
+				d.status = err.Error()
+			} else {
+				d.status = "Connection successful"
+			}
+		})
+	})
+}
+
 func (a *App) saveDatabaseProfile(tb *tab) {
 	d := tb.database
-	name, value := strings.TrimSpace(d.draftName), strings.TrimSpace(d.draftValue)
-	if name == "" || value == "" {
-		d.status = "Name and connection value are required"
+	name := strings.TrimSpace(d.draftName)
+	if name == "" {
+		d.status = "Connection name is required"
 		return
 	}
 	next := a.databaseStore.all()
@@ -285,21 +536,10 @@ func (a *App) saveDatabaseProfile(tb *tab) {
 		return
 	}
 	delete(next, d.oldName)
-	p := database.ConnectionConfig{Driver: d.draftDriver, AgentAccess: d.draftAgent}
-	switch p.Driver {
-	case "sqlite":
-		p.Path = value
-	case "postgres":
-		p.URLEnv = value
-	case "mysql":
-		p.DSNEnv = value
-	case "sqlserver":
-		port, err := strconv.Atoi(strings.TrimSpace(d.draftPort))
-		if err != nil {
-			d.status = "Enter a valid SQL Server port"
-			return
-		}
-		p.Host, p.Port, p.Database, p.User, p.PasswordEnv, p.TrustServerCertificate = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), value, d.draftTrust
+	p, err := a.draftDatabaseConfig(d)
+	if err != nil {
+		d.status = err.Error()
+		return
 	}
 	next[name] = p
 	if err := a.databaseStore.save(next); err != nil {
@@ -500,15 +740,15 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 	ui.Column(c).Grow(1).MinWidth(0).BorderWidth(0, 1, 0, 0).BorderColor(theme.Border).Children(func() {
 		ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			ui.Icon(c, iconDatabase).FontSize(14).TextColor(theme.Accent)
-			ui.Text(c, "Tables").FontSize(12).Bold().Grow(1)
-			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh tables", false, func() {
+			ui.Text(c, "Objects").FontSize(12).Bold().Grow(1)
+			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh database objects", false, func() {
 				if !d.loading {
 					a.loadDatabaseSchema(tb)
 				}
 			})
 		})
 		ui.Row(c).Padding(7, 9).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
-			ui.SearchField(c.Key("db-items-search"), &d.search).Label("Find tables").Placeholder("Find tables").Grow(1).MinWidth(0).
+			ui.SearchField(c.Key("db-items-search"), &d.search).Label("Find database objects").Placeholder("Find tables, views, functions").Grow(1).MinWidth(0).
 				OnShortcut(0, ui.KeyEscape, func() { d.search = "" })
 		})
 		if search != "" {
@@ -516,7 +756,7 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 			for _, tables := range visible {
 				matches += len(tables)
 			}
-			ui.Text(c, fmt.Sprintf("%d of %d tables and views", matches, len(d.tables))).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
+			ui.Text(c, fmt.Sprintf("%d of %d objects", matches, len(d.tables))).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
 		}
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Tree(c, func() {
@@ -539,12 +779,12 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 					}
 					item := ui.TreeItem(c.Key("db-schema-"+schema), name, open, func() {
 						for _, table := range visible[schema] {
-							row := ui.TreeItem(c.Key("db-table-"+table.Schema+"."+table.Name), table.Name, nil, nil).Selected(d.schema == table.Schema && d.table == table.Name)
+							label := databaseObjectMarker(table.Type) + "  " + table.Name
+							row := ui.TreeItem(c.Key("db-table-"+table.Schema+"."+table.Name), label, nil, nil).Selected(d.schema == table.Schema && d.table == table.Name)
 							if row.Clicked() {
-								d.schema, d.table = table.Schema, table.Name
-								d.results[databaseData].offset = 0
-								a.loadDatabaseRows(tb, true)
+								a.openDatabaseObject(tb, table)
 							}
+							row.ContextMenu(func(m *ui.Menu) { a.databaseObjectMenu(m, tb, table) })
 						}
 					})
 					if item.Clicked() {
@@ -553,13 +793,13 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 				}
 			}).Padding(6, 8)
 			if len(schemas) == 0 && !d.loading {
-				message := "No tables or views in this connection."
+				message := "No tables, views, or functions in this connection."
 				if search != "" {
-					message = "No tables match this search."
+					message = "No objects match this search."
 				}
 				ui.Text(c, message).Padding(12).TextColor(theme.TextMuted)
 			} else if len(schemas) == 0 && d.loading {
-				ui.Text(c, "Loading tables…").Padding(12).TextColor(theme.TextMuted)
+				ui.Text(c, "Loading database objects…").Padding(12).TextColor(theme.TextMuted)
 			}
 		})
 	})
@@ -568,6 +808,97 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 func (a *App) databaseCenter(c *ui.Context, theme *ui.Theme, tb *tab) {
 	d := tb.database
 	a.ensureDatabaseEditor(tb)
+	if d.showStructure {
+		object, ok := findDatabaseObject(d.tables, d.schema, d.table)
+		ui.Column(c).Grow(1).MinHeight(100).Children(func() {
+			ui.Row(c).Height(36).Gap(10).Padding(2, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+				a.iconButton(c, theme, "db-structure-back", iconBack, "Back to table rows", false, func() {
+					if ok {
+						a.openDatabaseObject(tb, object)
+					} else {
+						d.showStructure = false
+					}
+				})
+				ui.Text(c, "Structure").FontSize(12).Bold()
+				ui.Text(c, d.schema+"."+d.table).FontSize(11).TextColor(theme.TextMuted).Grow(1).SingleLine()
+				if ok {
+					ui.Text(c, fmt.Sprintf("%d columns", len(object.Columns))).FontSize(11).TextColor(theme.TextMuted)
+				}
+			})
+			if !ok {
+				ui.Text(c, "Object structure is unavailable. Refresh the schema and try again.").Grow(1).Padding(16).TextColor(theme.TextMuted)
+				return
+			}
+			ui.Row(c).Gap(16).Padding(8, 14).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+				ui.Text(c, "Column").FontSize(11).Bold().Grow(1)
+				ui.Text(c, "Type").FontSize(11).Bold().Width(180)
+				ui.Text(c, "Nullable").FontSize(11).Bold().Width(90)
+				ui.Text(c, "Key").FontSize(11).Bold().Width(90)
+			})
+			ui.Scroll(c).Grow(1).Children(func() {
+				for i, column := range object.Columns {
+					ui.Row(c.Key(fmt.Sprintf("db-structure-column-%d", i))).Gap(16).Padding(8, 14).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+						ui.Text(c, column.Name).FontSize(12).Grow(1).SingleLine()
+						ui.Text(c, column.Type).FontSize(11).TextColor(theme.TextMuted).Width(180).SingleLine()
+						nullable := "No"
+						if column.Nullable {
+							nullable = "Yes"
+						}
+						ui.Text(c, nullable).FontSize(11).TextColor(theme.TextMuted).Width(90)
+						key := "—"
+						if column.PrimaryKey {
+							key = "Primary"
+						}
+						ui.Text(c, key).FontSize(11).TextColor(theme.TextMuted).Width(90)
+					})
+				}
+				if len(object.Columns) == 0 {
+					ui.Text(c, "No columns are available for this object.").Padding(14).TextColor(theme.TextMuted)
+				}
+			})
+		})
+		return
+	}
+	if d.showFunctionDefinition {
+		ui.Column(c).Grow(1).MinHeight(100).Children(func() {
+			ui.Row(c).Height(36).Gap(10).Padding(2, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+				a.iconButton(c, theme, "db-function-back", iconBack, "Back to SQL query", false, func() {
+					d.showFunctionDefinition = false
+				})
+				ui.Text(c, "ƒ").FontSize(16).TextColor(theme.Accent)
+				ui.Text(c, "Function definition").FontSize(12).Bold()
+				ui.Text(c, d.schema+"."+d.table).FontSize(11).TextColor(theme.TextMuted).Grow(1).SingleLine()
+				if d.functionEditor != nil {
+					a.iconButton(c, theme, "db-copy-function", iconCopy, "Copy function definition", false, func() {
+						c.Services().WriteClipboard(d.functionEditor.Buffer.String())
+					})
+				}
+			})
+			if d.functionStatus != "" {
+				color := theme.Danger
+				if d.loading {
+					color = theme.TextMuted
+				}
+				ui.Text(c, d.functionStatus).Grow(1).Padding(16).TextColor(color)
+				return
+			}
+			if d.functionEditor == nil {
+				ui.Text(c, "Function definition is unavailable.").Grow(1).Padding(16).TextColor(theme.TextMuted)
+				return
+			}
+			codeTheme := editor.DefaultTheme(theme)
+			codeTheme.Background = theme.Background
+			if a.paneOpacity < 1 {
+				codeTheme.Background = theme.Background.Alpha(0)
+			}
+			codeTheme.Tokens[editor.TokenKeyword].Color = theme.Accent
+			codeTheme.Tokens[editor.TokenString].Color = theme.Success
+			codeTheme.Tokens[editor.TokenComment].Color = theme.TextMuted
+			d.functionEditor.Theme = codeTheme
+			editor.View(c.Key("db-function-definition"), d.functionEditor).Grow(1).MinWidth(0).MinHeight(0)
+		})
+		return
+	}
 	ui.SplitVertical(c, &d.editorHeight, func() {
 		ui.Column(c).Grow(1).MinHeight(100).Children(func() {
 			ui.Row(c).Height(36).Gap(10).Padding(2, 14).AlignItems(ui.Center).Children(func() {
@@ -827,15 +1158,34 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 					if ui.Segmented(c.Key("db-profile-driver"), &kind, "SQLite", "PostgreSQL", "MySQL", "SQL Server").Label("Database type").AlignSelf(ui.Start).Changed() {
 						d.draftDriver = drivers[kind]
 						d.draftValue = ""
-						d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = "", "1433", "", "", false
+						port := "1433"
+						if d.draftDriver == "postgres" {
+							port = "5432"
+						}
+						d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = "", port, "", "", false
+						d.draftPasswordEnv = ""
 					}
 				})
 				ui.Column(c).Gap(7).FillWidth().Children(func() {
 					switch d.draftDriver {
 					case "postgres":
-						ui.Text(c, "Connection URL variable").FontSize(12).Bold()
-						ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. DATABASE_URL").Label("Connection URL environment variable").FillWidth()
-						ui.Text(c, "Enter the environment variable name. Its URL stays outside Larik settings.").FontSize(11).TextColor(theme.TextMuted)
+						if d.draftValue != "" {
+							ui.Text(c, "Legacy URL environment variable").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. DATABASE_URL").Label("Connection URL environment variable").FillWidth()
+							ui.Text(c, "This saved connection uses a legacy URL variable. Clear it to switch to the form fields.").FontSize(11).TextColor(theme.TextMuted)
+						} else {
+							ui.Text(c, "Server").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-host"), &d.draftHost).Placeholder("db.example.com").Label("Host").FillWidth()
+							ui.Text(c, "Port").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-port"), &d.draftPort).Label("Port").Width(120)
+							ui.Text(c, "Database").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-database"), &d.draftDatabase).Label("Database name").FillWidth()
+							ui.Text(c, "Username").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-user"), &d.draftUser).Label("Username").FillWidth()
+							ui.Text(c, "Password variable").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-password-env"), &d.draftPasswordEnv).Placeholder("e.g. DATABASE_PASSWORD").Label("Password environment variable").FillWidth()
+							ui.Text(c, "The password stays in your environment; Larik saves only the environment variable name.").FontSize(11).TextColor(theme.TextMuted)
+						}
 					case "mysql":
 						ui.Text(c, "MySQL DSN variable").FontSize(12).Bold()
 						ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. MYSQL_DSN").Label("MySQL DSN environment variable").FillWidth()
@@ -870,9 +1220,13 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 					ui.Switch(c.Key("db-profile-agent"), &d.draftAgent).Label("Allow the agent to inspect this connection")
 				})
 				if d.status != "" {
-					ui.Text(c, d.status).FontSize(12).TextColor(theme.Danger)
+					color := theme.Danger
+					if d.status == "Connection successful" {
+						color = theme.Success
+					}
+					ui.Text(c, d.status).FontSize(12).TextColor(color)
 				}
-				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				actions := func() {
 					if d.oldName != "" && ui.Button(c.Key("db-delete-profile"), "Delete connection").TextColor(theme.Danger).Clicked() {
 						d.deleting = true
 					}
@@ -880,10 +1234,38 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 					if ui.Button(c.Key("db-cancel-profile"), "Cancel").Clicked() {
 						d.editing, d.status = false, ""
 					}
+					if ui.Button(c.Key("db-test-profile"), map[bool]string{true: "Testing…", false: "Test Connection"}[d.testingConnection]).Clicked() && !d.testingConnection {
+						a.testDatabaseConnection(tb)
+					}
 					if ui.Button(c.Key("db-save-profile"), "Save connection").Background(theme.Accent).TextColor(theme.AccentText).Clicked() {
 						a.saveDatabaseProfile(tb)
 					}
-				})
+				}
+				if d.narrow {
+					ui.Column(c).FillWidth().Gap(8).Children(func() {
+						ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+							if d.oldName != "" && ui.Button(c.Key("db-delete-profile"), "Delete connection").TextColor(theme.Danger).Clicked() {
+								d.deleting = true
+							}
+							ui.Spacer(c)
+							if ui.Button(c.Key("db-cancel-profile"), "Cancel").Clicked() {
+								d.editing, d.status = false, ""
+							}
+						})
+						ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+							if ui.Button(c.Key("db-test-profile"), map[bool]string{true: "Testing…", false: "Test Connection"}[d.testingConnection]).Clicked() && !d.testingConnection {
+								a.testDatabaseConnection(tb)
+							}
+						})
+						ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+							if ui.Button(c.Key("db-save-profile"), "Save connection").Background(theme.Accent).TextColor(theme.AccentText).Clicked() {
+								a.saveDatabaseProfile(tb)
+							}
+						})
+					})
+				} else {
+					ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(actions)
+				}
 				if d.deleting {
 					ui.Column(c).FillWidth().Padding(12).Gap(8).Border(1, theme.Danger.Alpha(0.4)).Radius(8).Background(theme.Danger.Alpha(0.06)).Children(func() {
 						ui.Text(c, "Delete "+d.oldName+"?").FontSize(12).Bold()

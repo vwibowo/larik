@@ -128,7 +128,7 @@ func (a *App) rebindable() []menuGroup {
 		}
 		var keep []command
 		for _, cmd := range cmds {
-			if cmd.run != nil && cmd.label != "" {
+			if cmd.run != nil && cmd.label != "" && !strings.HasPrefix(cmd.label, "Switch to ") && !strings.HasPrefix(cmd.label, "Move Pane to ") {
 				keep = append(keep, cmd)
 			}
 		}

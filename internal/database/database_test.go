@@ -12,6 +12,67 @@ import (
 	"testing"
 )
 
+func TestSelectStatementQuotesQualifiedObjectName(t *testing.T) {
+	tests := []struct {
+		driver, schema, object, want string
+	}{
+		{"postgres", "order", `weird"name`, `SELECT * FROM "order"."weird""name";`},
+		{"mysql", "order", "weird`name", "SELECT * FROM `order`.`weird``name`;"},
+		{"sqlserver", "order", "weird]name", "SELECT * FROM [order].[weird]]name];"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.driver, func(t *testing.T) {
+			if got := SelectStatement(tt.driver, tt.schema, tt.object); got != tt.want {
+				t.Fatalf("SelectStatement() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTableCreationStatementIncludesStructureAndQuotes(t *testing.T) {
+	object := Table{Schema: "app", Name: "order]items", Columns: []Column{
+		{Name: "order", Type: "integer", PrimaryKey: true},
+		{Name: "display name", Type: "varchar(80)", Nullable: true},
+	}}
+	tests := []struct {
+		driver, want string
+	}{
+		{"postgres", "CREATE TABLE \"app\".\"order]items\" (\n  \"order\" integer,\n  \"display name\" varchar(80),\n  PRIMARY KEY (\"order\")\n);"},
+		{"sqlserver", "CREATE TABLE [app].[order]]items] (\n  [order] integer,\n  [display name] varchar(80),\n  PRIMARY KEY ([order])\n);"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.driver, func(t *testing.T) {
+			got, err := tableCreationStatement(tt.driver, object.Schema, object)
+			if err != nil || got != tt.want {
+				t.Fatalf("tableCreationStatement() = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreationStatementUsesNativeSQLiteDDL(t *testing.T) {
+	m, path := fixture(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE VIEW note_view AS SELECT id, body FROM notes`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ name, want string }{
+		{"notes", `CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT)`},
+		{"note_view", `CREATE VIEW note_view AS SELECT id, body FROM notes`},
+	} {
+		got, err := m.CreationStatement(context.Background(), "local", "main", tt.name, true)
+		if err != nil || got != tt.want {
+			t.Errorf("CreationStatement(%s) = %q, %v; want %q", tt.name, got, err, tt.want)
+		}
+	}
+}
+
 func fixture(t *testing.T) (*Manager, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sample.sqlite")

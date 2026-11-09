@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -75,7 +76,7 @@ func (a *App) saveProjectLayout(root, name string) error {
 	}
 	layout := projectLayout{Version: 1, Active: -1}
 	index := map[*tab]int{}
-	for _, t := range a.tabs {
+	for _, t := range a.shownTabs() {
 		if !filesWithinRoot(root, t.dir) {
 			continue
 		}
@@ -174,9 +175,21 @@ func (a *App) openProjectLayout(root, name string) error {
 	if len(opened) == 0 {
 		return errors.New("none of the layout's folders or sessions is available")
 	}
+	activeTabs := a.shownTabs()
+	for _, t := range opened {
+		if w := a.workspaceOf(t); w != nil && w != a.activeWorkspace {
+			if p := paneOfTree(w.layout, t); p != nil {
+				a.removeInactivePane(w, p)
+			}
+		}
+		if !slices.Contains(activeTabs, t) {
+			activeTabs = append(activeTabs, t)
+		}
+	}
 	if panes := restorePanes(layout.Panes, opened, map[*tab]bool{}); panes != nil {
 		a.layout = panes
-		for _, t := range a.tabs {
+		a.undo = nil
+		for _, t := range activeTabs {
 			if a.paneOf(t) == nil {
 				a.splitPane(a.layout.leaves()[len(a.layout.leaves())-1], t, false)
 			}

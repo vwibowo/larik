@@ -95,8 +95,12 @@ type App struct {
 	renaming, newName          string
 	focusRename, renameFocused bool
 	// dragging says a session is being dragged from the sidebar.
-	dragging bool
-	tabs     []*tab
+	dragging         bool
+	tabs             []*tab
+	workspaces       []*workspace
+	activeWorkspace  *workspace
+	closingWorkspace *workspace
+	workspaceRename  *workspaceRename
 	// layout is the panes showing tabs, nil with none (see panes.go);
 	// focus is the one with the keyboard, which the sidebar, the title bar
 	// and the keys follow, and zoomed shows it alone.
@@ -398,7 +402,7 @@ func (a *App) closeFind(t *tab) {
 // New makes the window's state. Call Start once update is set.
 func New(opts Options) *App {
 	host, _ := os.Hostname()
-	return &App{
+	a := &App{
 		opts:          opts,
 		databaseStore: loadDatabaseStore(),
 		bookmarks:     loadBookmarkStore(opts.DataDir),
@@ -424,6 +428,8 @@ func New(opts Options) *App {
 		layouts:       readProjectLayouts(opts.DataDir),
 		host:          host,
 	}
+	a.ensureWorkspace()
+	return a
 }
 
 // Start loads the index, opens the newest session of the starting
@@ -1269,7 +1275,7 @@ func (a *App) askClose(tabs []*tab, keep *tab) {
 // closeOthers closes every tab but keep.
 func (a *App) closeOthers(keep *tab) {
 	var others []*tab
-	for _, t := range a.tabs {
+	for _, t := range a.shownTabs() {
 		if t != keep {
 			others = append(others, t)
 		}
@@ -1341,6 +1347,9 @@ func (a *App) closeNow() {
 	for _, t := range a.closing {
 		a.closeTab(t)
 	}
+	if a.closingWorkspace != nil {
+		a.removeWorkspace(a.closingWorkspace)
+	}
 	if a.closeKeep != nil && slices.Contains(a.tabs, a.closeKeep) {
 		a.activate(a.closeKeep)
 	}
@@ -1349,6 +1358,7 @@ func (a *App) closeNow() {
 
 func (a *App) cancelClose() {
 	a.closing, a.closeKeep, a.confirming = nil, nil, false
+	a.closingWorkspace = nil
 }
 
 // tabStatus is what a tab's larik is doing: its session's status, or an

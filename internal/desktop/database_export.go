@@ -129,3 +129,64 @@ func (a *App) exportDatabaseResult(tb *tab) {
 		}
 	})
 }
+
+func (a *App) exportDatabaseObject(tb *tab, object database.Table) {
+	d := tb.database
+	if d == nil || d.profile == "" || a.databaseStore.manager == nil {
+		return
+	}
+	d.exportSeq++
+	seq, profile := d.exportSeq, d.profile
+	source := object.Schema + "." + object.Name
+	loaded := &d.results[databaseData]
+	if loaded.source == source && len(loaded.result.Columns) > 0 {
+		a.saveDatabaseObjectCSV(tb, object.Name, loaded.result)
+		return
+	}
+	limit := d.pageSize
+	if limit <= 0 {
+		limit = database.DefaultRows
+	}
+	d.status = "Loading rows for CSV export…"
+	a.databaseWork(func() {
+		result, err := a.databaseStore.manager.Rows(d.ctx, profile, object.Schema, object.Name, 0, limit, false)
+		a.update(func() {
+			if tb.database != d || d.ctx.Err() != nil || d.exportSeq != seq {
+				return
+			}
+			if err != nil {
+				d.status = "Export failed: " + err.Error()
+				return
+			}
+			d.status = ""
+			a.saveDatabaseObjectCSV(tb, object.Name, result)
+		})
+	})
+}
+
+func (a *App) saveDatabaseObjectCSV(tb *tab, objectName string, result database.Result) {
+	d := tb.database
+	if a.saveDatabaseCSV == nil {
+		d.status = "CSV export is unavailable"
+		return
+	}
+	data, err := databaseCSV(result)
+	if err != nil {
+		d.status = "Export failed: " + err.Error()
+		return
+	}
+	name := strings.NewReplacer("/", "_", "\\", "_").Replace(objectName)
+	if name == "" {
+		name = "database-object"
+	}
+	a.saveDatabaseCSV(name+".csv", data, func(path string, err error) {
+		if tb.database != d || d.ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			d.status = "Export failed: " + err.Error()
+		} else if path != "" {
+			d.status = "Exported loaded rows as CSV"
+		}
+	})
+}

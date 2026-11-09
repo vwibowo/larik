@@ -113,6 +113,8 @@ func (a *App) show(p *pane, t *tab) {
 	} else if q == nil && p.tab != nil {
 		a.splitPane(p, t, false)
 		return
+	} else if q == nil {
+		a.releaseInactivePane(t)
 	}
 	p.tab = t
 }
@@ -127,7 +129,7 @@ func (a *App) splitPane(p *pane, t *tab, below bool) *pane {
 // splitAt is splitPane with the new pane first, left of p or above it,
 // when before is set.
 func (a *App) splitAt(p *pane, t *tab, below, before bool) *pane {
-	existing := a.paneOf(t) != nil
+	existing := a.paneOf(t) != nil || a.releaseInactivePane(t)
 	if q := a.paneOf(t); q != nil {
 		if q == p || !a.split() {
 			a.focusPane(q)
@@ -246,6 +248,9 @@ func (a *App) splitRight() { a.splitNew(false) }
 // showInSplit shows an open tab in a new pane beside the focused one, or
 // moves the keyboard to it when a pane shows it already.
 func (a *App) showInSplit(t *tab, below bool) {
+	if w := a.workspaceOf(t); w != nil && w != a.activeWorkspace {
+		a.switchWorkspace(w)
+	}
 	if p := a.paneOf(t); p != nil {
 		a.focusPane(p)
 		return
@@ -354,6 +359,9 @@ func (a *App) activate(t *tab) {
 	if t == nil {
 		return
 	}
+	if w := a.workspaceOf(t); w != nil && w != a.activeWorkspace {
+		a.switchWorkspace(w)
+	}
 	a.rememberFocus(t)
 	if p := a.paneOf(t); p != nil {
 		a.focusPane(p)
@@ -391,8 +399,14 @@ func (a *App) panesTooSmall(count int) bool {
 
 // unshow removes a closing item's pane.
 func (a *App) unshow(t *tab, i int) {
-	p := a.paneOf(t)
-	if p != nil {
+	if w := a.workspaceOf(t); w != nil && w != a.activeWorkspace {
+		for _, p := range w.layout.leaves() {
+			if p.tab == t {
+				a.removeInactivePane(w, p)
+				return
+			}
+		}
+	} else if p := a.paneOf(t); p != nil {
 		a.removePane(p)
 	}
 }

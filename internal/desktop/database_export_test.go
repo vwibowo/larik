@@ -111,3 +111,34 @@ func TestDatabaseExportCancelAndFailure(t *testing.T) {
 		t.Fatalf("failed export status: %q", v.status)
 	}
 }
+
+func TestDatabaseObjectExportUsesLoadedPageOrLoadsFirstPage(t *testing.T) {
+	project, path := databaseFixture(t)
+	a := New(Options{Cwd: project})
+	defer a.Close()
+	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+		t.Fatal(err)
+	}
+	a.openDatabaseProfile("local")
+	tb := a.focused()
+	var exportedName, exportedCSV string
+	a.saveDatabaseCSV = func(name string, data []byte, done func(string, error)) {
+		exportedName, exportedCSV = name, string(data)
+		done(name, nil)
+	}
+	object := database.Table{Schema: "main", Name: "notes", Type: "table"}
+	loaded := &tb.database.results[databaseData]
+	loaded.source = "main.notes"
+	loaded.result = database.Result{Columns: []string{"body"}, Rows: [][]any{{"current page"}}}
+	a.exportDatabaseObject(tb, object)
+	if exportedName != "notes.csv" || !strings.Contains(exportedCSV, "body\ncurrent page\n") {
+		t.Fatalf("loaded page export %q: %q", exportedName, exportedCSV)
+	}
+
+	exportedName, exportedCSV = "", ""
+	loaded.source = ""
+	a.exportDatabaseObject(tb, object)
+	if exportedName != "notes.csv" || !strings.Contains(exportedCSV, "id,body\n1,hello\n") {
+		t.Fatalf("first page export %q: %q", exportedName, exportedCSV)
+	}
+}

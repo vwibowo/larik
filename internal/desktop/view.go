@@ -199,6 +199,7 @@ func (a *App) view(c *ui.Context) {
 		a.filesConflictDialog(c)
 		a.remoteFolderDialog(c)
 		a.layoutDialog(c)
+		a.workspaceRenameDialog(c)
 		a.recentDialog(c)
 		a.commandPalette(c, t)
 	})
@@ -501,10 +502,9 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 			a.sidebarButton(c, t)
 			ui.Box(c).Width(6)
 		}
-		title, where := "Larik", a.host
+		title, where := "Workspace", "0 panes"
 		f := a.focused()
 		if f != nil {
-			title = "Workspace"
 			where = fmt.Sprintf("%d pane", len(a.panes()))
 			if a.split() {
 				where = fmt.Sprintf("%d panes", len(a.panes()))
@@ -515,15 +515,26 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 				title = fmt.Sprintf("Window %d of %d", index, total)
 			}
 		}
-		ui.Column(c).Gap(1).Shrink(1).MinWidth(0).Children(func() {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, title).Bold().FontSize(13).SingleLine().Shrink(1)
+		contentWidth := 1240
+		if a.contentSize != nil {
+			contentWidth, _ = a.contentSize()
+		}
+		if !a.noSidebar {
+			contentWidth -= int(a.sidebarW)
+		}
+		if contentWidth >= 650 {
+			ui.Column(c).Gap(1).Shrink(1).MinWidth(0).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, title).Bold().FontSize(13).SingleLine().Shrink(1)
+				})
+				sub := ui.Text(c, where).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
+				if f != nil {
+					sub.Tooltip(tildePath(f.dir))
+				}
 			})
-			sub := ui.Text(c, where).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
-			if f != nil {
-				sub.Tooltip(tildePath(f.dir))
-			}
-		})
+			ui.Box(c).Width(8)
+		}
+		a.workspaceTabs(c, t)
 		ui.Spacer(c)
 		if a.layout != nil {
 			split := a.iconButton(c, t, "split", iconSplit, splitTip(), false, a.splitRight)
@@ -703,6 +714,14 @@ func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
 
 // tabMenu is what a tab's context menu offers.
 func (a *App) tabMenu(m *ui.Menu, tb *tab) {
+	if len(a.workspaces) > 1 {
+		for _, w := range a.workspaces {
+			if w != a.workspaceOf(tb) && m.Item("Move to "+w.name).Chosen() {
+				_ = a.movePaneToWorkspace(tb, w)
+			}
+		}
+		m.Separator()
+	}
 	if s, _, ok := a.find(tb.path); ok {
 		a.answerMenu(m, s)
 	}
@@ -734,7 +753,7 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if tb.browser && tb.url != blankPage {
 		a.pageMenu(m, tb)
 	}
-	if len(a.tabs) > 1 && m.Item("Close Other Panes").Chosen() {
+	if len(a.panes()) > 1 && m.Item("Close Other Panes").Chosen() {
 		a.closeOthers(tb)
 	}
 	if (len(a.closed) > 0 || len(a.recent) > 0) && m.Item("Reopen Closed Pane").Chosen() {

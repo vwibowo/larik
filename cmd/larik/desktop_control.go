@@ -22,7 +22,7 @@ import (
 // with what each does, for usage.
 var desktopCommands = []struct{ name, usage, about string }{
 	{"list", "", "list the window's tabs: id, session, state, directory and title"},
-	{"open", "[--session id] [--prompt text] [--shell | --files | --database | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a session in a tab, or start one in dir (this directory by default), or with --shell, --files, --database, --run or --url open a terminal, Files, Database, command or browser pane; --worktree starts it in a new git worktree of dir's repository; prints the tab's id"},
+	{"open", "[--workspace id] [--session id] [--prompt text] [--shell | --files | --database | --run cmd | --url address] [--worktree [--branch name]] [--split | --below | --background] [dir]", "open a pane in the active or named workspace; an existing pane switches to its workspace; prints the tab's id"},
 	{"send", "--tab tab [--no-enter] [text | -]", "type text into a tab and press Return; - or no text reads it from stdin"},
 	{"read", "--tab tab [--lines n]", "print the last lines a tab's terminal shows, its scrollback included"},
 	{"wait", "(--tab tab | --session id) [--state done] [--timeout d]", "wait until the session is in a state: done, error, blocked, working or idle, or several comma separated; prints the state"},
@@ -34,6 +34,7 @@ var desktopCommands = []struct{ name, usage, about string }{
 	{"status", "[--tab tab] --id source --state idle|working|done|blocked|error|clear [--kind permission|question|auth] [--title text] [--message text]", "report a terminal tab's program status; --tab defaults to $LARIK_DESKTOP_TAB"},
 	{"page", "op [--tab tab] [--ref ref] [--state condition] [--timeout duration] [--out file] [url | text | code | -]", "drive a browser tab: navigate, back, forward, reload, snapshot, click, type, fill, press, select, scroll, wait, console, eval or screenshot; wait supports load, URL, text and element conditions"},
 	{"pane", "list | focus --id pane | move --tab tab --id pane | layout columns|rows|grid|main-stack", "list panes or focus, move a tab into, or arrange them"},
+	{"workspace", "list | new [--name name] [--window id] | focus|rename|reorder|move-pane|close --workspace id [--name name] [--position n] [--tab tab] [--force]", "list or manage a window's workspace tabs and their panes"},
 	{"notifications", "list | clear", "list or clear Desktop notifications"},
 	{"project-layout", "list|save|open --project dir [--name name]", "list, save or open a named layout for one project"},
 	{"archive", "--session id", "archive a session that isn't running: it leaves the sidebar and /resume for its project's archived ones"},
@@ -106,6 +107,7 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	var pageOut string
 	switch name {
 	case "open":
+		fs.StringVar(&req.Workspace, "workspace", "", "workspace ID for a new pane")
 		fs.StringVar(&req.Session, "session", "", "the session to open, by id or the start of one")
 		fs.StringVar(&req.Prompt, "prompt", "", "what the session starts with")
 		fs.BoolVar(&req.Split, "split", false, "open it in a new pane beside the focused one")
@@ -158,6 +160,13 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	case "pane":
 		fs.StringVar(&req.Ref, "id", "", "the stable pane ID from pane list")
 		fs.StringVar(&req.Tab, "tab", "", "the tab to move")
+	case "workspace":
+		fs.StringVar(&req.Workspace, "workspace", "", "stable workspace ID")
+		fs.StringVar(&req.Window, "window", "", "target window ID for new (default: active window)")
+		fs.StringVar(&req.Name, "name", "", "workspace name for new or rename")
+		fs.IntVar(&req.Position, "position", 0, "one-based position for reorder")
+		fs.StringVar(&req.Tab, "tab", "", "tab ID for move-pane")
+		fs.BoolVar(&req.Force, "force", false, "close a workspace even while its panes work")
 	case "project-layout":
 		fs.StringVar(&req.Project, "project", "", "the project's root directory")
 		fs.StringVar(&req.Name, "name", "", "layout name")
@@ -233,6 +242,17 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 		if req.Op == "layout" && len(words) > 1 {
 			req.State = words[1]
 		}
+	case "workspace":
+		if len(words) == 0 {
+			return errors.New("workspace needs list, new, focus, rename, reorder, move-pane or close")
+		}
+		req.Op = words[0]
+		if req.Op != "list" && req.Op != "new" && req.Workspace == "" {
+			return errors.New("workspace operation needs --workspace")
+		}
+		if req.Op == "move-pane" && req.Tab == "" {
+			return errors.New("workspace move-pane needs --tab")
+		}
 	case "notifications":
 		req.Op = "list"
 		if len(words) > 0 {
@@ -307,6 +327,17 @@ func runDesktopCommand(name string, args []string, stdin io.Reader, w io.Writer)
 	case "project-layout":
 		for _, name := range res.Layouts {
 			fmt.Fprintln(w, name)
+		}
+	case "workspace":
+		for _, ws := range res.Workspaces {
+			mark := " "
+			if ws.Active {
+				mark = "*"
+			}
+			fmt.Fprintf(w, "%s %s  %s  %d  %d panes  %s\n", mark, ws.ID, ws.Window, ws.Position, ws.Panes, ws.Name)
+		}
+		if res.State == "confirmation" {
+			fmt.Fprintln(w, "Waiting for close confirmation in Desktop")
 		}
 	}
 	return nil

@@ -54,7 +54,7 @@ func TestCloseFlushesStateAfterFailedBackgroundWrite(t *testing.T) {
 	}
 	a.Close() // the retry deadline has not passed, but close must flush.
 	data, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(data), `"version":4`) {
+	if err != nil || !strings.Contains(string(data), `"version":5`) {
 		t.Fatalf("close did not write state: %v %q", err, data)
 	}
 }
