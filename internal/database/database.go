@@ -51,6 +51,10 @@ type ConnectionConfig struct {
 	Database               string `json:"database,omitempty"`
 	User                   string `json:"user,omitempty"`
 	PasswordEnv            string `json:"password_env,omitempty"`
+	Password               string `json:"-"`
+	PasswordError          string `json:"-"`
+	HasPassword            bool   `json:"has_password,omitempty"`
+	SSLMode                string `json:"ssl_mode,omitempty"`
 	TrustServerCertificate bool   `json:"trust_server_certificate,omitempty"`
 	AgentAccess            bool   `json:"agent_access,omitempty"`
 }
@@ -95,20 +99,20 @@ func New(profiles map[string]ConnectionConfig, cwd string) (*Manager, error) {
 		}
 		switch p.Driver {
 		case "sqlite":
-			if p.Path == "" || p.URLEnv != "" || p.DSNEnv != "" || p.Host != "" || p.PasswordEnv != "" {
+			if p.Path == "" || p.URLEnv != "" || p.DSNEnv != "" || p.Host != "" || p.PasswordEnv != "" || p.Password != "" || p.HasPassword || p.SSLMode != "" || p.TrustServerCertificate {
 				return nil, fmt.Errorf("database profile %q needs only path", name)
 			}
 		case "postgres":
-			if p.Path != "" || p.DSNEnv != "" || p.URLEnv == "" && (strings.TrimSpace(p.Host) == "" || p.Host != strings.TrimSpace(p.Host) || strings.ContainsAny(p.Host, "/@?#\\") || strings.Contains(p.Host, ":") && net.ParseIP(p.Host) == nil || p.Port < 1 || p.Port > 65535 || strings.TrimSpace(p.Database) == "" || strings.TrimSpace(p.User) == "" || !envName.MatchString(p.PasswordEnv)) || p.URLEnv != "" && (!envName.MatchString(p.URLEnv) || p.Host != "" || p.PasswordEnv != "") {
-				return nil, fmt.Errorf("database profile %q needs PostgreSQL host, port, database, user, and password_env", name)
+			if p.Path != "" || p.DSNEnv != "" || !validPostgresSSLMode(p.SSLMode) || p.URLEnv == "" && (!validRemoteFields(p) || p.PasswordEnv != "" && !envName.MatchString(p.PasswordEnv)) || p.URLEnv != "" && (!envName.MatchString(p.URLEnv) || p.Host != "" || p.PasswordEnv != "" || p.Password != "" || p.HasPassword || p.SSLMode != "") {
+				return nil, fmt.Errorf("database profile %q needs valid PostgreSQL host, port, database, and username fields", name)
 			}
 		case "mysql":
-			if p.Path != "" || p.URLEnv != "" || p.Host != "" || !envName.MatchString(p.DSNEnv) {
-				return nil, fmt.Errorf("database profile %q needs only dsn_env", name)
+			if p.Path != "" || p.URLEnv != "" || !validMySQLSSLMode(p.SSLMode) || p.DSNEnv != "" && (!envName.MatchString(p.DSNEnv) || p.Host != "" || p.PasswordEnv != "" || p.Password != "" || p.HasPassword || p.SSLMode != "") || p.DSNEnv == "" && (!validRemoteFields(p) || p.PasswordEnv != "" && !envName.MatchString(p.PasswordEnv)) {
+				return nil, fmt.Errorf("database profile %q needs a MySQL DSN environment variable or valid host, port, database, and username fields", name)
 			}
 		case "sqlserver":
-			if p.Path != "" || p.URLEnv != "" || p.DSNEnv != "" || strings.TrimSpace(p.Host) == "" || p.Host != strings.TrimSpace(p.Host) || strings.ContainsAny(p.Host, "/@?#\\") || strings.Contains(p.Host, ":") && net.ParseIP(p.Host) == nil || p.Port < 1 || p.Port > 65535 || strings.TrimSpace(p.Database) == "" || strings.TrimSpace(p.User) == "" || !envName.MatchString(p.PasswordEnv) {
-				return nil, fmt.Errorf("database profile %q needs SQL Server host, port, database, user, and password_env", name)
+			if p.Path != "" || p.URLEnv != "" || p.DSNEnv != "" || p.SSLMode != "" || !validRemoteFields(p) || p.PasswordEnv != "" && !envName.MatchString(p.PasswordEnv) {
+				return nil, fmt.Errorf("database profile %q needs valid SQL Server host, port, database, and username fields", name)
 			}
 		default:
 			return nil, fmt.Errorf("database profile %q: unsupported driver", name)
@@ -116,6 +120,28 @@ func New(profiles map[string]ConnectionConfig, cwd string) (*Manager, error) {
 		m.profiles[name] = p
 	}
 	return m, nil
+}
+
+func validRemoteFields(p ConnectionConfig) bool {
+	return strings.TrimSpace(p.Host) != "" && p.Host == strings.TrimSpace(p.Host) && !strings.ContainsAny(p.Host, "/@?#\\") && (!strings.Contains(p.Host, ":") || net.ParseIP(p.Host) != nil) && p.Port >= 1 && p.Port <= 65535 && strings.TrimSpace(p.Database) != "" && strings.TrimSpace(p.User) != ""
+}
+
+func validPostgresSSLMode(mode string) bool {
+	switch mode {
+	case "", "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		return true
+	default:
+		return false
+	}
+}
+
+func validMySQLSSLMode(mode string) bool {
+	switch mode {
+	case "", "disabled", "preferred", "required", "skip-verify":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) List(agent bool) []Profile {
@@ -193,30 +219,60 @@ func (m *Manager) connection(ctx context.Context, p ConnectionConfig) (*sql.DB, 
 				}
 				secrets = append(secrets, dsn)
 			} else {
-				password := os.Getenv(p.PasswordEnv)
+				password, passwordErr := connectionPassword(p)
+				if passwordErr != nil {
+					return nil, nil, nil, nil, passwordErr
+				}
 				if password == "" {
-					return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.PasswordEnv)
+					return nil, nil, nil, nil, errors.New("PostgreSQL password is missing")
 				}
 				secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))
 				u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(p.Host, strconv.Itoa(p.Port)), User: url.UserPassword(p.User, password), Path: "/" + p.Database}
+				q := u.Query()
+				q.Set("sslmode", p.SSLMode)
+				if p.SSLMode == "" {
+					q.Set("sslmode", "prefer")
+				}
+				u.RawQuery = q.Encode()
 				dsn = u.String()
 				secrets = append(secrets, dsn)
 			}
 			db, err = m.openPostgres(dsn)
 		case "mysql":
-			secret := os.Getenv(p.DSNEnv)
-			if secret == "" {
-				return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.DSNEnv)
+			var dsn string
+			if p.DSNEnv != "" {
+				dsn = os.Getenv(p.DSNEnv)
+				if dsn == "" {
+					return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.DSNEnv)
+				}
+				secrets = append(secrets, dsn)
+				if cfg, e := mysql.ParseDSN(dsn); e == nil && cfg.Passwd != "" {
+					secrets = append(secrets, cfg.Passwd)
+				}
+			} else {
+				password, passwordErr := connectionPassword(p)
+				if passwordErr != nil {
+					return nil, nil, nil, nil, passwordErr
+				}
+				if password == "" {
+					return nil, nil, nil, nil, errors.New("MySQL password is missing")
+				}
+				secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))
+				cfg := mysql.NewConfig()
+				cfg.User, cfg.Passwd, cfg.Net = p.User, password, "tcp"
+				cfg.Addr = net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
+				cfg.DBName, cfg.TLSConfig = p.Database, mysqlTLSMode(p.SSLMode)
+				dsn = cfg.FormatDSN()
+				secrets = append(secrets, dsn)
 			}
-			secrets = append(secrets, secret)
-			if cfg, e := mysql.ParseDSN(secret); e == nil && cfg.Passwd != "" {
-				secrets = append(secrets, cfg.Passwd)
-			}
-			db, err = m.openMySQL(secret)
+			db, err = m.openMySQL(dsn)
 		case "sqlserver":
-			password := os.Getenv(p.PasswordEnv)
+			password, passwordErr := connectionPassword(p)
+			if passwordErr != nil {
+				return nil, nil, nil, nil, passwordErr
+			}
 			if password == "" {
-				return nil, nil, nil, nil, fmt.Errorf("environment variable %s is not set", p.PasswordEnv)
+				return nil, nil, nil, nil, errors.New("SQL Server password is missing")
 			}
 			secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))
 			u := url.URL{Scheme: "sqlserver", Host: net.JoinHostPort(p.Host, strconv.Itoa(p.Port)), User: url.UserPassword(p.User, password)}
@@ -274,6 +330,34 @@ func (m *Manager) connection(ctx context.Context, p ConnectionConfig) (*sql.DB, 
 		return nil, nil, nil, nil, errors.New("could not start database inspection transaction")
 	}
 	return db, conn, tx, func(runErr error) error { _ = tx.Rollback(); return finish(runErr) }, nil
+}
+
+func connectionPassword(p ConnectionConfig) (string, error) {
+	if p.PasswordError != "" {
+		return "", errors.New(p.PasswordError)
+	}
+	if p.Password != "" {
+		return p.Password, nil
+	}
+	if p.PasswordEnv != "" {
+		return os.Getenv(p.PasswordEnv), nil
+	}
+	return "", nil
+}
+
+func mysqlTLSMode(mode string) string {
+	switch mode {
+	case "disabled":
+		return "false"
+	case "required":
+		return "true"
+	case "skip-verify":
+		return "skip-verify"
+	case "preferred":
+		return "preferred"
+	default:
+		return "false"
+	}
 }
 
 func safeError(err error, secret string) error {

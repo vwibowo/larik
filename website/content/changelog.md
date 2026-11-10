@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.35.0
+
+<p class="release-meta"><time datetime="2026-11-10">November 10, 2026</time></p>
+
+### Added
+
+- **PostgreSQL SSL mode.** Configure `disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full` from the connection form; `prefer` is the default.
+- **MySQL/MariaDB TLS mode.** Configure TLS from the connection form; new connections default to `required`. Existing DSN environment-variable profiles remain supported.
+- **Direct password entry.** Enter passwords for PostgreSQL, MySQL/MariaDB, and SQL Server connections in the form. Larik stores them in the operating system credential store, not the settings file. Leave the field blank while editing to keep the saved password, or remove it explicitly. Environment-variable credentials remain supported.
+
+### Compatibility
+
+- Existing environment-backed connections continue to load. If the system credential store is unavailable, environment-variable credentials remain an option.
+
 ## v0.34.0
 
 <p class="release-meta"><time datetime="2026-11-10">November 10, 2026</time></p>

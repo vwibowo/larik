@@ -37,7 +37,8 @@ type databaseState struct {
 	editing, deleting                              bool
 	oldName, draftName, draftDriver, draftValue    string
 	draftHost, draftPort, draftDatabase, draftUser string
-	draftPasswordEnv                               string
+	draftPasswordEnv, draftPassword, draftSSLMode  string
+	draftClearPassword                             bool
 	draftTrust                                     bool
 	draftAgent                                     bool
 	testingConnection                              bool
@@ -440,7 +441,7 @@ func (a *App) beginDatabaseProfile(tb *tab, name string) {
 	d.editing, d.deleting, d.oldName, d.draftName = true, false, name, name
 	d.draftDriver, d.draftValue, d.draftAgent, d.status = "sqlite", "", false, ""
 	d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = "", "1433", "", "", false
-	d.draftPasswordEnv = ""
+	d.draftPasswordEnv, d.draftPassword, d.draftSSLMode, d.draftClearPassword = "", "", "prefer", false
 	if p, ok := a.databaseStore.get(name); ok {
 		d.draftDriver, d.draftAgent = p.Driver, p.AgentAccess
 		switch p.Driver {
@@ -448,6 +449,10 @@ func (a *App) beginDatabaseProfile(tb *tab, name string) {
 			d.draftValue = p.Path
 		case "postgres":
 			d.draftPasswordEnv = p.PasswordEnv
+			d.draftSSLMode = p.SSLMode
+			if d.draftSSLMode == "" {
+				d.draftSSLMode = "prefer"
+			}
 			if p.URLEnv == "" {
 				d.draftHost, d.draftPort, d.draftDatabase, d.draftUser = p.Host, strconv.Itoa(p.Port), p.Database, p.User
 			} else {
@@ -455,8 +460,13 @@ func (a *App) beginDatabaseProfile(tb *tab, name string) {
 			}
 		case "mysql":
 			d.draftValue = p.DSNEnv
+			d.draftHost, d.draftPort, d.draftDatabase, d.draftUser = p.Host, strconv.Itoa(p.Port), p.Database, p.User
+			d.draftPasswordEnv, d.draftSSLMode = p.PasswordEnv, p.SSLMode
+			if d.draftSSLMode == "" {
+				d.draftSSLMode = "required"
+			}
 		case "sqlserver":
-			d.draftValue = p.PasswordEnv
+			d.draftPasswordEnv = p.PasswordEnv
 			d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = p.Host, strconv.Itoa(p.Port), p.Database, p.User, p.TrustServerCertificate
 		}
 	}
@@ -477,20 +487,51 @@ func (a *App) draftDatabaseConfig(d *databaseState) (database.ConnectionConfig, 
 		if err != nil {
 			return p, fmt.Errorf("enter a valid PostgreSQL port")
 		}
-		p.Host, p.Port, p.Database, p.User, p.PasswordEnv = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), strings.TrimSpace(d.draftPasswordEnv)
+		p.Host, p.Port, p.Database, p.User, p.SSLMode = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), d.draftSSLMode
+		a.applyDraftDatabasePassword(d, &p)
 	case "mysql":
-		p.DSNEnv = value
+		if value != "" { // legacy DSN profiles remain supported
+			p.DSNEnv = value
+			break
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(d.draftPort))
+		if err != nil {
+			return p, fmt.Errorf("enter a valid MySQL port")
+		}
+		p.Host, p.Port, p.Database, p.User, p.SSLMode = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), d.draftSSLMode
+		a.applyDraftDatabasePassword(d, &p)
 	case "sqlserver":
 		port, err := strconv.Atoi(strings.TrimSpace(d.draftPort))
 		if err != nil {
 			return p, fmt.Errorf("enter a valid SQL Server port")
 		}
-		p.Host, p.Port, p.Database, p.User, p.PasswordEnv, p.TrustServerCertificate = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), value, d.draftTrust
+		p.Host, p.Port, p.Database, p.User, p.TrustServerCertificate = strings.TrimSpace(d.draftHost), port, strings.TrimSpace(d.draftDatabase), strings.TrimSpace(d.draftUser), d.draftTrust
+		p.PasswordEnv = strings.TrimSpace(d.draftPasswordEnv)
+		a.applyDraftDatabasePassword(d, &p)
 	}
 	if _, err := database.New(map[string]database.ConnectionConfig{"connection-test": p}, "/"); err != nil {
 		return p, err
 	}
 	return p, nil
+}
+
+func (a *App) applyDraftDatabasePassword(d *databaseState, p *database.ConnectionConfig) {
+	if d.draftClearPassword {
+		p.Password, p.PasswordError, p.HasPassword = "", "", false
+	}
+	if d.draftPassword != "" {
+		p.Password, p.PasswordError, p.HasPassword, p.PasswordEnv = d.draftPassword, "", true, ""
+		return
+	}
+	if p.PasswordEnv != "" {
+		p.Password, p.PasswordError, p.HasPassword = "", "", false
+		return
+	}
+	if !d.draftClearPassword && d.oldName != "" {
+		if existing, ok := a.databaseStore.get(d.oldName); ok && existing.HasPassword {
+			p.Password, p.PasswordError, p.HasPassword = existing.Password, existing.PasswordError, true
+		}
+	}
 }
 
 func (a *App) testDatabaseConnection(tb *tab) {
@@ -547,6 +588,7 @@ func (a *App) saveDatabaseProfile(tb *tab) {
 		return
 	}
 	d.editing, d.profile, d.driver, d.status = false, name, p.Driver, ""
+	d.draftPassword = ""
 	for _, pane := range a.tabs {
 		if pane.database == nil {
 			continue
@@ -579,6 +621,26 @@ func (a *App) deleteDatabaseProfile(tb *tab, name string) {
 		}
 	}
 	tb.database.deleting = false
+}
+
+func (a *App) databasePasswordField(c *ui.Context, d *databaseState, label string) {
+	ui.Text(c, label).FontSize(12).Bold()
+	ui.TextInput(c.Key("db-profile-password"), &d.draftPassword).Placeholder("Enter password").Label(label).FillWidth().Password()
+	if d.oldName == "" {
+		return
+	}
+	p, ok := a.databaseStore.get(d.oldName)
+	if !ok || !p.HasPassword {
+		return
+	}
+	if d.draftClearPassword {
+		ui.Text(c, "Saved password will be removed when you save.").FontSize(11).TextColor(c.Theme().TextMuted)
+		return
+	}
+	ui.Text(c, "A password is saved securely. Leave this blank to keep it.").FontSize(11).TextColor(c.Theme().TextMuted)
+	if ui.Button(c.Key("db-profile-remove-password"), "Remove saved password").TextColor(c.Theme().Danger).Clicked() {
+		d.draftClearPassword, d.draftPassword = true, ""
+	}
 }
 
 func (a *App) databasePane(c *ui.Context, theme *ui.Theme, tb *tab) ui.Element {
@@ -1157,10 +1219,15 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 					}
 					if ui.Segmented(c.Key("db-profile-driver"), &kind, "SQLite", "PostgreSQL", "MySQL", "SQL Server").Label("Database type").AlignSelf(ui.Start).Changed() {
 						d.draftDriver = drivers[kind]
-						d.draftValue = ""
+						d.draftValue, d.draftPassword, d.draftPasswordEnv = "", "", ""
+						d.draftClearPassword = false
+						d.draftSSLMode = ""
 						port := "1433"
 						if d.draftDriver == "postgres" {
 							port = "5432"
+							d.draftSSLMode = "prefer"
+						} else if d.draftDriver == "mysql" {
+							port, d.draftSSLMode = "3306", "required"
 						}
 						d.draftHost, d.draftPort, d.draftDatabase, d.draftUser, d.draftTrust = "", port, "", "", false
 						d.draftPasswordEnv = ""
@@ -1182,14 +1249,37 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 							ui.TextInput(c.Key("db-profile-database"), &d.draftDatabase).Label("Database name").FillWidth()
 							ui.Text(c, "Username").FontSize(12).Bold()
 							ui.TextInput(c.Key("db-profile-user"), &d.draftUser).Label("Username").FillWidth()
-							ui.Text(c, "Password variable").FontSize(12).Bold()
+							a.databasePasswordField(c, d, "PostgreSQL password")
+							ui.Text(c, "Password environment variable (optional)").FontSize(12).Bold()
 							ui.TextInput(c.Key("db-profile-password-env"), &d.draftPasswordEnv).Placeholder("e.g. DATABASE_PASSWORD").Label("Password environment variable").FillWidth()
-							ui.Text(c, "The password stays in your environment; Larik saves only the environment variable name.").FontSize(11).TextColor(theme.TextMuted)
+							ui.Text(c, "Direct passwords are stored in the system credential store. An environment variable can be used instead.").FontSize(11).TextColor(theme.TextMuted)
+							ui.Text(c, "SSL mode").FontSize(12).Bold()
+							ui.Select(c.Key("db-profile-ssl-mode"), &d.draftSSLMode, []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}).Width(180).Label("PostgreSQL SSL mode")
 						}
 					case "mysql":
-						ui.Text(c, "MySQL DSN variable").FontSize(12).Bold()
-						ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. MYSQL_DSN").Label("MySQL DSN environment variable").FillWidth()
-						ui.Text(c, "The Desktop process reads the DSN; credentials stay outside Larik settings. Use a SELECT-only account.").FontSize(11).TextColor(theme.TextMuted)
+						if d.draftValue != "" {
+							ui.Text(c, "Legacy MySQL DSN variable").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. MYSQL_DSN").Label("MySQL DSN environment variable").FillWidth()
+							ui.Text(c, "Clear this field to use host, username, and password fields instead.").FontSize(11).TextColor(theme.TextMuted)
+						} else {
+							ui.Text(c, "Server").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-host"), &d.draftHost).Placeholder("db.example.com").Label("MySQL host").FillWidth()
+							ui.Text(c, "Port").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-port"), &d.draftPort).Label("MySQL port").Width(120)
+							ui.Text(c, "Database").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-database"), &d.draftDatabase).Label("MySQL database").FillWidth()
+							ui.Text(c, "Username").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-user"), &d.draftUser).Label("MySQL username").FillWidth()
+							a.databasePasswordField(c, d, "MySQL password")
+							ui.Text(c, "Password environment variable (optional)").FontSize(12).Bold()
+							ui.TextInput(c.Key("db-profile-password-env"), &d.draftPasswordEnv).Placeholder("e.g. DATABASE_PASSWORD").Label("MySQL password environment variable").FillWidth()
+							ui.Text(c, "TLS mode").FontSize(12).Bold()
+							ui.Select(c.Key("db-profile-ssl-mode"), &d.draftSSLMode, []string{"disabled", "preferred", "required", "skip-verify"}).Width(180).Label("MySQL TLS mode")
+							if d.draftSSLMode == "skip-verify" {
+								ui.Text(c, "Skip Verify disables certificate checks and is vulnerable to interception.").FontSize(11).TextColor(theme.Danger)
+							}
+						}
+						ui.Text(c, "Use a SELECT-only account.").FontSize(11).TextColor(theme.TextMuted)
 					case "sqlserver":
 						ui.Text(c, "Server host").FontSize(12).Bold()
 						ui.TextInput(c.Key("db-profile-host"), &d.draftHost).Placeholder("sql.example.com").Label("SQL Server host").FillWidth()
@@ -1199,13 +1289,14 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 						ui.TextInput(c.Key("db-profile-database"), &d.draftDatabase).Label("SQL Server database").FillWidth()
 						ui.Text(c, "Username").FontSize(12).Bold()
 						ui.TextInput(c.Key("db-profile-user"), &d.draftUser).Label("SQL Server username").FillWidth()
-						ui.Text(c, "Password variable").FontSize(12).Bold()
-						ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("e.g. SQLSERVER_PASSWORD").Label("SQL Server password environment variable").FillWidth()
+						a.databasePasswordField(c, d, "SQL Server password")
+						ui.Text(c, "Password environment variable (optional)").FontSize(12).Bold()
+						ui.TextInput(c.Key("db-profile-password-env"), &d.draftPasswordEnv).Placeholder("e.g. SQLSERVER_PASSWORD").Label("SQL Server password environment variable").FillWidth()
 						ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, "Trust server certificate").FontSize(12).Grow(1)
 							ui.Switch(c.Key("db-profile-trust"), &d.draftTrust).Label("Trust SQL Server certificate without validation")
 						})
-						ui.Text(c, "Encrypted connections validate certificates by default. Use a SELECT-only account.").FontSize(11).TextColor(theme.TextMuted)
+						ui.Text(c, "Encrypted connections validate certificates by default. Direct passwords are stored in the system credential store. Use a SELECT-only account.").FontSize(11).TextColor(theme.TextMuted)
 					default:
 						ui.Text(c, "SQLite file").FontSize(12).Bold()
 						ui.TextInput(c.Key("db-profile-value"), &d.draftValue).Placeholder("/path/to/database.sqlite").Label("Absolute SQLite file path").FillWidth()
@@ -1232,7 +1323,7 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 					}
 					ui.Spacer(c)
 					if ui.Button(c.Key("db-cancel-profile"), "Cancel").Clicked() {
-						d.editing, d.status = false, ""
+						d.editing, d.status, d.draftPassword = false, "", ""
 					}
 					if ui.Button(c.Key("db-test-profile"), map[bool]string{true: "Testing…", false: "Test Connection"}[d.testingConnection]).Clicked() && !d.testingConnection {
 						a.testDatabaseConnection(tb)
@@ -1249,7 +1340,7 @@ func (a *App) databaseProfileForm(c *ui.Context, theme *ui.Theme, tb *tab) {
 							}
 							ui.Spacer(c)
 							if ui.Button(c.Key("db-cancel-profile"), "Cancel").Clicked() {
-								d.editing, d.status = false, ""
+								d.editing, d.status, d.draftPassword = false, "", ""
 							}
 						})
 						ui.Row(c).FillWidth().Justify(ui.End).Children(func() {

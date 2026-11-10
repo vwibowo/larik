@@ -6,8 +6,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
+
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 type dialectCall struct {
@@ -142,6 +145,50 @@ func TestMySQLDialectAndReadOnly(t *testing.T) {
 	r.fail = "driver failure: very_secret"
 	if _, err := m.Query(context.Background(), "my", "SELECT 1", 1, true); err == nil || strings.Contains(err.Error(), "very_secret") {
 		t.Fatalf("password in error: %v", err)
+	}
+}
+
+func TestPostgresDirectPasswordAndSSLMode(t *testing.T) {
+	r := &dialectRecorder{}
+	sql.Register("larik-test-postgres-direct-password", dialectDriver{r})
+	m, err := New(map[string]ConnectionConfig{"pg": {
+		Driver: "postgres", Host: "localhost", Port: 5432, Database: "app", User: "reader",
+		Password: "p@ss word", SSLMode: "verify-full",
+	}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.openPostgres = func(dsn string) (*sql.DB, error) { return sql.Open("larik-test-postgres-direct-password", dsn) }
+	if _, err := m.Schema(context.Background(), "pg", false); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(r.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, _ := u.User.Password()
+	if password != "p@ss word" || u.Query().Get("sslmode") != "verify-full" {
+		t.Fatalf("PostgreSQL DSN: %q", r.dsn)
+	}
+}
+
+func TestMySQLDirectPasswordAndTLSMode(t *testing.T) {
+	r := &dialectRecorder{}
+	sql.Register("larik-test-mysql-direct-password", dialectDriver{r})
+	m, err := New(map[string]ConnectionConfig{"my": {
+		Driver: "mysql", Host: "localhost", Port: 3306, Database: "app", User: "reader",
+		Password: "very_secret", SSLMode: "required",
+	}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.openMySQL = func(dsn string) (*sql.DB, error) { return sql.Open("larik-test-mysql-direct-password", dsn) }
+	if _, err := m.Schema(context.Background(), "my", false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := mysql.ParseDSN(r.dsn)
+	if err != nil || cfg.Passwd != "very_secret" || cfg.TLSConfig != "true" {
+		t.Fatalf("MySQL DSN: %q %v", r.dsn, err)
 	}
 }
 

@@ -1,16 +1,15 @@
-# Larik v0.34.0
+# Larik v0.35.0
 
-_November 10, 2026 · Previous release: v0.33.0._
+_November 10, 2026 · Previous release: v0.34.0._
 
-Larik's browser automation tools now operate only on visible browser panes in Larik Desktop. Standalone terminal sessions no longer launch Chrome or expose browser controls.
+Database Manager connections can now use SSL/TLS settings and passwords entered directly in the connection form. Direct passwords are kept in the operating system credential store.
 
-### Changed
+### Added
 
-- **Desktop browser panes.** Improved browser navigation, focus tracking, and visible status feedback across Browser, Files, and Database panes.
-- **Browser automation.** `desktop_page_*` tools remain available to Larik running in a Desktop terminal tab and control the Desktop's native browser panes. Standalone CLI, TUI, headless, and server sessions no longer register `browser_*` tools or start Chrome.
-- **Terminal interface.** Removed the `/browser` controls, browser viewer, and terminal browser compare and replay commands.
+- **PostgreSQL SSL mode.** Choose `disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full`; the default is `prefer`.
+- **MySQL/MariaDB TLS mode.** Configure TLS from the connection form, with `required` as the default. Existing DSN environment-variable profiles continue to work.
+- **Direct password entry.** Enter passwords for PostgreSQL, MySQL/MariaDB, and SQL Server connections in the form. Passwords are stored in the operating system credential store, never in the settings file. Leave the field blank while editing to keep a saved password, or remove it explicitly. Environment-variable credentials remain available.
 
 ### Compatibility
 
-- Existing `browser` configuration fields are ignored, so older config files continue to load. Shared trace and snapshot support remains available to Desktop.
-- Browser automation now requires Larik Desktop; standalone browser sessions and their chromedp dependency have been removed.
+- Existing environment-backed PostgreSQL, MySQL/MariaDB, and SQL Server connections continue to load. If the system credential store is unavailable, environment-variable credentials remain an option.

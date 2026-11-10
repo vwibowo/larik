@@ -9,9 +9,32 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/egoist/mygo"
 	"larik/internal/config"
 	"larik/internal/database"
 )
+
+const databaseSecretService = "Larik Desktop Database"
+
+type databaseSecrets interface {
+	Set(string, []byte) error
+	Get(string) ([]byte, error)
+	Delete(string) error
+}
+
+type systemDatabaseSecrets struct{}
+
+func (systemDatabaseSecrets) Set(key string, value []byte) error {
+	return mygo.Secrets.Service(databaseSecretService).Set(key, value)
+}
+func (systemDatabaseSecrets) Get(key string) ([]byte, error) {
+	return mygo.Secrets.Service(databaseSecretService).Get(key)
+}
+func (systemDatabaseSecrets) Delete(key string) error {
+	return mygo.Secrets.Service(databaseSecretService).Delete(key)
+}
+
+func databaseSecretKey(name string) string { return "connection:" + name }
 
 // databaseStore is shared by Desktop windows. Profiles are global to Desktop,
 // never loaded from a project. The file contains no PostgreSQL URL.
@@ -20,11 +43,16 @@ type databaseStore struct {
 	path     string
 	profiles map[string]database.ConnectionConfig
 	manager  *database.Manager
+	secrets  databaseSecrets
 	err      error
 }
 
 func loadDatabaseStore() *databaseStore {
-	s := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}}
+	return loadDatabaseStoreWithSecrets(systemDatabaseSecrets{})
+}
+
+func loadDatabaseStoreWithSecrets(secrets databaseSecrets) *databaseStore {
+	s := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}, secrets: secrets}
 	data, err := os.ReadFile(s.path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.err = err
@@ -38,6 +66,18 @@ func loadDatabaseStore() *databaseStore {
 		} else if saved.Connections != nil {
 			s.profiles = saved.Connections
 		}
+	}
+	for name, p := range s.profiles {
+		if !p.HasPassword {
+			continue
+		}
+		secret, err := s.secrets.Get(databaseSecretKey(name))
+		if err != nil {
+			p.PasswordError = "saved password is unavailable in the system credential store"
+		} else {
+			p.Password = string(secret)
+		}
+		s.profiles[name] = p
 	}
 	for _, p := range s.profiles {
 		if p.Driver == "sqlite" && !filepath.IsAbs(p.Path) {
@@ -104,7 +144,23 @@ func (s *databaseStore) save(next map[string]database.ConnectionConfig) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := config.SetSettingPath(s.path, "database_connections", next); err != nil {
+	oldProfiles := maps.Clone(s.profiles)
+	for name, p := range next {
+		if p.Password != "" {
+			if err := s.secrets.Set(databaseSecretKey(name), []byte(p.Password)); err != nil {
+				return errors.New("could not save password in the system credential store")
+			}
+			p.HasPassword = true
+			p.PasswordError = ""
+			next[name] = p
+		}
+	}
+	persisted := maps.Clone(next)
+	for name, p := range persisted {
+		p.Password, p.PasswordError = "", ""
+		persisted[name] = p
+	}
+	if err := config.SetSettingPath(s.path, "database_connections", persisted); err != nil {
 		return err
 	}
 	if s.manager == nil {
@@ -117,5 +173,15 @@ func (s *databaseStore) save(next map[string]database.ConnectionConfig) error {
 	}
 	s.profiles = maps.Clone(next)
 	s.err = nil
+	for name, old := range oldProfiles {
+		if old.HasPassword {
+			current, keep := next[name]
+			if !keep || !current.HasPassword {
+				if err := s.secrets.Delete(databaseSecretKey(name)); err != nil && !errors.Is(err, mygo.ErrSecretNotFound) {
+					return errors.New("connection was saved, but its old password could not be removed from the system credential store")
+				}
+			}
+		}
+	}
 	return nil
 }

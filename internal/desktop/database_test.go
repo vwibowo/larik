@@ -3,6 +3,7 @@ package desktop
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"larik/internal/config"
 	"larik/internal/database"
@@ -37,6 +39,27 @@ func databaseFixture(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return project, path
+}
+
+type fakeDatabaseSecrets map[string][]byte
+
+func (s fakeDatabaseSecrets) Set(key string, value []byte) error {
+	s[key] = append([]byte(nil), value...)
+	return nil
+}
+func (s fakeDatabaseSecrets) Get(key string) ([]byte, error) {
+	value, ok := s[key]
+	if !ok {
+		return nil, mygo.ErrSecretNotFound
+	}
+	return append([]byte(nil), value...), nil
+}
+func (s fakeDatabaseSecrets) Delete(key string) error {
+	if _, ok := s[key]; !ok {
+		return mygo.ErrSecretNotFound
+	}
+	delete(s, key)
+	return nil
 }
 
 func TestRefreshFocusedDatabasePaneSkipsWhileLoading(t *testing.T) {
@@ -147,7 +170,7 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	wide.Frame()
-	if d.draftDriver != "postgres" || !wide.HasText("Host") || !wide.HasText("Database name") || !wide.HasText("Username") || !wide.HasText("Password environment variable") {
+	if d.draftDriver != "postgres" || !wide.HasText("Host") || !wide.HasText("Database name") || !wide.HasText("Username") || !wide.HasText("PostgreSQL password") || !wide.HasText("PostgreSQL SSL mode") || !wide.HasText("Password environment variable") {
 		t.Fatalf("PostgreSQL form: driver %q, texts %q", d.draftDriver, wide.Texts())
 	}
 	snapshot(t, wide, "database-add-postgres-dark.png")
@@ -188,7 +211,7 @@ func TestDatabaseNewDriverFormsAndStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	for _, label := range []string{"SQL Server host", "SQL Server port", "SQL Server database", "SQL Server username", "SQL Server password environment variable", "Trust SQL Server certificate without validation"} {
+	for _, label := range []string{"SQL Server host", "SQL Server port", "SQL Server database", "SQL Server username", "SQL Server password", "SQL Server password environment variable", "Trust SQL Server certificate without validation"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing SQL Server field %q", label)
 		}
@@ -201,8 +224,10 @@ func TestDatabaseNewDriverFormsAndStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("MySQL DSN environment variable") {
-		t.Fatal("MySQL DSN field missing")
+	for _, label := range []string{"MySQL host", "MySQL port", "MySQL database", "MySQL username", "MySQL password", "MySQL TLS mode"} {
+		if !tt.HasText(label) {
+			t.Fatalf("MySQL connection form is missing %q: %q", label, tt.Texts())
+		}
 	}
 	profiles := map[string]database.ConnectionConfig{
 		"sql": {Driver: "sqlserver", Host: "localhost", Port: 1433, Database: "app", User: "reader", PasswordEnv: "LARIK_TEST_SQL_PASSWORD"},
@@ -236,6 +261,61 @@ func TestDatabaseNewDriverFormsAndStorage(t *testing.T) {
 		t.Fatal("MySQL connection was not deleted")
 	}
 }
+
+func TestDatabasePasswordUsesSystemCredentialStore(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	secrets := fakeDatabaseSecrets{}
+	store := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}, secrets: secrets}
+	const password = "very_secret_password"
+	profile := database.ConnectionConfig{Driver: "postgres", Host: "db.example.com", Port: 5432, Database: "app", User: "reader", Password: password, SSLMode: "verify-full"}
+	if err := store.save(map[string]database.ConnectionConfig{"analytics": profile}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), password) || !strings.Contains(string(data), `"has_password": true`) {
+		t.Fatalf("settings did not keep the password in the credential store: %s", data)
+	}
+	if string(secrets[databaseSecretKey("analytics")]) != password {
+		t.Fatal("password missing from system credential store")
+	}
+
+	reloaded := loadDatabaseStoreWithSecrets(secrets)
+	if got, ok := reloaded.get("analytics"); !ok || got.Password != password || got.SSLMode != "verify-full" {
+		t.Fatalf("saved connection was not restored: %+v %v", got, ok)
+	}
+	if err := reloaded.save(map[string]database.ConnectionConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := secrets[databaseSecretKey("analytics")]; ok {
+		t.Fatal("deleted connection left a password in the credential store")
+	}
+}
+
+func TestDatabasePasswordStoreFailureDoesNotPersistProfile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	secrets := failingDatabaseSecrets{}
+	store := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}, secrets: secrets}
+	err := store.save(map[string]database.ConnectionConfig{"analytics": {Driver: "postgres", Host: "db.example.com", Port: 5432, Database: "app", User: "reader", Password: "secret"}})
+	if err == nil || !strings.Contains(err.Error(), "system credential store") {
+		t.Fatalf("expected secure storage failure, got %v", err)
+	}
+	if _, ok := store.get("analytics"); ok {
+		t.Fatal("profile was published without storing its password")
+	}
+}
+
+type failingDatabaseSecrets struct{}
+
+func (failingDatabaseSecrets) Set(string, []byte) error { return errors.New("keyring unavailable") }
+func (failingDatabaseSecrets) Get(string) ([]byte, error) {
+	return nil, errors.New("keyring unavailable")
+}
+func (failingDatabaseSecrets) Delete(string) error { return nil }
 
 func TestDatabaseNewDriversAgentOptIn(t *testing.T) {
 	project, _ := databaseFixture(t)
