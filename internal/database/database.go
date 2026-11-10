@@ -590,6 +590,50 @@ func (m *Manager) Query(ctx context.Context, name, statement string, limit int, 
 	return result, finish(err)
 }
 
+// Analyze returns the database's plan for one read-only result-producing
+// statement. PostgreSQL and MySQL execute the statement to collect runtime
+// details; SQLite and SQL Server return a plan without running it.
+func (m *Manager) Analyze(ctx context.Context, name, statement string, limit int, agent bool) (Result, error) {
+	p, err := m.profile(name, agent)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := validSQL(statement); err != nil {
+		return Result{}, err
+	}
+	if p.Driver == "sqlserver" || p.Driver == "mysql" {
+		if err := validRemoteSQL(statement, p.Driver); err != nil {
+			return Result{}, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, conn, tx, finish, err := m.connection(ctx, p)
+	if err != nil {
+		return Result{}, err
+	}
+	query := statement
+	switch p.Driver {
+	case "sqlite":
+		query = "EXPLAIN QUERY PLAN " + statement
+	case "postgres":
+		query = "EXPLAIN (ANALYZE, FORMAT TEXT) " + statement
+	case "mysql":
+		query = "EXPLAIN ANALYZE " + statement
+	case "sqlserver":
+		if _, err := tx.ExecContext(ctx, "SET SHOWPLAN_XML ON"); err != nil {
+			return Result{}, finish(err)
+		}
+	}
+	result, runErr := bounded(ctx, conn, tx, query, limit)
+	if p.Driver == "sqlserver" {
+		if _, err := tx.ExecContext(ctx, "SET SHOWPLAN_XML OFF"); runErr == nil && err != nil {
+			runErr = err
+		}
+	}
+	return result, finish(runErr)
+}
+
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 func quoteFor(driver, s string) string {

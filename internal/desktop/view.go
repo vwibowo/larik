@@ -661,9 +661,6 @@ func (a *App) where(tb *tab) string {
 		return tildePath(tb.dir)
 	}
 	if tb.browser {
-		if tb.loading {
-			return pageHost(tb.url) + " — loading"
-		}
 		return pageHost(tb.url)
 	}
 	st := a.tabStatus(tb)
@@ -1631,6 +1628,9 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 		statusDot(c, t, a.tabStatus(tb))
 		kind, kindIcon := a.tabKind(tb)
 		ui.Icon(c, kindIcon).FontSize(12).TextColor(t.TextMuted).Tooltip(kind)
+		if _, loading, _ := paneFeedbackState(tb); loading {
+			ui.Spinner(c).Size(12, 12).Label("Loading")
+		}
 		title := ui.Text(c, a.tabTitle(tb)).FontSize(12).SingleLine().Shrink(1)
 		if active {
 			title.Bold()

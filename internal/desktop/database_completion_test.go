@@ -176,9 +176,9 @@ func TestDatabaseSQLEditorKeyboardAndTheme(t *testing.T) {
 		t.Fatal("SQL editor undo did not remove the last edit")
 	}
 	d.sql.Buffer.Set("SELECT count(*) FROM notes")
-	light.Key(ui.Ctrl, ui.KeyEnter)
+	light.Key(ui.Cmd, ui.KeyEnter)
 	if d.activeResult != databaseQuery || len(d.results[databaseQuery].result.Rows) != 1 {
-		t.Fatal("Ctrl+Enter did not run the editor buffer")
+		t.Fatal("Cmd+Enter did not run the editor buffer")
 	}
 	snapshot(t, light, "database-editor-light.png")
 	query := d.sql.Buffer.String()

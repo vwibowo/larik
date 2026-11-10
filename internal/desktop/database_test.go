@@ -392,10 +392,13 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if dataTab.Y-queryHeader.Y < 140 || dataTab.Y-queryHeader.Y > 240 {
 		t.Fatalf("editor is not compact: SQL y=%v, results y=%v", queryHeader.Y, dataTab.Y)
 	}
-	for _, want := range []string{"local", "Objects", "SQL query", "main.notes", "hello", "Find database objects"} {
+	for _, want := range []string{"local", "SQL query", "main.notes", "hello", "Find database objects", "Refresh database objects"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %q", want, tt.Texts())
 		}
+	}
+	if tt.HasText("Objects") {
+		t.Fatal("database object sidebar still has a title")
 	}
 	if _, ok := tt.Find("Select a row to show details on the right"); !ok {
 		t.Fatal("right panel icon should remain visible before a row is selected")
@@ -439,7 +442,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if err := tt.Click("Read-only SQL query"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Key(ui.Ctrl, ui.KeyEnter)
+	tt.Key(ui.Cmd, ui.KeyEnter)
 	tt.Frame()
 	if !tt.HasText("SQL query") || !tt.HasText("total") || tb.database.activeResult != databaseQuery {
 		t.Fatalf("query result: %q", tt.Texts())

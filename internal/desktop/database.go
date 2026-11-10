@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type databaseState struct {
 	showStructure                                  bool
 	exportSeq                                      uint64
 	search                                         string
+	schemaFilter                                   string
 	pageSize                                       int
 	results                                        [3]databaseResultView
 	activeResult, region                           int
@@ -121,7 +123,7 @@ func (a *App) ensureDatabaseEditor(tb *tab) {
 	d.sql = &editor.State{Buffer: editor.NewBuffer(""), Placeholder: "SELECT * FROM …", Label: "Read-only SQL query", NoFolding: true, NoScrollPastEnd: true}
 	d.sql.Buffer.SetLanguage(editor.LanguageNamed("sql"))
 	d.sql.OnInput = func(ev ui.InputEvent) bool {
-		if ev.Kind == ui.InputKeyDown && ev.Key == ui.KeyEnter && ev.Mods == ui.Ctrl {
+		if ev.Kind == ui.InputKeyDown && ev.Key == ui.KeyEnter && ev.Mods == ui.Cmd {
 			a.runDatabaseQuery(tb)
 			return true
 		}
@@ -411,14 +413,36 @@ func (a *App) runDatabaseQuery(tb *tab) {
 	if d == nil || d.profile == "" || a.databaseStore.manager == nil {
 		return
 	}
+	query := d.sql.Buffer.String()
+	a.runDatabaseSQL(tb, query, "SQL query", func(ctx context.Context, profile, query string) (database.Result, error) {
+		return a.databaseStore.manager.Query(ctx, profile, query, database.DefaultRows, false)
+	})
+}
+
+func (a *App) runDatabaseAnalyze(tb *tab, query string) {
+	d := tb.database
+	if d == nil || d.profile == "" || a.databaseStore.manager == nil || strings.TrimSpace(query) == "" {
+		return
+	}
+	a.runDatabaseSQL(tb, query, "SQL analysis", func(ctx context.Context, profile, query string) (database.Result, error) {
+		return a.databaseStore.manager.Analyze(ctx, profile, query, database.DefaultRows, false)
+	})
+}
+
+func (a *App) runDatabaseSQL(tb *tab, query, source string, run func(context.Context, string, string) (database.Result, error)) {
+	d := tb.database
 	d.seq++
 	v := &d.results[databaseQuery]
-	seq, profile, query := d.seq, d.profile, d.sql.Buffer.String()
-	d.loading, d.status, v.status = true, "", "Running query…"
+	seq, profile := d.seq, d.profile
+	runningStatus := "Running query…"
+	if source == "SQL analysis" {
+		runningStatus = "Running analysis…"
+	}
+	d.loading, d.status, v.status = true, "", runningStatus
 	d.selectResult(databaseQuery)
 	a.databaseWork(func() {
 		start := time.Now()
-		result, err := a.databaseStore.manager.Query(d.ctx, profile, query, database.DefaultRows, false)
+		result, err := run(d.ctx, profile, query)
 		a.update(func() {
 			if tb.database != d || d.ctx.Err() != nil || d.seq != seq {
 				return
@@ -431,7 +455,7 @@ func (a *App) runDatabaseQuery(tb *tab) {
 			v.result, v.selectedRow, v.status = result, -1, ""
 			v.selection.Clear()
 			v.grid.Cells = ui.ColumnRange{}
-			v.source = "SQL query"
+			v.source = source
 		})
 	})
 }
@@ -723,6 +747,11 @@ func (a *App) databaseHeader(c *ui.Context, theme *ui.Theme, tb *tab) {
 			ui.Text(c, driver+" · Read only").FontSize(11).TextColor(theme.TextMuted).SingleLine()
 		}
 		if d.profile != "" {
+			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh database objects ("+keyText("Cmd+R")+")", false, func() {
+				if !d.loading {
+					a.loadDatabaseSchema(tb)
+				}
+			})
 			if !d.compact {
 				browserTip := "Show tables on the left"
 				if d.showBrowser {
@@ -789,9 +818,32 @@ func (a *App) databaseEmpty(c *ui.Context, theme *ui.Theme, tb *tab) {
 func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 	d := tb.database
 	search := strings.ToLower(strings.TrimSpace(d.search))
+	schemaOptions := []string{"All schemas"}
+	seenSchemas := make(map[string]bool)
+	for _, table := range d.tables {
+		if !seenSchemas[table.Schema] {
+			seenSchemas[table.Schema] = true
+			name := table.Schema
+			if name == "" {
+				name = "Default"
+			}
+			schemaOptions = append(schemaOptions, name)
+		}
+	}
+	sort.Strings(schemaOptions[1:])
+	if d.schemaFilter == "" || !containsString(schemaOptions, d.schemaFilter) {
+		d.schemaFilter = "All schemas"
+	}
 	schemas := make([]string, 0)
 	visible := make(map[string][]database.Table)
 	for _, table := range d.tables {
+		schemaName := table.Schema
+		if schemaName == "" {
+			schemaName = "Default"
+		}
+		if d.schemaFilter != "All schemas" && schemaName != d.schemaFilter {
+			continue
+		}
 		if search == "" || strings.Contains(strings.ToLower(table.Schema), search) || strings.Contains(strings.ToLower(table.Name), search) {
 			if _, ok := visible[table.Schema]; !ok {
 				schemas = append(schemas, table.Schema)
@@ -800,25 +852,30 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 		}
 	}
 	ui.Column(c).Grow(1).MinWidth(0).BorderWidth(0, 1, 0, 0).BorderColor(theme.Border).Children(func() {
-		ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
-			ui.Icon(c, iconDatabase).FontSize(14).TextColor(theme.Accent)
-			ui.Text(c, "Objects").FontSize(12).Bold().Grow(1)
-			a.iconButton(c, theme, "db-refresh", iconReload, "Refresh database objects ("+keyText("Cmd+R")+")", false, func() {
-				if !d.loading {
-					a.loadDatabaseSchema(tb)
-				}
-			})
-		})
 		ui.Row(c).Padding(7, 9).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			ui.SearchField(c.Key("db-items-search"), &d.search).Label("Find database objects").Placeholder("Find tables, views, functions").Grow(1).MinWidth(0).
 				OnShortcut(0, ui.KeyEscape, func() { d.search = "" })
+		})
+		ui.Row(c).Gap(8).Padding(7, 9).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Schema").FontSize(11).TextColor(theme.TextMuted)
+			ui.Select(c.Key("db-schema-filter"), &d.schemaFilter, schemaOptions).Label("Filter by schema").Grow(1).MinWidth(0)
 		})
 		if search != "" {
 			matches := 0
 			for _, tables := range visible {
 				matches += len(tables)
 			}
-			ui.Text(c, fmt.Sprintf("%d of %d objects", matches, len(d.tables))).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
+			total := 0
+			for _, table := range d.tables {
+				schemaName := table.Schema
+				if schemaName == "" {
+					schemaName = "Default"
+				}
+				if d.schemaFilter == "All schemas" || d.schemaFilter == schemaName {
+					total++
+				}
+			}
+			ui.Text(c, fmt.Sprintf("%d of %d objects", matches, total)).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
 		}
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Tree(c, func() {
@@ -865,6 +922,15 @@ func (a *App) databaseObjects(c *ui.Context, theme *ui.Theme, tb *tab) {
 			}
 		})
 	})
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) databaseCenter(c *ui.Context, theme *ui.Theme, tb *tab) {
@@ -966,9 +1032,9 @@ func (a *App) databaseCenter(c *ui.Context, theme *ui.Theme, tb *tab) {
 			ui.Row(c).Height(36).Gap(10).Padding(2, 14).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "SQL query").FontSize(12).Bold().Grow(1)
 				if !d.narrow {
-					ui.Text(c, "Ctrl+Enter").FontSize(10).TextColor(theme.TextMuted).SingleLine()
+					ui.Text(c, keyText("Cmd+Enter")).FontSize(10).TextColor(theme.TextMuted).SingleLine()
 				}
-				run := ui.Box(c.Key("db-run")).Size(32, 32).Center().Focusable().Radius(6).Background(theme.Accent).Label("Run query (Ctrl+Enter)").Tooltip("Run query (Ctrl+Enter)").Disabled(d.loading).Children(func() {
+				run := ui.Box(c.Key("db-run")).Size(32, 32).Center().Focusable().Radius(6).Background(theme.Accent).Label("Run query (" + keyText("Cmd+Enter") + ")").Tooltip("Run query (" + keyText("Cmd+Enter") + ")").Disabled(d.loading).Children(func() {
 					ui.Icon(c, iconRun).FontSize(15).TextColor(theme.AccentText)
 				})
 				if run.Clicked() {
@@ -984,7 +1050,24 @@ func (a *App) databaseCenter(c *ui.Context, theme *ui.Theme, tb *tab) {
 			codeTheme.Tokens[editor.TokenString].Color = theme.Success
 			codeTheme.Tokens[editor.TokenComment].Color = theme.TextMuted
 			d.sql.Theme = codeTheme
-			editor.View(c.Key("db-sql"), d.sql).Grow(1).MinWidth(0).MinHeight(0)
+			sqlEditor := editor.View(c.Key("db-sql"), d.sql).Grow(1).MinWidth(0).MinHeight(0)
+			sqlEditor.ContextMenu(func(m *ui.Menu) {
+				selected := strings.TrimSpace(d.sql.SelectedText())
+				if m.Item("Run Query").Chosen() {
+					query := selected
+					if query == "" {
+						query = d.sql.Buffer.String()
+					}
+					a.runDatabaseSQL(tb, query, "SQL query", func(ctx context.Context, profile, query string) (database.Result, error) {
+						return a.databaseStore.manager.Query(ctx, profile, query, database.DefaultRows, false)
+					})
+				}
+				if m.Item("Run Analyze").Disabled(selected == "").Chosen() {
+					a.runDatabaseAnalyze(tb, selected)
+				}
+				m.Separator()
+				m.EditItems()
+			})
 		})
 	}, func() { a.databaseResults(c, theme, tb) }).Grow(1)
 }
@@ -1102,16 +1185,19 @@ func (a *App) databaseResults(c *ui.Context, theme *ui.Theme, tb *tab) {
 			})
 		}
 		ui.Row(c).Height(32).Gap(8).Padding(4, 14).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(theme.Border).Children(func() {
+			_, _, hasSharedFailure := paneFeedbackState(tb)
 			if v.status != "" || d.status != "" {
 				status := v.status
 				if d.status != "" {
 					status = d.status
 				}
-				color := theme.Danger
-				if d.loading || strings.HasPrefix(status, "Exported ") {
-					color = theme.TextMuted
+				if !hasSharedFailure {
+					color := theme.Danger
+					if d.loading || strings.HasPrefix(status, "Exported ") {
+						color = theme.TextMuted
+					}
+					ui.Text(c, status).FontSize(11).TextColor(color).Grow(1).SingleLine()
 				}
-				ui.Text(c, status).FontSize(11).TextColor(color).Grow(1).SingleLine()
 			} else {
 				label := fmt.Sprintf("%d rows · %s", len(r.Rows), databaseTiming(v.elapsed))
 				if d.activeResult == databaseData && len(r.Rows) > 0 {
