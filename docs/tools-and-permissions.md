@@ -1,5 +1,7 @@
 # Tools and permissions
 
+Browser automation tools are available only in Larik Desktop terminal tabs, where `desktop_page_*` operates on the visible native browser panes. Standalone CLI, TUI, headless and server sessions do not receive browser tools or launch Chrome. Existing `browser` settings are ignored.
+
 ## The Tool interface
 
 Every capability the model can use, built-in or not, implements three methods ([tool.go](../internal/tools/tool.go)):
@@ -62,12 +64,7 @@ classDiagram
 | `todo_write` | tools | yes | Replaces the model's task list; at most one item `in_progress`. The result tells the model only the progress and the item in progress, since it just sent the list. Stateless: the latest successful call in the transcript is the list, so the TUI, resume and `/todos` read it from there, and compaction carries open items into the summary. Not offered to subagents |
 | `memory` | memory | no | Saves, reads, lists and deletes notes kept across sessions; reads/listing and project changes are prompt-free, but user-scoped saves/replacements/deletes ask (including in plan/auto mode), unless explicitly allowed or in yolo; omitted delete scope means project only; see [state](state-and-persistence.md#memory). Not offered to subagents |
 | `web_fetch`, `web_search` | web | no (concurrency-safe) | Per-domain permission; see [security](security.md#web-tools) |
-| `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_press_key`, `browser_upload`, `browser_history`, `browser_tabs`, `browser_eval` | termbrowser | no | Only in standalone CLI/TUI sessions when `browser.enabled`; `browser_navigate` has per-domain permission like `web_fetch`; see [extensibility](extensibility.md#browser) |
-| `browser_compare` | termbrowser | yes | Compares the active tab with what the user last pointed at, through the browser panel. With no panel or no selection it returns an error telling the model what to ask for. With `page: true` it needs neither: it compares the window with the picture kept before the agent's edits |
-| `browser_render` | termbrowser | yes | Draws Mermaid, SVG or HTML in a sealed page (no network, own cookie jar, no scripts except Mermaid's) and returns the PNG. The result says whether the user can see it; if not, it tells the model to use text and saves the file |
-| `browser_snapshot`, `browser_wait_for`, `browser_console`, `browser_network` | termbrowser | yes | Read the active tab |
-| `browser_show` | termbrowser | yes | Opens the in-terminal browser pane beside Larik's (`larik browser view`) |
-| `browser_screenshot` | termbrowser | only without `save_path` (concurrency-safe) | Returns the capture as an image. With `save_path` it also writes a JPEG in the project, and is then treated like `write` by rules and modes. It is the one tool whose read-only answer depends on its input, through `ReadOnlyFor` ([runtools.go](../internal/agent/runtools.go)), which is consulted after `PreToolUse` may have rewritten the input |
+| `desktop_page_navigate`, `desktop_page_snapshot`, `desktop_page_click`, `desktop_page_type`, `desktop_page_eval`, `desktop_page_screenshot` and related page tools | desktoppage | varies by operation | Available only in Desktop terminal tabs; navigation uses per-domain permission. Operates on the visible Desktop browser pane; see [Desktop](desktop.md) |
 | `lsp` | lsp | yes | definition, references, hover, symbols, diagnostics, code_actions (listing) |
 | `apply_code_action` | lsp | no | Applies a listed code action by title; `edit(...)` rules also cover it. Every destination in each workspace-edit batch is checked against explicit deny rules and the project boundary before that batch writes; files are snapshotted for `/undo`. Command-generated batches receive the same checks, but the full action is not an atomic transaction across batches. Not offered to worktree subagents |
 | `skill` | skills | yes | Loads a skill's full instructions |
@@ -186,7 +183,7 @@ Every outcome of `authorize` except a read-only call allowed by rules or mode is
 2. Any **deny rule** matches → Deny. (Applies in every mode, including yolo.)
 3. Mode **yolo** → Allow. The `memory` tool also allows reads/listing and project changes; user-scoped saves/replacements/deletes Ask unless a personal allow rule covers them. This memory decision precedes the generic plan-mode write restriction.
 4. Tool is **read-only** → Allow.
-5. Mode **plan** → Deny, except `web_fetch`/`web_search`/`browser_navigate`, which fall through to ask (research is part of planning).
+5. Mode **plan** → Deny, except `web_fetch`/`web_search`, which fall through to ask (research is part of planning).
 6. Any **allow rule** matches → Allow.
 7. `bash` and the **sandbox** is on and the call didn't set `"sandbox": false` → Allow.
 8. `bash` and the command is on the **safe list** (`ls`, exact `git status`, exact `git diff`, …) with no shell operators → Allow.
@@ -216,14 +213,14 @@ Rules are `tool` or `tool(pattern)`. The pattern matches a *subject* taken from 
 |---|---|---|---|
 | `bash` | the command | `*` wildcard | `bash(go test*)` |
 | `read`, `write`, `edit`, `multi_edit`, … | the path, relative to cwd when inside it | doublestar glob | `edit(docs/**)` |
-| `web_fetch`, `browser_navigate` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
+| `web_fetch` | the URL's host | `domain:` plus subdomains | `web_fetch(domain:go.dev)` |
 | `mcp__server__tool` | none | whole-tool or whole-server | `mcp__github` |
 
 Bash patterns are prefixes, so Larik checks every command in a command line. An allow rule covers a chained or piped command (`;`, `&&`, `||`, `|`, `&`, subshells) only when each command in it matches an allow rule. A command substitution (`$(…)`, backticks) or a redirection to a file always asks; `2>&1` and redirections to `/dev/null` don't count. A deny rule applies to each command too, so `bash(rm*)` also stops `true; rm -rf x` and `echo $(rm x)`. Quoting isn't parsed: an operator inside quotes splits the line as well, which only makes Larik ask. The bare rule `bash` still allows everything. Deny rules match the command as written, so `/bin/rm` or `command rm` isn't `rm*`; rely on the sandbox, not deny patterns, to contain commands.
 
 `read(...)` deny rules apply to the `read` tool and to `@` mentions. They don't reach `grep` or `glob` searches over a directory that contains the file, or sandboxed `bash` (the sandbox can read everything, and `cat`, `head` and `tail` are auto-allowed outside it). Treat them as a guard against the model reading a file by accident, not as a boundary; keep secrets out of the project.
 
-"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch` and `browser_navigate`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
+"Always allow" proposes a rule with `SuggestRule`: `bash(git commit*)` for tools with subcommands (git, go, npm, cargo, …), `bash(make*)` otherwise, the domain for `web_fetch`, and the bare tool name for everything else. The answer is added to the in-memory checker and written to private project settings under `~/.config/larik/projects/`. If saving fails, the rule remains active for the session and Larik emits a notice; the HTTP reply also reports `persisted: false` and the error.
 
 `Checker.WithCwd` gives a worktree subagent a checker that shares the parent's mode and rules (one `state` pointer) but resolves paths against the worktree. Switching mode with shift+tab applies to running subagents too.
 

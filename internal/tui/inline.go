@@ -2,13 +2,11 @@ package tui
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"image"
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -99,41 +97,18 @@ func (m *model) showImages(e agent.Event) tea.Cmd {
 	return tea.Sequence(cmds...)
 }
 
-// openImage shows a picture full size in the browser panel, where it can be
-// zoomed, or in the system's viewer when the panel isn't available.
+// openImage saves a picture to a temporary file and opens it in the system viewer.
 func (m *model) openImage(img *inlineImage) tea.Cmd {
 	mediaType := "image/jpeg"
 	if termgfx.IsPNG(img.data) {
 		mediaType = "image/png"
 	}
-	external := func() tea.Cmd {
-		path, err := saveImage(img.data, mediaType)
-		if err != nil {
-			return m.println(m.st.err.Render("image: " + err.Error()))
-		}
-		openBrowser(path)
-		return nil
-	}
-	if m.opts.App == nil || m.opts.App.Browser == nil || !m.panelAllowed() {
-		return external()
-	}
-	init, err := m.prepareBrowserPanel()
+	path, err := saveImage(img.data, mediaType)
 	if err != nil {
-		return external()
+		return m.println(m.st.err.Render("image: " + err.Error()))
 	}
-	open, data := m.imageOpen, img.data
-	if open == nil {
-		open = m.opts.App.Browser.ShowImage
-	}
-	show := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := open(ctx, mediaType, data); err != nil {
-			return outputMsg(m.st.err.Render("image: " + err.Error()))
-		}
-		return nil
-	}
-	return tea.Batch(init, show)
+	openBrowser(path)
+	return nil
 }
 
 // saveImage writes a picture to a temporary file for another program.

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"larik/internal/desktop"
-	"larik/internal/termbrowser"
+	"larik/internal/pageoutline"
 	"larik/internal/tools"
 )
 
@@ -43,7 +43,7 @@ func byName(call Caller, name string) tools.Tool {
 
 func TestNavigateReturnsTheOutline(t *testing.T) {
 	long := strings.Repeat("- text \"line\"\n", 3000)
-	f := &fake{res: desktop.Response{Page: &desktop.PageResult{Snapshot: &termbrowser.Snapshot{URL: "http://localhost:3000/", Title: "App", Text: "- button \"Save\" [ref=e1]\n" + long, Refs: 1}}}}
+	f := &fake{res: desktop.Response{Page: &desktop.PageResult{Snapshot: &pageoutline.Snapshot{URL: "http://localhost:3000/", Title: "App", Text: "- button \"Save\" [ref=e1]\n" + long, Refs: 1}}}}
 	res := run(t, byName(f.call, "desktop_page_navigate"), `{"url":"localhost:3000"}`)
 	if res.IsError || len(f.asked) != 1 || f.asked[0].Cmd != "page" || f.asked[0].Op != desktop.PageNavigate || f.asked[0].URL != "localhost:3000" {
 		t.Fatalf("asked %+v: %s", f.asked, res.Content)
@@ -59,7 +59,7 @@ func TestNavigateReturnsTheOutline(t *testing.T) {
 }
 
 func TestActions(t *testing.T) {
-	f := &fake{res: desktop.Response{Page: &desktop.PageResult{Snapshot: &termbrowser.Snapshot{URL: "u", Text: "- text \"done\""}}}}
+	f := &fake{res: desktop.Response{Page: &desktop.PageResult{Snapshot: &pageoutline.Snapshot{URL: "u", Text: "- text \"done\""}}}}
 	if res := run(t, byName(f.call, "desktop_page_type"), `{"ref":"e2","text":"Ada","submit":true}`); res.IsError || !strings.HasPrefix(res.Content, "Typed into e2 and submitted it.") {
 		t.Fatal(res.Content)
 	}

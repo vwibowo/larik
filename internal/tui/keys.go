@@ -32,7 +32,6 @@ const (
 	actScrollDown     = "scroll_down"
 	actScrollTop      = "scroll_top"
 	actScrollBottom   = "scroll_bottom"
-	actToggleBrowser  = "toggle_browser"
 	actViewDiff       = "view_diff"
 )
 
@@ -58,7 +57,6 @@ var defaultKeys = []struct {
 	{actScrollDown, []string{"pgdown"}},
 	{actScrollTop, []string{"ctrl+home"}},
 	{actScrollBottom, []string{"ctrl+end"}},
-	{actToggleBrowser, []string{"f3"}},
 	{actViewDiff, []string{"f4"}},
 }
 

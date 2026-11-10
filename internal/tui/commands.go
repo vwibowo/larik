@@ -93,7 +93,7 @@ func (m *model) command(line string) tea.Cmd {
 	// compaction.
 	if !m.idle() {
 		switch name {
-		case "/model", "/connect", "/providers", "/execution", "/browser", "/db", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
+		case "/model", "/connect", "/providers", "/execution", "/db", "/reload", "/undo", "/compact", "/clear", "/sessions", "/resume", "/new", "/fork", "/rewind":
 			return fail(name + " is unavailable while " + m.busyWhat() + m.interruptHint())
 		}
 	}
@@ -216,9 +216,6 @@ func (m *model) command(line string) tea.Cmd {
 	case "/sampling":
 		return m.samplingCommand(arg)
 
-	case "/browser":
-		return m.browserCommand(arg)
-
 	case "/reload":
 		if m.agent.RunningBackground() > 0 {
 			return fail("wait for background tasks before reloading")
@@ -307,12 +304,6 @@ func (m *model) command(line string) tea.Cmd {
 
 	case "/timeline":
 		return m.timelineCommand()
-
-	case "/replay":
-		return m.replayCommand(arg)
-
-	case "/compare":
-		return m.compareCommand()
 
 	case "/cost":
 		s := m.agent.Stats()

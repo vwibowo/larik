@@ -317,7 +317,7 @@ func (namedTool) Run(context.Context, *tools.Env, json.RawMessage) tools.Result 
 	return tools.Result{}
 }
 
-func TestChildToolsAndTheBrowser(t *testing.T) {
+func TestChildToolsDoNotSpecialCaseBrowserTools(t *testing.T) {
 	// memory and ask_user are the main agent's alone, whatever the
 	// definition lists.
 	parent := tools.NewRegistry(namedTool("read"), namedTool("browser_navigate"), namedTool("browser_click"), namedTool("memory"), namedTool("ask_user"))
@@ -333,13 +333,10 @@ func TestChildToolsAndTheBrowser(t *testing.T) {
 		tools []string
 		want  string
 	}{
-		// Each agent has its own browser tabs, so a subagent gets the
-		// browser like any other tool.
-		{nil, "browser_click,browser_navigate,read"},
-		{[]string{"*"}, "browser_click,browser_navigate,read"},
-		{[]string{"read", "browser"}, "browser_click,browser_navigate,read"},
-		{[]string{"browser_navigate"}, "browser_navigate"},
 		{[]string{"read"}, "read"},
+		{[]string{"*"}, "browser_click,browser_navigate,read"},
+		{[]string{"read", "browser"}, "read"},
+		{[]string{"browser_navigate"}, "browser_navigate"},
 	} {
 		if got := names(Definition{Tools: c.tools}); got != c.want {
 			t.Errorf("tools %v: got %s, want %s", c.tools, got, c.want)

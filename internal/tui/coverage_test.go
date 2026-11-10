@@ -25,7 +25,6 @@ var panelCoverage = map[string]string{
 	"model_sampling":         "/sampling, per model",
 	"approved_mcp_servers":   "/mcp approve",
 	"approved_project_hooks": "/hooks approve",
-	"browser.enabled":        "/browser on|off",
 }
 
 // jsonOnly contains compatibility fields with no separate control. Every

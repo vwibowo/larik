@@ -14,8 +14,8 @@ import (
 
 	"larik/internal/config"
 	"larik/internal/desktop"
+	"larik/internal/pageoutline"
 	"larik/internal/status"
-	"larik/internal/termbrowser"
 )
 
 // desktopCommands are the commands larik desktop sends the open window,
@@ -359,7 +359,7 @@ func printPage(w io.Writer, res desktop.Response, out string) error {
 		if p.Loading {
 			did = "The page is still loading; what has loaded so far:"
 		}
-		fmt.Fprintln(w, termbrowser.RenderSnapshot(*p.Snapshot, did, 0).Content)
+		fmt.Fprintln(w, pageoutline.RenderSnapshot(*p.Snapshot, did, 0).Content)
 	default:
 		fmt.Fprintln(w, p.Value)
 	}

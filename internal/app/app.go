@@ -34,7 +34,6 @@ import (
 	"larik/internal/skills"
 	"larik/internal/subagent"
 	"larik/internal/telemetry"
-	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/trace"
 	"larik/internal/web"
@@ -169,8 +168,6 @@ type App struct {
 	SecretEnv   []string
 	// Memory is the notes kept across sessions; nil when switched off.
 	Memory *memory.Store
-	// Browser drives Chrome for the browser_* tools; nil unless enabled.
-	Browser *termbrowser.Session
 	// Audio is the optional local STT/TTS service used by interactive front ends.
 	Audio audio.Service
 
@@ -184,10 +181,6 @@ type App struct {
 	// Warnings for front ends to surface.
 	SandboxNote string
 	SearchNote  string
-	// BrowserNote warns that Chrome may not be usable. Browser tools are
-	// offered anyway: Chrome starts on the first call, and that call reports
-	// the real error.
-	BrowserNote string
 	// TelemetryNote says why trace export is off although it was asked for.
 	TelemetryNote string
 
@@ -251,33 +244,9 @@ func Setup(cwd, version string) (*App, error) {
 	if cfg.Audio.Enabled {
 		a.Audio = audio.New(cfg.Audio)
 	}
-	// Desktop agents use the visible native webview through desktop_page_*.
-	// Keep the Chrome tools for standalone CLI and TUI sessions only.
-	if cfg.Browser.Enabled && !a.DesktopTab {
-		var location *termbrowser.Location
-		if l := cfg.Browser.Location; l != nil {
-			location = &termbrowser.Location{Latitude: l.Latitude, Longitude: l.Longitude, Accuracy: l.Accuracy}
-		}
-		browserOpts := termbrowser.Options{
-			Location:   location,
-			ChromePath: cfg.Browser.ChromePath, PaneSize: cfg.Browser.PaneSize, Sound: cfg.Browser.Sound,
-			SocketDir:   filepath.Join(cfg.DataDir, "browser"),
-			LogFile:     filepath.Join(cfg.DataDir, "logs", "browser.log"),
-			ProfileDir:  filepath.Join(cfg.DataDir, "browser-profile"),
-			DownloadDir: filepath.Join(cfg.DataDir, "browser-downloads"),
-		}
-		// Browser startup is deferred until the first browser tool call.
-		// Looking for Chrome costs nothing and starts nothing, so it is only
-		// an early warning: the tools stay available either way, since
-		// chromedp finds installations this check doesn't know about.
-		if err := termbrowser.FindChrome(browserOpts); err != nil {
-			a.BrowserNote = "browser tools may not work: " + err.Error()
-		}
-		a.Browser = termbrowser.New(browserOpts)
-		baseTools = append(baseTools, termbrowser.Tools(a.Browser)...)
-	}
-	// In a larik desktop tab, the window's browser tabs too: the page the
-	// user sees beside the session.
+	// Browser automation is available only through Desktop's visible native
+	// browser panes. Standalone sessions neither create a Chrome session nor
+	// register browser automation tools.
 	if a.DesktopTab {
 		baseTools = append(baseTools, desktoppage.Tools(cfg.DataDir)...)
 		baseTools = append(baseTools, desktopterminal.Tools(cfg.DataDir)...)
@@ -303,8 +272,6 @@ func Setup(cwd, version string) (*App, error) {
 		Policy:       func() string { return string(a.Cfg.Routing().Delegation) },
 		Repo:         gitRoot,
 		WorktreeRoot: filepath.Join(cfg.DataDir, "worktrees"),
-		// A finished subagent's browser tabs are closed.
-		OnChildDone: func(owner string) { a.Browser.Release(owner) },
 		SandboxFor: func(dir, gitDir string) tools.Sandbox {
 			if a.Sandbox == nil {
 				return nil // a nil interface, not a typed nil
@@ -391,7 +358,6 @@ func (a *App) Close() {
 	a.closeOnce.Do(func() {
 		a.MCP.Close()
 		a.LSP.Close()
-		a.Browser.Close()
 		a.Sandbox.Close()
 		a.Telemetry.Close()
 	})
@@ -570,8 +536,6 @@ func (a *App) Open(o Options) (*Session, error) {
 		Perms:       perms,
 		Session:     sess,
 		Checkpoints: checkpoint.New(filepath.Join(a.Cfg.DataDir, "checkpoints", sess.ID), cwd),
-		WillWrite:   a.Browser.MarkBefore,
-		NewTurn:     a.Browser.NewTurn,
 		OnAllowRule: func(rule string) error { return config.PersistAllowRule(cwd, rule) },
 		LoadTools:   a.loadTools,
 		Hooks:       hookRunner,

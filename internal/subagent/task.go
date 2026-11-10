@@ -446,10 +446,6 @@ func (t *Tool) offeredRoles() []Role {
 	return out
 }
 
-// browserPrefix starts the browser tools' names (termbrowser.Prefix); a
-// definition can allow them all with "browser".
-const browserPrefix = "browser_"
-
 // SystemPrompt is the system prompt of a subagent of def: its own prompt,
 // the footer on reporting back, then shared, the context it shares with
 // the main agent.

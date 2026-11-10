@@ -399,20 +399,6 @@ func TestConfigAreaAliases(t *testing.T) {
 	}
 }
 
-func TestBrowserLocationSetting(t *testing.T) {
-	m := testModel(t)
-	m.configCommandApply("browser_location", "-6.2, 106.8")
-	if l := m.opts.Config.Browser.Location; l == nil || l.Latitude != -6.2 || l.Longitude != 106.8 {
-		t.Fatalf("location: %+v", l)
-	}
-	if data := savedConfig(t, m); !strings.Contains(data, `"latitude": -6.2`) || !strings.Contains(data, `"longitude": 106.8`) {
-		t.Fatalf("saved: %s", data)
-	}
-	if _, err := parseLocation("north"); err == nil {
-		t.Error("a location that isn't two numbers should be refused")
-	}
-}
-
 func TestLaunchPromptRunsACommand(t *testing.T) {
 	m := testModel(t)
 	m.opts.InitialPrompt = "/config"

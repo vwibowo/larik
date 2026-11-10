@@ -196,9 +196,6 @@ type Config struct {
 	// repository's commands would defeat the check.
 	AutoMode AutoModeConfig `json:"auto_mode,omitempty"`
 
-	// Browser configures the browser_* tools. It launches a program, so
-	// only personal files may enable it; shared files may only disable it.
-	Browser BrowserConfig `json:"browser,omitempty"`
 	// Audio configures local microphone recording, OpenAI-compatible STT/TTS
 	// endpoints and local playback. It is personal-only because it launches
 	// processes and sends microphone data to a configured server.
@@ -301,15 +298,14 @@ func delegationRank(p DelegationPolicy) int {
 
 // TraceConfig configures /trace.
 type TraceConfig struct {
-	// OpenIn is "auto" (default: Larik's browser panel when it can be
-	// shown, else the system browser), "browser" or "external".
+	// OpenIn is "auto" (the system browser) or "external".
 	OpenIn string `json:"open_in,omitempty"`
 }
 
 // TraceOpenIn is the validated open_in value; unknown values mean auto.
 func (c *Config) TraceOpenIn() string {
 	switch c.Trace.OpenIn {
-	case "browser", "external":
+	case "external":
 		return c.Trace.OpenIn
 	}
 	return "auto"
@@ -528,39 +524,6 @@ func (c *Config) merge(path string, trusted bool) error {
 		// Shared settings may disable audio, but may not enable or configure it.
 		c.Audio = audio.Config{}
 	}
-	if b := browserSection(rawSections["browser"]); b != nil {
-		if trusted {
-			if b.Enabled != nil {
-				c.Browser.Enabled = *b.Enabled
-			}
-			if b.ChromePath != nil {
-				c.Browser.ChromePath = *b.ChromePath
-			}
-			if b.PaneSize != nil {
-				if *b.PaneSize < 20 || *b.PaneSize > 80 {
-					return fmt.Errorf("%s: browser.pane_size must be between 20 and 80 (percent)", path)
-				}
-				c.Browser.PaneSize = *b.PaneSize
-			}
-			if b.Sound != nil {
-				c.Browser.Sound = *b.Sound
-			}
-			if b.Show != nil {
-				if *b.Show != "" && *b.Show != "panel" && *b.Show != "pane" {
-					return fmt.Errorf("%s: browser.show must be panel or pane", path)
-				}
-				c.Browser.Show = *b.Show
-			}
-			if l := b.Location; l != nil {
-				if l.Latitude < -90 || l.Latitude > 90 || l.Longitude < -180 || l.Longitude > 180 || l.Accuracy < 0 {
-					return fmt.Errorf("%s: browser.location needs a latitude (-90 to 90) and a longitude (-180 to 180)", path)
-				}
-				c.Browser.Location = l
-			}
-		} else if b.Enabled != nil && !*b.Enabled {
-			c.Browser.Enabled = false // a shared file may only switch it off
-		}
-	}
 	if trusted {
 		if o.Sandbox.Enabled != nil {
 			c.Sandbox.Enabled = o.Sandbox.Enabled
@@ -656,10 +619,14 @@ func (c *Config) merge(path string, trusted bool) error {
 	}
 	if trusted && o.Trace.OpenIn != "" {
 		switch o.Trace.OpenIn {
-		case "auto", "browser", "external":
+		case "auto", "external":
 			c.Trace.OpenIn = o.Trace.OpenIn
+		case "browser":
+			// The old in-terminal trace panel was removed; preserve old configs
+			// by falling back to the system browser.
+			c.Trace.OpenIn = "external"
 		default:
-			return fmt.Errorf("%s: trace.open_in must be auto, browser or external", path)
+			return fmt.Errorf("%s: trace.open_in must be auto or external", path)
 		}
 	}
 	if trusted && o.DebugRetentionDays != 0 {
@@ -1195,7 +1162,7 @@ func (c *Config) SetUserSettings(values map[string]any) error {
 // environment — so writing anywhere inside one also makes the file readable
 // only by its owner.
 var secretSections = map[string]bool{
-	"providers": true, "audio": true, "web": true, "mcp_servers": true, "browser": true, "permissions": true, "database_connections": true,
+	"providers": true, "audio": true, "web": true, "mcp_servers": true, "permissions": true, "database_connections": true,
 }
 
 // settingPerm is the mode a settings file is written with when path changes:
@@ -1381,12 +1348,6 @@ func (c *Config) SetProjectSkillsHide(patterns []string) error {
 	}
 	c.Skills.Hide = hide
 	return nil
-}
-
-// SetBrowserEnabled updates only the personal browser switch, preserving
-// the rest of the section. Browser tools remain off by default.
-func (c *Config) SetBrowserEnabled(enabled bool) error {
-	return c.SetUserSettingPath("browser.enabled", enabled)
 }
 
 // SetAudioSetting updates one personal audio setting without replacing the
@@ -1811,60 +1772,6 @@ type AutoModeConfig struct {
 	// Model is the provider/model or routing role that judges calls in
 	// auto mode; empty uses the session's model.
 	Model string `json:"model,omitempty"`
-}
-
-// BrowserConfig is the "browser" settings section: the browser_* tools,
-// which drive a headless Chrome the user can watch in a terminal pane.
-// Off unless a personal file enables it. Chrome always runs headless, so a
-// "headless" key from older versions is accepted and ignored.
-type BrowserConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
-	// ChromePath overrides the Chrome or Chromium binary to launch.
-	ChromePath string `json:"chrome_path,omitempty"`
-	// PaneSize is the percent of the terminal's width browser_show's pane
-	// or panel takes; 0 means 50.
-	PaneSize int `json:"pane_size,omitempty"`
-	// Show is where browser_show puts the browser: "panel" (beside the
-	// conversation, in Larik's window; the default) or "pane" (a split of
-	// the terminal's own).
-	Show string `json:"show,omitempty"`
-	// Sound lets pages play audio through this computer's speakers. Off,
-	// Chrome runs muted, so an agent browsing unwatched stays silent.
-	Sound bool `json:"sound,omitempty"`
-	// Location is what a page learns when the user allows it to ask where
-	// they are: headless Chrome can't read this computer's location.
-	Location *BrowserLocation `json:"location,omitempty"`
-}
-
-// BrowserLocation is a position in degrees, and its accuracy in meters.
-type BrowserLocation struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Accuracy  float64 `json:"accuracy,omitempty"`
-}
-
-// browserPatch is one file's "browser" section with presence kept, so a
-// later file can switch a setting back off.
-type browserPatch struct {
-	Enabled    *bool   `json:"enabled"`
-	ChromePath *string `json:"chrome_path"`
-	PaneSize   *int    `json:"pane_size"`
-	Show       *string `json:"show"`
-	Sound      *bool   `json:"sound"`
-	// Location is replaced whole: a later file sets both coordinates.
-	Location *BrowserLocation `json:"location"`
-}
-
-// browserSection decodes a file's raw "browser" section, if it has one.
-func browserSection(raw json.RawMessage) *browserPatch {
-	if len(raw) == 0 {
-		return nil
-	}
-	var b browserPatch
-	if json.Unmarshal(raw, &b) != nil {
-		return nil
-	}
-	return &b
 }
 
 // WebConfig is the "web" settings section.

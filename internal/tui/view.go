@@ -29,16 +29,13 @@ import (
 )
 
 func (m *model) sessionSidebarWidth() int {
-	if !m.showInfo || m.width < 100 || m.showKeys || m.browser != nil {
+	if !m.showInfo || m.width < 100 || m.showKeys {
 		return 0
 	}
 	return min(max(m.width/3, 30), 44)
 }
 
 func (m *model) currentConversationWidth() int {
-	if bw := m.browserPanelWidth(); bw > 0 {
-		return max(m.width-bw-1, 1) // a column between them
-	}
 	return max(m.width-m.sessionSidebarWidth(), 1)
 }
 
@@ -61,10 +58,6 @@ func (m *model) View() tea.View {
 	room := max(height-m.frameBottomRows, 0)
 
 	sidebarWidth := m.sessionSidebarWidth()
-	browserWidth := m.browserPanelWidth()
-	if browserWidth > 0 {
-		sidebarWidth = browserWidth
-	}
 	showSidebar := sidebarWidth > 0
 	conversationWidth := m.currentConversationWidth()
 	if m.convWidth != conversationWidth && !m.resizePending {
@@ -131,22 +124,8 @@ func (m *model) View() tea.View {
 				left = strings.Split(conversation, "\n")
 			}
 			left = append(left, live...)
-			var right []string
-			if browserWidth > 0 {
-				// The panel's image is drawn over its blank rows.
-				m.browserRect = browserRect{x: conversationWidth + 1, y: 0, cols: browserWidth, rows: room - panelRows}
-				right = strings.Split(m.browserColumn(browserWidth, room-panelRows), "\n")
-			} else {
-				right = strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
-			}
+			right := strings.Split(m.sessionSidebar(sidebarWidth, room-panelRows), "\n")
 			sep := " "
-			if browserWidth > 0 {
-				// The divider, which can be dragged to resize the panel.
-				sep = m.st.dim.Render("│")
-				if m.browserResizing {
-					sep = m.st.accent.Render("┃")
-				}
-			}
 			for i := 0; i < max(len(left), len(right)); i++ {
 				l, r := "", ""
 				if i < len(left) {
@@ -180,15 +159,9 @@ func (m *model) View() tea.View {
 	v := tea.NewView(m.overlayToast(strings.Join(rows, "\n"), m.width))
 	v.AltScreen = true
 	switch {
-	case m.browser != nil:
-		v.MouseMode = tea.MouseModeAllMotion // hover reaches pages in the panel
 	case m.mouse:
 		v.MouseMode = tea.MouseModeCellMotion
 	}
-	if m.browser != nil && browserWidth == 0 {
-		m.browserRect = browserRect{} // too narrow: the panel steps aside
-	}
-	m.noteBrowserMoved()
 	v.WindowTitle = "larik"
 	v.ReportFocus = m.notify != "off"
 	m.lastView = &v
@@ -669,10 +642,6 @@ func (m *model) composerView() string {
 	}
 	if m.shellMode() {
 		box = box.BorderForeground(m.st.warn.GetForeground())
-	}
-	if m.browser != nil && m.browserFocused {
-		// The keyboard is in the browser panel: the composer steps back.
-		box = box.BorderForeground(m.st.dim.GetForeground())
 	}
 	return box.Width(max(m.width, 7)).Render(m.input.View())
 }
@@ -1974,9 +1943,6 @@ func (m *model) printBanner() tea.Cmd {
 	}
 	if m.opts.SearchNote != "" {
 		warn("web_search disabled: " + m.opts.SearchNote)
-	}
-	if m.opts.BrowserNote != "" {
-		warn(m.opts.BrowserNote)
 	}
 	if !m.opts.Config.ProjectHooksApproved() {
 		warn("project hooks in .larik/settings.json are not approved yet · review with /hooks")

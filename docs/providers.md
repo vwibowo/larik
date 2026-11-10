@@ -55,7 +55,7 @@ Design choices worth knowing:
 
 - **`Block` is a flat union.** One struct with optional fields instead of an interface per kind, so a message round-trips through JSONL with the standard encoder and no custom codecs.
 - **Only two roles.** Tool results are blocks inside a user message, as in the Anthropic API. Adapters for APIs with a separate `tool` role split them out.
-- **Tool results can carry images** (`Block.Images`, from `tools.Result.Images`), such as `browser_screenshot`'s capture or an MCP tool's image. Each adapter sends them where its API allows:
+- **Tool results can carry images** (`Block.Images`, from `tools.Result.Images`), such as a Desktop page screenshot or an MCP tool's image. Each adapter sends them where its API allows:
 
   | Adapter | Where the images go |
   |---|---|

@@ -52,7 +52,7 @@ func TestDesktopTabGetsControlGuidance(t *testing.T) {
 	}
 }
 
-func TestDesktopUsesVisibleBrowserWhenHeadlessBrowserIsEnabled(t *testing.T) {
+func TestBrowserToolsOnlyExistInsideDesktop(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
@@ -79,8 +79,8 @@ func TestDesktopUsesVisibleBrowserWhenHeadlessBrowserIsEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer standalone.Close()
-	if standalone.Browser == nil || !toolNamed(standalone, "browser_navigate") || toolNamed(standalone, "desktop_page_navigate") {
-		t.Fatal("standalone sessions must retain the headless browser tools")
+	if toolNamed(standalone, "browser_navigate") || toolNamed(standalone, "desktop_page_navigate") {
+		t.Fatal("standalone sessions must not create a browser or expose browser tools")
 	}
 	t.Setenv("LARIK_DESKTOP_TAB", "tab-123")
 	desktop, err := Setup(cwd, "test")
@@ -88,7 +88,7 @@ func TestDesktopUsesVisibleBrowserWhenHeadlessBrowserIsEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer desktop.Close()
-	if desktop.Browser != nil || desktop.BrowserNote != "" || toolNamed(desktop, "browser_navigate") || !toolNamed(desktop, "desktop_page_navigate") {
-		t.Fatal("Desktop sessions must use only the visible browser tools without probing Chrome")
+	if toolNamed(desktop, "browser_navigate") || !toolNamed(desktop, "desktop_page_navigate") {
+		t.Fatal("Desktop sessions must use only the visible browser tools")
 	}
 }

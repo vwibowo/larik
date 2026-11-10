@@ -1,8 +1,6 @@
-// Package desktoppage gives larik, running in a larik desktop tab, tools
-// to drive the window's browser tabs: the page you look at beside the
-// session, a dev server's say, rather than the headless Chrome of the
-// browser_* tools. They go through the window's commands (larik desktop
-// page), so they're there only while the window is.
+// Package desktoppage gives Larik sessions in Desktop terminal tabs tools
+// to operate the window's visible native browser panes. Calls go through
+// the window's page-control API, so the tools exist only inside Desktop.
 package desktoppage
 
 import (
@@ -18,8 +16,8 @@ import (
 	"larik/internal/clipboard"
 	"larik/internal/desktop"
 	"larik/internal/llm"
+	"larik/internal/pageoutline"
 	"larik/internal/status"
-	"larik/internal/termbrowser"
 	"larik/internal/tools"
 )
 
@@ -83,7 +81,7 @@ func page(call Caller, req desktop.Request, did string, start int) tools.Result 
 	if p.Loading {
 		did = strings.TrimSpace(did + "\nThe page is still loading after 15s; what has loaded so far:")
 	}
-	out := termbrowser.RenderSnapshot(*p.Snapshot, did, start)
+	out := pageoutline.RenderSnapshot(*p.Snapshot, did, start)
 	out.Content = strings.ReplaceAll(out.Content, "browser_snapshot", Prefix+"snapshot")
 	return out
 }

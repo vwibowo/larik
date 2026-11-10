@@ -357,73 +357,15 @@ func TestEmptySettingsFilesAreIgnored(t *testing.T) {
 	}
 }
 
-func TestBrowserOnlyFromPersonalSettings(t *testing.T) {
+func TestLegacyBrowserSettingsAreIgnored(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"enabled":true,"chrome_path":"/tmp/evil"}}`)
-	cfg, err := Load(cwd)
+	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"browser":{"enabled":true,"chrome_path":"/tmp/evil","pane_size":95,"sound":true}}`)
+	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"enabled":false,"location":{"latitude":95,"longitude":0}}}`)
+	_, err := Load(cwd)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Browser != (BrowserConfig{}) {
-		t.Errorf("shared settings must not enable the browser or pick its binary: %+v", cfg.Browser)
-	}
-
-	// "headless" is from before Chrome always ran headless: still accepted.
-	write(t, filepath.Join(cfgHome, "larik", "config.json"), `{"browser":{"enabled":true,"headless":true,"pane_size":40}}`)
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"enabled":false,"pane_size":70}}`)
-	cfg, err = Load(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Browser.Enabled || cfg.Browser.PaneSize != 40 {
-		t.Errorf("shared settings may switch the browser off, and nothing else: %+v", cfg.Browser)
-	}
-
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{}`)
-	write(t, LocalSettingsPath(cwd), `{"browser":{"pane_size":60}}`)
-	cfg, _ = Load(cwd)
-	if !cfg.Browser.Enabled || cfg.Browser.PaneSize != 60 {
-		t.Errorf("a later personal file overrides single fields: %+v", cfg.Browser)
-	}
-
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"sound":true}}`)
-	if cfg, _ = Load(cwd); cfg.Browser.Sound {
-		t.Error("shared settings must not turn browser sound on")
-	}
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{}`)
-	write(t, LocalSettingsPath(cwd), `{"browser":{"sound":true}}`)
-	if cfg, _ = Load(cwd); !cfg.Browser.Sound {
-		t.Error("personal settings may turn browser sound on")
-	}
-
-	write(t, LocalSettingsPath(cwd), `{"browser":{"location":{"latitude":-6.2,"longitude":106.8}}}`)
-	if cfg, _ = Load(cwd); cfg.Browser.Location == nil || cfg.Browser.Location.Longitude != 106.8 {
-		t.Errorf("personal settings set the location: %+v", cfg.Browser.Location)
-	}
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{"browser":{"location":{"latitude":1,"longitude":2}}}`)
-	if cfg, _ = Load(cwd); cfg.Browser.Location == nil || cfg.Browser.Location.Latitude != -6.2 {
-		t.Errorf("shared settings must not set the location: %+v", cfg.Browser.Location)
-	}
-	write(t, filepath.Join(cwd, ".larik", "settings.json"), `{}`)
-	write(t, LocalSettingsPath(cwd), `{"browser":{"location":{"latitude":95,"longitude":0}}}`)
-	if _, err := Load(cwd); err == nil {
-		t.Error("a latitude past 90 should be refused")
-	}
-
-	write(t, LocalSettingsPath(cwd), `{"browser":{"show":"pane"}}`)
-	if cfg, _ = Load(cwd); cfg.Browser.Show != "pane" {
-		t.Errorf("browser.show: %q", cfg.Browser.Show)
-	}
-	write(t, LocalSettingsPath(cwd), `{"browser":{"show":"sideways"}}`)
-	if _, err := Load(cwd); err == nil {
-		t.Error("browser.show must be panel or pane")
-	}
-
-	write(t, LocalSettingsPath(cwd), `{"browser":{"pane_size":95}}`)
-	if _, err := Load(cwd); err == nil {
-		t.Error("a pane wider than 80% should be refused")
+		t.Fatalf("legacy browser settings should be ignored: %v", err)
 	}
 }
 

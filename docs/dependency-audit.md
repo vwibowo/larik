@@ -6,7 +6,7 @@ Generated from `go list -m -u -json all` against the public Go module proxy. “
 
 ## Upgrade batches
 
-- **Browser core:** test `chromedp` and `cdproto` together in a separate change, covering CLI/TUI navigation, screenshots, uploads, and browser panel behavior. They remain in Larik for standalone sessions.
+- **Browser core:** standalone Chrome automation and its terminal viewer have been removed. Desktop browser tools use the native webview.
 - **TUI:** test Bubble Tea with its Charm dependencies together, including keyboard input, rendering, and browser panel behavior.
 - **Providers and data:** upgrade SDKs and database drivers in separate batches with their fake-server integration tests. Keep the OpenAI Go SDK at `v3.68.0` until a newer version passes the existing plain-HTTP LAN compatibility requirement documented in `go.mod`.
 - **MyGo:** `go.mod` names `v0.7.4`, but `replace` uses `third_party/mygo`. The Go module proxy reports a `v0.8.0` tag; compare the local OSC and notification-action patches in `third_party/mygo/README-LARIK.md` with that tag before updating the local copy.
@@ -29,8 +29,6 @@ Generated from `go list -m -u -json all` against the public Go module proxy. “
 | `github.com/charmbracelet/harmonica` | `v0.2.0` | `v0.2.0` | current |
 | `github.com/charmbracelet/ultraviolet` | `v0.0.0-20260922123528-4e49372c11f9` | `v0.0.0-20261023060817-a45b7c86333f` |  |
 | `github.com/charmbracelet/x/ansi` | `v0.11.8` | `v0.11.9` |  |
-| `github.com/chromedp/cdproto` | `v0.0.0-20260922220944-a19bff23514f` | `v0.159.2` |  |
-| `github.com/chromedp/chromedp` | `v0.16.0` | `v0.23.0` |  |
 | `github.com/dop251/goja` | `v0.0.0-20261002135814-104bc28c3abd` | `v0.0.0-20261105002551-2413f2132ac8` |  |
 | `github.com/egoist/mygo` | `v0.7.4` | `v0.8.0` | local replace |
 | `github.com/go-sql-driver/mysql` | `v1.9.3` | `v1.10.1` |  |
@@ -105,7 +103,6 @@ Generated from `go list -m -u -json all` against the public Go module proxy. “
 | `github.com/charmbracelet/x/term` | `v0.2.2` | `v0.2.2` | current |
 | `github.com/charmbracelet/x/termios` | `v0.1.1` | `v0.1.1` | current |
 | `github.com/charmbracelet/x/windows` | `v0.2.2` | `v0.2.2` | current |
-| `github.com/chromedp/sysutil` | `v1.1.0` | `v1.1.0` | current |
 | `github.com/chzyer/readline` | `v1.5.1` | `v1.5.1` | current |
 | `github.com/clipperhouse/displaywidth` | `v0.11.0` | `v0.11.0` | current |
 | `github.com/clipperhouse/stringish` | `v0.1.1` | `v0.1.1` | current |

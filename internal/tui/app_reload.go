@@ -79,11 +79,10 @@ func (m *model) finishReload(msg reloadSetupMsg) tea.Cmd {
 	old.Close()
 	m.ownedApps = []*app.App{next}
 	m.opts.App, m.opts.Session = next, s
-	m.registerShower()
 	m.opts.Config, m.opts.MCP, m.opts.Skills = next.Cfg, next.MCP, next.Skills
 	m.opts.Memory, m.opts.Agents, m.opts.LSP = next.Memory, next.AgentDefs, next.LSP
 	m.opts.Sandbox, m.opts.Audio = next.Sandbox, next.Audio
-	m.opts.SandboxNote, m.opts.SearchNote, m.opts.BrowserNote = next.SandboxNote, next.SearchNote, next.BrowserNote
+	m.opts.SandboxNote, m.opts.SearchNote = next.SandboxNote, next.SearchNote
 	m.sess, m.agent = s, s.Agent
 	m.opts.Agent, m.opts.Hooks, m.opts.History = s.Agent, s.Hooks, s.History
 	m.stats = s.Agent.Stats()
@@ -93,8 +92,5 @@ func (m *model) finishReload(msg reloadSetupMsg) tea.Cmd {
 	m.applyUIConfig()
 	m.applyTheme(m.wantDark())
 	done := tea.Sequence(m.printHistory("app reloaded · fresh model context"))
-	if next.BrowserNote != "" {
-		done = tea.Sequence(done, m.println(m.st.warn.Render(next.BrowserNote)))
-	}
 	return tea.Batch(m.waitBackground(), done, m.nextQueued())
 }

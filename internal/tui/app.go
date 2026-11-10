@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -33,7 +32,6 @@ import (
 	"larik/internal/skills"
 	"larik/internal/status"
 	"larik/internal/subagent"
-	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/trace/viewer"
 )
@@ -59,7 +57,6 @@ type Options struct {
 	Sandbox       *sandbox.Sandbox // nil when unavailable or disabled
 	SandboxNote   string           // why there is no sandbox, if any
 	SearchNote    string           // why web_search is unavailable, if configured but broken
-	BrowserNote   string           // why browser tools are unavailable, if enabled but Chrome cannot launch
 	Audio         audio.Service
 }
 
@@ -70,7 +67,6 @@ func Run(opts Options) error {
 	m := newModel(opts)
 	p := tea.NewProgram(m)
 	m.send = p.Send
-	m.registerShower()
 	_, err := p.Run()
 	cleanupModel(m)
 	return err
@@ -97,9 +93,6 @@ func RunWithStartup(start func(context.Context) (Options, error)) error {
 func cleanupModel(m *model) {
 	m.inline.forget(os.Stdout)
 	clearStatus(m)
-	if m.browser != nil {
-		m.browser.Close()
-	}
 	if m.recording != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, _ = m.recording.Stop(ctx)
@@ -113,7 +106,7 @@ func cleanupModel(m *model) {
 		m.sess.Close("prompt_input_exit")
 	}
 	// Close the current app after the session so session-end hooks can still
-	// use shared services. This owns the browser and its Chrome process.
+	// use shared services.
 	if m.opts.App != nil {
 		m.opts.App.Close()
 	}
@@ -176,7 +169,6 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.live = newModel(msg.opts)
 		m.live.send = m.send
-		m.live.registerShower()
 		if m.size != nil {
 			m.live.Update(*m.size)
 		}
@@ -248,15 +240,9 @@ type model struct {
 	status        *statusCmd
 	sidebarStatus *statusCmd
 	vim           *vimEditor // nil unless editor_mode is vim
-	// traceView serves traceDir to the browser once /trace opened it.
+	// traceView serves traceDir for the system browser once /trace opens it.
 	traceView   *viewer.Server
 	traceDir    string
-	traceOpenID uint64 // discard completions from superseded /trace invocations
-	// traceNavigate is an optional navigation seam for command-path tests.
-	// Nil uses the current App browser session's OpenURL.
-	traceNavigate func(context.Context, string, string) error
-	// imageOpen is the same seam for opening a picture.
-	imageOpen   func(context.Context, string, []byte) error
 	spin        spinner.Model
 	motion      motion
 	toast       string // the confirmation in the corner, if any
@@ -343,25 +329,12 @@ type model struct {
 	wizardReturn bool
 	showKeys     bool // the ? shortcuts overlay
 	showInfo     bool // the F2 session information panel
-	// browser is the browser panel beside the conversation, when open
-	// (browser_panel.go); browserFocused gives it the keyboard.
-	browser        *termbrowser.Panel
-	browserFocused bool
-	browserRect    browserRect // where View put it
-	browserLaid    browserRect // where it was last told it is
-	// browserMoveSent says a browserMovedMsg is on its way.
-	browserMoveSent bool
-	// browserPct is the panel's share of the width after the user dragged
-	// the divider (0: browser.pane_size); browserResizing is that drag.
-	browserPct      int
-	browserResizing bool
-	panelOK         atomic.Bool // the panel could open now (read off the UI goroutine)
 	// lastView is the last frame View built; reuseView says the message
 	// since changed nothing it shows, so the next View returns it again.
 	lastView  *tea.View
 	reuseView bool
 	// send is the running program's Send, for messages from other
-	// goroutines (the browser panel, the agent's browser_show).
+	// goroutines (the agent and hosted services).
 	send           func(tea.Msg)
 	usedSkills     map[string]bool // skills explicitly invoked in this TUI session
 	settings       *settingsPanel  // the /config screen, when open
@@ -613,21 +586,8 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	before := m.browserLook()
-	if cmd, ok := m.browserUpdate(msg); ok {
-		// Most of what the panel handles (frames, hover, page events)
-		// changes only its image, which it draws itself. Bubble Tea renders
-		// after every message, so unless the panel's header or focus
-		// changed, the last View stands instead of being built again
-		// dozens of times a second.
-		m.reuseView = m.browserLook() == before
-		return m, cmd
-	}
 	m.reuseView = false
 	md, cmd := m.update(msg)
-	// The last frame may have moved the browser panel (the composer grew,
-	// a picker opened); it learns where it is now.
-	cmd = tea.Batch(cmd, m.syncBrowserLayout())
 	// Whatever changed may be something the status line shows.
 	if st := m.refreshStatus(); st != nil {
 		cmd = tea.Batch(cmd, st)
@@ -660,14 +620,8 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.println(m.st.warn.Render("  ! update available: " + msg.version + " (current v" + strings.TrimPrefix(m.opts.Version, "v") + ")"))
 
-	case traceOpenedMsg:
-		return m, m.traceOpened(msg)
-
 	case inlineSendMsg:
 		return m, m.inline.send()
-
-	case pageComparedMsg:
-		return m, tea.Sequence(m.println(m.st.dim.Render(msg.note)), m.showImages(agent.Event{Images: []llm.Block{msg.image}}))
 
 	case outputMsg:
 		m.appendOutput(string(msg))

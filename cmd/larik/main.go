@@ -21,12 +21,11 @@ import (
 	"larik/internal/providers"
 	"larik/internal/sandbox"
 	"larik/internal/session"
-	"larik/internal/termbrowser"
 	"larik/internal/tools"
 	"larik/internal/tui"
 )
 
-var version = "0.33.0"
+var version = "0.34.0"
 
 func main() {
 	// A run_code script runner, started by Larik itself; see tools.ServeCodeIfChild.
@@ -45,17 +44,6 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) > 1 && os.Args[1] == "browser" {
-		return runBrowser(os.Args[2:])
-	}
-	if len(os.Args) > 1 && os.Args[1] == "browser-broker" {
-		// Larik 0.15's macOS LaunchAgent runs this; it is no longer needed.
-		removed, err := termbrowser.RemoveLegacyBroker()
-		if err == nil && removed {
-			fmt.Println("removed the old browser LaunchAgent; Chrome now runs headless inside larik")
-		}
-		return err
-	}
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		return runServe(os.Args[2:])
 	}
@@ -95,7 +83,7 @@ func run() error {
 			"       larik trace [session]   (review a debug trace in the browser; see larik trace -h)\n"+
 			"       larik sessions [--all] [--json]   (sessions from every project; see larik sessions -h)\n"+
 			"       larik desktop   (a window with every project's sessions; see larik desktop -h)\n"+
-			"       larik browser view --socket <path>   (the in-terminal browser pane browser_show opens)\n\n")
+			"\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -191,7 +179,7 @@ func run() error {
 				App: a, Session: s, Config: a.Cfg, InitialPrompt: prompt,
 				SessionDir: a.SessionDir, MCP: a.MCP, Skills: a.Skills, Memory: a.Memory,
 				Agents: a.AgentDefs, LSP: a.LSP, Sandbox: a.Sandbox, SandboxNote: a.SandboxNote,
-				SearchNote: a.SearchNote, BrowserNote: a.BrowserNote, Audio: a.Audio, Version: version,
+				SearchNote: a.SearchNote, Audio: a.Audio, Version: version,
 			}, nil
 		})
 	}
@@ -214,9 +202,6 @@ func run() error {
 		defer s.Close("other")
 		if a.SearchNote != "" {
 			fmt.Fprintln(os.Stderr, "! web_search disabled: "+a.SearchNote)
-		}
-		if a.BrowserNote != "" {
-			fmt.Fprintln(os.Stderr, "! "+a.BrowserNote)
 		}
 		if a.SandboxNote != "" {
 			fmt.Fprintln(os.Stderr, "! "+a.SandboxNote)
@@ -249,7 +234,7 @@ func run() error {
 
 	return tui.Run(tui.Options{App: a, Session: s, Config: a.Cfg, InitialPrompt: prompt, SessionDir: a.SessionDir, MCP: a.MCP,
 		Skills: a.Skills, Memory: a.Memory, Agents: a.AgentDefs, LSP: a.LSP, Sandbox: a.Sandbox, SandboxNote: a.SandboxNote,
-		SearchNote: a.SearchNote, BrowserNote: a.BrowserNote, Audio: a.Audio, Version: version})
+		SearchNote: a.SearchNote, Audio: a.Audio, Version: version})
 }
 
 // readOutputSchema reads --output-schema: inline JSON, or the path of a

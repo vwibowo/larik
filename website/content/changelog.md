@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.34.0
+
+<p class="release-meta"><time datetime="2026-11-10">November 10, 2026</time></p>
+
+### Changed
+
+- Desktop browser panes now provide improved navigation, focus tracking, and visible status feedback across Browser, Files, and Database panes.
+- Browser automation is available through `desktop_page_*` tools when Larik runs in a Larik Desktop terminal tab. These tools operate on Desktop's native browser panes.
+- Standalone CLI, TUI, headless, and server sessions no longer register `browser_*` tools or start Chrome. The terminal `/browser` controls, browser viewer, and compare and replay commands have been removed.
+
+### Compatibility
+
+- Existing `browser` configuration fields are ignored, so older config files continue to load. Shared trace and snapshot support remains available to Desktop.
+- Browser automation now requires Larik Desktop; standalone browser sessions and the chromedp dependency have been removed.
+
 ## v0.33.0
 
 <p class="release-meta"><time datetime="2026-11-09">November 9, 2026</time></p>

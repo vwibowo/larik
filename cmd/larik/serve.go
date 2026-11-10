@@ -108,9 +108,6 @@ func runServe(args []string) error {
 	if a.SearchNote != "" {
 		fmt.Fprintln(os.Stderr, "! web_search disabled: "+a.SearchNote)
 	}
-	if a.BrowserNote != "" {
-		fmt.Fprintln(os.Stderr, "! "+a.BrowserNote)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -10,7 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"larik/internal/termbrowser"
+	"larik/internal/pageoutline"
 )
 
 // Driving a browser tab's page, for scripts (larik desktop page) and for
@@ -44,7 +44,7 @@ const (
 // PageResult is what a page op found: the page's outline after it, what
 // eval returned (as JSON), or the screenshot (a PNG).
 type PageResult struct {
-	Snapshot *termbrowser.Snapshot `json:"snapshot,omitempty"`
+	Snapshot *pageoutline.Snapshot `json:"snapshot,omitempty"`
 	Value    string                `json:"value,omitempty"`
 	PNG      []byte                `json:"png,omitempty"`
 	Loading  bool                  `json:"loading,omitempty"` // still loading when the wait gave up
@@ -275,13 +275,13 @@ func waitLoad(ctx context.Context, p *mygo.Page) bool {
 }
 
 // pageSnapshot outlines the page, or the element with ref.
-func pageSnapshot(ctx context.Context, p *mygo.Page, ref string) (*termbrowser.Snapshot, error) {
-	v, err := p.EvalContext(ctx, termbrowser.SnapshotScript(ref))
+func pageSnapshot(ctx context.Context, p *mygo.Page, ref string) (*pageoutline.Snapshot, error) {
+	v, err := p.EvalContext(ctx, pageoutline.SnapshotScript(ref))
 	if err != nil {
 		return nil, fmt.Errorf("couldn't read the page: %w", err)
 	}
 	b, _ := json.Marshal(v)
-	var snap termbrowser.Snapshot
+	var snap pageoutline.Snapshot
 	if err := json.Unmarshal(b, &snap); err != nil {
 		return nil, fmt.Errorf("couldn't read the page: %w", err)
 	}

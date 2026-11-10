@@ -191,8 +191,6 @@ func (d Definition) toolAllowed(name string) bool {
 			return true
 		case strings.HasPrefix(t, "mcp__") && !strings.Contains(t[len("mcp__"):], "__") && strings.HasPrefix(name, t+"__"):
 			return true
-		case strings.EqualFold(t, "browser") && strings.HasPrefix(name, browserPrefix):
-			return true
 		}
 	}
 	return false
