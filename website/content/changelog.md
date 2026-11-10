@@ -1,5 +1,17 @@
 # Changelog
 
+
+## v0.36.0
+
+<p class="release-meta"><time datetime="2026-11-10">November 10, 2026</time></p>
+
+### Added
+
+- **Database query workflows.** Run SQL with Cmd+Enter, refresh database objects with Cmd+R, filter the schema browser by schema, and use the editor context menu to run the selected SQL or full buffer. **Run Analyze** displays query plans and runtime details where supported.
+
+### Changed
+
+- Database pane loading indicators now appear beside the pane title, while the shared status strip is reserved for failures. Loading context remains visible in the pane content.
 ## v0.35.0
 
 <p class="release-meta"><time datetime="2026-11-10">November 10, 2026</time></p>
