@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.37.0
+
+<p class="release-meta"><time datetime="2026-11-11">November 11, 2026</time></p>
+
+### Added
+
+- **Files pane roots and transfers.** Choose and pin a Files pane root across restarts; drag files between panes to move them or hold Option to copy, with folder-root drop targets and conflict choices.
+
+### Changed
+
+- Desktop notices now appear in the notification dropdown under the bell instead of as an in-window toast.
+- Window controls can fill or center the OS window.
+
 
 ## v0.36.0
 

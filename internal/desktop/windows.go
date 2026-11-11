@@ -369,6 +369,8 @@ func (g *windowGroup) create(id string, background bool) *windowEntry {
 	b.update = win.Update
 	b.redraw = func() { win.Update(func() {}) }
 	b.contentSize = win.ContentSize
+	b.fillWindow = win.Maximize
+	b.centerWindow = win.Center
 	b.overflow = func(t *tab) bool { return g.overflow(b, t) }
 	b.activateWindow = func() { g.setActive(b) }
 	b.navigateWindow = func(by int) { g.navigateWindow(b, by) }

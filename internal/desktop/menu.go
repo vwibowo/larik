@@ -129,7 +129,17 @@ func (a *App) menuDefaults() []menuGroup {
 			{role: mygo.RoleToggleFullScreen},
 		}},
 		{title: "Window", items: append([]command{
-			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom}, {},
+			{role: mygo.RoleMinimize}, {role: mygo.RoleZoom},
+			{label: "Fill", key: "Ctrl+Alt+F", run: func() {
+				if a.fillWindow != nil {
+					a.fillWindow()
+				}
+			}},
+			{label: "Center", key: "Ctrl+Alt+C", run: func() {
+				if a.centerWindow != nil {
+					a.centerWindow()
+				}
+			}}, {},
 			{label: "New Workspace", run: func() { a.newWorkspace("") }},
 			{label: "Rename Workspace…", run: func() { a.askRenameWorkspace(a.activeWorkspace) }},
 			{label: "Close Workspace", run: func() {

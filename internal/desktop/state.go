@@ -24,6 +24,7 @@ type savedState struct {
 	RemotePaths   map[int]string            `json:"remote_paths,omitempty"`
 	Agents        map[int]agentResume       `json:"agents,omitempty"`
 	Files         map[int]string            `json:"files,omitempty"`     // Files tab roots by tab index
+	FilesPinned   map[int]bool              `json:"files_pinned,omitempty"` // roots chosen in the Files pane
 	Databases     map[int]string            `json:"databases,omitempty"` // Database pane project roots by tab index
 	DatabaseViews map[int]savedDatabaseView `json:"database_views,omitempty"`
 	Sites         map[string]bool           `json:"sites,omitempty"`
@@ -213,6 +214,12 @@ func (a *App) state() savedState {
 				st.Files = map[int]string{}
 			}
 			st.Files[len(st.Tabs)] = t.dir
+			if t.files.pinnedRoot {
+				if st.FilesPinned == nil {
+					st.FilesPinned = map[int]bool{}
+				}
+				st.FilesPinned[len(st.Tabs)] = true
+			}
 			path = ""
 		case t.database != nil:
 			if st.Databases == nil {
@@ -431,6 +438,7 @@ func (a *App) restore() bool {
 		}
 		if dir, ok := st.Files[i]; ok {
 			opened[i] = a.startFiles(dir)
+			opened[i].files.pinnedRoot = st.FilesPinned[i]
 			continue
 		}
 		if dir, ok := st.Databases[i]; ok {

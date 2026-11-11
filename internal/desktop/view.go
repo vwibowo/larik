@@ -1386,8 +1386,7 @@ func (a *App) reveal(path string) {
 // tab is open.
 func (a *App) main(c *ui.Context, t *ui.Theme) {
 	if a.layout == nil {
-		a.card(c, t, func() {
-			a.noticeBar(c, t)
+		a.opacityCard(c, t, func() {
 			empty := ui.Column(c).Fill().Children(func() {
 				dir := cmp.Or(a.emptyDir, a.currentDir())
 				a.chooser(c, t, "No Session Open", "Pick a session in the sidebar, or open a new pane", &a.emptyPick, dir, func(d string) { a.emptyDir = d }, func(i int) {
@@ -1459,21 +1458,22 @@ func (a *App) card(c *ui.Context, t *ui.Theme, fn func()) {
 	ui.Column(c).Fill().Background(t.Background).Clip().Children(fn)
 }
 
-func (a *App) noticeBar(c *ui.Context, t *ui.Theme) {
-	if a.notice == "" && a.saveError == "" {
+// opacityCard is a pane whose background follows the pane-opacity setting.
+func (a *App) opacityCard(c *ui.Context, t *ui.Theme, fn func()) {
+	if a.paneOpacity < 1 {
+		ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(fn)
 		return
 	}
-	if a.saveError != "" {
-		ui.Row(c.Key("save-error")).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Danger.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, a.saveError).FontSize(12).Grow(1).Shrink(1)
-		})
+	a.card(c, t, fn)
+}
+
+func (a *App) noticeBar(c *ui.Context, t *ui.Theme) {
+	if a.saveError == "" {
+		return
 	}
-	if a.notice != "" {
-		ui.Row(c.Key("notice")).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Warning.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, a.notice).FontSize(12).Grow(1).Shrink(1)
-			a.closeButton(c, t, "Dismiss", func() { a.notice = "" })
-		})
-	}
+	ui.Row(c.Key("save-error")).Gap(8).Padding(8, 14).AlignItems(ui.Center).Background(t.Danger.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.Text(c, a.saveError).FontSize(12).Grow(1).Shrink(1)
+	})
 }
 
 // pane is a pane's tab: its header, find bar and terminal.

@@ -313,6 +313,14 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	if !tt.HasText("notes.md") {
 		t.Errorf("changes pane: %q", tt.Texts())
 	}
+	changesOpaque := tt.Image().RGBAAt(1300, 700)
+	a.paneOpacity = 0.5
+	tt.Frame()
+	if got := tt.Image().RGBAAt(1300, 700); got == changesOpaque {
+		t.Errorf("Changes pane background stayed opaque: %v", got)
+	}
+	a.paneOpacity = 1
+	tt.Frame()
 	snapshot(t, tt, "changes-window-dark.png")
 	// The changes beside a split: both stay.
 	a.splitRight()
@@ -891,6 +899,9 @@ func TestMenuBar(t *testing.T) {
 	defer mu.Unlock()
 	a.setProjects(index(t, data))
 	a.selectStart()
+	filled, centered := false, false
+	a.fillWindow = func() { filled = true }
+	a.centerWindow = func() { centered = true }
 	byKey := map[string]command{}
 	for _, g := range a.menuBar() {
 		for _, cmd := range g.items {
@@ -908,6 +919,17 @@ func TestMenuBar(t *testing.T) {
 	}
 	if c := byKey["Shift+Cmd+W"]; c.role != mygo.RoleClose {
 		t.Fatalf("Shift+Cmd+W: %+v", c)
+	}
+	if c := byKey["Ctrl+Alt+F"]; c.label != "Fill" || c.run == nil {
+		t.Fatalf("Fill shortcut: %+v", c)
+	}
+	if c := byKey["Ctrl+Alt+C"]; c.label != "Center" || c.run == nil {
+		t.Fatalf("Center shortcut: %+v", c)
+	}
+	byKey["Ctrl+Alt+F"].run()
+	byKey["Ctrl+Alt+C"].run()
+	if !filled || !centered {
+		t.Fatalf("window actions: filled %v, centered %v", filled, centered)
 	}
 	byKey["Cmd+T"].run()
 	byKey["Cmd+="].run()

@@ -193,6 +193,7 @@ func (a *App) openEvent(i int) {
 
 // markAllRead marks every notification read.
 func (a *App) markAllRead() {
+	a.notice = ""
 	for i := range a.events {
 		a.events[i].read = true
 	}
@@ -202,6 +203,9 @@ func (a *App) markAllRead() {
 // seen, opening their list.
 func (a *App) bell(c *ui.Context, t *ui.Theme) {
 	n := a.unreadEvents()
+	if a.notice != "" {
+		n++
+	}
 	tip := "Notifications (" + keyLabel(true, "U") + " opens the newest)"
 	if n > 0 {
 		tip = fmt.Sprintf("%d unread notifications (%s opens the newest)", n, keyLabel(true, "U"))
@@ -243,8 +247,17 @@ func (a *App) eventList(c *ui.Context, t *ui.Theme) {
 				}
 			}
 		})
+		if a.notice != "" {
+			ui.Row(c.Key("notice-row")).Gap(8).Padding(8, 6).Radius(6).AlignItems(ui.Center).Background(t.Warning.Alpha(0.1)).Children(func() {
+				ui.Icon(c, iconBell).FontSize(13).TextColor(t.Warning)
+				ui.Text(c, a.notice).FontSize(12).Grow(1).Shrink(1)
+				a.closeButton(c, t, "Dismiss", func() { a.notice = "" })
+			})
+		}
 		if len(a.events) == 0 {
-			ui.Text(c, "Sessions that need you, finish or fail show here, as does what larik desktop notify posts.").FontSize(12).TextColor(t.TextMuted).Padding(4, 4, 8, 4)
+			if a.notice == "" {
+				ui.Text(c, "Sessions that need you, finish or fail show here, as does what larik desktop notify posts.").FontSize(12).TextColor(t.TextMuted).Padding(4, 4, 8, 4)
+			}
 			return
 		}
 		ui.Scroll(c).MaxHeight(420).Children(func() {

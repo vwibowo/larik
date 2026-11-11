@@ -72,6 +72,21 @@ func TestTerminalTabs(t *testing.T) {
 	}
 }
 
+func TestEmptyStatePaneOpacity(t *testing.T) {
+	a, mu := serialApp(Options{Bin: fakeLarik(t), DataDir: t.TempDir(), Cwd: t.TempDir()})
+	defer a.Close()
+	tt := ui.NewTester(a.view, 1240, 800)
+	mu.Lock()
+	tt.Frame()
+	opaque := tt.Image().RGBAAt(900, 700)
+	a.paneOpacity = 0.5
+	tt.Frame()
+	mu.Unlock()
+	if got := tt.Image().RGBAAt(900, 700); got == opaque {
+		t.Fatalf("empty-state pane background stayed opaque: %v", got)
+	}
+}
+
 func TestShellCommand(t *testing.T) {
 	t.Setenv("SHELL", "/bin/zsh")
 	if got := shellCommand(""); len(got) != 2 || got[0] != "/bin/zsh" || got[1] != "-l" {

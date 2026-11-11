@@ -527,6 +527,67 @@ func TestFilesFollowFocusSplitAndRestore(t *testing.T) {
 	}
 }
 
+func TestFilesChosenRootIsPinnedAndRestored(t *testing.T) {
+	root := filesFixture(t)
+	chosen := t.TempDir()
+	followed := t.TempDir()
+	data := t.TempDir()
+	a := New(Options{Cwd: root, DataDir: data})
+	defer a.Close()
+	a.openFiles(root)
+	tb := a.focused()
+	a.pickDir = func(start string, then func(string)) {
+		if start != root {
+			t.Errorf("folder picker started at %q, want %q", start, root)
+		}
+		then(chosen)
+	}
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	if err := tt.Click("Browse folder"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tb.files.root != chosen || !tb.files.pinnedRoot {
+		t.Fatalf("chosen root was not applied and pinned: root=%q pinned=%v", tb.files.root, tb.files.pinnedRoot)
+	}
+	a.followFiles(followed)
+	if tb.files.root != chosen {
+		t.Fatalf("focused folder replaced chosen root: %q", tb.files.root)
+	}
+	a.changeFilesRoot(tb, filepath.Join(chosen, "missing"))
+	if tb.files.root != chosen || a.notice == "" {
+		t.Fatalf("invalid folder changed root: root=%q notice=%q", tb.files.root, a.notice)
+	}
+	st := a.state()
+	if st.Files[0] != chosen || !st.FilesPinned[0] {
+		t.Fatalf("chosen root not persisted: files=%v pinned=%v", st.Files, st.FilesPinned)
+	}
+	dataJSON, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(a.statePath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.statePath(), dataJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next := New(Options{Cwd: root, DataDir: data})
+	defer next.Close()
+	if !next.restore() || len(next.tabs) != 1 {
+		t.Fatal("could not restore Files tab")
+	}
+	restored := next.tabs[0]
+	if restored.files == nil || restored.files.root != chosen || !restored.files.pinnedRoot {
+		t.Fatalf("restored Files root: %+v", restored.files)
+	}
+	next.followFiles(followed)
+	if restored.files.root != chosen {
+		t.Fatalf("restored chosen root did not stay pinned: %q", restored.files.root)
+	}
+}
+
 func TestFilesNarrowSplit(t *testing.T) {
 	root := filesFixture(t)
 	a := New(Options{Cwd: root})

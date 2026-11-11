@@ -100,6 +100,44 @@ func TestFilesDragAndMoveTo(t *testing.T) {
 	}
 }
 
+func TestFilesDragToOtherPaneTreeAreaUsesRoot(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Files behavior")
+	}
+	left, right := t.TempDir(), t.TempDir()
+	src := filepath.Join(left, "root-drop.txt")
+	if err := os.WriteFile(src, []byte("root target"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := New(Options{Cwd: left})
+	defer a.Close()
+	a.openFiles(left)
+	to := a.startFiles(right)
+	a.showInSplit(to, false)
+	tt := ui.NewTester(a.view, 1240, 800)
+	tt.Frame()
+	from, ok := tt.Find("root-drop.txt")
+	if !ok {
+		t.Fatalf("source missing: %q", tt.Texts())
+	}
+	tree, ok := tt.Find("Files tree area " + filepath.Base(right))
+	if !ok {
+		t.Fatalf("target tree area missing: %q", tt.Texts())
+	}
+	dropX, dropY := tree.X+tree.W/2, tree.Y+tree.H-12
+	tt.Press(from.X+from.W/2, from.Y+from.H/2)
+	tt.Move(from.X+from.W/2+20, from.Y+from.H/2)
+	tt.Move(dropX, dropY)
+	tt.Release(dropX, dropY)
+	tt.Frame()
+	if data, err := os.ReadFile(filepath.Join(right, "root-drop.txt")); err != nil || string(data) != "root target" {
+		t.Fatalf("drop in target tree area did not reach root: %q, %v; tree=%+v drop=(%v,%v) notice=%q texts=%q", data, err, tree, dropX, dropY, a.notice, tt.Texts())
+	}
+	if _, err := os.Lstat(src); !os.IsNotExist(err) {
+		t.Fatalf("source stayed after root drop: %v", err)
+	}
+}
+
 func TestFilesMoveConflictsAndValidation(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{"left", "right", "left/dir", "right/dir"} {
@@ -248,6 +286,65 @@ func TestFilesMoveConflictDialogChoices(t *testing.T) {
 	}
 }
 
+func TestCopyFilesPathToDirectoriesAndConflicts(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "source")
+	dest := filepath.Join(root, "destination")
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "nested", "note.txt"), []byte("source"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFilesPathTo(src, dest, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dest, "nested", "note.txt")); err != nil || string(data) != "source" {
+		t.Fatalf("copied directory contents: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(src, "nested", "note.txt")); err != nil {
+		t.Fatalf("copy removed source: %v", err)
+	}
+	if err := copyFilesPathTo(src, dest, false, nil); !os.IsExist(err) {
+		t.Fatalf("copy conflict: %v", err)
+	}
+	if err := os.RemoveAll(dest); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(root, "old.txt")
+	newSource := filepath.Join(root, "new.txt")
+	if err := os.WriteFile(old, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newSource, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	trash := func(path string) error {
+		if data, err := os.ReadFile(path); err != nil || string(data) != "old" {
+			return errors.New("replacement backup did not contain old data")
+		}
+		return os.Remove(path)
+	}
+	if err := copyFilesPathTo(newSource, old, true, trash); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(old); err != nil || string(data) != "new" {
+		t.Fatalf("replacement copy: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(newSource); err != nil || string(data) != "new" {
+		t.Fatalf("replacement removed source: %q, %v", data, err)
+	}
+	if err := os.WriteFile(old, []byte("old again"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFilesPathTo(newSource, old, true, func(string) error { return errors.New("trash failed") }); err == nil {
+		t.Fatal("replacement succeeded when Trash failed")
+	}
+	if data, err := os.ReadFile(old); err != nil || string(data) != "old again" {
+		t.Fatalf("failed replacement did not restore old destination: %q, %v", data, err)
+	}
+}
+
 func TestFilesCrossVolumeMoveFallback(t *testing.T) {
 	root := t.TempDir()
 	src, dest := filepath.Join(root, "source.txt"), filepath.Join(root, "destination.txt")
@@ -297,11 +394,22 @@ func TestFilesMoveBetweenLocalTabs(t *testing.T) {
 	a := New(Options{Cwd: left})
 	defer a.Close()
 	from, to := a.startFiles(left), a.startFiles(right)
+	a.moveFilesDrop(filesDrag{source: from, paths: []string{src}, copying: true}, to, right)
+	if data, err := os.ReadFile(filepath.Join(right, "note.txt")); err != nil || string(data) != "hello" {
+		t.Fatalf("cross-tab copy: %q, %v", data, err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("copy removed source: %v", err)
+	}
+	src = filepath.Join(left, "move.txt")
+	if err := os.WriteFile(src, []byte("move"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	a.moveFilesDrop(filesDrag{source: from, paths: []string{src}}, to, right)
-	if _, err := os.Stat(filepath.Join(right, "note.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(right, "move.txt")); err != nil {
 		t.Fatalf("cross-tab move: %v", err)
 	}
 	if _, err := os.Lstat(src); !os.IsNotExist(err) {
-		t.Fatalf("source stayed: %v", err)
+		t.Fatalf("source stayed after move: %v", err)
 	}
 }

@@ -14,8 +14,9 @@ import (
 )
 
 type filesDrag struct {
-	source *tab
-	paths  []string
+	source  *tab
+	paths   []string
+	copying bool
 }
 
 func (a *App) filesBulkAvailable(tb *tab) bool {
@@ -77,7 +78,7 @@ func (a *App) filesRightClick(tb *tab, path string, dir bool) {
 	a.selectFile(tb, path, dir)
 }
 
-func (a *App) filesDragItem(item ui.Element, tb *tab, entry fileEntry) {
+func (a *App) filesDragItem(c *ui.Context, item ui.Element, tb *tab, entry fileEntry) {
 	if !a.filesBulkAvailable(tb) {
 		return
 	}
@@ -85,14 +86,14 @@ func (a *App) filesDragItem(item ui.Element, tb *tab, entry fileEntry) {
 	if slices.Contains(tb.files.picked, entry.path) {
 		paths = slices.Clone(tb.files.picked)
 	}
-	item.Drag(filesDrag{source: tb, paths: paths})
+	item.Drag(filesDrag{source: tb, paths: paths, copying: c.Modifiers()&ui.Alt != 0})
 }
 
 func (a *App) moveFilesDrop(d filesDrag, target *tab, dir string) {
 	if !a.filesBulkAvailable(d.source) || !a.filesBulkAvailable(target) {
 		return
 	}
-	a.startFilesMove(d.source, target, d.paths, dir)
+	a.startFilesTransfer(d.source, target, d.paths, dir, d.copying)
 }
 
 // normalizeFilesSelection lets an ancestor stand for its selected descendants.
@@ -200,6 +201,7 @@ type filesMoveBatch struct {
 	sourceRoot, targetRoot string
 	paths                  []string
 	dest                   string
+	copying                bool
 	at, moved, skipped     int
 	failures               []string
 }
@@ -211,6 +213,10 @@ type filesConflict struct {
 }
 
 func (a *App) startFilesMove(source, target *tab, paths []string, dest string) {
+	a.startFilesTransfer(source, target, paths, dest, false)
+}
+
+func (a *App) startFilesTransfer(source, target *tab, paths []string, dest string, copying bool) {
 	if a.filesMoving != nil || !a.filesBulkAvailable(source) || !a.filesBulkAvailable(target) || !filesWithinRoot(target.files.root, dest) {
 		return
 	}
@@ -218,7 +224,7 @@ func (a *App) startFilesMove(source, target *tab, paths []string, dest string) {
 	if len(paths) == 0 {
 		return
 	}
-	batch := &filesMoveBatch{source: source, target: target, sourceRoot: source.files.root, targetRoot: target.files.root, paths: paths, dest: dest}
+	batch := &filesMoveBatch{source: source, target: target, sourceRoot: source.files.root, targetRoot: target.files.root, paths: paths, dest: dest, copying: copying}
 	a.filesMoving = batch
 	a.nextFilesMove(batch)
 }
@@ -227,7 +233,11 @@ func (a *App) nextFilesMove(b *filesMoveBatch) {
 	if !a.filesBulkAvailable(b.source) || !a.filesBulkAvailable(b.target) || b.source.files.root != b.sourceRoot || b.target.files.root != b.targetRoot {
 		a.filesMoving = nil
 		a.filesConflict = nil
-		a.notice = fmt.Sprintf("Move stopped after %d item(s): a Files folder changed.", b.moved)
+		action := "Move"
+		if b.copying {
+			action = "Copy"
+		}
+		a.notice = fmt.Sprintf("%s stopped after %d item(s): a Files folder changed.", action, b.moved)
 		return
 	}
 	for b.at < len(b.paths) {
@@ -271,7 +281,7 @@ func (a *App) filesConflictDialog(c *ui.Context) {
 		b := p.batch
 		switch action {
 		case "replace":
-			a.performFilesMove(b, p.src, p.dest, true)
+			a.performFilesTransfer(b, p.src, p.dest, true)
 		case "both":
 			to, err := availableFilesName(p.dest, isDirectory(p.src))
 			if err != nil {
@@ -279,7 +289,7 @@ func (a *App) filesConflictDialog(c *ui.Context) {
 				b.at++
 				a.nextFilesMove(b)
 			} else {
-				a.performFilesMove(b, p.src, to, false)
+				a.performFilesTransfer(b, p.src, to, false)
 			}
 		default:
 			b.skipped++
@@ -310,11 +320,19 @@ func (a *App) filesConflictDialog(c *ui.Context) {
 }
 
 func (a *App) performFilesMove(b *filesMoveBatch, src, dest string, replace bool) {
-	sourceRoot, targetRoot, targetDir := b.sourceRoot, b.targetRoot, b.dest
+	a.performFilesTransfer(b, src, dest, replace)
+}
+
+func (a *App) performFilesTransfer(b *filesMoveBatch, src, dest string, replace bool) {
+	sourceRoot, targetRoot, targetDir, copying := b.sourceRoot, b.targetRoot, b.dest, b.copying
 	a.filesWork(func() {
 		err := validateFilesMove(sourceRoot, targetRoot, src, targetDir)
 		if err == nil {
-			err = moveFilesPath(src, dest, replace, a.trashItem)
+			if copying {
+				err = copyFilesPathTo(src, dest, replace, a.trashItem)
+			} else {
+				err = moveFilesPath(src, dest, replace, a.trashItem)
+			}
 		}
 		a.filesResult(func() {
 			if err != nil {
@@ -336,7 +354,7 @@ func (a *App) finishFilesMove(b *filesMoveBatch) {
 	if b.target != b.source && b.target.files != nil && b.target.files.root == b.targetRoot {
 		a.refreshFiles(b.target)
 	}
-	a.notice = fmt.Sprintf("Moved %d item(s)", b.moved)
+	a.notice = fmt.Sprintf("%s %d item(s)", map[bool]string{true: "Copied", false: "Moved"}[b.copying], b.moved)
 	if b.skipped > 0 {
 		a.notice += fmt.Sprintf(", skipped %d", b.skipped)
 	}
@@ -389,6 +407,76 @@ func availableFilesName(path string, sourceDir bool) (string, error) {
 		}
 	}
 	return "", errors.New("too many items with this name")
+}
+
+func copyFilesPathTo(src, dest string, replace bool, trash func(string) error) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		if !replace {
+			return os.ErrExist
+		}
+		if trash == nil {
+			return errors.New("system Trash is unavailable")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	stageDir, err := os.MkdirTemp(filepath.Dir(dest), ".larik-copy-")
+	if err != nil {
+		return err
+	}
+	preserveBackup := false
+	defer func() {
+		if !preserveBackup {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
+	stage := filepath.Join(stageDir, filepath.Base(dest))
+	if err := copyFilesPath(src, stage, info); err != nil {
+		return err
+	}
+	backup := filepath.Join(stageDir, "replaced")
+	if _, err := os.Lstat(dest); err == nil {
+		if !replace {
+			return os.ErrExist
+		}
+		if trash == nil {
+			return errors.New("system Trash is unavailable")
+		}
+		if err := os.Rename(dest, backup); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stage, dest); err != nil {
+		if _, backupErr := os.Lstat(backup); backupErr == nil {
+			if restoreErr := os.Rename(backup, dest); restoreErr != nil {
+				preserveBackup = true
+				return fmt.Errorf("could not install copy: %v (backup: %s; restore: %v)", err, backup, restoreErr)
+			}
+		}
+		return err
+	}
+	if _, err := os.Lstat(backup); err == nil {
+		if err := trash(backup); err != nil {
+			if removeErr := os.RemoveAll(dest); removeErr != nil {
+				preserveBackup = true
+				return fmt.Errorf("could not move replaced item to Trash: %v (new copy: %s; backup: %s; cleanup: %v)", err, dest, backup, removeErr)
+			}
+			if restoreErr := os.Rename(backup, dest); restoreErr != nil {
+				preserveBackup = true
+				return fmt.Errorf("could not move replaced item to Trash: %v (backup: %s; restore: %v)", err, backup, restoreErr)
+			}
+			return fmt.Errorf("could not move replaced item to Trash: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func moveFilesPath(src, dest string, replace bool, trash func(string) error) error {

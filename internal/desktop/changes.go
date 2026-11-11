@@ -593,7 +593,7 @@ func isBinary(s string) bool {
 
 // changesPane shows the changes card.
 func (a *App) changesPane(c *ui.Context, t *ui.Theme, ch *changes) {
-	a.card(c, t, func() {
+	a.opacityCard(c, t, func() {
 		ui.Row(c).Gap(8).Padding(9, 12, 9, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			ui.Icon(c, iconDiff).FontSize(15).TextColor(t.Accent)
 			ui.Text(c, "Changes").Bold()

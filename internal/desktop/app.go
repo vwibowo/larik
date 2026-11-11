@@ -56,6 +56,8 @@ type App struct {
 	activateWindow func()
 	navigateWindow func(int)
 	windowPosition func() (int, int)
+	fillWindow     func()
+	centerWindow   func()
 	skipAdoption   bool
 	ownedHostTabs  map[string]bool
 	// update runs fn on the main thread and draws a new frame, without
@@ -150,7 +152,7 @@ type App struct {
 	layouts         map[string]map[string]projectLayout
 	layoutPick      *layoutPick
 	fontSize        float32 // the terminals' text size, 0 for fontSize
-	paneOpacity     float32 // terminal, Files and Database pane backgrounds; 1 is opaque
+	paneOpacity     float32 // terminal, Files, Database, Changes, and empty-state backgrounds; 1 is opaque
 	// closing are the tabs waiting on confirming, the question whether
 	// to close them while they work, and closeKeep the tab to show after.
 	closing    []*tab

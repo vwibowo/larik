@@ -29,6 +29,7 @@ const (
 // immutable results; the window's update callback applies them on its frame.
 type filesState struct {
 	root, query, selected  string
+	pinnedRoot             bool
 	picked, rows, lastRows []string
 	anchor                 string
 	showHidden             bool
@@ -124,12 +125,27 @@ func (a *App) openFiles(dir string) { a.activate(a.startFiles(dir)) }
 
 // followFiles changes every Files tab to the latest focused non-Files
 // tab's working folder. Focusing Files itself never changes that folder.
+func (a *App) changeFilesRoot(tb *tab, dir string) {
+	if tb == nil || tb.files == nil || isRemote(dir) {
+		return
+	}
+	dir = filepath.Clean(dir)
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		a.notice = "Choose an existing folder for the Files pane."
+		return
+	}
+	tb.dir = dir
+	tb.files.pinnedRoot = true
+	a.refreshFiles(tb)
+}
+
 func (a *App) followFiles(dir string) {
 	if dir == "" {
 		return
 	}
 	for _, tb := range a.tabs {
-		if tb.files == nil || tb.dir == dir {
+		if tb.files == nil || tb.files.pinnedRoot || tb.dir == dir {
 			continue
 		}
 		old := tb.files
@@ -593,6 +609,7 @@ func (a *App) refreshFiles(tb *tab) {
 	next := newFilesState(tb.dir)
 	next.showHidden, next.showIgnored, next.wrap = f.showHidden, f.showIgnored, f.wrap
 	next.treeW, next.narrow, next.previewOnly, next.focusSearch = f.treeW, f.narrow, f.previewOnly, f.focusSearch
+	next.pinnedRoot = f.pinnedRoot
 	next.query = query
 	next.anchor = f.anchor
 	next.picked = slices.Clone(f.picked)
@@ -631,14 +648,23 @@ func filePathVisible(f *filesState, path string) bool {
 func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 	f := tb.files
 	ui.Column(c).Fill().MinWidth(0).Children(func() {
-		header := ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
+		ui.Row(c).Height(40).Gap(6).Padding(0, 8, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			ui.Icon(c, iconFolder).FontSize(14).TextColor(theme.Accent)
-			name := filepath.Base(f.root)
-			if name == "." || name == string(filepath.Separator) {
-				name = f.root
+			rootLabel := ui.Text(c, tildePath(f.root)).FontSize(12).Bold().SingleLine().Grow(1).Shrink(1).Tooltip(f.root).Label("Explorer folder " + filepath.Base(f.root))
+			rootLabel.ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, f.root, true, true) })
+			if a.filesBulkAvailable(tb) {
+				if _, over := ui.DragOver[filesDrag](rootLabel); over {
+					rootLabel.Background(theme.Accent.Alpha(0.2))
+				}
+				if drag, ok := ui.Drop[filesDrag](rootLabel); ok {
+					a.moveFilesDrop(drag, tb, f.root)
+				}
 			}
-			ui.Text(c, name).FontSize(12).Bold().SingleLine().Grow(1).Shrink(1).Tooltip(f.root).Label("Explorer folder " + name).
-				ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, f.root, true, true) })
+			if a.pickDir != nil && !isRemote(f.root) {
+				a.smallButton(c, theme, "browse-files-root", iconFolder, "Browse folder", func() {
+					a.pickDir(f.root, func(dir string) { a.changeFilesRoot(tb, dir) })
+				})
+			}
 			a.iconButton(c, theme, "refresh-files", iconReload, "Refresh files ("+keyText("Cmd+R")+")", false, func() { a.refreshFiles(tb) })
 			ui.Box(c.Key("file-visibility")).Padding(6).Radius(6).Label("File visibility").Tooltip("File visibility").Children(func() {
 				ui.Icon(c, iconFilter).FontSize(15).TextColor(theme.Text.Alpha(0.75))
@@ -653,14 +679,6 @@ func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 				}
 			})
 		})
-		if a.filesBulkAvailable(tb) {
-			if _, over := ui.DragOver[filesDrag](header); over {
-				header.Background(theme.Accent.Alpha(0.2))
-			}
-			if drag, ok := ui.Drop[filesDrag](header); ok {
-				a.moveFilesDrop(drag, tb, f.root)
-			}
-		}
 		ui.Row(c).Padding(7, 9).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
 			field := ui.SearchField(c.Key("file-search"), &f.query).Placeholder("Find files").Label("Search files and folders").Grow(1).MinWidth(0).
 				OnChange(func() { a.searchFiles(tb) }).
@@ -684,7 +702,16 @@ func (a *App) filesTree(c *ui.Context, theme *ui.Theme, tb *tab) {
 			}
 			ui.Text(c, status).FontSize(11).TextColor(theme.TextMuted).Padding(7, 12)
 		}
-		ui.Scroll(c.Key("files-scroll")).Grow(1).Children(func() {
+		scroll := ui.Scroll(c.Key("files-scroll")).Grow(1).Label("Files tree area " + filepath.Base(f.root))
+		if a.filesBulkAvailable(tb) {
+			if _, over := ui.DragOver[filesDrag](scroll); over {
+				scroll.Background(theme.Accent.Alpha(0.12))
+			}
+			if drag, ok := ui.Drop[filesDrag](scroll); ok {
+				a.moveFilesDrop(drag, tb, f.root)
+			}
+		}
+		scroll.Children(func() {
 			if !f.hasQuery() {
 				a.loadFilesDir(tb, f.root)
 			}
@@ -758,7 +785,7 @@ func (a *App) filesTreeChildren(c *ui.Context, tb *tab, dir string, depth int) {
 				a.filesRightClick(tb, e.path, true)
 			}
 			item.ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, e.path, true, false) })
-			a.filesDragItem(item, tb, e)
+			a.filesDragItem(c, item, tb, e)
 			if a.filesBulkAvailable(tb) {
 				if _, over := ui.DragOver[filesDrag](item); over {
 					item.Background(c.Theme().Accent.Alpha(0.2))
@@ -776,7 +803,7 @@ func (a *App) filesTreeChildren(c *ui.Context, tb *tab, dir string, depth int) {
 				a.filesRightClick(tb, e.path, false)
 			}
 			item.ContextMenu(func(m *ui.Menu) { a.filesMenu(m, tb, e.path, false, false) })
-			a.filesDragItem(item, tb, e)
+			a.filesDragItem(c, item, tb, e)
 		}
 	}
 }

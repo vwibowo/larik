@@ -94,6 +94,8 @@ func Run(opts Options) error {
 		a.update = win.Update
 		a.redraw = func() { win.Update(func() {}) }
 		a.contentSize = win.ContentSize
+		a.fillWindow = win.Maximize
+		a.centerWindow = win.Center
 		a.overflow = func(t *tab) bool { return group.overflow(a, t) }
 		a.activateWindow = func() { group.setActive(a) }
 		a.navigateWindow = func(by int) { group.navigateWindow(a, by) }
