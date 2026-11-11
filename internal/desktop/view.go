@@ -585,7 +585,6 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 		newButton := ui.Row(c.Key("new")).Gap(3).Padding(5, 7).Radius(6).AlignItems(ui.Center).
 			Label("New pane").Tooltip("New session, worktree session, terminal, browser, Files, or Database pane").Children(func() {
 			ui.Icon(c, iconPlus).FontSize(15).TextColor(t.Text.Alpha(0.75))
-			ui.Text(c, "New").FontSize(12)
 			ui.Icon(c, iconDown).FontSize(10).TextColor(t.TextMuted)
 		})
 		if newButton.Hovered() {
