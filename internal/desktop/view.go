@@ -1614,13 +1614,13 @@ func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 	tb := p.tab
 	active := tb == a.focused()
-	background, border := t.Text.Alpha(0.03), t.Border
+	border := t.Border
 	if active {
-		background, border = t.Accent.Alpha(0.08), t.Accent.Alpha(0.55)
+		border = t.Accent.Alpha(0.55)
 	}
 	// Dragged by its header, the pane moves: to another pane's edge, or
 	// in its place, swapping the two.
-	head := ui.Row(c.Key("header")).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).Background(background).BorderWidth(0, 0, 2, 0).BorderColor(border).
+	head := ui.Row(c.Key("header")).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 2, 0).BorderColor(border).
 		Cursor(ui.CursorGrab).Description("Drag to move this pane")
 	head.Drag(paneDrag{p})
 	head.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
