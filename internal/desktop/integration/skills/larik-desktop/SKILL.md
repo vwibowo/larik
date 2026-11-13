@@ -32,6 +32,7 @@ larik desktop pane list --json
 larik desktop pane focus --id PANE
 larik desktop pane move --tab TAB --id PANE
 larik desktop pane layout grid
+larik desktop pane layout left-stack
 larik desktop workspace list --json
 larik desktop workspace new --name Review
 larik desktop workspace focus --workspace WORKSPACE

@@ -30,6 +30,7 @@ var settingsItems = []settingsItem{
 	{"chooser", "window", "Ask what to open in new panes", "Choose a Larik session, worktree, terminal, or browser when opening a pane."},
 	{"appearance", "appearance", "Appearance", "Follow your system, or use light or dark colors for Larik."},
 	{"accent", "appearance", "Accent color", "Use your system accent or choose a color for selection and focus."},
+	{"pane-layout", "appearance", "Pane layout", "Choose the compact pane layout or rounded, spaced glass panes."},
 	{"pane-opacity", "appearance", "Pane background opacity", "Let the desktop show through terminal, Files, Database, Changes, and empty-state pane backgrounds while text stays solid."},
 	{"font", "terminal", "Terminal text size", "Size of text in every terminal pane."},
 	{"model", "agent", "Default model", "Model used when you start a new Larik session."},
@@ -204,6 +205,19 @@ func (a *App) settingsControl(c *ui.Context, t *ui.Theme, id string) {
 		i := max(0, indexOf(appearances, a.appearance))
 		if ui.Segmented(c.Key("choice"), &i, "System", "Light", "Dark").Label("Appearance").Changed() {
 			a.setAppearance(appearances[i])
+		}
+	case "pane-layout":
+		i := 0
+		if a.paneLayout == "glass" {
+			i = 1
+		}
+		if ui.Segmented(c.Key("choice"), &i, "Compact", "Glass").Label("Pane layout").Changed() {
+			if i == 1 {
+				a.paneLayout = "glass"
+			} else {
+				a.paneLayout = "compact"
+			}
+			a.settingsChanged()
 		}
 	case "accent":
 		ui.Row(c.Key("colors")).Gap(5).Children(func() {

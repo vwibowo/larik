@@ -23,9 +23,9 @@ type savedState struct {
 	RemotePorts   map[int]savedRemotePort   `json:"remote_ports,omitempty"`
 	RemotePaths   map[int]string            `json:"remote_paths,omitempty"`
 	Agents        map[int]agentResume       `json:"agents,omitempty"`
-	Files         map[int]string            `json:"files,omitempty"`     // Files tab roots by tab index
+	Files         map[int]string            `json:"files,omitempty"`        // Files tab roots by tab index
 	FilesPinned   map[int]bool              `json:"files_pinned,omitempty"` // roots chosen in the Files pane
-	Databases     map[int]string            `json:"databases,omitempty"` // Database pane project roots by tab index
+	Databases     map[int]string            `json:"databases,omitempty"`    // Database pane project roots by tab index
 	DatabaseViews map[int]savedDatabaseView `json:"database_views,omitempty"`
 	Sites         map[string]bool           `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
@@ -57,8 +57,9 @@ type savedState struct {
 	// Servers are the machines connected to, by SSH destination, to
 	// connect to again; their tabs come back from their hosts.
 	Servers         []string `json:"servers,omitempty"`
-	Font            float32  `json:"font_size,omitempty"`        // the terminals' text size
-	PaneOpacity     *float32 `json:"pane_opacity,omitempty"`     // nil is the solid default
+	Font            float32  `json:"font_size,omitempty"` // the terminals' text size
+	PaneOpacity     *float32 `json:"pane_opacity,omitempty"`
+	PaneLayout      string   `json:"pane_layout,omitempty"`      // nil is the solid default
 	TerminalOpacity *float32 `json:"terminal_opacity,omitempty"` // read older Desktop state
 	// Open says, for each project's root, whether its section is open.
 	Open map[string]bool `json:"open,omitempty"`
@@ -144,7 +145,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Version: 5, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Version: 5, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, PaneLayout: a.paneLayout, Open: map[string]bool{}}
 	if a.windowKeys != nil {
 		st.Windows = a.windowKeys()
 	}
@@ -368,6 +369,11 @@ func (a *App) restore() bool {
 		a.paneOpacity = min(max(*st.TerminalOpacity, 0), 1)
 	}
 	a.appearance, a.accent, a.keys = st.Appearance, st.Accent, st.Keys
+	if st.PaneLayout == "glass" {
+		a.paneLayout = st.PaneLayout
+	} else {
+		a.paneLayout = "compact"
+	}
 	if st.Version < 3 {
 		for old, renamed := range map[string]string{
 			"New Tab": "New Pane", "New Tab in Split": "New Pane Beside",

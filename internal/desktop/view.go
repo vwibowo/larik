@@ -167,7 +167,7 @@ func (a *App) view(c *ui.Context) {
 	// window's material, and beside it the content, opaque, under a
 	// toolbar and the panes.
 	vib := c.Vibrancy()
-	seeThrough := a.paneOpacity < 1
+	seeThrough := a.paneOpacity < 1 || a.paneLayout == "glass"
 	if vib || seeThrough {
 		c.Root().Background(ui.Transparent)
 	}
@@ -519,8 +519,16 @@ func (a *App) toolbar(c *ui.Context, t *ui.Theme) {
 	if a.noSidebar {
 		start = bar.Left + 10
 	}
-	ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(start).PaddingEnd(bar.Right+10).Gap(4).AlignItems(ui.Center).Background(t.Background).
-		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).DragWindow().Children(func() {
+	toolbarBackground := t.Background
+	if a.paneLayout == "glass" {
+		toolbarBackground = ui.Transparent
+	}
+	toolbar := ui.Row(c).Height(max(bar.Height, toolbarHeight)).PaddingStart(start).PaddingEnd(bar.Right+10).Gap(4).AlignItems(ui.Center).Background(toolbarBackground).
+		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).DragWindow()
+	if a.paneLayout == "glass" {
+		toolbar.BorderWidth(0, 0, 1, 0)
+	}
+	toolbar.Children(func() {
 		if a.noSidebar {
 			a.sidebarButton(c, t)
 			ui.Box(c).Width(6)
@@ -1436,14 +1444,41 @@ func splitTip() string {
 // over the other, with the divider between them to drag.
 func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
 	if !p.split() {
+		if a.paneLayout == "glass" {
+			ui.Column(c).Fill().Padding(8).Children(func() {
+				card := ui.Column(c).Fill().Border(1, t.Border).Clip().Radius(14)
+				// if a.paneOpacity < 1 {
+				// 	// Clear glass keeps the pane color consistent at different sizes;
+				// 	// the tint gives the opacity control its solid-to-transparent range.
+				// 	card.Material(glass.Glass{Style: glass.Clear, Tint: t.Background.Alpha(a.paneOpacity)})
+				// } else {
+				// 	card.Background(t.Background)
+				// }
+				card.Children(func() { a.pane(c, t, p) })
+			})
+			return
+		}
 		if p.tab != nil && a.paneOpacity < 1 && (p.tab.term != nil || p.tab.files != nil || p.tab.database != nil) {
-			ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(func() { a.pane(c, t, p) })
+			// ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(func() { a.pane(c, t, p) })
 		} else {
 			a.card(c, t, func() { a.pane(c, t, p) })
 		}
 		return
 	}
 	first, second := func() { a.paneTree(c, t, p.first) }, func() { a.paneTree(c, t, p.second) }
+	if a.paneLayout == "glass" {
+		// Hide the one-pixel split line but keep its accessible resize handle.
+		glassTheme := *t
+		glassTheme.Border = ui.Transparent
+		// ui.Themed(c, &glassTheme).Grow(1).Children(func() {
+		if p.below {
+			ui.SplitVerticalPercent(c, &p.percent, first, second).Grow(1)
+		} else {
+			ui.SplitPercent(c, &p.percent, first, second).Grow(1)
+		}
+		// })
+		return
+	}
 	if p.below {
 		ui.SplitVerticalPercent(c, &p.percent, first, second).Grow(1)
 	} else {
@@ -1454,7 +1489,7 @@ func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
 // card is a pane: flush with the window's edges and its neighbour, as
 // macOS's split views are.
 func (a *App) card(c *ui.Context, t *ui.Theme, fn func()) {
-	ui.Column(c).Fill().Background(t.Background).Clip().Children(fn)
+	ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(fn)
 }
 
 // opacityCard is a pane whose background follows the pane-opacity setting.
@@ -1621,6 +1656,9 @@ func (a *App) header(c *ui.Context, t *ui.Theme, p *pane) {
 	// in its place, swapping the two.
 	head := ui.Row(c.Key("header")).Height(28).Gap(6).Padding(0, 6, 0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 2, 0).BorderColor(border).
 		Cursor(ui.CursorGrab).Description("Drag to move this pane")
+	if a.paneLayout == "glass" {
+		head.BorderWidth(0, 0, 0, 0)
+	}
 	head.Drag(paneDrag{p})
 	head.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, tb) })
 	head.Children(func() {

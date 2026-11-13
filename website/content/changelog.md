@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Glass pane layout.** Choose Appearance › Pane layout to switch from the compact default to rounded panes with gaps. The split remains draggable; pane-header bottom borders and split separator lines are hidden. The window surface is transparent in Glass mode, and pane opacity controls how much desktop material shows through. The choice persists across restarts.
+- **Left Stack pane layout.** Arrange three or more panes as a vertical stack on the left beside a vertical stack on the right, matching the GoRex-style workspace layout.
+
+
 ## v0.37.0
 
 <p class="release-meta"><time datetime="2026-11-11">November 11, 2026</time></p>

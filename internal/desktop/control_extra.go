@@ -63,10 +63,10 @@ func (a *App) controlPane(req Request) Response {
 		a.focusPane(a.paneOf(t))
 		return Response{Panes: []PaneInfo{{ID: p.id, Tab: t.id, Focused: true}}}
 	case "layout":
-		layouts := map[string]layout{"columns": layoutColumns, "rows": layoutRows, "grid": layoutGrid, "main-stack": layoutMainStack}
+		layouts := map[string]layout{"columns": layoutColumns, "rows": layoutRows, "grid": layoutGrid, "main-stack": layoutMainStack, "left-stack": layoutLeftStack}
 		l, ok := layouts[req.State]
 		if !ok {
-			return Response{Error: "pane layout must be columns, rows, grid or main-stack"}
+			return Response{Error: "pane layout must be columns, rows, grid, main-stack or left-stack"}
 		}
 		a.arrange(l)
 		return a.controlPane(Request{Op: "list"})

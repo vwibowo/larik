@@ -197,17 +197,18 @@ const (
 	layoutRows
 	layoutGrid
 	layoutMainStack
+	layoutLeftStack
 )
 
 func (l layout) String() string {
-	return [...]string{"Columns", "Rows", "Grid", "Main and Stack"}[l]
+	return [...]string{"Columns", "Rows", "Grid", "Main and Stack", "Left Stack"}[l]
 }
 
 // arrange lays every pane out as l says, keeping their tabs, in their
 // order, and the keyboard where it was. The main pane of Main and Stack
 // is the focused one.
 func (a *App) arrange(l layout) {
-	if !a.split() {
+	if !a.split() || l == layoutLeftStack && len(a.panes()) < 3 {
 		return
 	}
 	a.remember()
@@ -240,6 +241,11 @@ func (a *App) arrange(l layout) {
 		main, stack := &pane{tab: tabs[0]}, chain(leavesOf(tabs[1:]), true)
 		a.layout = &pane{percent: 60, first: main, second: stack}
 		main.parent, stack.parent = a.layout, a.layout
+	case layoutLeftStack:
+		left := chain(leavesOf(tabs[:2]), true)
+		right := chain(leavesOf(tabs[2:]), true)
+		a.layout = &pane{percent: 50, first: left, second: right}
+		left.parent, right.parent = a.layout, a.layout
 	}
 	a.layout.parent, a.zoomed = nil, false
 	for _, p := range a.panes() {
@@ -344,7 +350,7 @@ func (a *App) tilingCommands() []command {
 	cmds := []command{
 		{label: "Equalize Panes", key: tilingKey("="), run: a.equalize},
 	}
-	for _, l := range []layout{layoutColumns, layoutRows, layoutGrid, layoutMainStack} {
+	for _, l := range []layout{layoutColumns, layoutRows, layoutGrid, layoutMainStack, layoutLeftStack} {
 		cmds = append(cmds, command{label: "Lay Out Panes in " + l.String(), run: func() { a.arrange(l) }})
 	}
 	return append(cmds,

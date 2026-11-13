@@ -172,6 +172,7 @@ func TestArrange(t *testing.T) {
 		{layoutRows, "(1/(2/(3/4)))"},
 		{layoutGrid, "((1|2)/(3|4))"},
 		{layoutMainStack, "(3|(1/(2/4)))"},
+		{layoutLeftStack, "((1/2)|(3/4))"},
 	} {
 		a, tabs := fourPanes(t)
 		a.focusPane(a.paneOf(tabs[2]))
@@ -203,8 +204,20 @@ func TestArrange(t *testing.T) {
 			t.Errorf("%v restored as %s", tc.l, got)
 		}
 	}
+	// Three in Left Stack: two on the left, one spanning the right.
+	a, tabs := twoTabs()
+	three := &tab{id: "3", dir: "/three"}
+	a.showInSplit(tabs[1], false)
+	a.tabs = append(a.tabs, three)
+	a.showInSplit(three, false)
+	a.arrange(layoutLeftStack)
+	if got := shape(a.layout); got != "((1/2)|3)" {
+		t.Fatalf("three-pane left stack: %s", got)
+	}
+	parents(t, a.layout)
+
 	// Five in a grid: three, then two.
-	a, tabs := fourPanes(t)
+	a, tabs = fourPanes(t)
 	five := &tab{id: "5", dir: "/five"}
 	a.tabs = append(tabs, five)
 	a.showInSplit(five, false)

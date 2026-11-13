@@ -153,6 +153,7 @@ type App struct {
 	layoutPick      *layoutPick
 	fontSize        float32 // the terminals' text size, 0 for fontSize
 	paneOpacity     float32 // terminal, Files, Database, Changes, and empty-state backgrounds; 1 is opaque
+	paneLayout      string  // compact (default) or glass
 	// closing are the tabs waiting on confirming, the question whether
 	// to close them while they work, and closeKeep the tab to show after.
 	closing    []*tab
@@ -425,6 +426,7 @@ func New(opts Options) *App {
 		started:       time.Now(),
 		sidebarW:      280,
 		paneOpacity:   1,
+		paneLayout:    "compact",
 		changesP:      60,
 		planP:         55,
 		plans:         map[string]*planPreview{},
