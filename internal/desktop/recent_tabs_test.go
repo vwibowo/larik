@@ -15,12 +15,12 @@ func TestReopenBrowserAndFilesInFormerPane(t *testing.T) {
 		t.Fatal("closing Files left its pane")
 	}
 	a.reopenClosed()
-	if !a.split() || !a.layout.below || a.focused().files == nil {
+	if !a.split() || !a.layout.below || a.focused().filesState() == nil {
 		t.Fatal("Files did not reopen in its former pane")
 	}
 	a.closeTab(b)
 	a.reopenClosed()
-	if len(a.tabs) != 2 || a.focused() == nil || !a.focused().browser {
+	if len(a.tabs) != 2 || a.focused() == nil || !a.focused().isBrowser() {
 		t.Fatalf("browser did not reopen: %d tabs", len(a.tabs))
 	}
 }

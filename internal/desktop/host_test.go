@@ -271,13 +271,13 @@ func TestHostedTabOutlivesTheWindow(t *testing.T) {
 	tt.SetDark(true)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "larik in the host", func() bool {
-		return strings.Contains(first.term.Text(), "args:--resume") && strings.Contains(first.term.Text(), "tab:"+first.id)
+		return strings.Contains(first.terminal().Text(), "args:--resume") && strings.Contains(first.terminal().Text(), "tab:"+first.id)
 	})
 	// Typed, it goes to the host's terminal, which echoes it back.
 	mu.Lock()
-	first.term.Send([]byte("47"))
+	first.terminal().Send([]byte("47"))
 	mu.Unlock()
-	frameUntil(t, mu, tt, "the echo", func() bool { return strings.Contains(first.term.Text(), "\n47") })
+	frameUntil(t, mu, tt, "the echo", func() bool { return strings.Contains(first.terminal().Text(), "\n47") })
 	// Closing, the window saves which tabs the host runs.
 	a.Close()
 	var st savedState
@@ -309,18 +309,18 @@ func TestHostedTabOutlivesTheWindow(t *testing.T) {
 	tt.SetDark(true)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "what it showed", func() bool {
-		text := again.term.Text()
+		text := again.terminal().Text()
 		return strings.Contains(text, "tab:"+first.id) && strings.Contains(text, "\n47")
 	})
 	mu.Lock()
-	if strings.Count(again.term.Text(), "args:") != 1 {
+	if strings.Count(again.terminal().Text(), "args:") != 1 {
 		mu.Unlock()
-		t.Fatalf("larik ran again: %q", again.term.Text())
+		t.Fatalf("larik ran again: %q", again.terminal().Text())
 	}
 	snapshot(t, tt, "hosted-dark.png")
 	// It ends with 47, which the host tells: the tab stays, for what it
 	// printed.
-	again.term.Send([]byte("\r"))
+	again.terminal().Send([]byte("\r"))
 	mu.Unlock()
 	waitFor(t, mu, "the exit", func() bool { return again.exited })
 	mu.Lock()

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"larik/internal/desktop/panes"
 )
 
 type projectLayout struct {
@@ -26,6 +28,7 @@ type layoutTab struct {
 	Agent      agentResume       `json:"agent,omitzero"`
 	RemotePort savedRemotePort   `json:"remote_port,omitzero"`
 	Database   savedDatabaseView `json:"database,omitzero"`
+	Content    *panes.Snapshot   `json:"content,omitempty"`
 }
 
 func projectLayoutsPath(dataDir string) string {
@@ -80,7 +83,10 @@ func (a *App) saveProjectLayout(root, name string) error {
 		if !filesWithinRoot(root, t.dir) {
 			continue
 		}
-		item := layoutTab{ID: t.id, Dir: t.dir, Path: t.path, URL: t.url, Agent: t.agent}
+		item := layoutTab{ID: t.id, Dir: t.dir, Path: t.path, Agent: t.agent}
+		if browser := t.browserState(); browser != nil {
+			item.URL = browser.URL
+		}
 		if t.remotePort.port != 0 {
 			item.RemotePort = savedRemotePort{t.remotePort.name, t.remotePort.port}
 			item.URL = blankPage
@@ -88,18 +94,20 @@ func (a *App) saveProjectLayout(root, name string) error {
 		switch {
 		case t.path != "":
 			item.Kind = "larik"
-		case t.browser:
+		case t.isBrowser():
 			item.Kind = "browser"
-		case t.files != nil:
+		case t.filesState() != nil:
 			item.Kind = "files"
-		case t.database != nil:
+		case t.databaseState() != nil:
 			item.Kind = "database"
-			item.Database = saveDatabaseView(t.database)
+			item.Database = saveDatabaseView(t.databaseState())
 		case t.shell():
 			item.Kind = "terminal"
 		default:
 			continue
 		}
+		snapshot := a.snapshotTab(t)
+		item.Content = &snapshot
 		if a.focused() == t {
 			layout.Active = len(layout.Tabs)
 		}
@@ -134,38 +142,45 @@ func (a *App) openProjectLayout(root, name string) error {
 			}
 		}
 		var t *tab
-		switch item.Kind {
-		case "larik":
-			if t = a.tabOf(item.Path); t == nil {
-				s, _, ok := a.find(item.Path)
-				if !ok || s.Running {
+		if item.Content != nil && item.Content.Kind != panes.Session {
+			t = a.restoreSnapshot(*item.Content, item.Agent)
+		} else {
+			switch item.Kind {
+			case "larik":
+				if t = a.tabOf(item.Path); t == nil {
+					s, _, ok := a.find(item.Path)
+					if !ok || s.Running {
+						continue
+					}
+					t = a.startTab(s.Cwd, s.ID, s.Path)
+				}
+			case "terminal":
+				t = a.startShell(item.Dir, "")
+				if t != nil && item.Agent.valid() {
+					item.Agent.Tab = t.id
+					t.agent = agentForTab(t, item.Agent)
+					t.agentOffered = t.agent.valid()
+				}
+			case "browser":
+				t = a.startBrowser(item.URL)
+				if t != nil {
+					t.dir = item.Dir
+					if item.RemotePort.Port > 0 {
+						t.remotePort = remotePortKey{item.RemotePort.Name, item.RemotePort.Port}
+						t.remotePortLost = true
+					}
+				}
+			case "files":
+				t = a.startFiles(item.Dir)
+			case "database":
+				if _, enabled := paneVariantFor(panes.Database); !enabled {
 					continue
 				}
-				t = a.startTab(s.Cwd, s.ID, s.Path)
-			}
-		case "terminal":
-			t = a.startShell(item.Dir, "")
-			if t != nil && item.Agent.valid() {
-				item.Agent.Tab = t.id
-				t.agent = agentForTab(t, item.Agent)
-				t.agentOffered = t.agent.valid()
-			}
-		case "browser":
-			t = a.startBrowser(item.URL)
-			if t != nil {
-				t.dir = item.Dir
-				if item.RemotePort.Port > 0 {
-					t.remotePort = remotePortKey{item.RemotePort.Name, item.RemotePort.Port}
-					t.remotePortLost = true
+				t = a.startDatabase(item.Dir)
+				restoreDatabaseView(t.databaseState(), item.Database)
+				if t.databaseState().Profile != "" {
+					a.loadDatabaseSchema(t)
 				}
-			}
-		case "files":
-			t = a.startFiles(item.Dir)
-		case "database":
-			t = a.startDatabase(item.Dir)
-			restoreDatabaseView(t.database, item.Database)
-			if t.database.profile != "" {
-				a.loadDatabaseSchema(t)
 			}
 		}
 		if t != nil {

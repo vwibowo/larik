@@ -14,15 +14,15 @@ func TestPaneFeedbackState(t *testing.T) {
 		loading bool
 		failed  bool
 	}{
-		{name: "browser loading", tab: &tab{browser: true, loading: true}, loading: true},
-		{name: "browser failure", tab: &tab{browser: true, pageError: "connection refused"}, message: "Page load failed: connection refused", failed: true},
-		{name: "files search", tab: &tab{files: &filesState{query: "readme", search: fileSearch{loading: true}}}, loading: true},
-		{name: "files root", tab: &tab{files: &filesState{root: "/repo", dirs: map[string]*fileDirectory{"/repo": {loading: true}}}}, loading: true},
-		{name: "files failure", tab: &tab{files: &filesState{root: "/repo", dirs: map[string]*fileDirectory{"/repo": {err: "permission denied"}}}}, message: "Can't open folder: permission denied", failed: true},
-		{name: "database loading", tab: &tab{database: &databaseState{loading: true, status: "Loading schema…"}}, loading: true},
-		{name: "database export loading", tab: &tab{database: &databaseState{status: "Loading rows for CSV export…"}}, loading: true},
-		{name: "database failure", tab: &tab{database: &databaseState{status: "connection refused"}}, message: "connection refused", failed: true},
-		{name: "idle", tab: &tab{browser: true}, message: ""},
+		{name: "browser loading", tab: &tab{pane: &browserState{Loading: true}}, loading: true},
+		{name: "browser failure", tab: &tab{pane: &browserState{PageError: "connection refused"}}, message: "Page load failed: connection refused", failed: true},
+		{name: "files search", tab: &tab{pane: &filesState{Query: "readme", Search: fileSearch{Loading: true}}}, loading: true},
+		{name: "files root", tab: &tab{pane: &filesState{Root: "/repo", Dirs: map[string]*fileDirectory{"/repo": {Loading: true}}}}, loading: true},
+		{name: "files failure", tab: &tab{pane: &filesState{Root: "/repo", Dirs: map[string]*fileDirectory{"/repo": {Err: "permission denied"}}}}, message: "Can't open folder: permission denied", failed: true},
+		{name: "database loading", tab: &tab{pane: &databaseState{Loading: true, Status: "Loading schema…"}}, loading: true},
+		{name: "database export loading", tab: &tab{pane: &databaseState{Status: "Loading rows for CSV export…"}}, loading: true},
+		{name: "database failure", tab: &tab{pane: &databaseState{Status: "connection refused"}}, message: "connection refused", failed: true},
+		{name: "idle", tab: &tab{pane: &browserState{}}, message: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			message, loading, failed := paneFeedbackState(tt.tab)
@@ -35,7 +35,7 @@ func TestPaneFeedbackState(t *testing.T) {
 
 func TestPaneLoadingShownInTitle(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	tb := &tab{id: "browser-loading", browser: true, loading: true, url: "https://example.com/docs", dir: "/work"}
+	tb := &tab{id: "browser-loading", pane: &browserState{Loading: true, URL: "https://example.com/docs"}, dir: "/work"}
 	a.tabs = []*tab{tb}
 	a.activate(tb)
 	tt := ui.NewTester(a.view, 1240, 800)
@@ -54,9 +54,9 @@ func TestPaneLoadingShownInTitle(t *testing.T) {
 func TestFilesLoadingKeepsContentPlaceholder(t *testing.T) {
 	a := New(Options{Cwd: "/repo"})
 	tb := &tab{
-		id:    "files-loading",
-		dir:   "/repo",
-		files: &filesState{root: "/repo", dirs: map[string]*fileDirectory{"/repo": {loading: true}}},
+		id:   "files-loading",
+		dir:  "/repo",
+		pane: &filesState{Root: "/repo", Dirs: map[string]*fileDirectory{"/repo": {Loading: true}}},
 	}
 	a.tabs = []*tab{tb}
 	a.activate(tb)
@@ -72,7 +72,7 @@ func TestFilesLoadingKeepsContentPlaceholder(t *testing.T) {
 
 func TestPaneFeedbackRendered(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	tb := &tab{id: "browser", browser: true, pageError: "connection refused", dir: "/work"}
+	tb := &tab{id: "browser", pane: &browserState{PageError: "connection refused"}, dir: "/work"}
 	a.tabs = []*tab{tb}
 	a.activate(tb)
 	tt := ui.NewTester(a.view, 1240, 800)

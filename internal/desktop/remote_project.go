@@ -50,17 +50,17 @@ type remoteProjectReply struct {
 }
 
 func changesWire(r changesRead) *remoteChangesRead {
-	w := &remoteChangesRead{Root: r.root, Branch: r.branch, Base: r.base, Remote: r.remote, Gh: r.gh, More: r.more}
-	for _, f := range r.snaps {
-		w.Files = append(w.Files, remoteFileRead{Path: f.path, From: f.from, Code: f.code, Adds: f.adds, Dels: f.dels, Note: f.note, Old: f.old, New: f.new, Index: f.index, Hunks: f.hunks})
+	w := &remoteChangesRead{Root: r.Root, Branch: r.Branch, Base: r.Base, Remote: r.Remote, Gh: r.GH, More: r.More}
+	for _, f := range r.Snaps {
+		w.Files = append(w.Files, remoteFileRead{Path: f.Path, From: f.From, Code: f.Code, Adds: f.Adds, Dels: f.Dels, Note: f.Note, Old: f.Old, New: f.New, Index: f.Index, Hunks: f.Hunks})
 	}
 	return w
 }
 
 func changesLocal(w *remoteChangesRead, name string, against int) changesRead {
-	r := changesRead{against: against, root: remotePath(name, w.Root), branch: w.Branch, base: w.Base, remote: w.Remote, gh: w.Gh, more: w.More}
+	r := changesRead{Against: against, Root: remotePath(name, w.Root), Branch: w.Branch, Base: w.Base, Remote: w.Remote, GH: w.Gh, More: w.More}
 	for _, f := range w.Files {
-		r.snaps = append(r.snaps, fileRead{path: f.Path, from: f.From, code: f.Code, adds: f.Adds, dels: f.Dels, note: f.Note, old: f.Old, new: f.New, index: f.Index, hunks: f.Hunks})
+		r.Snaps = append(r.Snaps, fileRead{Path: f.Path, From: f.From, Code: f.Code, Adds: f.Adds, Dels: f.Dels, Note: f.Note, Old: f.Old, New: f.New, Index: f.Index, Hunks: f.Hunks})
 	}
 	return r
 }
@@ -78,8 +78,8 @@ func (h *host) projectRequest(req remoteProjectRequest) (remoteProjectReply, err
 	defer cancel()
 	if req.Op == "read" {
 		r := readChanges(req.Dir, headCache{}, req.Against)
-		if r.err != nil {
-			return reply, r.err
+		if r.Err != nil {
+			return reply, r.Err
 		}
 		reply.Changes = changesWire(r)
 		return reply, nil
@@ -288,10 +288,10 @@ func (a *App) remoteProjectCall(req remoteProjectRequest) (remoteProjectReply, e
 func (a *App) readRemoteChanges(dir string, against int) changesRead {
 	reply, err := a.remoteProjectCall(remoteProjectRequest{Op: "read", Dir: dir, Against: against})
 	if err != nil {
-		return changesRead{against: against, err: err}
+		return changesRead{Against: against, Err: err}
 	}
 	if reply.Changes == nil {
-		return changesRead{against: against, err: errors.New("remote host returned no changes")}
+		return changesRead{Against: against, Err: errors.New("remote host returned no changes")}
 	}
 	name, _, _ := splitRemote(dir)
 	return changesLocal(reply.Changes, name, against)

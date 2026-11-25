@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
+	"larik/internal/desktop/panes"
 	"larik/internal/session"
 	"larik/internal/status"
 )
@@ -370,16 +371,16 @@ func (a *App) shortcuts(c *ui.Context) {
 		mod = ui.Super
 	}
 	switch {
-	case a.focused() != nil && a.focused().browser && c.Shortcut(ui.Ctrl, ui.KeyTab):
+	case a.focused() != nil && a.focused().isBrowser() && c.Shortcut(ui.Ctrl, ui.KeyTab):
 		a.cycleBrowserTab(1)
-	case a.focused() != nil && a.focused().browser && c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab):
+	case a.focused() != nil && a.focused().isBrowser() && c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab):
 		a.cycleBrowserTab(-1)
 	case a.keyed(c, paletteLabel, mod|ui.Shift, ui.KeyP):
 		a.openPalette()
 	case a.keyed(c, "New Session in Worktree", mod|ui.Alt, ui.KeyT):
 		a.newWorktreeSession(a.currentDir())
 	case a.keyed(c, "New Pane", mod, ui.KeyT):
-		if t := a.focused(); t != nil && t.browser {
+		if t := a.focused(); t != nil && t.isBrowser() {
 			a.newBrowserTab()
 		} else {
 			a.openNew()
@@ -466,10 +467,10 @@ func (a *App) shortcuts(c *ui.Context) {
 	}
 	for i, k := range []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7, ui.Key8, ui.Key9} {
 		if c.Shortcut(mod, k) && len(a.tabs) > 0 {
-			if current := a.focused(); current != nil && current.browser {
+			if current := a.focused(); current != nil && current.isBrowser() {
 				var pages []*tab
 				for _, page := range a.tabs {
-					if page.browser {
+					if page.isBrowser() {
 						pages = append(pages, page)
 					}
 				}
@@ -621,46 +622,30 @@ func (a *App) creationMenu(m *ui.Menu, p *pane) {
 			a.focusPane(p)
 		}
 	}
-	if m.Item("New Larik Session").Chosen() {
-		inPane()
-		a.newTab(a.currentDir(), "", "")
-	}
-	if m.Item("New Session in Worktree").Chosen() {
-		inPane()
-		a.newWorktreeSession(a.currentDir())
-	}
-	if m.Item("New Terminal").Chosen() {
-		inPane()
-		a.openShell()
-	}
-	if m.Item("New Browser Pane").Chosen() {
-		inPane()
-		a.openBrowser("")
-	}
-	if m.Item("New Files Pane").Chosen() {
-		inPane()
-		a.openFiles(a.currentDir())
-	}
-	if m.Item("New Database Pane").Chosen() {
-		inPane()
-		a.openDatabase(a.currentDir())
+	for i, variant := range paneVariants {
+		if m.Item(variant.menuTitle).Chosen() {
+			inPane()
+			if tab := a.startKind(i, a.currentDir()); tab != nil {
+				a.activate(tab)
+			}
+		}
 	}
 }
 
 // where says where a tab's session is and what it's doing: its project
 // and folder, its status, and its model.
 func (a *App) where(tb *tab) string {
-	if tb.files != nil {
+	if tb.filesState() != nil {
 		return tildePath(tb.dir)
 	}
-	if tb.database != nil {
+	if tb.databaseState() != nil {
 		return tildePath(tb.dir)
 	}
-	if tb.chooser {
+	if tb.chooserState() != nil {
 		return tildePath(tb.dir)
 	}
-	if tb.browser {
-		return pageHost(tb.url)
+	if tb.isBrowser() {
+		return pageHost(tb.browserState().URL)
 	}
 	st := a.tabStatus(tb)
 	s, p, ok := a.find(tb.path)
@@ -710,23 +695,19 @@ func (a *App) sidebarButton(c *ui.Context, t *ui.Theme) {
 }
 
 func (a *App) tabKind(tb *tab) (string, *ui.SVG) {
-	if tb.chooser {
+	if a.inWorktree(tb.dir) {
+		if a.tabPaneKind(tb) == "larik" {
+			return "Worktree session", iconBranch
+		}
+	}
+	if tb.chooserState() != nil {
 		return "New pane", iconPlus
 	}
-	if tb.browser {
-		return "Browser", iconGlobe
+	if a.tabPaneKind(tb) == "larik" {
+		return "Larik session", iconChat
 	}
-	if tb.files != nil {
-		return "Files", iconFolder
-	}
-	if tb.database != nil {
-		return "Database", iconDatabase
-	}
-	if tb.shell() {
-		return "Terminal", iconTerm
-	}
-	if a.inWorktree(tb.dir) {
-		return "Worktree session", iconBranch
+	if variant, ok := paneVariantFor(a.tabPaneKind(tb)); ok {
+		return variant.Title, variant.icon
 	}
 	return "Larik session", iconChat
 }
@@ -769,7 +750,7 @@ func (a *App) tabMenu(m *ui.Menu, tb *tab) {
 	if tb.exited && tb.code != 0 && !tb.agentOffered && m.Item("Restart").Chosen() {
 		a.restart(tb)
 	}
-	if tb.browser && tb.url != blankPage {
+	if tb.isBrowser() && tb.browserState().URL != blankPage {
 		a.pageMenu(m, tb)
 	}
 	if len(a.panes()) > 1 && m.Item("Close Other Panes").Chosen() {
@@ -829,8 +810,10 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 			if b, ok := bookmarkForTab(f); ok && a.bookmarks.has(b) {
 				selected = "bookmark:" + b.key()
 			}
-			if f.database != nil && f.database.profile != "" {
-				selected = "database:" + f.database.profile
+			if variant, ok := paneVariantFor(a.tabPaneKind(f)); ok && variant.selected != nil {
+				if key := variant.selected(f); key != "" {
+					selected = key
+				}
 			}
 		}
 		searching := strings.TrimSpace(a.query) != ""
@@ -851,7 +834,11 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 			a.pinnedSection(c, t)
 			a.detachedSection(c, t)
 			a.bookmarksSection(c, t)
-			a.databaseSidebar(c, t)
+			for _, variant := range paneVariants {
+				if variant.sidebar != nil {
+					variant.sidebar(a, c, t)
+				}
+			}
 			if len(a.servers) > 0 {
 				machineHeading(c, t, "this-mac", iconLaptop, thisMachine())
 			}
@@ -869,8 +856,7 @@ func (a *App) sidebar(c *ui.Context, t *ui.Theme, vib bool) {
 		toggle, extend := multiMods(c.Modifiers())
 		if f := a.focused(); sb.Changed() && selected != "" && (f == nil || f.path != selected && tabKey(f) != selected) {
 			switch {
-			case strings.HasPrefix(selected, "database:"):
-				a.openDatabaseProfile(strings.TrimPrefix(selected, "database:"))
+			case a.openPaneSidebarSelection(selected):
 			case extend && slices.Contains(a.rows, selected):
 				a.pickRange(cmp.Or(a.anchor, a.cursor, a.focusedSession()), selected)
 				a.cursor = selected
@@ -1404,11 +1390,11 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 		return
 	}
 	// The changes are the focused tab's project's: they follow it.
-	if a.changes != nil && a.changes.dir != a.focused().dir {
+	if a.changes != nil && a.changes.Dir != a.focused().dir {
 		a.closeChanges()
 		a.toggleChanges()
 	}
-	panes := func() {
+	mainPanes := func() {
 		ui.Column(c).Fill().Children(func() {
 			a.noticeBar(c, t)
 			root := a.layout
@@ -1419,11 +1405,15 @@ func (a *App) main(c *ui.Context, t *ui.Theme) {
 		})
 	}
 	if plan, tb := a.focusedPlan(); tb != nil {
-		ui.SplitPercent(c, &a.planP, panes, func() { a.planPane(c, t, plan, tb) }).Grow(1)
+		ui.SplitPercent(c, &a.planP, mainPanes, func() { a.planPane(c, t, plan, tb) }).Grow(1)
 	} else if a.changes != nil {
-		ui.SplitPercent(c, &a.changesP, panes, func() { a.changesPane(c, t, a.changes) }).Grow(1)
+		if variant, ok := paneVariantFor(panes.Changes); ok && variant.sideRender != nil {
+			ui.SplitPercent(c, &a.changesP, mainPanes, func() { variant.sideRender(a, c, t) }).Grow(1)
+		} else {
+			ui.Column(c).Grow(1).Children(mainPanes)
+		}
 	} else {
-		ui.Column(c).Grow(1).Children(panes)
+		ui.Column(c).Grow(1).Children(mainPanes)
 	}
 }
 
@@ -1436,7 +1426,7 @@ func splitTip() string {
 // over the other, with the divider between them to drag.
 func (a *App) paneTree(c *ui.Context, t *ui.Theme, p *pane) {
 	if !p.split() {
-		if p.tab != nil && a.paneOpacity < 1 && (p.tab.term != nil || p.tab.files != nil || p.tab.database != nil) {
+		if p.tab != nil && a.paneOpacity < 1 && (p.tab.terminal() != nil || p.tab.filesState() != nil || p.tab.databaseState() != nil) {
 			ui.Column(c).Fill().Background(t.Background.Alpha(a.paneOpacity)).Clip().Children(func() { a.pane(c, t, p) })
 		} else {
 			a.card(c, t, func() { a.pane(c, t, p) })
@@ -1483,39 +1473,8 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 		a.header(c, t, p)
 		a.exitBar(c, t, tb)
 		a.paneFeedback(c, t, tb)
-		if tb.chooser {
-			term = a.chooserPane(c, t, tb)
-			return
-		}
-		if tb.files != nil {
-			term = a.filesPane(c, t, tb)
-			return
-		}
-		if tb.database != nil {
-			term = a.databasePane(c, t, tb)
-			return
-		}
-		if tb.browser {
-			a.browserTabs(c, t, tb)
-			a.addressBar(c, t, tb)
-			a.siteBars(c, t, tb)
-			if tb.finding {
-				a.pageFindBar(c, t, tb)
-			}
-			if tb.web != nil {
-				term = ui.WebView(c.Key(tb.id), tb.web).Grow(1)
-			} else {
-				term = ui.Box(c.Key(tb.id)).Grow(1)
-			}
-			return
-		}
-		if tb.finding {
-			a.findBar(c, t, tb)
-		}
-		if tb.term != nil {
-			term = terminal.View(c.Key(tb.id), tb.term).Grow(1)
-		} else {
-			term = ui.Box(c.Key(tb.id)).Grow(1)
+		if variant, ok := paneVariantFor(a.tabPaneKind(tb)); ok && variant.render != nil {
+			term = variant.render(a, c, t, tb)
 		}
 	})
 	// A tab, a session or a pane dragged here goes beside this one, at
@@ -1528,15 +1487,15 @@ func (a *App) pane(c *ui.Context, t *ui.Theme, p *pane) {
 	// The keyboard anywhere in the pane, its find bar too, makes its tab
 	// the focused one.
 	if a.focusNext == tb {
-		if tb.web != nil {
-			tb.web.Focus()
+		if browser := tb.browserState(); browser != nil && browser.Web != nil {
+			browser.Web.Focus()
 		} else {
 			term.Focus()
 		}
 		a.focusNext = nil
-	} else if (body.FocusWithin() || tb.browser && term.Hovered()) && a.focus != p {
+	} else if (body.FocusWithin() || tb.isBrowser() && term.Hovered()) && a.focus != p {
 		a.focus = p
-		if tb.files == nil {
+		if tb.filesState() == nil {
 			a.followFiles(tb.dir)
 		}
 	}
@@ -1583,9 +1542,9 @@ func (a *App) exitBar(c *ui.Context, t *ui.Theme, tb *tab) {
 func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 	ui.Row(c.Key("find")).Gap(6).Padding(6, 10, 6, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		field := ui.SearchField(c.Key("field"), &tb.find).Placeholder("Find").Label("Find in the terminal").Grow(1).MaxWidth(320).
-			OnChange(func() { tb.term.Search(tb.find) }).
-			OnSubmit(tb.term.SearchNext).
-			OnShortcut(ui.Shift, ui.KeyEnter, tb.term.SearchPrevious).
+			OnChange(func() { tb.terminal().Search(tb.find) }).
+			OnSubmit(tb.terminal().SearchNext).
+			OnShortcut(ui.Shift, ui.KeyEnter, tb.terminal().SearchPrevious).
 			OnShortcut(0, ui.KeyEscape, func() { a.closeFind(tb) })
 		if tb.focusFind {
 			field.Focus()
@@ -1603,8 +1562,8 @@ func (a *App) findBar(c *ui.Context, t *ui.Theme, tb *tab) {
 		}
 		ui.Text(c, count).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		ui.Spacer(c)
-		a.iconButton(c, t, "older", iconUp, "Next match up (Enter)", false, tb.term.SearchNext)
-		a.iconButton(c, t, "newer", iconDown, "Next match down (Shift+Enter)", false, tb.term.SearchPrevious)
+		a.iconButton(c, t, "older", iconUp, "Next match up (Enter)", false, tb.terminal().SearchNext)
+		a.iconButton(c, t, "newer", iconDown, "Next match down (Shift+Enter)", false, tb.terminal().SearchPrevious)
 		a.closeButton(c, t, "Close find", func() { a.closeFind(tb) })
 	})
 }

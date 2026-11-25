@@ -45,7 +45,7 @@ func TestBrowserBookmarkButtonAndPersistence(t *testing.T) {
 	if !tt.HasText("Browser Bookmarks") {
 		t.Fatal("closing the pane removed its bookmark")
 	}
-	if err := tt.Click("Example Docs"); err != nil || len(a.tabs) != 1 || a.focused().url != b.URL {
+	if err := tt.Click("Example Docs"); err != nil || len(a.tabs) != 1 || a.focused().browserState().URL != b.URL {
 		t.Fatalf("sidebar bookmark did not open its page: %v", err)
 	}
 	other := New(Options{DataDir: data, Cwd: "/work"})
@@ -53,7 +53,7 @@ func TestBrowserBookmarkButtonAndPersistence(t *testing.T) {
 		t.Fatalf("bookmark did not persist: %+v", got)
 	}
 	other.openSavedBookmark(other.bookmarks.all()[0])
-	if len(other.tabs) != 1 || other.focused().url != b.URL {
+	if len(other.tabs) != 1 || other.focused().browserState().URL != b.URL {
 		t.Fatal("saved bookmark did not open a browser pane")
 	}
 	other.openSavedBookmark(other.bookmarks.all()[0])
@@ -111,7 +111,7 @@ func TestBookmarksSharedAcrossWindows(t *testing.T) {
 
 func TestRemoteBookmarkStoresDestinationAndPath(t *testing.T) {
 	a := New(Options{DataDir: t.TempDir(), Cwd: "/work"})
-	tb := &tab{browser: true, url: "http://127.0.0.1:49152/docs/a%20b?q=one#intro", remotePort: remotePortKey{"devbox", 3000}}
+	tb := &tab{pane: &browserState{URL: "http://127.0.0.1:49152/docs/a%20b?q=one#intro"}, remotePort: remotePortKey{"devbox", 3000}}
 	b, ok := bookmarkForTab(tb)
 	if !ok || b.URL != "" || b.RemoteName != "devbox" || b.RemotePort != 3000 || b.RemotePath != "/docs/a%20b?q=one#intro" {
 		t.Fatalf("remote bookmark: %+v", b)
@@ -135,8 +135,8 @@ func TestRemoteBookmarkStoresDestinationAndPath(t *testing.T) {
 		t.Fatalf("remote bookmark opened %d panes", len(a.tabs))
 	}
 	ready := a.tabs[0]
-	if ready.url != "http://127.0.0.1:5173/docs/a%20b?q=one#intro" || ready.remotePortLost {
-		t.Fatalf("remote bookmark reopened at %q", ready.url)
+	if ready.browserState().URL != "http://127.0.0.1:5173/docs/a%20b?q=one#intro" || ready.remotePortLost {
+		t.Fatalf("remote bookmark reopened at %q", ready.browserState().URL)
 	}
 	a.openSavedBookmark(b)
 	if len(a.tabs) != 1 {

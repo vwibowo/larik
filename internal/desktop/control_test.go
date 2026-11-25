@@ -157,7 +157,7 @@ func TestSidebarDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if opened != "" || len(a.tabs) != 1 || !a.tabs[0].browser || a.tabs[0].url != "http://localhost:5173" {
+	if opened != "" || len(a.tabs) != 1 || !a.tabs[0].isBrowser() || a.tabs[0].browserState().URL != "http://localhost:5173" {
 		t.Fatalf("the port opened %q, tabs %d", opened, len(a.tabs))
 	}
 	// Again, it shows the tab already on it; Cmd-clicked, your browser.

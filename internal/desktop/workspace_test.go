@@ -169,7 +169,7 @@ func TestWorkspacesRestoreAndMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := a.state()
-	if st.Version != 5 || len(st.Workspaces) != 2 || st.ActiveWorkspace != w1.id || st.Workspaces[0].ID != w2.id {
+	if st.Version != 6 || len(st.Workspaces) != 2 || st.ActiveWorkspace != w1.id || st.Workspaces[0].ID != w2.id {
 		t.Fatalf("saved workspaces: %+v", st.Workspaces)
 	}
 	path := a.statePath()

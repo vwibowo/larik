@@ -23,12 +23,12 @@ func TestDatabaseObjectContextMenusAndStructure(t *testing.T) {
 	}
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
 	tb := a.focused()
-	tb.database.sql.Buffer.Set("SELECT 'draft'")
+	tb.databaseState().SQL.Buffer.Set("SELECT 'draft'")
 	var copied string
 	a.copyText = func(text string) { copied = text }
 	var exportedName, exportedCSV string
@@ -83,25 +83,25 @@ func TestDatabaseObjectContextMenusAndStructure(t *testing.T) {
 
 	rightClick("▦  notes")
 	choose("Open Structure")
-	if !tb.database.showStructure || !tt.HasText("Structure") || !tt.HasText("body") || !tt.HasText("TEXT") || !tt.HasText("Primary") {
+	if !tb.databaseState().ShowStructure || !tt.HasText("Structure") || !tt.HasText("body") || !tt.HasText("TEXT") || !tt.HasText("Primary") {
 		t.Fatalf("structure view missing details: %q", tt.Texts())
 	}
-	if got := tb.database.sql.Buffer.String(); got != "SELECT 'draft'" {
+	if got := tb.databaseState().SQL.Buffer.String(); got != "SELECT 'draft'" {
 		t.Fatalf("structure changed SQL draft: %q", got)
 	}
 	if err := tt.Click("Back to table rows"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.database.showStructure || !tt.HasText("SQL query") || !tt.HasText("hello") {
+	if tb.databaseState().ShowStructure || !tt.HasText("SQL query") || !tt.HasText("hello") {
 		t.Fatalf("back to rows: %q", tt.Texts())
 	}
-	if got := tb.database.sql.Buffer.String(); got != "SELECT 'draft'" {
+	if got := tb.databaseState().SQL.Buffer.String(); got != "SELECT 'draft'" {
 		t.Fatalf("returning to rows changed SQL draft: %q", got)
 	}
 	rightClick("▦  notes")
 	choose("Open")
-	if !tt.HasText("hello") || tb.database.showStructure || tb.database.showFunctionDefinition {
+	if !tt.HasText("hello") || tb.databaseState().ShowStructure || tb.databaseState().ShowFunctionDefinition {
 		t.Fatalf("open rows: %q", tt.Texts())
 	}
 
@@ -113,7 +113,7 @@ func TestDatabaseObjectContextMenusAndStructure(t *testing.T) {
 	if copied != `CREATE VIEW note_view AS SELECT id, body FROM notes` {
 		t.Fatalf("copied view creation script %q", copied)
 	}
-	tb.database.tables = append(tb.database.tables, database.Table{Schema: "main", Name: "rebuild_index", Type: "FUNCTION"})
+	tb.databaseState().Tables = append(tb.databaseState().Tables, database.Table{Schema: "main", Name: "rebuild_index", Type: "FUNCTION"})
 	tt.Frame()
 	menu = rightClick("ƒ  rebuild_index")
 	for _, item := range []string{"Open Definition", "Copy Name", "Copy Script As"} {

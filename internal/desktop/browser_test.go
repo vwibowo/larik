@@ -20,7 +20,7 @@ func TestBrowserTabsStayInTheirPane(t *testing.T) {
 	first := p.tab
 	a.newBrowserTab()
 	second := a.focused()
-	if p != a.focus || second == nil || !second.browser || first == second || len(a.tabs) != 2 {
+	if p != a.focus || second == nil || !second.isBrowser() || first == second || len(a.tabs) != 2 {
 		t.Fatalf("new browser tab: focus=%p pane=%p tabs=%d", a.focus, p, len(a.tabs))
 	}
 	if a.paneOf(first) != nil || a.paneOf(second) != p {
@@ -46,7 +46,7 @@ func TestBrowserWindowOpenCreatesTabInSamePane(t *testing.T) {
 	from := pane.tab
 	a.openBrowserWindow(from, mygo.WindowOpenRequest{URL: "https://example.org/link", UserInitiated: true})
 	opened := a.focused()
-	if opened == from || opened == nil || opened.url != "https://example.org/link" || pane != a.focus || pane.tab != opened {
+	if opened == from || opened == nil || opened.browserState().URL != "https://example.org/link" || pane != a.focus || pane.tab != opened {
 		t.Fatalf("opened link should be active in its originating pane: page=%+v pane=%p focus=%p", opened, pane, a.focus)
 	}
 	if len(a.tabs) != 2 {
@@ -90,7 +90,7 @@ func TestBrowserTabSwitchingShortcuts(t *testing.T) {
 
 func TestBrowserTabSwitchShortcutsIgnoreOtherPanes(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	session := &tab{id: "session", dir: "/work", chooser: true}
+	session := &tab{id: "session", dir: "/work", pane: &choice{}}
 	a.tabs = []*tab{session}
 	a.activate(session)
 	a.openBrowser("one.example")
@@ -210,33 +210,33 @@ func TestRefreshPaneShortcutIsDiscoverable(t *testing.T) {
 
 func TestBrowserTab(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	session := &tab{id: "s", dir: "/work", chooser: true}
+	session := &tab{id: "s", dir: "/work", pane: &choice{}}
 	a.tabs = []*tab{session}
 	a.activate(session)
 
 	a.openBrowser("")
 	b := a.focused()
-	if b == nil || !b.browser || b.url != blankPage || b.addr != "" || !b.focusAddr || len(a.tabs) != 2 {
+	if b == nil || !b.isBrowser() || b.browserState().URL != blankPage || b.browserState().Address != "" || !b.browserState().FocusAddress || len(a.tabs) != 2 {
 		t.Fatalf("a new browser tab: %+v", b)
 	}
 	if kind, _ := a.tabKind(b); kind != "Browser" || a.tabTitle(b) != "New browser pane" {
 		t.Fatalf("kind %q, title %q", kind, a.tabTitle(b))
 	}
 	// Typed into its address bar, a host goes over https.
-	b.addr = "example.com/docs"
+	b.browserState().Address = "example.com/docs"
 	a.goTo(b)
-	if b.url != "https://example.com/docs" || a.tabTitle(b) != "example.com" || a.where(b) != "example.com" {
-		t.Fatalf("after going: url %q, title %q, where %q", b.url, a.tabTitle(b), a.where(b))
+	if b.browserState().URL != "https://example.com/docs" || a.tabTitle(b) != "example.com" || a.where(b) != "example.com" {
+		t.Fatalf("after going: url %q, title %q, where %q", b.browserState().URL, a.tabTitle(b), a.where(b))
 	}
-	b.addr = "a search query"
+	b.browserState().Address = "a search query"
 	a.goTo(b)
-	if b.url != "https://www.google.com/search?q=a+search+query" || b.addr != b.url || a.notice != "" {
-		t.Fatalf("words should search Google: url %q, addr %q, notice %q", b.url, b.addr, a.notice)
+	if b.browserState().URL != "https://www.google.com/search?q=a+search+query" || b.browserState().Address != b.browserState().URL || a.notice != "" {
+		t.Fatalf("words should search Google: url %q, addr %q, notice %q", b.browserState().URL, b.browserState().Address, a.notice)
 	}
-	b.addr = ""
+	b.browserState().Address = ""
 	a.goTo(b)
-	if b.url != "https://www.google.com/" || b.addr != b.url {
-		t.Fatalf("empty address should open Google: url %q, addr %q", b.url, b.addr)
+	if b.browserState().URL != "https://www.google.com/" || b.browserState().Address != b.browserState().URL {
+		t.Fatalf("empty address should open Google: url %q, addr %q", b.browserState().URL, b.browserState().Address)
 	}
 	// It splits beside a session as any tab does.
 	a.activate(session)
@@ -245,14 +245,14 @@ func TestBrowserTab(t *testing.T) {
 		t.Fatal("the browser tab beside the session")
 	}
 	// Cmd+L gives its address bar the keyboard, or opens one.
-	b.focusAddr = false
+	b.browserState().FocusAddress = false
 	a.focusAddress()
-	if !b.focusAddr || len(a.tabs) != 2 {
+	if !b.browserState().FocusAddress || len(a.tabs) != 2 {
 		t.Fatal("Open Location in a browser tab")
 	}
 	a.activate(session)
 	a.focusAddress()
-	if len(a.tabs) != 3 || !a.focused().browser {
+	if len(a.tabs) != 3 || !a.focused().isBrowser() {
 		t.Fatal("Open Location elsewhere opens a browser tab")
 	}
 
@@ -267,8 +267,8 @@ func TestBrowserTab(t *testing.T) {
 
 func TestBrowserPageHoverActivatesItsPane(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	session := &tab{id: "session", dir: "/work", chooser: true}
-	browser := &tab{id: "browser", dir: "/work", browser: true, url: blankPage}
+	session := &tab{id: "session", dir: "/work", pane: &choice{}}
+	browser := &tab{id: "browser", dir: "/work", pane: &browserState{URL: blankPage}}
 	a.tabs = []*tab{session, browser}
 	a.layout = &pane{tab: session}
 	a.focusPane(a.layout)
@@ -314,7 +314,7 @@ func TestBrowserTabsComeBack(t *testing.T) {
 	if !b.restore() || len(b.tabs) != 2 || !b.split() {
 		t.Fatalf("restored %d tabs, split %v: %s", len(b.tabs), b.split(), b.notice)
 	}
-	if !b.tabs[0].browser || b.tabs[0].url != "http://localhost:3000" || b.tabs[1].url != "https://example.com" || b.focusNext == nil {
+	if !b.tabs[0].isBrowser() || b.tabs[0].browserState().URL != "http://localhost:3000" || b.tabs[1].browserState().URL != "https://example.com" || b.focusNext == nil {
 		t.Fatalf("restored: %+v %+v", b.tabs[0], b.tabs[1])
 	}
 }
@@ -347,7 +347,7 @@ func TestPortOpensBesideItsSession(t *testing.T) {
 	a.activate(other)
 	a.openPort("/s.jsonl", 3000, false)
 	b := a.focused()
-	if b == nil || !b.browser || len(a.panes()) != 3 || a.paneOf(b).parent != a.paneOf(s).parent {
+	if b == nil || !b.isBrowser() || len(a.panes()) != 3 || a.paneOf(b).parent != a.paneOf(s).parent {
 		t.Fatalf("the port's tab beside its session: %d panes", len(a.panes()))
 	}
 }
@@ -388,8 +388,8 @@ func TestSitePermissions(t *testing.T) {
 	b := a.focused()
 	call := mygo.PermissionRequest{Origin: "https://meet.example.com", Permissions: []mygo.Permission{mygo.PermissionNotifications}}
 	// Asked first, it gets nothing yet, and the bar asks you.
-	if a.permitted(b, call) || b.asking == nil || permissionText(b.asking.perms) != "your notifications" {
-		t.Fatalf("first ask: %+v", b.asking)
+	if a.permitted(b, call) || b.browserState().Asking == nil || permissionText(b.browserState().Asking.Permissions) != "your notifications" {
+		t.Fatalf("first ask: %+v", b.browserState().Asking)
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
@@ -400,14 +400,14 @@ func TestSitePermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if b.asking != nil || !a.permitted(b, call) {
+	if b.browserState().Asking != nil || !a.permitted(b, call) {
 		t.Fatal("allowed, it gets it")
 	}
 	// Don't Allow keeps it from asking again; another site still asks.
 	other := mygo.PermissionRequest{Origin: "https://ads.example.com", Permissions: []mygo.Permission{mygo.PermissionNotifications}}
 	a.permitted(b, other)
 	a.answerSite(b, false)
-	if a.permitted(b, other) || b.asking != nil {
+	if a.permitted(b, other) || b.browserState().Asking != nil {
 		t.Fatal("denied, it doesn't ask again")
 	}
 	// The answers are kept.
@@ -425,7 +425,7 @@ func TestDownloadBar(t *testing.T) {
 	a.showFile = func(p string) { shown = p }
 	a.openBrowser("example.com")
 	b := a.focused()
-	b.download = &pageDownload{name: "report.pdf"}
+	b.browserState().Download = &pageDownload{Name: "report.pdf"}
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
 	if !tt.HasText("Downloading report.pdf…") {
@@ -458,13 +458,13 @@ func TestFindInPageBar(t *testing.T) {
 	if _, ok := tt.Find("Find in the page"); !ok {
 		t.Fatalf("no find bar in %q", tt.Texts())
 	}
-	b.find, b.found = "domain", mygo.FindResult{Matches: 3, Active: 2}
+	b.find, b.browserState().Found = "domain", mygo.FindResult{Matches: 3, Active: 2}
 	tt.Frame()
 	if !tt.HasText("2 of 3") {
 		t.Fatalf("no count in %q", tt.Texts())
 	}
 	a.closeFind(b)
-	if b.finding || b.find != "" || b.found.Matches != 0 || a.focusNext != b {
+	if b.finding || b.find != "" || b.browserState().Found.Matches != 0 || a.focusNext != b {
 		t.Fatal("closing the bar clears it")
 	}
 }
@@ -483,7 +483,7 @@ func TestPageCommandsFindTheirTab(t *testing.T) {
 	// Going somewhere with none opens one beside the focused pane, which
 	// keeps the keyboard.
 	_, msg := a.pageTab(Request{Op: PageNavigate, URL: "localhost:3000"})
-	if len(a.tabs) != 2 || !a.tabs[1].browser || a.tabs[1].url != "http://localhost:3000" || !a.split() || a.focused() != s {
+	if len(a.tabs) != 2 || !a.tabs[1].isBrowser() || a.tabs[1].browserState().URL != "http://localhost:3000" || !a.split() || a.focused() != s {
 		t.Fatalf("navigate with none: %d tabs, split %v, msg %q", len(a.tabs), a.split(), msg)
 	}
 	if msg != "the browser tab has no page" { // no window in a test

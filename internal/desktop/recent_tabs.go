@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"larik/internal/desktop/panes"
 )
 
 type closedTab struct {
@@ -16,13 +17,17 @@ type closedTab struct {
 	URL        string            `json:"url,omitempty"`
 	RemotePort savedRemotePort   `json:"remote_port,omitzero"`
 	Database   savedDatabaseView `json:"database,omitzero"`
+	Content    *panes.Snapshot   `json:"content,omitempty"`
 	Anchor     string            `json:"anchor,omitempty"`
 	Below      bool              `json:"below,omitempty"`
 	Before     bool              `json:"before,omitempty"`
 }
 
 func (a *App) rememberClosed(t *tab) {
-	r := closedTab{Path: t.path, Dir: t.dir, URL: t.url}
+	r := closedTab{Path: t.path, Dir: t.dir}
+	if browser := t.browserState(); browser != nil {
+		r.URL = browser.URL
+	}
 	if t.remotePort.port != 0 {
 		r.RemotePort = savedRemotePort{t.remotePort.name, t.remotePort.port}
 		r.URL = blankPage
@@ -30,18 +35,20 @@ func (a *App) rememberClosed(t *tab) {
 	switch {
 	case t.path != "":
 		r.Kind = "larik"
-	case t.browser:
+	case t.isBrowser():
 		r.Kind = "browser"
-	case t.files != nil:
+	case t.filesState() != nil:
 		r.Kind = "files"
-	case t.database != nil:
+	case t.databaseState() != nil:
 		r.Kind = "database"
-		r.Database = saveDatabaseView(t.database)
+		r.Database = saveDatabaseView(t.databaseState())
 	case t.shell():
 		r.Kind = "terminal"
 	default:
 		return
 	}
+	snapshot := a.snapshotTab(t)
+	r.Content = &snapshot
 	if p := a.paneOf(t); p != nil && p.parent != nil {
 		r.Below = p.parent.below
 		r.Before = p.parent.first == p
@@ -61,37 +68,44 @@ func (a *App) rememberClosed(t *tab) {
 
 func (a *App) reopenRecent(r closedTab) bool {
 	var t *tab
-	switch r.Kind {
-	case "larik":
-		if r.Path == "" {
-			return false
-		}
-		if existing := a.tabOf(r.Path); existing != nil {
-			a.activate(existing)
-			return true
-		}
-		s, _, ok := a.find(r.Path)
-		if !ok || s.Running {
-			return false
-		}
-		t = a.startTab(s.Cwd, s.ID, s.Path)
-		a.closed = slices.DeleteFunc(a.closed, func(path string) bool { return path == r.Path })
-	case "terminal":
-		t = a.startShell(r.Dir, "")
-	case "browser":
-		t = a.startBrowser(r.URL)
-		if t != nil && r.RemotePort.Port > 0 {
-			t.dir = r.Dir
-			t.remotePort = remotePortKey{r.RemotePort.Name, r.RemotePort.Port}
-			t.remotePortLost = true
-		}
-	case "files":
-		t = a.startFiles(r.Dir)
-	case "database":
-		t = a.startDatabase(r.Dir)
-		restoreDatabaseView(t.database, r.Database)
-		if t.database.profile != "" {
-			a.loadDatabaseSchema(t)
+	if r.Content != nil && r.Content.Kind != panes.Session {
+		t = a.restoreSnapshot(*r.Content, agentResume{})
+	} else {
+		switch r.Kind {
+		case "larik":
+			if r.Path == "" {
+				return false
+			}
+			if existing := a.tabOf(r.Path); existing != nil {
+				a.activate(existing)
+				return true
+			}
+			s, _, ok := a.find(r.Path)
+			if !ok || s.Running {
+				return false
+			}
+			t = a.startTab(s.Cwd, s.ID, s.Path)
+			a.closed = slices.DeleteFunc(a.closed, func(path string) bool { return path == r.Path })
+		case "terminal":
+			t = a.startShell(r.Dir, "")
+		case "browser":
+			t = a.startBrowser(r.URL)
+			if t != nil && r.RemotePort.Port > 0 {
+				t.dir = r.Dir
+				t.remotePort = remotePortKey{r.RemotePort.Name, r.RemotePort.Port}
+				t.remotePortLost = true
+			}
+		case "files":
+			t = a.startFiles(r.Dir)
+		case "database":
+			if _, enabled := paneVariantFor(panes.Database); !enabled {
+				return false
+			}
+			t = a.startDatabase(r.Dir)
+			restoreDatabaseView(t.databaseState(), r.Database)
+			if t.databaseState().Profile != "" {
+				a.loadDatabaseSchema(t)
+			}
 		}
 	}
 	if t == nil {

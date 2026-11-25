@@ -134,16 +134,16 @@ func TestSSHLoopbackInterruptedForwardKeepsTab(t *testing.T) {
 		t.Fatal("remote terminal did not start")
 	}
 	a.activate(tb)
-	oldTerm, oldPane := tb.term, a.paneOf(tb)
+	oldTerm, oldPane := tb.terminal(), a.paneOf(tb)
 	stop := a.serverNamed(name).stop
 	mu.Unlock()
-	frameUntil(t, mu, tt, "remote process start", func() bool { return strings.Contains(tb.term.Text(), "larik-live-start") })
+	frameUntil(t, mu, tt, "remote process start", func() bool { return strings.Contains(tb.terminal().Text(), "larik-live-start") })
 	stop() // The host and its process stay alive; only the SSH forward drops.
 	frameUntil(t, mu, tt, "disconnected tab", func() bool { return tb.disconnected && a.dialOf(a.servers[0]) == nil })
 	frameUntil(t, mu, tt, "automatic reconnection", func() bool { return !tb.disconnected && a.dialOf(a.servers[0]) != nil })
-	frameUntil(t, mu, tt, "continued remote output", func() bool { return strings.Contains(tb.term.Text(), "larik-live-continued") })
+	frameUntil(t, mu, tt, "continued remote output", func() bool { return strings.Contains(tb.terminal().Text(), "larik-live-continued") })
 	mu.Lock()
-	if a.tabByID(tb.id) != tb || tb.term == oldTerm || a.paneOf(tb) != oldPane || len(a.tabs) != 1 {
+	if a.tabByID(tb.id) != tb || tb.terminal() == oldTerm || a.paneOf(tb) != oldPane || len(a.tabs) != 1 {
 		mu.Unlock()
 		t.Fatal("reconnection duplicated or moved the remote tab")
 	}

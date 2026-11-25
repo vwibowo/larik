@@ -14,7 +14,7 @@ func TestNewTabAsksWhatToOpen(t *testing.T) {
 
 	a.openNew()
 	ch := a.focused()
-	if ch == nil || !ch.chooser || ch.dir != "/work" || len(a.tabs) != 2 || a.tabTitle(ch) != "New Pane" {
+	if ch == nil || ch.chooserState() == nil || ch.dir != "/work" || len(a.tabs) != 2 || a.tabTitle(ch) != "New Pane" {
 		t.Fatalf("cmd+t: %+v", ch)
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
@@ -33,13 +33,13 @@ func TestNewTabAsksWhatToOpen(t *testing.T) {
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyDown)
-	if ch.choice.pick != 3 {
-		t.Fatalf("highlighted %d", ch.choice.pick)
+	if ch.chooserState().Pick != 3 {
+		t.Fatalf("highlighted %d", ch.chooserState().Pick)
 	}
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
 	b := a.focused()
-	if b == nil || !b.browser || b.dir != "/work" || len(a.tabs) != 2 || a.tabs[1] != b || a.hasTab(ch) {
+	if b == nil || !b.isBrowser() || b.dir != "/work" || len(a.tabs) != 2 || a.tabs[1] != b || a.hasTab(ch) {
 		t.Fatalf("after choosing: %+v, %d tabs", b, len(a.tabs))
 	}
 }
@@ -50,14 +50,14 @@ func TestChooserInSplitAndItsLetters(t *testing.T) {
 	s := a.focused()
 	a.splitRight()
 	ch := a.focused()
-	if !ch.chooser || !a.split() || shownAt(a, 1) != ch {
+	if ch.chooserState() == nil || !a.split() || shownAt(a, 1) != ch {
 		t.Fatal("cmd+d splits with a chooser")
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
 	tt.Key(0, ui.KeyB)
 	tt.Frame()
-	if b := shownAt(a, 1); b == nil || !b.browser || shownAt(a, 0) != s || a.hasTab(ch) {
+	if b := shownAt(a, 1); b == nil || !b.isBrowser() || shownAt(a, 0) != s || a.hasTab(ch) {
 		t.Fatalf("B in the split: %+v", b)
 	}
 	// Closing a chooser starts nothing.
@@ -77,7 +77,7 @@ func TestChooserTurnedOff(t *testing.T) {
 	}
 	a.openNew() // starts larik, which fails here, with no binary: no chooser either way
 	for _, tb := range a.tabs {
-		if tb.chooser {
+		if tb.chooserState() != nil {
 			t.Fatal("a chooser with it turned off")
 		}
 	}
@@ -92,7 +92,7 @@ func TestEmptyWindowChooses(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if len(a.tabs) != 1 || !a.tabs[0].browser || a.focused() != a.tabs[0] {
+	if len(a.tabs) != 1 || !a.tabs[0].isBrowser() || a.focused() != a.tabs[0] {
 		t.Fatalf("the empty window's choice: %d tabs", len(a.tabs))
 	}
 }
@@ -113,13 +113,13 @@ func TestArrowsWithThePointerOverTheChooser(t *testing.T) {
 	tt.Frame()
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
-	if ch.choice.pick != 2 {
-		t.Fatalf("Down twice under a resting pointer: %d", ch.choice.pick)
+	if ch.chooserState().Pick != 2 {
+		t.Fatalf("Down twice under a resting pointer: %d", ch.chooserState().Pick)
 	}
 	tt.Key(0, ui.KeyUp)
 	tt.Frame()
-	if ch.choice.pick != 1 {
-		t.Fatalf("then Up: %d", ch.choice.pick)
+	if ch.chooserState().Pick != 1 {
+		t.Fatalf("then Up: %d", ch.chooserState().Pick)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestArrowsAfterClickingTheChoosersBackground(t *testing.T) {
 	tt.Frame()
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
-	if ch.choice.pick != 1 || !tt.Focused("Kinds of pane") {
-		t.Fatalf("Down after a click in the pane: %d", ch.choice.pick)
+	if ch.chooserState().Pick != 1 || !tt.Focused("Kinds of pane") {
+		t.Fatalf("Down after a click in the pane: %d", ch.chooserState().Pick)
 	}
 }

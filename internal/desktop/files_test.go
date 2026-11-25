@@ -61,13 +61,13 @@ func TestRefreshFocusedFilesPane(t *testing.T) {
 	defer a.Close()
 	a.openFiles(root)
 	tb := a.focused()
-	if tb == nil || tb.files == nil {
+	if tb == nil || tb.filesState() == nil {
 		t.Fatal("Files pane not opened")
 	}
 	query := "main.go"
-	tb.files.query = query
+	tb.filesState().Query = query
 	a.refreshFocused()
-	if tb.files == nil || tb.files.query != query {
+	if tb.filesState() == nil || tb.filesState().Query != query {
 		t.Fatal("refresh should preserve the Files search")
 	}
 }
@@ -202,33 +202,13 @@ func TestFilesContextMenuCreateRenameDuplicateTrash(t *testing.T) {
 	}
 }
 
-func TestDuplicateFilesFolderKeepsContents(t *testing.T) {
-	root := filesFixture(t)
-	src := filepath.Join(root, "src")
-	first, err := duplicateFilesPath(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := duplicateFilesPath(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(first) != "src copy" || filepath.Base(second) != "src copy 2" {
-		t.Fatalf("duplicate names: %q, %q", first, second)
-	}
-	data, err := os.ReadFile(filepath.Join(second, "main.go"))
-	if err != nil || string(data) != "package main\n\nfunc main() {}\n" {
-		t.Fatalf("duplicated contents: %q, %v", data, err)
-	}
-}
-
 func TestFilesTabBrowsingAndPreview(t *testing.T) {
 	root := filesFixture(t)
 	a := New(Options{Cwd: root})
 	defer a.Close()
 	a.openFiles(root)
 	tb := a.focused()
-	if tb == nil || tb.files == nil || tb.dir != root {
+	if tb == nil || tb.filesState() == nil || tb.dir != root {
 		t.Fatalf("Files tab: %+v", tb)
 	}
 	tt := ui.NewTester(a.view, 1240, 800)
@@ -253,10 +233,10 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.files.selected != filepath.Join(root, "src", "main.go") || tb.files.preview.code == nil || tb.files.preview.code.Buffer.String() != "package main\n\nfunc main() {}\n" || !tb.files.preview.code.ReadOnly || tb.files.preview.code.SoftWrap {
-		t.Fatalf("file preview: selected %q, texts %q", tb.files.selected, tt.Texts())
+	if tb.filesState().Selected != filepath.Join(root, "src", "main.go") || tb.filesState().Preview.Code == nil || tb.filesState().Preview.Code.Buffer.String() != "package main\n\nfunc main() {}\n" || !tb.filesState().Preview.Code.ReadOnly || tb.filesState().Preview.Code.SoftWrap {
+		t.Fatalf("file preview: selected %q, texts %q", tb.filesState().Selected, tt.Texts())
 	}
-	if tb.files.preview.code.Buffer.Language() == nil {
+	if tb.filesState().Preview.Code.Buffer.Language() == nil {
 		t.Fatal("Go preview has no syntax highlighting")
 	}
 	treeOpaque, previewOpaque, toolbarOpaque := tt.Image().RGBAAt(350, 700), tt.Image().RGBAAt(800, 700), tt.Image().RGBAAt(900, 20)
@@ -275,7 +255,7 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Type("not an edit")
-	if tb.files.preview.code.Buffer.String() != "package main\n\nfunc main() {}\n" {
+	if tb.filesState().Preview.Code.Buffer.String() != "package main\n\nfunc main() {}\n" {
 		t.Fatal("typing changed a read-only preview")
 	}
 	opened, revealed := "", ""
@@ -287,13 +267,13 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 	if err := tt.Click(filesRevealLabel()); err != nil {
 		t.Fatal(err)
 	}
-	if opened != tb.files.selected || revealed != tb.files.selected {
+	if opened != tb.filesState().Selected || revealed != tb.filesState().Selected {
 		t.Fatalf("actions: opened %q, revealed %q", opened, revealed)
 	}
 	if err := tt.Click("Wrap lines"); err != nil {
 		t.Fatal(err)
 	}
-	if !tb.files.wrap || !tb.files.preview.code.SoftWrap {
+	if !tb.filesState().Wrap || !tb.filesState().Preview.Code.SoftWrap {
 		t.Fatal("wrap toggle did not update the code viewer")
 	}
 	tt.SetDark(true)
@@ -307,7 +287,7 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.files.wrap {
+	if tb.filesState().Wrap {
 		t.Fatal("long lines should remain intact by default")
 	}
 	snapshot(t, tt, "files-go-sum-dark.png")
@@ -332,7 +312,7 @@ func TestFilesTabBrowsingAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	compact.Frame()
-	if tb.files.previewOnly || !compact.HasText("src") {
+	if tb.filesState().PreviewOnly || !compact.HasText("src") {
 		t.Fatal("Back to Files did not restore the explorer")
 	}
 }
@@ -372,7 +352,7 @@ func TestFilesSearchVisibilityAndFailures(t *testing.T) {
 	if !tt.HasText("generated") || !slices.Contains(tt.Texts(), ".git") {
 		t.Fatalf("ignored folders are missing: %q", tt.Texts())
 	}
-	if tb.files.selected != filepath.Join(root, "src", "main.go") || tb.files.open[filepath.Join(root, "src")] == nil || !*tb.files.open[filepath.Join(root, "src")] {
+	if tb.filesState().Selected != filepath.Join(root, "src", "main.go") || tb.filesState().Open[filepath.Join(root, "src")] == nil || !*tb.filesState().Open[filepath.Join(root, "src")] {
 		t.Fatal("changing visibility lost the selected file or expanded folder")
 	}
 	if err := tt.Click("File visibility"); err != nil {
@@ -396,38 +376,38 @@ func TestFilesSearchVisibilityAndFailures(t *testing.T) {
 	if !tt.HasText("No matching files or folders") {
 		t.Fatalf("empty search: %q", tt.Texts())
 	}
-	tb.files.query = ""
+	tb.filesState().Query = ""
 	a.searchFiles(tb)
 	tt.Frame()
-	tb.files.query = "   "
+	tb.filesState().Query = "   "
 	a.searchFiles(tb)
 	tt.Frame()
 	if !tt.HasText("README.md") {
 		t.Fatal("whitespace-only search hid the folder tree")
 	}
-	tb.files.query = ""
+	tb.filesState().Query = ""
 	a.searchFiles(tb)
 	a.selectFile(tb, filepath.Join(root, "missing.txt"), false)
 	tt.Frame()
-	if !strings.Contains(tb.files.preview.note, "Can't read this file") {
-		t.Fatalf("missing preview: %+v", tb.files.preview)
+	if !strings.Contains(tb.filesState().Preview.Note, "Can't read this file") {
+		t.Fatalf("missing preview: %+v", tb.filesState().Preview)
 	}
 	a.selectFile(tb, filepath.Join(root, "assets", "logo.png"), false)
-	if tb.files.preview.image == nil {
-		t.Fatalf("image preview: %+v", tb.files.preview)
+	if tb.filesState().Preview.Image == nil {
+		t.Fatalf("image preview: %+v", tb.filesState().Preview)
 	}
 	binary := filepath.Join(root, "binary.dat")
 	if err := os.WriteFile(binary, []byte{0, 1, 2}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readFilePreview(binary).note, "binary") {
+	if !strings.Contains(readFilePreview(binary).Note, "binary") {
 		t.Fatal("binary fallback missing")
 	}
 	large := filepath.Join(root, "large.txt")
 	if err := os.WriteFile(large, make([]byte, maxFilePreview+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readFilePreview(large).note, "too large") {
+	if !strings.Contains(readFilePreview(large).Note, "too large") {
 		t.Fatal("large-file fallback missing")
 	}
 	if _, err := readFilesDir(context.Background(), root, filepath.Join(root, "gone"), false, false); !os.IsNotExist(err) {
@@ -444,7 +424,7 @@ func TestFilesChooserAndTreeKeyboard(t *testing.T) {
 	tt.Frame()
 	tt.Key(0, ui.KeyF)
 	tt.Frame()
-	if tb := a.focused(); tb == nil || tb.files == nil {
+	if tb := a.focused(); tb == nil || tb.filesState() == nil {
 		t.Fatal("F did not choose Files")
 	}
 	if info := a.tabInfo(a.focused()); info.Kind != "files" {
@@ -465,8 +445,8 @@ func TestFilesChooserAndTreeKeyboard(t *testing.T) {
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	if a.focused().files.selected != filepath.Join(root, "src", "helper.go") {
-		t.Fatalf("tree keyboard selected %q", a.focused().files.selected)
+	if a.focused().filesState().Selected != filepath.Join(root, "src", "helper.go") {
+		t.Fatalf("tree keyboard selected %q", a.focused().filesState().Selected)
 	}
 }
 
@@ -481,14 +461,14 @@ func TestFilesFollowFocusSplitAndRestore(t *testing.T) {
 	b := a.startBrowser("")
 	b.dir = other
 	a.showInSplit(b, false)
-	if !a.split() || files.dir != other || files.files.root != other {
+	if !a.split() || files.dir != other || files.filesState().Root != other {
 		t.Fatalf("Files did not follow focused split: dir %q", files.dir)
 	}
 	a.activate(files)
 	if files.dir != other {
 		t.Fatal("focusing Files changed its root")
 	}
-	ctx := files.files.ctx
+	ctx := files.filesState().Ctx
 	a.focusPane(a.paneOf(b))
 	b.dir = root
 	a.focusPane(a.paneOf(b))
@@ -512,7 +492,7 @@ func TestFilesFollowFocusSplitAndRestore(t *testing.T) {
 	}
 	next := New(Options{Cwd: root, DataDir: data})
 	defer next.Close()
-	if !next.restore() || len(next.tabs) != 2 || next.focused().files == nil || next.focused().dir != root {
+	if !next.restore() || len(next.tabs) != 2 || next.focused().filesState() == nil || next.focused().dir != root {
 		t.Fatalf("Files restore: tabs %d, focused %+v", len(next.tabs), next.focused())
 	}
 	remote := remotePath("server", "/work")
@@ -548,16 +528,16 @@ func TestFilesChosenRootIsPinnedAndRestored(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.files.root != chosen || !tb.files.pinnedRoot {
-		t.Fatalf("chosen root was not applied and pinned: root=%q pinned=%v", tb.files.root, tb.files.pinnedRoot)
+	if tb.filesState().Root != chosen || !tb.filesState().PinnedRoot {
+		t.Fatalf("chosen root was not applied and pinned: root=%q pinned=%v", tb.filesState().Root, tb.filesState().PinnedRoot)
 	}
 	a.followFiles(followed)
-	if tb.files.root != chosen {
-		t.Fatalf("focused folder replaced chosen root: %q", tb.files.root)
+	if tb.filesState().Root != chosen {
+		t.Fatalf("focused folder replaced chosen root: %q", tb.filesState().Root)
 	}
 	a.changeFilesRoot(tb, filepath.Join(chosen, "missing"))
-	if tb.files.root != chosen || a.notice == "" {
-		t.Fatalf("invalid folder changed root: root=%q notice=%q", tb.files.root, a.notice)
+	if tb.filesState().Root != chosen || a.notice == "" {
+		t.Fatalf("invalid folder changed root: root=%q notice=%q", tb.filesState().Root, a.notice)
 	}
 	st := a.state()
 	if st.Files[0] != chosen || !st.FilesPinned[0] {
@@ -579,12 +559,12 @@ func TestFilesChosenRootIsPinnedAndRestored(t *testing.T) {
 		t.Fatal("could not restore Files tab")
 	}
 	restored := next.tabs[0]
-	if restored.files == nil || restored.files.root != chosen || !restored.files.pinnedRoot {
-		t.Fatalf("restored Files root: %+v", restored.files)
+	if restored.filesState() == nil || restored.filesState().Root != chosen || !restored.filesState().PinnedRoot {
+		t.Fatalf("restored Files root: %+v", restored.filesState())
 	}
 	next.followFiles(followed)
-	if restored.files.root != chosen {
-		t.Fatalf("restored chosen root did not stay pinned: %q", restored.files.root)
+	if restored.filesState().Root != chosen {
+		t.Fatalf("restored chosen root did not stay pinned: %q", restored.filesState().Root)
 	}
 }
 
@@ -599,7 +579,7 @@ func TestFilesNarrowSplit(t *testing.T) {
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
 	tt.Frame()
-	if !files.files.narrow || !tt.HasText("Search files and folders") || tt.HasText("Select a file to preview") {
+	if !files.filesState().Narrow || !tt.HasText("Search files and folders") || tt.HasText("Select a file to preview") {
 		t.Fatalf("split Files should show its explorer: %q", tt.Texts())
 	}
 	if err := tt.Click("src"); err != nil {
@@ -610,7 +590,7 @@ func TestFilesNarrowSplit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !files.files.previewOnly || !tt.HasText("Back to Files") || files.files.preview.code == nil {
+	if !files.filesState().PreviewOnly || !tt.HasText("Back to Files") || files.filesState().Preview.Code == nil {
 		t.Fatalf("split preview: %q", tt.Texts())
 	}
 }

@@ -25,6 +25,8 @@ import (
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
+	"larik/internal/desktop/panes"
+	terminalpane "larik/internal/desktop/panes/terminal"
 	"larik/internal/session"
 	"larik/internal/status"
 )
@@ -67,7 +69,7 @@ type App struct {
 	kick   chan struct{} // asks the index loop to look again now
 
 	projects            []session.Project
-	databaseStore       *databaseStore
+	databaseStore       databaseStore
 	bookmarks           *bookmarkStore
 	bookmarksChanged    func()
 	openBookmark        func(browserBookmark)
@@ -312,7 +314,6 @@ type App struct {
 // terminal tab, your shell or a program (see shell.go).
 type tab struct {
 	id     string // in the process's environment as status.TabEnv
-	term   *terminal.Terminal
 	dir    string
 	path   string // the session it has open, once it has one
 	title  string // what larik, or the shell, set as the terminal's title
@@ -344,47 +345,52 @@ type tab struct {
 	search    terminal.SearchStatus
 	focusFind bool
 
-	// A browser tab's (see browser.go): its web view, nil without a
-	// window; the address of its page, and what its address bar says;
-	// that the bar takes the keyboard next frame; whether its page loads,
-	// and can go back and forward; and what stops following its page.
-	browser              bool
-	web                  *mygo.WebView
-	url, addr            string
-	remoteBookmarkSuffix string // path to load after an SSH forward reconnects
-	focusAddr            bool
-	loading              bool
-	pageError            string
-	back, fwd            bool
-	off                  []func()
-	// asking is what its page asked to use and waits on you for, and
-	// download its last download (see browser.go).
-	asking   *siteAsk
-	download *pageDownload
-	// found is how its find bar's search of its page went.
-	found mygo.FindResult
 	// remotePort identifies an SSH forwarded development service shown
 	// by this browser tab, even while the connection is down.
-	remotePort     remotePortKey
-	remotePortLost bool
+	remoteBookmarkSuffix string
+	remotePort           remotePortKey
+	remotePortLost       bool
 
-	// A chooser tab's (see chooser.go): the kind highlighted.
-	chooser bool
-	choice  choice
-	// A Files tab's local folder tree and read-only preview.
-	files *filesState
-	// A Database tab's local connection browser and read-only query editor.
-	database *databaseState
+	// Pane-local content, managed through its registered kind.
+	pane panes.Content
+}
+
+func (t *tab) terminalState() *terminalpane.State {
+	if t == nil {
+		return nil
+	}
+	state, _ := t.pane.(*terminalpane.State)
+	return state
+}
+
+func (t *tab) terminal() *terminal.Terminal {
+	if state := t.terminalState(); state != nil {
+		return state.Terminal
+	}
+	return nil
+}
+
+func (t *tab) setTerminal(term *terminal.Terminal) {
+	state := t.terminalState()
+	if state == nil {
+		kind := panes.Session
+		if t.shell() {
+			kind = panes.Terminal
+		}
+		state = &terminalpane.State{PaneKind: kind}
+		t.pane = state
+	}
+	state.Terminal = term
 }
 
 // openFind opens the find bar of the tab with the keyboard, or gives the
 // bar the keyboard again.
 func (a *App) openFind() {
 	if t := a.focused(); t != nil {
-		if t.files != nil {
-			t.files.previewOnly = false
-			t.files.focusSearch = true
-		} else if t.term != nil || t.browser {
+		if t.filesState() != nil {
+			t.filesState().PreviewOnly = false
+			t.filesState().FocusSearch = true
+		} else if t.terminal() != nil || t.isBrowser() {
 			t.finding, t.focusFind = true, true
 		}
 	}
@@ -394,10 +400,10 @@ func (a *App) openFind() {
 // keyboard back to its terminal.
 func (a *App) closeFind(t *tab) {
 	t.finding, t.find = false, ""
-	if t.browser {
+	if t.isBrowser() {
 		a.endPageFind(t)
 	} else {
-		t.term.EndSearch()
+		t.terminal().EndSearch()
 	}
 	a.focusNext = t
 }
@@ -1074,14 +1080,14 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 		opts.OnBell, opts.OnNotify, opts.OnStatus, opts.OnPrompt, opts.OnReset = nil, nil, nil, nil, nil
 		opts.Conn, opts.ResizeByConn = hc, true
 	} else {
-		opts.Command, opts.Dir, opts.Env = args, t.dir, append([]string{status.TabEnv + "=" + t.id}, a.databaseStore.maskedEnv()...)
+		opts.Command, opts.Dir, opts.Env = args, t.dir, append([]string{status.TabEnv + "=" + t.id}, a.paneEnvironment()...)
 	}
 	opts.OnExit = func(code int) {
 		if hc != nil {
 			code = hc.exitCode()
 		}
 		a.update(func() {
-			if t.term == term {
+			if t.terminal() == term {
 				if isRemote(t.dir) && t.disconnected && code == -1 {
 					t.exited, t.code = true, -1
 					return
@@ -1101,7 +1107,8 @@ func (a *App) run(t *tab, id string, flags ...string) bool {
 	if hc != nil {
 		hc.attached(term)
 	}
-	t.term, t.hosted = term, hc != nil
+	t.setTerminal(term)
+	t.hosted = hc != nil
 	return true
 }
 
@@ -1116,7 +1123,7 @@ func (a *App) restart(t *tab) {
 	if s, _, ok := a.find(t.path); ok {
 		id = s.ID
 	}
-	old := t.term
+	old := t.terminal()
 	if !a.run(t, id) {
 		return
 	}
@@ -1158,25 +1165,16 @@ func (a *App) zoom(z terminal.Zoom) {
 		a.fontSize = 0
 	}
 	for _, t := range a.tabs {
-		if t.term != nil {
-			t.term.SetFont(a.termFont())
+		if t.terminal() != nil {
+			t.terminal().SetFont(a.termFont())
 		}
 	}
 }
 
 // close ends the tab's larik, or leaves the host running it.
 func (t *tab) close() {
-	if t.files != nil {
-		t.files.close()
-	}
-	if t.database != nil {
-		t.database.close()
-	}
-	if t.term != nil {
-		t.term.Close()
-	}
-	if t.browser {
-		t.closeBrowser()
+	if t.pane != nil {
+		t.pane.Close()
 	}
 }
 
@@ -1395,18 +1393,17 @@ func (a *App) tabTitle(t *tab) string {
 		return t.title
 	}
 	switch {
-	case t.chooser:
-		return "New Pane"
-	case t.files != nil:
-		return "Files"
-	case t.database != nil:
-		return "Database"
-	case t.browser && t.remotePort.port != 0:
+	case t.isBrowser() && t.remotePort.port != 0:
 		return fmt.Sprintf("%s:%d", t.remotePort.name, t.remotePort.port)
-	case t.browser && t.url != blankPage:
-		return pageHost(t.url)
-	case t.browser:
+	case t.isBrowser() && t.browserState().URL != blankPage:
+		return pageHost(t.browserState().URL)
+	case t.isBrowser():
 		return "New browser pane"
+	case t.pane != nil && t.terminalState() == nil:
+		if descriptor, ok := paneRegistry.Get(t.pane.Kind()); ok {
+			return descriptor.Title
+		}
+		return string(t.pane.Kind())
 	case t.run != "":
 		return t.run
 	case t.shell():

@@ -3,11 +3,11 @@ package desktop
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	changespane "larik/internal/desktop/panes/changes"
 )
 
 // What the changes pane does with what it shows, as you would in a
@@ -21,35 +21,21 @@ import (
 const actionTimeout = 2 * time.Minute
 
 // gitDo runs git in dir for an action, failing with what git said.
-func gitDo(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true")
-	out, err := cmd.CombinedOutput()
-	said := strings.TrimSpace(string(out))
-	if err != nil {
-		if said == "" {
-			said = err.Error()
-		}
-		return said, fmt.Errorf("git %s: %s", args[0], said)
-	}
-	return said, nil
-}
-
 // changesDo runs an action on the pane's repository off the main thread,
 // saying what's under way as busy, then says how it went in the notice
 // bar, or done's words, and reads the repository again.
 func (a *App) changesDo(ch *changes, busy string, do func(ctx context.Context, root string) (string, error)) {
-	if ch.busy != "" || ch.root == "" {
+	if ch.Busy != "" || ch.Root == "" {
 		return
 	}
-	ch.busy = busy
-	root := ch.root
+	ch.Busy = busy
+	root := ch.Root
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 		defer cancel()
 		said, err := do(ctx, root)
 		a.update(func() {
-			ch.busy = ""
+			ch.Busy = ""
 			switch {
 			case err != nil:
 				a.notice = err.Error()
@@ -71,7 +57,7 @@ func (a *App) changesRemoteDo(ch *changes, busy string, req remoteProjectRequest
 
 // stage stages the file's change, all of it, or unstages it.
 func (a *App) stage(ch *changes, f *fileChange, on bool) {
-	if isRemote(ch.root) {
+	if isRemote(ch.Root) {
 		op := "unstage"
 		if on {
 			op = "stage"
@@ -84,32 +70,18 @@ func (a *App) stage(ch *changes, f *fileChange, on bool) {
 		paths = append(paths, f.from)
 	}
 	a.changesDo(ch, "Staging…", func(ctx context.Context, root string) (string, error) {
-		if on {
-			_, err := gitDo(ctx, root, append([]string{"add", "-A", "--"}, paths...)...)
-			return "", err
-		}
-		return "", unstage(ctx, root, paths...)
+		return "", changespane.Stage(ctx, root, paths, on)
 	})
 }
 
 // unstage takes paths out of the index, or everything with none.
 func unstage(ctx context.Context, root string, paths ...string) error {
-	if _, err := gitDo(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
-		// Before the first commit there's no HEAD to reset to.
-		args := []string{"rm", "-r", "-q", "--cached", "--"}
-		if len(paths) == 0 {
-			paths = []string{"."}
-		}
-		_, err := gitDo(ctx, root, append(args, paths...)...)
-		return err
-	}
-	_, err := gitDo(ctx, root, append([]string{"reset", "-q", "--"}, paths...)...)
-	return err
+	return changespane.Unstage(ctx, root, paths...)
 }
 
 // stageAll stages every change, or unstages every one.
 func (a *App) stageAll(ch *changes, on bool) {
-	if isRemote(ch.root) {
+	if isRemote(ch.Root) {
 		op := "unstage-all"
 		if on {
 			op = "stage-all"
@@ -118,11 +90,7 @@ func (a *App) stageAll(ch *changes, on bool) {
 		return
 	}
 	a.changesDo(ch, "Staging…", func(ctx context.Context, root string) (string, error) {
-		if on {
-			_, err := gitDo(ctx, root, "add", "-A")
-			return "", err
-		}
-		return "", unstage(ctx, root)
+		return "", changespane.StageAll(ctx, root, on)
 	})
 }
 
@@ -141,44 +109,31 @@ func (a *App) askDiscard(ch *changes, f *fileChange) {
 // discard throws the file's change away: back to the last commit, or
 // gone for a file that's new since.
 func (a *App) discard(ch *changes, f *fileChange) {
-	if isRemote(ch.root) {
+	if isRemote(ch.Root) {
 		a.changesRemoteDo(ch, "Discarding…", remoteProjectRequest{Op: "discard", Path: f.path, From: f.from, Code: f.code})
 		return
 	}
 	path, from, code := f.path, f.from, f.code
 	a.changesDo(ch, "Discarding…", func(ctx context.Context, root string) (string, error) {
-		switch {
-		case code == "??":
-			return "", os.Remove(filepath.Join(root, path))
-		case code[0] == 'A' || from != "":
-			if _, err := gitDo(ctx, root, "rm", "-q", "-f", "--", path); err != nil {
-				return "", err
-			}
-			if from == "" {
-				return "", nil
-			}
-			path = from // a rename: the old name comes back
-		}
-		_, err := gitDo(ctx, root, "restore", "--source=HEAD", "--staged", "--worktree", "--", path)
-		return "", err
+		return "", changespane.Discard(ctx, root, path, from, code)
 	})
 }
 
 // commit commits what's staged, or with nothing staged every change,
 // with the pane's message.
 func (a *App) commit(ch *changes) {
-	msg := strings.TrimSpace(ch.message)
+	msg := strings.TrimSpace(ch.Message)
 	if msg == "" {
 		return
 	}
 	all := ch.stagedCount() == 0
-	if isRemote(ch.root) {
+	if isRemote(ch.Root) {
 		a.changesDo(ch, "Committing…", func(_ context.Context, root string) (string, error) {
 			reply, err := a.remoteProjectCall(remoteProjectRequest{Op: "commit", Dir: root, Message: msg, All: all})
 			if err == nil {
 				a.update(func() {
-					if strings.TrimSpace(ch.message) == msg {
-						ch.message = ""
+					if strings.TrimSpace(ch.Message) == msg {
+						ch.Message = ""
 					}
 				})
 			}
@@ -196,8 +151,8 @@ func (a *App) commit(ch *changes) {
 			return "", err
 		}
 		a.update(func() {
-			if strings.TrimSpace(ch.message) == msg {
-				ch.message = ""
+			if strings.TrimSpace(ch.Message) == msg {
+				ch.Message = ""
 			}
 		})
 		short, _ := gitDo(ctx, root, "log", "-1", "--format=%h %s")
@@ -208,7 +163,7 @@ func (a *App) commit(ch *changes) {
 // stagedCount counts the files with some of their change staged.
 func (ch *changes) stagedCount() int {
 	n := 0
-	for _, f := range ch.files {
+	for _, f := range ch.Files {
 		if some, _ := f.staged(); some {
 			n++
 		}
@@ -220,14 +175,14 @@ func (ch *changes) stagedCount() int {
 // its branch: gh is installed, there's a remote, and a base to ask to
 // merge into.
 func (ch *changes) canPullRequest() bool {
-	return ch.gh && ch.remote && ch.branch != "" && ch.base != ""
+	return ch.GH && ch.Remote && ch.Branch != "" && ch.Base != ""
 }
 
 // askPullRequest opens the branch's pull request, or, asking first,
 // pushes the branch and opens a new one in the browser, for gh to fill
 // in from its commits.
 func (a *App) askPullRequest(ch *changes) {
-	branch, base := ch.branch, strings.TrimPrefix(ch.base, "origin/")
+	branch, base := ch.Branch, strings.TrimPrefix(ch.Base, "origin/")
 	a.changesDo(ch, "Looking for a pull request…", func(ctx context.Context, root string) (string, error) {
 		var url string
 		var err error
@@ -280,18 +235,9 @@ func (a *App) pullRequest(ch *changes, branch, base string) {
 	})
 }
 
-// ghDo runs gh in dir, failing with what it said.
+func gitDo(ctx context.Context, dir string, args ...string) (string, error) {
+	return changespane.GitDo(ctx, dir, args...)
+}
 func ghDo(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1")
-	out, err := cmd.CombinedOutput()
-	said := strings.TrimSpace(string(out))
-	if err != nil {
-		if said == "" {
-			said = err.Error()
-		}
-		return said, fmt.Errorf("gh %s: %s", strings.Join(args[:min(2, len(args))], " "), said)
-	}
-	return said, nil
+	return changespane.GhDo(ctx, dir, args...)
 }

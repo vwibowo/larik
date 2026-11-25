@@ -2,11 +2,11 @@ package desktop
 
 import (
 	"os"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
 
+	terminalpane "larik/internal/desktop/panes/terminal"
 	"larik/internal/session"
 	"larik/internal/status"
 )
@@ -18,29 +18,6 @@ import (
 // tab. OSC 7501 reports from programs in terminal tabs show their live
 // status, and a larik started in one can also use its status file, as the
 // tab's id is in its environment.
-
-// shellCommand is what a terminal tab runs: your login shell, or run
-// through it, as an interactive shell reads your profile and its PATH.
-func shellCommand(run string) []string {
-	if runtime.GOOS == "windows" {
-		sh := os.Getenv("COMSPEC")
-		if sh == "" {
-			sh = "cmd.exe"
-		}
-		if run == "" {
-			return []string{sh}
-		}
-		return []string{sh, "/c", run}
-	}
-	sh := os.Getenv("SHELL")
-	if sh == "" {
-		sh = "/bin/sh"
-	}
-	if run == "" {
-		return []string{sh, "-l"}
-	}
-	return []string{sh, "-ilc", run}
-}
 
 // startShell starts a terminal tab in dir, running run through the
 // shell, or the shell itself for "", and adds it.
@@ -149,3 +126,5 @@ func (a *App) selectKey(key string) {
 	}
 	a.selectSession(key)
 }
+
+func shellCommand(run string) []string { return terminalpane.ShellCommand(run) }

@@ -53,7 +53,7 @@ func TestRemoteForwardStopsWhenPortDisappears(t *testing.T) {
 	a := New(Options{DataDir: t.TempDir()})
 	defer a.Close()
 	key := remotePortKey{"devbox", 3000}
-	b := &tab{id: "browser", browser: true, remotePort: key}
+	b := &tab{id: "browser", pane: &browserState{}, remotePort: key}
 	a.tabs = []*tab{b}
 	stopped := 0
 	a.forwards = map[remotePortKey]*remoteForward{key: {local: 43210, stop: func() { stopped++ }}}

@@ -64,11 +64,11 @@ func (s fakeDatabaseSecrets) Delete(key string) error {
 
 func TestRefreshFocusedDatabasePaneSkipsWhileLoading(t *testing.T) {
 	a := New(Options{Cwd: "/work"})
-	tb := &tab{id: "db", dir: "/work", database: &databaseState{loading: true}}
+	tb := &tab{id: "db", dir: "/work", pane: &databaseState{Loading: true}}
 	a.tabs = []*tab{tb}
 	a.activate(tb)
 	a.refreshFocused()
-	if !tb.database.loading {
+	if !tb.databaseState().Loading {
 		t.Fatal("refresh should not start another schema load while one is active")
 	}
 }
@@ -88,7 +88,7 @@ func TestDatabaseCellTooltipVisible(t *testing.T) {
 	}
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
@@ -135,7 +135,7 @@ func TestDatabaseBrowserManyTables(t *testing.T) {
 	}
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
@@ -152,7 +152,7 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 	a := New(Options{Cwd: project})
 	defer a.Close()
 	a.openDatabase(project)
-	d := a.focused().database
+	d := a.focused().databaseState()
 	a.beginDatabaseProfile(a.focused(), "")
 	wide := ui.NewTester(func(c *ui.Context) { c.SetTheme(ui.DarkTheme()); a.view(c) }, 1400, 800)
 	wide.Frame()
@@ -170,14 +170,14 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	wide.Frame()
-	if d.draftDriver != "postgres" || !wide.HasText("Host") || !wide.HasText("Database name") || !wide.HasText("Username") || !wide.HasText("PostgreSQL password") || !wide.HasText("PostgreSQL SSL mode") || !wide.HasText("Password environment variable") {
-		t.Fatalf("PostgreSQL form: driver %q, texts %q", d.draftDriver, wide.Texts())
+	if d.DraftDriver != "postgres" || !wide.HasText("Host") || !wide.HasText("Database name") || !wide.HasText("Username") || !wide.HasText("PostgreSQL password") || !wide.HasText("PostgreSQL SSL mode") || !wide.HasText("Password environment variable") {
+		t.Fatalf("PostgreSQL form: driver %q, texts %q", d.DraftDriver, wide.Texts())
 	}
 	snapshot(t, wide, "database-add-postgres-dark.png")
 	if err := wide.Click("SQLite"); err != nil {
 		t.Fatal(err)
 	}
-	d.draftName, d.draftValue = "local", path
+	d.DraftName, d.DraftValue = "local", path
 	narrow := ui.NewTester(a.view, 560, 500)
 	narrow.Frame()
 	snapshot(t, narrow, "database-add-connection-narrow.png")
@@ -191,9 +191,9 @@ func TestDatabaseConnectionFormLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	narrow.Frame()
-	if d.editing || d.profile != "local" {
+	if d.Editing || d.Profile != "local" {
 		button, _ := narrow.Find("Save connection")
-		t.Fatalf("form did not save the connection: editing=%v profile=%q status=%q driver=%q path=%q button=%+v", d.editing, d.profile, d.status, d.draftDriver, d.draftValue, button)
+		t.Fatalf("form did not save the connection: editing=%v profile=%q status=%q driver=%q path=%q button=%+v", d.Editing, d.Profile, d.Status, d.DraftDriver, d.DraftValue, button)
 	}
 }
 
@@ -216,7 +216,7 @@ func TestDatabaseNewDriverFormsAndStorage(t *testing.T) {
 			t.Fatalf("missing SQL Server field %q", label)
 		}
 	}
-	if a.focused().database.draftTrust {
+	if a.focused().databaseState().DraftTrust {
 		t.Fatal("certificate trust started enabled")
 	}
 	snapshot(t, tt, "database-add-sqlserver.png")
@@ -233,31 +233,31 @@ func TestDatabaseNewDriverFormsAndStorage(t *testing.T) {
 		"sql": {Driver: "sqlserver", Host: "localhost", Port: 1433, Database: "app", User: "reader", PasswordEnv: "LARIK_TEST_SQL_PASSWORD"},
 		"my":  {Driver: "mysql", DSNEnv: "LARIK_TEST_MYSQL_DSN"},
 	}
-	if err := a.databaseStore.save(profiles); err != nil {
+	if err := a.databaseStore.Save(profiles); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(a.databaseStore.path)
+	data, err := os.ReadFile(a.databaseStore.Path())
 	if err != nil || strings.Contains(string(data), "very_secret") {
 		t.Fatalf("credentials stored: %v", err)
 	}
-	masked := a.databaseStore.maskedEnv()
+	masked := a.databaseStore.MaskedEnv()
 	if !slices.Contains(masked, "LARIK_TEST_SQL_PASSWORD=") || !slices.Contains(masked, "LARIK_TEST_MYSQL_DSN=") {
 		t.Fatalf("unmasked variables: %v", masked)
 	}
 	other := New(Options{Cwd: project})
 	defer other.Close()
-	if p, ok := other.databaseStore.get("sql"); !ok || p.TrustServerCertificate || p.PasswordEnv != "LARIK_TEST_SQL_PASSWORD" {
+	if p, ok := other.databaseStore.Get("sql"); !ok || p.TrustServerCertificate || p.PasswordEnv != "LARIK_TEST_SQL_PASSWORD" {
 		t.Fatalf("restored SQL Server: %+v %v", p, ok)
 	}
 	profiles["sql"] = database.ConnectionConfig{Driver: "sqlserver", Host: "localhost", Port: 1433, Database: "app", User: "reader", PasswordEnv: "LARIK_TEST_SQL_PASSWORD", TrustServerCertificate: true}
 	delete(profiles, "my")
-	if err := a.databaseStore.save(profiles); err != nil {
+	if err := a.databaseStore.Save(profiles); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := a.databaseStore.get("sql"); !ok || !p.TrustServerCertificate {
+	if p, ok := a.databaseStore.Get("sql"); !ok || !p.TrustServerCertificate {
 		t.Fatalf("edited SQL Server: %+v %v", p, ok)
 	}
-	if _, ok := a.databaseStore.get("my"); ok {
+	if _, ok := a.databaseStore.Get("my"); ok {
 		t.Fatal("MySQL connection was not deleted")
 	}
 }
@@ -266,13 +266,13 @@ func TestDatabasePasswordUsesSystemCredentialStore(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	secrets := fakeDatabaseSecrets{}
-	store := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}, secrets: secrets}
+	store := loadDatabaseStoreWithSecrets(secrets)
 	const password = "very_secret_password"
 	profile := database.ConnectionConfig{Driver: "postgres", Host: "db.example.com", Port: 5432, Database: "app", User: "reader", Password: password, SSLMode: "verify-full"}
-	if err := store.save(map[string]database.ConnectionConfig{"analytics": profile}); err != nil {
+	if err := store.Save(map[string]database.ConnectionConfig{"analytics": profile}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(store.path)
+	data, err := os.ReadFile(store.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,10 +284,10 @@ func TestDatabasePasswordUsesSystemCredentialStore(t *testing.T) {
 	}
 
 	reloaded := loadDatabaseStoreWithSecrets(secrets)
-	if got, ok := reloaded.get("analytics"); !ok || got.Password != password || got.SSLMode != "verify-full" {
+	if got, ok := reloaded.Get("analytics"); !ok || got.Password != password || got.SSLMode != "verify-full" {
 		t.Fatalf("saved connection was not restored: %+v %v", got, ok)
 	}
-	if err := reloaded.save(map[string]database.ConnectionConfig{}); err != nil {
+	if err := reloaded.Save(map[string]database.ConnectionConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := secrets[databaseSecretKey("analytics")]; ok {
@@ -299,12 +299,12 @@ func TestDatabasePasswordStoreFailureDoesNotPersistProfile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	secrets := failingDatabaseSecrets{}
-	store := &databaseStore{path: config.DesktopDatabasePath(), profiles: map[string]database.ConnectionConfig{}, secrets: secrets}
-	err := store.save(map[string]database.ConnectionConfig{"analytics": {Driver: "postgres", Host: "db.example.com", Port: 5432, Database: "app", User: "reader", Password: "secret"}})
+	store := loadDatabaseStoreWithSecrets(secrets)
+	err := store.Save(map[string]database.ConnectionConfig{"analytics": {Driver: "postgres", Host: "db.example.com", Port: 5432, Database: "app", User: "reader", Password: "secret"}})
 	if err == nil || !strings.Contains(err.Error(), "system credential store") {
 		t.Fatalf("expected secure storage failure, got %v", err)
 	}
-	if _, ok := store.get("analytics"); ok {
+	if _, ok := store.Get("analytics"); ok {
 		t.Fatal("profile was published without storing its password")
 	}
 }
@@ -325,7 +325,7 @@ func TestDatabaseNewDriversAgentOptIn(t *testing.T) {
 		"sql": {Driver: "sqlserver", Host: "localhost", Port: 1433, Database: "app", User: "reader", PasswordEnv: "LARIK_MISSING_SQL_PASSWORD"},
 		"my":  {Driver: "mysql", DSNEnv: "LARIK_MISSING_MYSQL_DSN"},
 	}
-	if err := a.databaseStore.save(profiles); err != nil {
+	if err := a.databaseStore.Save(profiles); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("sql")
@@ -333,7 +333,7 @@ func TestDatabaseNewDriversAgentOptIn(t *testing.T) {
 		t.Fatalf("private SQL Server pane listed: %+v", got)
 	}
 	profiles["sql"] = database.ConnectionConfig{Driver: "sqlserver", Host: "localhost", Port: 1433, Database: "app", User: "reader", PasswordEnv: "LARIK_MISSING_SQL_PASSWORD", AgentAccess: true}
-	if err := a.databaseStore.save(profiles); err != nil {
+	if err := a.databaseStore.Save(profiles); err != nil {
 		t.Fatal(err)
 	}
 	got := a.databaseControl(Request{Cmd: "database", Op: "list"})
@@ -348,7 +348,7 @@ func TestDatabaseNewDriversAgentOptIn(t *testing.T) {
 		t.Fatalf("private MySQL pane listed: %+v", got)
 	}
 	profiles["my"] = database.ConnectionConfig{Driver: "mysql", DSNEnv: "LARIK_MISSING_MYSQL_DSN", AgentAccess: true}
-	if err := a.databaseStore.save(profiles); err != nil {
+	if err := a.databaseStore.Save(profiles); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.databaseControl(Request{Cmd: "database", Op: "list"}); got.Database == nil || len(got.Database.Panes) != 2 {
@@ -368,10 +368,10 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 		t.Fatalf("empty sidebar: %q", tt.Texts())
 	}
 	a.beginDatabaseProfile(tb, "")
-	tb.database.draftName, tb.database.draftValue = "local", path
+	tb.databaseState().DraftName, tb.databaseState().DraftValue = "local", path
 	a.saveDatabaseProfile(tb)
-	if tb.database.editing || tb.database.status != "" {
-		t.Fatalf("saved profile: %+v", tb.database)
+	if tb.databaseState().Editing || tb.databaseState().Status != "" {
+		t.Fatalf("saved profile: %+v", tb.databaseState())
 	}
 	tt.Frame()
 	snapshot(t, tt, "database-wide.png")
@@ -407,14 +407,14 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.database.showBrowser {
+	if tb.databaseState().ShowBrowser {
 		t.Fatal("left panel icon did not hide the table browser")
 	}
 	if err := tt.Click("Show tables on the left"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tb.database.showBrowser {
+	if !tb.databaseState().ShowBrowser {
 		t.Fatal("left panel icon did not restore the table browser")
 	}
 	if err := tt.Click("main"); err != nil {
@@ -422,7 +422,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	}
 	tt.Key(0, ui.KeyLeft)
 	tt.Frame()
-	if open := tb.database.schemaOpen["main"]; open == nil || *open {
+	if open := tb.databaseState().SchemaOpen["main"]; open == nil || *open {
 		t.Fatal("schema tree did not collapse with the Files panel keyboard behavior")
 	}
 	if err := tt.Click("Find database objects"); err != nil {
@@ -430,50 +430,50 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	}
 	tt.Type("notes")
 	tt.Frame()
-	if open := tb.database.schemaOpen["main"]; open == nil || !*open {
+	if open := tb.databaseState().SchemaOpen["main"]; open == nil || !*open {
 		t.Fatal("search did not reveal matching tables in a collapsed schema")
 	}
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
-	if p, _ := a.databaseStore.get("local"); p.AgentAccess {
+	if p, _ := a.databaseStore.Get("local"); p.AgentAccess {
 		t.Fatal("new connection shared with agent")
 	}
-	tb.database.sql.Buffer.Set("SELECT count(*) AS total FROM notes")
+	tb.databaseState().SQL.Buffer.Set("SELECT count(*) AS total FROM notes")
 	if err := tt.Click("Read-only SQL query"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Key(ui.Cmd, ui.KeyEnter)
 	tt.Frame()
-	if !tt.HasText("SQL query") || !tt.HasText("total") || tb.database.activeResult != databaseQuery {
+	if !tt.HasText("SQL query") || !tt.HasText("total") || tb.databaseState().ActiveResult != databaseQuery {
 		t.Fatalf("query result: %q", tt.Texts())
 	}
 	if err := tt.Click("2"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.database.currentResult().selectedRow != 0 || tb.database.showDetails {
-		t.Fatalf("single click should only select a row: row %d, details %t", tb.database.currentResult().selectedRow, tb.database.showDetails)
+	if tb.databaseState().CurrentResult().SelectedRow != 0 || tb.databaseState().ShowDetails {
+		t.Fatalf("single click should only select a row: row %d, details %t", tb.databaseState().CurrentResult().SelectedRow, tb.databaseState().ShowDetails)
 	}
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
 	if !tt.HasText("Details") || !tt.HasText("total") {
 		t.Fatalf("row inspector: %q", tt.Texts())
 	}
-	if !tb.database.showDetails {
+	if !tb.databaseState().ShowDetails {
 		t.Fatal("Enter did not open the inspector")
 	}
 	if err := tt.Click("Hide details on the right"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.database.showDetails {
+	if tb.databaseState().ShowDetails {
 		t.Fatal("right panel icon did not hide the inspector")
 	}
 	if err := tt.Click("Show details on the right"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tb.database.showDetails {
+	if !tb.databaseState().ShowDetails {
 		t.Fatal("right panel icon did not restore the inspector")
 	}
 	snapshot(t, tt, "database-inspector.png")
@@ -481,7 +481,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.database.activeResult != databaseData || !tt.HasText("hello") || len(tb.database.results[databaseQuery].result.Rows) != 1 {
+	if tb.databaseState().ActiveResult != databaseData || !tt.HasText("hello") || len(tb.databaseState().Results[databaseQuery].Result.Rows) != 1 {
 		t.Fatalf("Data/Query result isolation: %q", tt.Texts())
 	}
 	if err := tt.Click("Find database objects"); err != nil {
@@ -497,7 +497,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if !tt.HasText("notes") {
 		t.Fatalf("search clear: %q", tt.Texts())
 	}
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(config.DesktopDatabasePath())
@@ -511,7 +511,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".larik", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("project settings written: %v", err)
 	}
-	tb.database.activeResult = databaseQuery
+	tb.databaseState().ActiveResult = databaseQuery
 	st := a.state()
 	if st.DatabaseViews[0].Profile != "local" {
 		t.Fatalf("saved view: %+v", st.DatabaseViews)
@@ -528,7 +528,7 @@ func TestDatabaseSidebarAndPane(t *testing.T) {
 	}
 	b := New(Options{Cwd: project, DataDir: a.opts.DataDir})
 	defer b.Close()
-	if !b.restore() || len(b.tabs) != 1 || b.tabs[0].database.profile != "local" || b.tabs[0].database.activeResult != databaseQuery {
+	if !b.restore() || len(b.tabs) != 1 || b.tabs[0].databaseState().Profile != "local" || b.tabs[0].databaseState().ActiveResult != databaseQuery {
 		t.Fatalf("restored pane: %+v", b.tabs)
 	}
 }
@@ -537,7 +537,7 @@ func TestDatabaseNarrowAndBridge(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
@@ -545,40 +545,40 @@ func TestDatabaseNarrowAndBridge(t *testing.T) {
 	if got := a.databaseControl(Request{Cmd: "database", Op: "list"}); got.Database == nil || len(got.Database.Panes) != 0 {
 		t.Fatalf("opt-in: %+v", got)
 	}
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.databaseControl(Request{Cmd: "database", Op: "list"}); got.Database == nil || len(got.Database.Panes) != 1 {
 		t.Fatalf("list: %+v", got)
 	}
-	tb.database.sql.Buffer.Set("SELECT 'draft'")
+	tb.databaseState().SQL.Buffer.Set("SELECT 'draft'")
 	a.runDatabaseQuery(tb)
-	queryRows := tb.database.results[databaseQuery].result.Rows
+	queryRows := tb.databaseState().Results[databaseQuery].Result.Rows
 	res := a.databaseControl(Request{Cmd: "database", Op: "query", SQL: "SELECT body FROM notes ORDER BY id"})
-	if res.Error != "" || res.Database == nil || len(res.Database.Result.Rows) != 2 || tb.database.sql.Buffer.String() != "SELECT 'draft'" || tb.database.activeResult != databaseAgent || len(tb.database.results[databaseQuery].result.Rows) != len(queryRows) {
+	if res.Error != "" || res.Database == nil || len(res.Database.Result.Rows) != 2 || tb.databaseState().SQL.Buffer.String() != "SELECT 'draft'" || tb.databaseState().ActiveResult != databaseAgent || len(tb.databaseState().Results[databaseQuery].Result.Rows) != len(queryRows) {
 		t.Fatalf("agent query: %+v", res)
 	}
-	if len(tb.database.results[databaseData].result.Rows) != 2 || tb.database.results[databaseAgent].source != "SQL query" {
+	if len(tb.databaseState().Results[databaseData].Result.Rows) != 2 || tb.databaseState().Results[databaseAgent].Source != "SQL query" {
 		t.Fatal("agent result replaced table data or lost its source")
 	}
 	rows := a.databaseControl(Request{Cmd: "database", Op: "rows", Schema: "main", Table: "notes", Limit: 1})
-	if rows.Error != "" || tb.database.results[databaseAgent].source != "main.notes" || len(tb.database.results[databaseData].result.Rows) != 2 || len(tb.database.results[databaseQuery].result.Rows) != len(queryRows) {
+	if rows.Error != "" || tb.databaseState().Results[databaseAgent].Source != "main.notes" || len(tb.databaseState().Results[databaseData].Result.Rows) != 2 || len(tb.databaseState().Results[databaseQuery].Result.Rows) != len(queryRows) {
 		t.Fatalf("agent rows disturbed user results: %+v", rows)
 	}
 	if got := a.databaseControl(Request{Cmd: "database", Op: "query", SQL: "DELETE FROM notes"}); got.Error == "" {
 		t.Fatal("write accepted")
 	}
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.databaseControl(Request{Cmd: "database", Op: "query", Tab: tb.id, SQL: "SELECT 1"}); got.Error == "" {
 		t.Fatal("revoked access accepted")
 	}
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path, AgentAccess: true}}); err != nil {
 		t.Fatal(err)
 	}
 	second := a.startDatabase(project)
-	second.database.profile = "local"
+	second.databaseState().Profile = "local"
 	a.activate(second)
 	if got := a.databaseControl(Request{Cmd: "database", Op: "schema"}); got.Error == "" {
 		t.Fatal("ambiguous pane accepted")
@@ -593,7 +593,7 @@ func TestDatabaseNarrowAndBridge(t *testing.T) {
 	if !tt.HasText("SQL query") || !tt.HasText("Agent") {
 		t.Fatalf("narrow results: %q", tt.Texts())
 	}
-	tb.database.region = databaseTablesRegion
+	tb.databaseState().Region = databaseTablesRegion
 	tt.Frame()
 	if !tt.HasText("Tables") || tt.HasText("SQL Query") {
 		t.Fatalf("narrow browser: %q", tt.Texts())
@@ -608,11 +608,11 @@ func TestDatabaseResponsiveRegionsAndRestore(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
-	d := a.focused().database
+	d := a.focused().databaseState()
 	medium := ui.NewTester(a.view, 900, 700)
 	medium.Frame()
 	snapshot(t, medium, "database-medium.png")
@@ -623,47 +623,47 @@ func TestDatabaseResponsiveRegionsAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	medium.Frame()
-	if d.region != databaseResultsRegion || !medium.HasText("hello") {
+	if d.Region != databaseResultsRegion || !medium.HasText("hello") {
 		t.Fatalf("single click should stay in results: %q", medium.Texts())
 	}
 	if err := medium.Click("hello"); err != nil {
 		t.Fatal(err)
 	}
 	medium.Frame()
-	if d.region != databaseDetailsRegion || !medium.HasText("Back to results") || !medium.HasText("body") {
+	if d.Region != databaseDetailsRegion || !medium.HasText("Back to results") || !medium.HasText("body") {
 		t.Fatalf("double click row details navigation: %q", medium.Texts())
 	}
 	if err := medium.Click("Back to results"); err != nil {
 		t.Fatal(err)
 	}
 	medium.Frame()
-	if d.region != databaseResultsRegion || !medium.HasText("hello") {
+	if d.Region != databaseResultsRegion || !medium.HasText("hello") {
 		t.Fatalf("back to data: %q", medium.Texts())
 	}
-	d.activeResult, d.editorHeight = databaseQuery, 225
+	d.ActiveResult, d.EditorHeight = databaseQuery, 225
 	saved := saveDatabaseView(d)
 	if saved.ActiveResult != databaseQuery || saved.EditorHeightPx != 225 || saved.EditorHeight != 0 || saved.PageSize != database.DefaultRows {
 		t.Fatalf("saved database layout: %+v", saved)
 	}
-	b := &databaseState{editorHeight: 180, region: databaseResultsRegion}
+	b := &databaseState{EditorHeight: 180, Region: databaseResultsRegion}
 	restoreDatabaseView(b, saved)
-	if b.activeResult != databaseQuery || b.editorHeight != 225 || b.pageSize != database.DefaultRows {
+	if b.ActiveResult != databaseQuery || b.EditorHeight != 225 || b.PageSize != database.DefaultRows {
 		t.Fatalf("restored database layout: %+v", b)
 	}
-	legacy := &databaseState{editorHeight: 180, region: databaseResultsRegion}
+	legacy := &databaseState{EditorHeight: 180, Region: databaseResultsRegion}
 	restoreDatabaseView(legacy, savedDatabaseView{Profile: "local", EditorHeight: 34, ShowBrowser: true, ShowDetails: true})
-	a.focused().database = legacy
+	a.focused().pane = legacy
 	wide := ui.NewTester(a.view, 1400, 800)
 	wide.Frame()
-	if legacy.editorHeight != 180 || legacy.legacyEditorPercent != 0 {
-		t.Fatalf("legacy editor height: %v, %v", legacy.editorHeight, legacy.legacyEditorPercent)
+	if legacy.EditorHeight != 180 || legacy.LegacyEditorPercent != 0 {
+		t.Fatalf("legacy editor height: %v, %v", legacy.EditorHeight, legacy.LegacyEditorPercent)
 	}
-	custom := &databaseState{editorHeight: 180, region: databaseResultsRegion}
+	custom := &databaseState{EditorHeight: 180, Region: databaseResultsRegion}
 	restoreDatabaseView(custom, savedDatabaseView{Profile: "local", EditorHeight: 50, ShowBrowser: true, ShowDetails: true})
-	a.focused().database = custom
+	a.focused().pane = custom
 	wide.Frame()
-	if custom.editorHeight <= 180 || custom.editorHeight > 320 || custom.legacyEditorPercent != 0 {
-		t.Fatalf("legacy custom editor height: %v, %v", custom.editorHeight, custom.legacyEditorPercent)
+	if custom.EditorHeight <= 180 || custom.EditorHeight > 320 || custom.LegacyEditorPercent != 0 {
+		t.Fatalf("legacy custom editor height: %v, %v", custom.EditorHeight, custom.LegacyEditorPercent)
 	}
 }
 
@@ -679,13 +679,13 @@ func TestDatabasePagingFooter(t *testing.T) {
 	_ = db.Close()
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
-	d := a.focused().database
-	d.schema, d.table = "main", "pages"
-	d.results[databaseData].offset = 0
+	d := a.focused().databaseState()
+	d.Schema, d.Table = "main", "pages"
+	d.Results[databaseData].Offset = 0
 	a.loadDatabaseRows(a.focused(), true)
 	tt := ui.NewTester(a.view, 1400, 800)
 	tt.Frame()
@@ -699,7 +699,7 @@ func TestDatabasePagingFooter(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("Rows 101–105") || len(d.results[databaseData].result.Rows) != 5 {
+	if !tt.HasText("Rows 101–105") || len(d.Results[databaseData].Result.Rows) != 5 {
 		t.Fatalf("second page footer: %q", tt.Texts())
 	}
 	if err := tt.Click("Rows per page"); err != nil {
@@ -709,14 +709,14 @@ func TestDatabasePagingFooter(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if d.pageSize != 25 || d.results[databaseData].offset != 0 || !tt.HasText("Rows 1–25") {
-		t.Fatalf("page size reset: size %d, offset %d, texts %q", d.pageSize, d.results[databaseData].offset, tt.Texts())
+	if d.PageSize != 25 || d.Results[databaseData].Offset != 0 || !tt.HasText("Rows 1–25") {
+		t.Fatalf("page size reset: size %d, offset %d, texts %q", d.PageSize, d.Results[databaseData].Offset, tt.Texts())
 	}
 	if got := saveDatabaseView(d).PageSize; got != 25 {
 		t.Fatalf("saved page size: %d", got)
 	}
-	d.results[databaseQuery].result = database.Result{Columns: []string{"value"}, Rows: [][]any{{1}}, Truncated: true}
-	d.activeResult = databaseQuery
+	d.Results[databaseQuery].Result = database.Result{Columns: []string{"value"}, Rows: [][]any{{1}}, Truncated: true}
+	d.ActiveResult = databaseQuery
 	tt.Frame()
 	if !tt.HasText("Truncated at row or 1 MiB limit") {
 		t.Fatalf("query truncation footer: %q", tt.Texts())
@@ -727,12 +727,12 @@ func TestDatabaseResultScrollsHorizontally(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
-	d := a.focused().database
-	d.results[databaseData].result = database.Result{Columns: []string{"first", "second", "third", "fourth", "fifth", "last_col"}, Rows: [][]any{{1, 2, 3, 4, 5, 6}}}
+	d := a.focused().databaseState()
+	d.Results[databaseData].Result = database.Result{Columns: []string{"first", "second", "third", "fourth", "fifth", "last_col"}, Rows: [][]any{{1, 2, 3, 4, 5, 6}}}
 	tt := ui.NewTester(a.view, 1200, 700)
 	tt.Frame()
 	before, ok := tt.Find("last_col")
@@ -750,7 +750,7 @@ func TestDatabaseSidebarOpensSavedConnection(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	tt := ui.NewTester(a.view, 1200, 700)
@@ -759,7 +759,7 @@ func TestDatabaseSidebarOpensSavedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if len(a.tabs) != 1 || a.focused() == nil || a.focused().database == nil || a.focused().database.profile != "local" {
+	if len(a.tabs) != 1 || a.focused() == nil || a.focused().databaseState() == nil || a.focused().databaseState().Profile != "local" {
 		t.Fatalf("sidebar did not open connection: %+v", a.tabs)
 	}
 }
@@ -776,13 +776,13 @@ func TestDatabaseGlobalStoreKeepsURLInEnvironment(t *testing.T) {
 	}
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if len(a.databaseStore.names()) != 0 {
+	if len(a.databaseStore.Names()) != 0 {
 		t.Fatal("legacy project profile was imported")
 	}
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"remote": {Driver: "postgres", URLEnv: "LARIK_DESKTOP_DB_URL"}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"remote": {Driver: "postgres", URLEnv: "LARIK_DESKTOP_DB_URL"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.databaseStore.maskedEnv(); len(got) != 1 || got[0] != "LARIK_DESKTOP_DB_URL=" {
+	if got := a.databaseStore.MaskedEnv(); len(got) != 1 || got[0] != "LARIK_DESKTOP_DB_URL=" {
 		t.Fatalf("terminal environment: %v", got)
 	}
 	data, err := os.ReadFile(config.DesktopDatabasePath())
@@ -791,7 +791,7 @@ func TestDatabaseGlobalStoreKeepsURLInEnvironment(t *testing.T) {
 	}
 	other := New(Options{Cwd: t.TempDir()})
 	defer other.Close()
-	if _, ok := other.databaseStore.get("remote"); !ok {
+	if _, ok := other.databaseStore.Get("remote"); !ok {
 		t.Fatal("connection was scoped to project")
 	}
 }

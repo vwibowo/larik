@@ -23,7 +23,7 @@ func TestProjectLayoutRestoresTabsAndPanes(t *testing.T) {
 	if err := second.openProjectLayout(root, "Review"); err != nil {
 		t.Fatal(err)
 	}
-	if len(second.tabs) != 2 || !second.split() || !second.layout.below || second.focused().files == nil {
+	if len(second.tabs) != 2 || !second.split() || !second.layout.below || second.focused().filesState() == nil {
 		t.Fatalf("restored layout: tabs=%d split=%v focus=%v", len(second.tabs), second.split(), second.focused())
 	}
 	if err := os.RemoveAll(root); err != nil {

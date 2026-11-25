@@ -87,11 +87,11 @@ func TestChangesWatcherSkipsIdleAndRefreshesOnEditOrAction(t *testing.T) {
 		fn()
 		updates <- struct{}{}
 	}
-	ch := &changes{dir: repo, stop: make(chan struct{}), kick: make(chan struct{}, 1)}
+	ch := newChanges(repo)
 	done := make(chan struct{})
 	go func() { a.watchChanges(ch); close(done) }()
 	defer func() {
-		close(ch.stop)
+		close(ch.Stop)
 		<-done
 		a.Close()
 	}()
@@ -113,8 +113,8 @@ func TestChangesWatcherSkipsIdleAndRefreshesOnEditOrAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUpdate("file edit", 3*time.Second)
-	if len(ch.files) != 1 || len(ch.files[0].parts) == 0 || ch.files[0].parts[0].new != "second edit\n" {
-		t.Fatalf("file edit was not shown: %+v", ch.files)
+	if len(ch.Files) != 1 || len(ch.Files[0].parts) == 0 || ch.Files[0].parts[0].new != "second edit\n" {
+		t.Fatalf("file edit was not shown: %+v", ch.Files)
 	}
 	ch.reread()
 	waitUpdate("explicit reread", time.Second)

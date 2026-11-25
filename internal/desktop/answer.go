@@ -152,7 +152,7 @@ func (a *App) answerable(s session.Indexed) (*tab, bool) {
 		return nil, false
 	}
 	t := a.tabOf(s.Path)
-	if t == nil || t.exited || t.term == nil {
+	if t == nil || t.exited || t.terminal() == nil {
 		return nil, false
 	}
 	return t, true
@@ -188,10 +188,10 @@ func (a *App) answerSession(path string, an answer) string {
 		if !s.Status.ReviewsPlan() {
 			return "The session isn't waiting for a plan review."
 		}
-		t.term.Send([]byte(an.key()))
+		t.terminal().Send([]byte(an.key()))
 		return "" // feedback is entered in the terminal; status stays blocked
 	}
-	t.term.Send([]byte(an.key()))
+	t.terminal().Send([]byte(an.key()))
 	sent := time.Now()
 	a.answered[path] = pending{sent: sent, prompt: f.Since()}
 	a.refreshIndex()

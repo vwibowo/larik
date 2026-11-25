@@ -1,32 +1,25 @@
 package desktop
 
 import (
-	"bytes"
-	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 
-	"larik/internal/worktree"
+	changespane "larik/internal/desktop/panes/changes"
 )
 
 // Limits on what the changes pane shows, so a large checkout or a
 // generated file can't stall it.
 const (
-	maxChangedFiles = 60
-	maxDiffBytes    = 512 << 10
+	maxChangedFiles = changespane.MaxChangedFiles
+	maxDiffBytes    = changespane.MaxDiffBytes
 	filesOpened     = 5 // the first few files start open
 )
 
@@ -34,33 +27,16 @@ const (
 // repository, file by file, kept current while it is open, against the
 // last commit, or against where the branch left its base; and what to do
 // with it: stage, discard, commit, open a pull request.
-type changes struct {
-	dir    string // the directory it was opened for
-	root   string // its repository's top level
-	files  []*fileChange
-	more   int // changed files past maxChangedFiles
-	err    string
-	loaded bool
-	stop   chan struct{}
-	kick   chan struct{} // reads again now, after an action
+type changes struct{ changespane.State[*fileChange] }
 
-	// against is what the files are compared with: compareCommit, what
-	// isn't committed, or compareBase, all the branch has done since it
-	// left its base. mode is the same, for the reads off the main thread.
-	against int
-	mode    atomic.Int32
-	branch  string // checked out, or "" when detached
-	base    string // what the branch is compared with, as main or origin/main; "" for nothing to
-	remote  bool   // there's a remote to push to
-	gh      bool   // gh is installed, to open pull requests with
-	busy    string // what's under way, as "Committing…"
-	message string // the commit message being written
+func newChanges(dir string) *changes {
+	return &changes{State: changespane.NewState[*fileChange](dir)}
 }
 
 // What the changes pane compares with.
 const (
-	compareCommit = iota // the last commit: what isn't committed
-	compareBase          // where the branch left its base
+	compareCommit = changespane.CompareCommit // the last commit: what isn't committed
+	compareBase   = changespane.CompareBase   // where the branch left its base
 )
 
 // fileChange is one changed file, with its diffs: what isn't staged and
@@ -86,24 +62,10 @@ func (f *fileChange) staged() (some, all bool) {
 // fileRead is a file's change as read from disk, off the main thread:
 // its text at the commit compared with, in the working tree, and, when
 // hunks says its changes can be taken a hunk at a time, in the index.
-type fileRead struct {
-	path, from, code string
-	adds, dels       int
-	note             string
-	old, new         string
-	index            string
-	hunks            bool
-}
+type fileRead = changespane.FileRead
 
 // changesRead is a read of the repository, off the main thread.
-type changesRead struct {
-	against            int // what it compared with
-	root, branch, base string
-	remote, gh         bool
-	snaps              []fileRead
-	more               int
-	err                error
-}
+type changesRead = changespane.Read
 
 // toggleChanges opens the changes pane beside the main one, or closes it.
 func (a *App) toggleChanges() {
@@ -115,13 +77,13 @@ func (a *App) toggleChanges() {
 	if dir == "" {
 		return
 	}
-	a.changes = &changes{dir: dir, stop: make(chan struct{}), kick: make(chan struct{}, 1)}
+	a.changes = newChanges(dir)
 	go a.watchChanges(a.changes)
 }
 
 func (a *App) closeChanges() {
 	if a.changes != nil {
-		close(a.changes.stop)
+		a.changes.Close()
 		a.changes = nil
 	}
 }
@@ -139,11 +101,11 @@ func (a *App) watchChanges(ch *changes) {
 	lastMode := -1
 	force := true
 	for {
-		mode := int(ch.mode.Load())
+		mode := int(ch.Mode.Load())
 		read := true
-		if !isRemote(ch.dir) {
+		if !isRemote(ch.Dir) {
 			if root == "" {
-				root, indexPath = changesRepo(ch.dir)
+				root, indexPath = changesRepo(ch.Dir)
 			}
 			if root != "" {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -157,11 +119,11 @@ func (a *App) watchChanges(ch *changes) {
 		}
 		if read {
 			var r changesRead
-			if isRemote(ch.dir) {
-				r = a.readRemoteChanges(ch.dir, mode)
+			if isRemote(ch.Dir) {
+				r = a.readRemoteChanges(ch.Dir, mode)
 			} else {
-				r = readChanges(ch.dir, heads, mode)
-				if r.err != nil {
+				r = readChanges(ch.Dir, heads, mode)
+				if r.Err != nil {
 					fingerprint = "" // retry a failed read at the next tick
 				}
 			}
@@ -169,13 +131,13 @@ func (a *App) watchChanges(ch *changes) {
 			a.update(func() { ch.apply(r) })
 		}
 		select {
-		case <-ch.stop:
+		case <-ch.Stop:
 			return
 		case <-a.done:
 			return
 		case <-tick.C:
 			force = false
-		case <-ch.kick:
+		case <-ch.Kick:
 			force = true
 		}
 	}
@@ -183,109 +145,69 @@ func (a *App) watchChanges(ch *changes) {
 
 // changesRepo resolves paths once for the local Changes pane's cheap
 // refresh check. A failed resolution leaves full reads in charge.
-func changesRepo(dir string) (root, indexPath string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	out, err := git(ctx, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", ""
-	}
-	root = strings.TrimSpace(string(out))
-	out, err = git(ctx, root, "rev-parse", "--path-format=absolute", "--git-path", "index")
-	if err != nil {
-		return "", ""
-	}
-	return root, strings.TrimSpace(string(out))
-}
+func changesRepo(dir string) (root, indexPath string) { return changespane.Repo(dir) }
 
 // changesFingerprint checks the current Git status and the contents of
 // changed paths without rebuilding their diffs. A full read still runs
 // every 30 seconds to catch preserved file timestamps and config edits.
 func changesFingerprint(ctx context.Context, root, indexPath string) (string, error) {
-	status, err := git(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil {
-		return "", err
-	}
-	branch, _ := git(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
-	head, _ := git(ctx, root, "rev-parse", "HEAD")
-	h := sha256.New()
-	h.Write(status)
-	h.Write(branch)
-	h.Write(head)
-	if info, err := os.Stat(indexPath); err == nil {
-		fmt.Fprintf(h, "index:%d:%d:%v\x00", info.Size(), info.ModTime().UnixNano(), info.Mode())
-	} else {
-		fmt.Fprintf(h, "index:%v\x00", err)
-	}
-	for _, entry := range parseStatus(status) {
-		for _, path := range []string{entry.path, entry.from} {
-			if path == "" {
-				continue
-			}
-			if info, err := os.Stat(filepath.Join(root, path)); err == nil {
-				fmt.Fprintf(h, "%s:%d:%d:%v\x00", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
-			} else {
-				fmt.Fprintf(h, "%s:%v\x00", path, err)
-			}
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return changespane.Fingerprint(ctx, root, indexPath)
 }
 
 // reread asks for a read now.
 func (ch *changes) reread() {
 	select {
-	case ch.kick <- struct{}{}:
+	case ch.Kick <- struct{}{}:
 	default:
 	}
 }
 
 // compare switches what the files are compared with.
 func (ch *changes) compare(against int) {
-	ch.against = against
-	ch.mode.Store(int32(against))
+	ch.Against = against
+	ch.Mode.Store(int32(against))
 	ch.reread()
 }
 
 // apply takes a fresh read, keeping each file's viewer, and whether it is
 // open, across reads. One read while the comparison changed is dropped.
 func (ch *changes) apply(r changesRead) {
-	if r.against != ch.against {
+	if r.Against != ch.Against {
 		return // the next read compares with what's chosen now
 	}
-	if r.err == nil && r.base == "" && ch.against == compareBase {
+	if r.Err == nil && r.Base == "" && ch.Against == compareBase {
 		ch.compare(compareCommit) // no base any more: back to the commit
 	}
-	ch.loaded, ch.root, ch.more, ch.err = true, r.root, r.more, ""
-	ch.branch, ch.base, ch.remote, ch.gh = r.branch, r.base, r.remote, r.gh
-	if r.err != nil {
-		ch.err = r.err.Error()
-		ch.files = nil
+	ch.Loaded, ch.Root, ch.More, ch.Err = true, r.Root, r.More, ""
+	ch.Branch, ch.Base, ch.Remote, ch.GH = r.Branch, r.Base, r.Remote, r.GH
+	if r.Err != nil {
+		ch.Err = r.Err.Error()
+		ch.Files = nil
 		return
 	}
-	snaps := r.snaps
+	snaps := r.Snaps
 	byPath := map[string]*fileChange{}
-	for _, f := range ch.files {
+	for _, f := range ch.Files {
 		byPath[f.path] = f
 	}
 	files := make([]*fileChange, 0, len(snaps))
 	for i, s := range snaps {
-		f := byPath[s.path]
+		f := byPath[s.Path]
 		if f == nil {
-			f = &fileChange{path: s.path, open: i < filesOpened}
+			f = &fileChange{path: s.Path, open: i < filesOpened}
 		}
-		f.from, f.code, f.adds, f.dels, f.note = s.from, s.code, s.adds, s.dels, s.note
+		f.from, f.code, f.adds, f.dels, f.note = s.From, s.Code, s.Adds, s.Dels, s.Note
 		f.parts = ch.parts(f, s)
 		files = append(files, f)
 	}
-	ch.files = files
+	ch.Files = files
 }
 
 // parts are the diffs a file shows for its read: what isn't staged and
 // what is, when its changes can be taken a hunk at a time, or else all
 // of its change; each keeps its viewer from the last read.
 func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
-	if s.note != "" {
+	if s.Note != "" {
 		return nil
 	}
 	type text struct {
@@ -294,17 +216,17 @@ func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
 	}
 	var want []text
 	switch {
-	case !s.hunks:
-		want = []text{{false, s.old, s.new}}
+	case !s.Hunks:
+		want = []text{{false, s.Old, s.New}}
 	default:
-		if s.index != s.new {
-			want = append(want, text{false, s.index, s.new})
+		if s.Index != s.New {
+			want = append(want, text{false, s.Index, s.New})
 		}
-		if s.old != s.index {
-			want = append(want, text{true, s.old, s.index})
+		if s.Old != s.Index {
+			want = append(want, text{true, s.Old, s.Index})
 		}
 		if len(want) == 0 {
-			want = []text{{false, s.old, s.new}} // a change of mode alone
+			want = []text{{false, s.Old, s.New}} // a change of mode alone
 		}
 	}
 	var out []*diffPart
@@ -316,7 +238,7 @@ func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
 			}
 		}
 		if p == nil {
-			lang := editor.LanguageFor(s.path)
+			lang := editor.LanguageFor(s.Path)
 			old, nw := editor.NewBuffer(w.old), editor.NewBuffer(w.new)
 			old.SetLanguage(lang)
 			nw.SetLanguage(lang)
@@ -332,9 +254,9 @@ func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
 			p.old, p.new = w.old, w.new
 		}
 		// Hunks can be taken while the index shows.
-		p.diff.HunkActions = s.hunks
-		p.diff.LineSelection = s.hunks
-		if !s.hunks {
+		p.diff.HunkActions = s.Hunks
+		p.diff.LineSelection = s.Hunks
+		if !s.Hunks {
 			p.diff.SetSelectedLines(editor.DiffLineRange{}, false)
 		}
 		out = append(out, p)
@@ -345,139 +267,24 @@ func (ch *changes) parts(f *fileChange, s fileRead) []*diffPart {
 // headCache keeps the text of files at HEAD between reads, by commit and
 // path, as it changes only when HEAD moves: without it every read would
 // start a git process per changed file.
-type headCache map[string]string
+type headCache = changespane.HeadCache
 
 // readChanges lists what changed in dir's repository against HEAD, or
 // for compareBase, against where the branch left its base, with each
 // file's text before and after, taking the text before from heads, and
 // keeping there what it reads, and no more.
-func readChanges(dir string, heads headCache, against int) (r changesRead) {
-	r.against = against
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := git(ctx, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		r.err = fmt.Errorf("%s is not in a git repository", dir)
-		return r
-	}
-	r.root = strings.TrimSpace(string(out))
-	root := r.root
-	branch, _ := git(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
-	r.branch = strings.TrimSpace(string(branch))
-	r.base = findBase(ctx, root, r.branch)
-	remotes, _ := git(ctx, root, "remote")
-	r.remote = strings.TrimSpace(string(remotes)) != ""
-	_, err = exec.LookPath("gh")
-	r.gh = err == nil
-
-	status, err := git(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil {
-		r.err = err
-		return r
-	}
-	entries := parseStatus(status)
-	head, _ := git(ctx, root, "rev-parse", "HEAD") // none before the first commit
-	since := strings.TrimSpace(string(head))
-	if against == compareBase && r.base != "" {
-		mb, err := git(ctx, root, "merge-base", "HEAD", r.base)
-		if err == nil {
-			since = strings.TrimSpace(string(mb))
-			entries = sinceEntries(ctx, root, since, entries)
-		}
-	}
-	counts := numstat(ctx, root, cmp.Or(since, "HEAD"))
-	var index map[string]string // path → its blob in the index, for files with staged changes
-	used := map[string]bool{}
-	if len(entries) > maxChangedFiles {
-		r.more = len(entries) - maxChangedFiles
-		entries = entries[:maxChangedFiles]
-	}
-	for _, e := range entries {
-		s := fileRead{path: e.path, code: e.code}
-		if e.from != e.path {
-			s.from = e.from
-		}
-		if c, ok := counts[e.path]; ok {
-			s.adds, s.dels = c[0], c[1]
-		}
-		if e.code != "??" && e.code[0] != 'A' && since != "" {
-			key := since + ":" + e.from
-			old, ok := heads[key]
-			if !ok {
-				out, _ := git(ctx, root, "show", since+":"+e.from)
-				old = string(out)
-				heads[key] = old
-			}
-			used[key] = true
-			s.old = old
-		}
-		if data, err := os.ReadFile(filepath.Join(root, e.path)); err == nil {
-			s.new = string(data)
-			if e.code == "??" {
-				s.adds = strings.Count(s.new, "\n")
-			}
-		}
-		switch {
-		case len(s.old) > maxDiffBytes || len(s.new) > maxDiffBytes:
-			s.note, s.old, s.new = "too large to show", "", ""
-		case isBinary(s.old) || isBinary(s.new):
-			s.note, s.old, s.new = "binary", "", ""
-		case against == compareCommit && hunkable(s):
-			// What's in the index: HEAD's text, with nothing staged.
-			s.hunks, s.index = true, s.old
-			if s.code[0] != ' ' {
-				if index == nil {
-					index = indexBlobs(ctx, root)
-				}
-				blob, ok := index[s.path]
-				if !ok {
-					s.hunks = false
-					break
-				}
-				key := "blob:" + blob
-				text, ok := heads[key]
-				if !ok {
-					out, _ := git(ctx, root, "cat-file", "blob", blob)
-					text = string(out)
-					heads[key] = text
-				}
-				used[key] = true
-				s.index = text
-			}
-		}
-		r.snaps = append(r.snaps, s)
-	}
-	for key := range heads {
-		if !used[key] {
-			delete(heads, key)
-		}
-	}
-	return r
+func readChanges(dir string, heads headCache, against int) changesRead {
+	return changespane.ReadChanges(dir, heads, against)
 }
 
 // hunkable reports whether a file's change can be taken a hunk at a
 // time: a text file in git, changed rather than deleted, renamed or in a
 // conflict.
-func hunkable(s fileRead) bool {
-	x, y := s.code[0], s.code[1]
-	return s.from == "" && strings.IndexByte(" MA", x) >= 0 && strings.IndexByte(" M", y) >= 0
-}
+func hunkable(s fileRead) bool { return changespane.Hunkable(s) }
 
 // indexBlobs lists the blob of each file in the index, by path.
 func indexBlobs(ctx context.Context, root string) map[string]string {
-	out, err := git(ctx, root, "ls-files", "-s", "-z")
-	if err != nil {
-		return nil
-	}
-	blobs := map[string]string{}
-	for _, entry := range strings.Split(string(out), "\x00") {
-		// "<mode> <blob> <stage>\t<path>"
-		meta, path, ok := strings.Cut(entry, "\t")
-		if f := strings.Fields(meta); ok && len(f) == 3 && f[2] == "0" {
-			blobs[path] = f[1]
-		}
-	}
-	return blobs
+	return changespane.IndexBlobs(ctx, root)
 }
 
 // findBase is what the branch is compared with: for one of larik's
@@ -485,163 +292,55 @@ func indexBlobs(ctx context.Context, root string) map[string]string {
 // made from; otherwise the remote's default branch, or main or master.
 // It's "" on the base itself, or with none.
 func findBase(ctx context.Context, root, branch string) string {
-	base := ""
-	if strings.HasPrefix(branch, worktree.BranchPrefix) {
-		if common, err := git(ctx, root, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
-			out, _ := git(ctx, filepath.Dir(strings.TrimSpace(string(common))), "symbolic-ref", "--quiet", "--short", "HEAD")
-			base = strings.TrimSpace(string(out))
-		}
-	}
-	if base == "" {
-		if out, err := git(ctx, root, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
-			base = strings.TrimSpace(string(out))
-		}
-	}
-	for _, b := range []string{"main", "master"} {
-		if base != "" {
-			break
-		}
-		if _, err := git(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+b); err == nil {
-			base = b
-		}
-	}
-	if base == branch || strings.TrimPrefix(base, "origin/") == branch {
-		return ""
-	}
-	return base
+	return changespane.FindBase(ctx, root, branch)
 }
 
 // sinceEntries lists what changed since the commit, as git status lists
 // what changed since HEAD: what the branch committed and what it hasn't,
 // with what status says isn't tracked.
 func sinceEntries(ctx context.Context, root, since string, status []statusEntry) []statusEntry {
-	out, err := git(ctx, root, "diff", "--name-status", "-z", "--no-renames", since)
-	if err != nil {
-		return status
-	}
-	var entries []statusEntry
-	fields := bytes.Split(out, []byte{0})
-	for i := 0; i+1 < len(fields); i += 2 {
-		if code := string(fields[i]); code != "" {
-			path := string(fields[i+1])
-			entries = append(entries, statusEntry{code: code[:1] + " ", path: path, from: path})
-		}
-	}
-	for _, e := range status {
-		if e.code == "??" {
-			entries = append(entries, e)
-		}
-	}
-	return entries
+	return changespane.SinceEntries(ctx, root, since, status)
 }
 
 func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
-	return cmd.Output()
+	return changespane.Git(ctx, dir, args...)
 }
 
 // numstat counts lines added and deleted per tracked file since the
 // commit.
 func numstat(ctx context.Context, root, since string) map[string][2]int {
-	out, err := git(ctx, root, "diff", since, "--numstat", "--no-renames")
-	if err != nil {
-		return nil
-	}
-	counts := map[string][2]int{}
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.SplitN(line, "\t", 3)
-		if len(f) != 3 {
-			continue
-		}
-		adds, _ := strconv.Atoi(f[0])
-		dels, _ := strconv.Atoi(f[1])
-		counts[f[2]] = [2]int{adds, dels}
-	}
-	return counts
+	return changespane.Numstat(ctx, root, since)
 }
 
-type statusEntry struct {
-	code, path string
-	from       string // the path in HEAD: the old name of a rename
-}
+type statusEntry = changespane.StatusEntry
 
 // parseStatus reads `git status --porcelain=v1 -z`.
-func parseStatus(out []byte) []statusEntry {
-	var entries []statusEntry
-	fields := bytes.Split(out, []byte{0})
-	for i := 0; i < len(fields); i++ {
-		f := string(fields[i])
-		if len(f) < 4 {
-			continue
-		}
-		e := statusEntry{code: f[:2], path: f[3:]}
-		e.from = e.path
-		if e.code[0] == 'R' || e.code[0] == 'C' {
-			if i+1 < len(fields) {
-				i++
-				e.from = string(fields[i])
-			}
-		}
-		entries = append(entries, e)
-	}
-	return entries
-}
+func parseStatus(out []byte) []statusEntry { return changespane.ParseStatus(out) }
 
-func isBinary(s string) bool {
-	return strings.IndexByte(s[:min(len(s), 8000)], 0) >= 0
-}
+func isBinary(s string) bool { return changespane.IsBinary(s) }
 
 // changesPane shows the changes card.
 func (a *App) changesPane(c *ui.Context, t *ui.Theme, ch *changes) {
-	a.opacityCard(c, t, func() {
-		ui.Row(c).Gap(8).Padding(9, 12, 9, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Icon(c, iconDiff).FontSize(15).TextColor(t.Accent)
-			ui.Text(c, "Changes").Bold()
-			where := ch.root
-			if where == "" {
-				where = ch.dir
-			}
-			ui.Text(c, filepath.Base(where)).TextColor(t.TextMuted).SingleLine().Shrink(1).Tooltip(tildePath(where))
-			ui.Spacer(c)
-			if ch.loaded && ch.err == "" {
-				ui.Text(c, fileCount(len(ch.files)+ch.more)).FontSize(12).TextColor(t.TextMuted).SingleLine()
-			}
-			if ch.loaded && ch.canPullRequest() {
-				pr := ui.Button(c.Key("pr"), "Pull Request").FontSize(12).Padding(2, 8).Tooltip("Open " + ch.branch + "'s pull request into " + strings.TrimPrefix(ch.base, "origin/") + ", or push it and start one, with gh")
-				if ch.busy != "" {
-					pr.Disabled(true)
-				}
-				if pr.Clicked() && ch.busy == "" {
-					a.askPullRequest(ch)
-				}
-			}
-			a.closeButton(c, t, "Close changes", a.closeChanges)
-		})
-		if ch.base != "" {
-			a.compareBar(c, t, ch)
-		}
-		if ch.against == compareCommit && len(ch.files) > 0 {
-			a.commitBox(c, t, ch)
-		}
-		scroll := ui.Scroll(c).Grow(1)
-		scroll.Children(func() {
-			switch {
-			case !ch.loaded:
-				ui.Spinner(c).Margin(ui.Auto)
-			case ch.err != "":
-				ui.Text(c, ch.err).TextColor(t.TextMuted).Margin(ui.Auto)
-			case len(ch.files) == 0 && ch.against == compareBase:
-				ui.Text(c, "Nothing since "+ch.branch+" left "+ch.base+".").TextColor(t.TextMuted).Margin(ui.Auto)
-			case len(ch.files) == 0:
-				ui.Text(c, "No changes against HEAD.").TextColor(t.TextMuted).Margin(ui.Auto)
-			}
-			for _, f := range ch.files {
+	where := ch.Root
+	if where == "" {
+		where = ch.Dir
+	}
+	changespane.View(c, t, changespane.ViewOptions{
+		Icon: iconDiff, Root: ch.Root, Dir: ch.Dir, Branch: ch.Branch, Base: ch.Base,
+		Busy: ch.Busy, Error: ch.Err, LocationTooltip: tildePath(where),
+		CountLabel: fileCount(len(ch.Files) + ch.More), Loaded: ch.Loaded,
+		CanPullRequest: ch.canPullRequest(), Files: len(ch.Files), More: ch.More,
+		Against:        func() int { return ch.Against },
+		Card:           func(fn func()) { a.opacityCard(c, t, fn) },
+		Close:          func() { a.closeButton(c, t, "Close changes", a.closeChanges) },
+		AskPullRequest: func() { a.askPullRequest(ch) },
+		CompareBar:     func() { a.compareBar(c, t, ch) },
+		CommitBox:      func() { a.commitBox(c, t, ch) },
+		DrawFiles: func() {
+			for _, f := range ch.Files {
 				a.fileDiff(c, t, ch, f)
 			}
-			if ch.more > 0 {
-				ui.Text(c, fmt.Sprintf("and %d more", ch.more)).FontSize(12).TextColor(t.TextMuted).Padding(4)
-			}
-		})
+		},
 	})
 }
 
@@ -649,12 +348,12 @@ func (a *App) changesPane(c *ui.Context, t *ui.Theme, ch *changes) {
 // or where the branch left its base.
 func (a *App) compareBar(c *ui.Context, t *ui.Theme, ch *changes) {
 	ui.Row(c.Key("compare")).Gap(8).Padding(6, 12, 6, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		seg := ui.Segmented(c.Key("against"), &ch.against, "Uncommitted", "Since "+ch.base).Label("Compare with").FontSize(12)
+		seg := ui.Segmented(c.Key("against"), &ch.Against, "Uncommitted", "Since "+ch.Base).Label("Compare with").FontSize(12)
 		if seg.Changed() {
-			ch.compare(ch.against)
+			ch.compare(ch.Against)
 		}
-		if ch.against == compareBase {
-			ui.Text(c, "all "+ch.branch+" has done since it left "+ch.base).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
+		if ch.Against == compareBase {
+			ui.Text(c, "all "+ch.Branch+" has done since it left "+ch.Base).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1)
 		}
 	})
 }
@@ -667,24 +366,24 @@ func (a *App) commitBox(c *ui.Context, t *ui.Theme, ch *changes) {
 		mod, keys = ui.Super, "⌘↩"
 	}
 	ui.Column(c.Key("commit")).Gap(6).Padding(8, 12, 8, 16).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.TextArea(c.Key("message"), &ch.message).Lines(1, 6).Placeholder("Commit message").Label("Commit message").FontSize(12).
+		ui.TextArea(c.Key("message"), &ch.Message).Lines(1, 6).Placeholder("Commit message").Label("Commit message").FontSize(12).
 			OnShortcut(mod, ui.KeyEnter, func() { a.commit(ch) })
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			n := ch.stagedCount()
 			link := func(key, text string) bool {
-				b := ui.ButtonBase(c.Key(key)).Cursor(ui.CursorPointer).Label(text).Disabled(ch.busy != "").Children(func() {
+				b := ui.ButtonBase(c.Key(key)).Cursor(ui.CursorPointer).Label(text).Disabled(ch.Busy != "").Children(func() {
 					ui.Text(c, text).FontSize(12).TextColor(t.Accent)
 				})
 				return b.Clicked()
 			}
-			if n < len(ch.files) && link("stage-all", "Stage All") {
+			if n < len(ch.Files) && link("stage-all", "Stage All") {
 				a.stageAll(ch, true)
 			}
 			if n > 0 && link("unstage-all", "Unstage All") {
 				a.stageAll(ch, false)
 			}
-			if ch.busy != "" {
-				ui.Text(c, ch.busy).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			if ch.Busy != "" {
+				ui.Text(c, ch.Busy).FontSize(12).TextColor(t.TextMuted).SingleLine()
 			}
 			ui.Spacer(c)
 			label, tip := "Commit", fmt.Sprintf("Commit the %s staged (%s)", fileCount(n), keys)
@@ -692,7 +391,7 @@ func (a *App) commitBox(c *ui.Context, t *ui.Theme, ch *changes) {
 				label, tip = "Commit All", "Stage every change and commit it ("+keys+")"
 			}
 			b := ui.Button(c.Key("commit"), label).Tooltip(tip).FontSize(12).Padding(3, 12)
-			ready := strings.TrimSpace(ch.message) != "" && ch.busy == ""
+			ready := strings.TrimSpace(ch.Message) != "" && ch.Busy == ""
 			if !ready {
 				b.Disabled(true)
 			}
@@ -710,7 +409,7 @@ func (a *App) fileDiff(c *ui.Context, t *ui.Theme, ch *changes, f *fileChange) {
 	// removed.
 	ui.Column(c.Key(f.path)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			if ch.against == compareCommit {
+			if ch.Against == compareCommit {
 				some, all := f.staged()
 				on := all
 				tip := "Stage " + f.path
@@ -721,10 +420,10 @@ func (a *App) fileDiff(c *ui.Context, t *ui.Theme, ch *changes, f *fileChange) {
 					tip = "Partly staged: stage the rest of " + f.path
 				}
 				box := ui.Checkbox(c.Key("stage"), &on, "").Label(tip).Tooltip(tip).Padding(0, 0, 0, 10)
-				if ch.busy != "" {
+				if ch.Busy != "" {
 					box.Disabled(true)
 				}
-				if box.Changed() && ch.busy == "" {
+				if box.Changed() && ch.Busy == "" {
 					a.stage(ch, f, !all)
 				}
 			}
@@ -781,8 +480,8 @@ func (a *App) fileDiff(c *ui.Context, t *ui.Theme, ch *changes, f *fileChange) {
 // discarding its change, while what isn't committed shows, then opening
 // it. A deleted file has nothing on disk to open or show.
 func (a *App) fileMenu(m *ui.Menu, ch *changes, f *fileChange) {
-	path := filepath.Join(ch.root, f.path)
-	if ch.against == compareCommit && ch.busy == "" {
+	path := filepath.Join(ch.Root, f.path)
+	if ch.Against == compareCommit && ch.Busy == "" {
 		if _, all := f.staged(); all {
 			if m.Item("Unstage").Chosen() {
 				a.stage(ch, f, false)

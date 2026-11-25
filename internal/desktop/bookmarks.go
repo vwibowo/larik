@@ -62,20 +62,20 @@ func bookmarkSuffix(raw string) string {
 }
 
 func bookmarkForTab(t *tab) (browserBookmark, bool) {
-	if t == nil || !t.browser || t.url == "" || t.url == blankPage {
+	if t == nil || !t.isBrowser() || t.browserState().URL == "" || t.browserState().URL == blankPage {
 		return browserBookmark{}, false
 	}
-	b := browserBookmark{Title: t.title, URL: t.url}
+	b := browserBookmark{Title: t.title, URL: t.browserState().URL}
 	if t.remotePort.port != 0 {
 		b.URL = ""
 		b.RemoteName, b.RemotePort = t.remotePort.name, t.remotePort.port
-		b.RemotePath = bookmarkSuffix(t.url)
+		b.RemotePath = bookmarkSuffix(t.browserState().URL)
 	}
 	return b, true
 }
 
 func tabMatchesBookmark(t *tab, b browserBookmark) bool {
-	if b.RemotePort != 0 && t != nil && t.browser && t.remotePort.name == b.RemoteName && t.remotePort.port == b.RemotePort && t.remoteBookmarkSuffix == b.RemotePath {
+	if b.RemotePort != 0 && t != nil && t.isBrowser() && t.remotePort.name == b.RemoteName && t.remotePort.port == b.RemotePort && t.remoteBookmarkSuffix == b.RemotePath {
 		return true
 	}
 	current, ok := bookmarkForTab(t)

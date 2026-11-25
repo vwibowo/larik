@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	browserpane "larik/internal/desktop/panes/browser"
 	"larik/internal/pageoutline"
 )
 
@@ -76,7 +77,7 @@ func (a *App) pageControl(req Request) Response {
 	if err != nil {
 		return Response{Error: err.Error(), Tab: &info}
 	}
-	a.syncPageURL(t, t.web.Page().URL())
+	a.syncPageURL(t, t.browserState().Web.Page().URL())
 	a.onMain(func() { info = a.tabInfo(t) })
 	return Response{Tab: &info, Page: res}
 }
@@ -91,10 +92,10 @@ func (a *App) pageTab(req Request) (*tab, string) {
 		if t, err = a.tabRef(req.Tab); err != "" {
 			return nil, err
 		}
-		if !t.browser {
+		if !t.isBrowser() {
 			return nil, "the tab isn't a browser tab"
 		}
-	case a.focused() != nil && a.focused().browser:
+	case a.focused() != nil && a.focused().isBrowser():
 		t = a.focused()
 	case a.lastBrowser != nil && a.hasTab(a.lastBrowser):
 		t = a.lastBrowser
@@ -114,7 +115,7 @@ func (a *App) pageTab(req Request) (*tab, string) {
 	default:
 		return nil, "no browser tab is open: go somewhere first (op navigate), or open one with larik desktop open --url"
 	}
-	if t.web == nil {
+	if t.browserState().Web == nil {
 		return nil, "the browser tab has no page"
 	}
 	return t, ""
@@ -138,7 +139,7 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
-	p := t.web.Page()
+	p := t.browserState().Web.Page()
 	settle := func() (*PageResult, error) {
 		res := &PageResult{Loading: !waitLoad(ctx, p)}
 		snap, err := pageSnapshot(ctx, p, "")
@@ -152,7 +153,7 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 		if !ok {
 			return nil, fmt.Errorf("%q isn't a web address", req.URL)
 		}
-		a.update(func() { t.addr, t.url = u, u })
+		a.update(func() { t.browserState().Address, t.browserState().URL = u, u })
 		if err := p.LoadURL(u); err != nil {
 			return nil, err
 		}
@@ -199,7 +200,7 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 		return &PageResult{Value: string(b)}, nil
 	case PageScreenshot:
 		waitLoad(ctx, p)
-		png, err := t.web.CapturePage()
+		png, err := t.browserState().Web.CapturePage()
 		if err != nil {
 			return nil, err
 		}
@@ -243,120 +244,25 @@ func (a *App) runPage(t *tab, req Request) (*PageResult, error) {
 // syncPageURL keeps tab metadata current when a page changes history without
 // a WebView navigation event, as single-page apps often do.
 func (a *App) syncPageURL(t *tab, u string) {
-	if u == "" || u == t.url {
+	if u == "" || u == t.browserState().URL {
 		return
 	}
 	a.update(func() {
-		if t.addr == t.url {
-			t.addr = u
+		if t.browserState().Address == t.browserState().URL {
+			t.browserState().Address = u
 		}
-		t.url = u
+		t.browserState().URL = u
 	})
 }
 
-// waitLoad waits for what the page started loading, reporting whether it
-// finished before the wait gave up.
 func waitLoad(ctx context.Context, p *mygo.Page) bool {
-	ctx, cancel := context.WithTimeout(ctx, pageLoadWait)
-	defer cancel()
-	// A navigation a click starts takes a moment to begin.
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
-	for i := 0; ; i++ {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-tick.C:
-		}
-		if i >= 2 && !p.IsLoading() {
-			return true
-		}
-	}
+	return browserpane.WaitLoad(ctx, p, pageLoadWait)
 }
-
-// pageSnapshot outlines the page, or the element with ref.
 func pageSnapshot(ctx context.Context, p *mygo.Page, ref string) (*pageoutline.Snapshot, error) {
-	v, err := p.EvalContext(ctx, pageoutline.SnapshotScript(ref))
-	if err != nil {
-		return nil, fmt.Errorf("couldn't read the page: %w", err)
-	}
-	b, _ := json.Marshal(v)
-	var snap pageoutline.Snapshot
-	if err := json.Unmarshal(b, &snap); err != nil {
-		return nil, fmt.Errorf("couldn't read the page: %w", err)
-	}
-	if snap.Error != "" {
-		return nil, errors.New(snap.Error)
-	}
-	return &snap, nil
+	return browserpane.PageSnapshot(ctx, p, ref)
 }
-
-// act runs a script that acts on an element and answers "" or why it
-// couldn't.
-func act(ctx context.Context, p *mygo.Page, js string) error {
-	v, err := p.EvalContext(ctx, js)
-	if err != nil {
-		return err
-	}
-	if msg, _ := v.(string); msg != "" {
-		return errors.New(msg)
-	}
-	return nil
-}
-
-// findRef is the script finding the element with ref, as the outline
-// named it, or answering why not.
-func findRef(ref string) string {
-	q, _ := json.Marshal(ref)
-	return fmt.Sprintf(`const el = window.__larikFind && window.__larikFind(%s);
-	if (!el) return "no element with ref " + %s + " on this page (it may have changed): take a new snapshot";
-	if (el.disabled) return "element " + %s + " is disabled";
-	el.scrollIntoView({block: "center", inline: "center", behavior: "instant"});`, q, q, q)
-}
-
-// clickScript clicks the element with ref.
-func clickScript(ref string) string {
-	return findRef(ref) + `
-	for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-		el.dispatchEvent(new (type.startsWith("pointer") ? PointerEvent : MouseEvent)(type, {bubbles: true, cancelable: true, view: window}));
-	}
-	if (el.focus) el.focus();
-	el.click();
-	return "";`
-}
-
-// typeScript types text into the element with ref, replacing what it
-// says, and with enter submits it, as Return would.
-func typeScript(ref, text string, enter bool) string {
-	t, _ := json.Marshal(text)
-	return findRef(ref) + fmt.Sprintf(`
-	const text = %s;
-	if (el.focus) el.focus();
-	if (el.isContentEditable) {
-		document.execCommand("selectAll");
-		document.execCommand("insertText", false, text);
-	} else if ("value" in el) {
-		const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-		const set = Object.getOwnPropertyDescriptor(proto, "value");
-		if (set && set.set) set.set.call(el, text); else el.value = text;
-		el.dispatchEvent(new InputEvent("input", {bubbles: true, data: text, inputType: "insertText"}));
-		el.dispatchEvent(new Event("change", {bubbles: true}));
-	} else {
-		return "element " + %s + " doesn't take text";
-	}
-	if (%t) {
-		const opts = {key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true};
-		const go = el.dispatchEvent(new KeyboardEvent("keydown", opts));
-		el.dispatchEvent(new KeyboardEvent("keypress", opts));
-		el.dispatchEvent(new KeyboardEvent("keyup", opts));
-		if (go && el.form && el.tagName !== "TEXTAREA") {
-			if (el.form.requestSubmit) el.form.requestSubmit(); else el.form.submit();
-		}
-	}
-	return "";`, t, mustJSON(ref), enter)
-}
-
-func mustJSON(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
+func act(ctx context.Context, p *mygo.Page, js string) error { return browserpane.Act(ctx, p, js) }
+func findRef(ref string) string                              { return browserpane.FindRef(ref) }
+func clickScript(ref string) string                          { return browserpane.ClickScript(ref) }
+func typeScript(ref, text string, enter bool) string         { return browserpane.TypeScript(ref, text, enter) }
+func mustJSON(s string) string                               { return browserpane.MustJSON(s) }

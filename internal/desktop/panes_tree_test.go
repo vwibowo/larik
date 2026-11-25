@@ -200,7 +200,7 @@ func TestPanesInTheWindow(t *testing.T) {
 	mu.Unlock()
 	frameUntil(t, mu, tt, "every pane's larik", func() bool {
 		for _, tb := range tabs {
-			if !strings.Contains(tb.term.Text(), "args:") {
+			if !strings.Contains(tb.terminal().Text(), "args:") {
 				return false
 			}
 		}

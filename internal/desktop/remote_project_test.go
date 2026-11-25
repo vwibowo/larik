@@ -37,7 +37,7 @@ func TestRemoteChangesActionsStayOnHost(t *testing.T) {
 	if read == nil || read.Root != repo || len(read.Files) != 1 || read.Files[0].New != "one\ntwo\n" {
 		t.Fatalf("remote read: %+v", read)
 	}
-	if got := changesLocal(read, "devbox", compareCommit).root; got != remotePath("devbox", repo) {
+	if got := changesLocal(read, "devbox", compareCommit).Root; got != remotePath("devbox", repo) {
 		t.Fatalf("client root: %q", got)
 	}
 	call(remoteProjectRequest{Op: "stage", Path: "a.txt"})

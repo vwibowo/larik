@@ -33,8 +33,8 @@ func TestFilesMultiSelectAndBulkTrash(t *testing.T) {
 	if err := tt.ClickWith(ui.Super, "go.sum"); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(tb.files.picked, []string{filepath.Join(root, "README.md"), filepath.Join(root, "go.sum")}) {
-		t.Fatalf("picked %q", tb.files.picked)
+	if !slices.Equal(tb.filesState().Picked, []string{filepath.Join(root, "README.md"), filepath.Join(root, "go.sum")}) {
+		t.Fatalf("picked %q", tb.filesState().Picked)
 	}
 	if err := tt.RightClick("README.md"); err != nil {
 		t.Fatal(err)
@@ -56,8 +56,8 @@ func TestFilesMultiSelectAndBulkTrash(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "go.sum")); err != nil {
 		t.Fatalf("failed item lost: %v", err)
 	}
-	if !slices.Equal(tb.files.picked, []string{filepath.Join(root, "go.sum")}) {
-		t.Fatalf("failed selection %q", tb.files.picked)
+	if !slices.Equal(tb.filesState().Picked, []string{filepath.Join(root, "go.sum")}) {
+		t.Fatalf("failed selection %q", tb.filesState().Picked)
 	}
 	if !strings.Contains(a.notice, "1 failed") {
 		t.Fatalf("missing failure summary: %q", a.notice)
@@ -209,30 +209,30 @@ func TestFilesSelectionKeysAndPDFClassification(t *testing.T) {
 	if err := tt.ClickWith(ui.Shift, "go.sum"); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(tb.files.picked, []string{filepath.Join(root, "go.sum"), filepath.Join(root, "README.md")}) {
-		t.Fatalf("range %q", tb.files.picked)
+	if !slices.Equal(tb.filesState().Picked, []string{filepath.Join(root, "go.sum"), filepath.Join(root, "README.md")}) {
+		t.Fatalf("range %q", tb.filesState().Picked)
 	}
 	tt.Key(ui.Super, ui.KeyA)
 	tt.Frame()
-	if len(tb.files.picked) != len(tb.files.lastRows) {
-		t.Fatalf("select all: %d of %d", len(tb.files.picked), len(tb.files.lastRows))
+	if len(tb.filesState().Picked) != len(tb.filesState().LastRows) {
+		t.Fatalf("select all: %d of %d", len(tb.filesState().Picked), len(tb.filesState().LastRows))
 	}
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
-	if len(tb.files.picked) != 0 || tb.files.selected != "" {
-		t.Fatalf("escape left selection: %q %q", tb.files.picked, tb.files.selected)
+	if len(tb.filesState().Picked) != 0 || tb.filesState().Selected != "" {
+		t.Fatalf("escape left selection: %q %q", tb.filesState().Picked, tb.filesState().Selected)
 	}
 	pdf := filepath.Join(root, "report.pdf")
 	if err := os.WriteFile(pdf, []byte("%PDF-1.4\nminimal fixture"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if p := readFilePreview(pdf); !p.pdf || p.note != "" {
+	if p := readFilePreview(pdf); !p.Pdf || p.Note != "" {
 		t.Fatalf("PDF classification: %+v", p)
 	}
 	if err := os.WriteFile(pdf, []byte("not a PDF"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if p := readFilePreview(pdf); p.pdf || !strings.Contains(p.note, "could not") {
+	if p := readFilePreview(pdf); p.Pdf || !strings.Contains(p.Note, "could not") {
 		t.Fatalf("invalid PDF: %+v", p)
 	}
 }

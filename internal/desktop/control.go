@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"larik/internal/desktop/panes"
 	"larik/internal/session"
 	"larik/internal/status"
 )
@@ -134,9 +135,9 @@ func (a *App) control(req Request) Response {
 	case "wait":
 		return a.wait(req)
 	case "page":
-		return a.pageControl(req)
+		return a.paneControl(panes.Browser, req)
 	case "database":
-		return a.databaseControl(req)
+		return a.paneControl(panes.Database, req)
 	case "status":
 		return a.controlStatus(req)
 	case "allow", "deny":
@@ -243,35 +244,35 @@ func (a *App) command(req Request) Response {
 	}
 	switch req.Cmd {
 	case "send", "read":
-		if t.browser {
+		if t.isBrowser() {
 			return Response{Error: "a browser tab has no terminal"}
 		}
-		if t.files != nil {
+		if t.filesState() != nil {
 			return Response{Error: "a Files tab has no terminal"}
 		}
-		if t.database != nil {
+		if t.databaseState() != nil {
 			return Response{Error: "a Database tab has no terminal"}
 		}
 	}
 	switch req.Cmd {
 	case "send":
-		if t.exited || t.term == nil {
+		if t.exited || t.terminal() == nil {
 			return Response{Error: "the tab's larik has exited"}
 		}
 		if strings.ContainsAny(req.Text, "\r\n") {
-			t.term.Paste(req.Text) // as one, not a line at a time
+			t.terminal().Paste(req.Text) // as one, not a line at a time
 		} else {
-			t.term.Send([]byte(req.Text))
+			t.terminal().Send([]byte(req.Text))
 		}
 		if req.Enter {
-			t.term.Send([]byte("\r"))
+			t.terminal().Send([]byte("\r"))
 		}
 	case "read":
-		if t.term == nil {
+		if t.terminal() == nil {
 			return Response{Error: "the tab has no terminal"}
 		}
 		info := a.tabInfo(t)
-		return Response{Tab: &info, Text: lastLines(t.term.Text(), req.Lines)}
+		return Response{Tab: &info, Text: lastLines(t.terminal().Text(), req.Lines)}
 	case "focus":
 		a.activate(t)
 		if a.raise != nil {
@@ -323,26 +324,40 @@ func (a *App) controlOpen(req Request) Response {
 				t = a.sessionTab(s.Path)
 			}
 			if t != nil && req.Prompt != "" && !t.exited {
-				t.term.Send([]byte(req.Prompt + "\r"))
+				t.terminal().Send([]byte(req.Prompt + "\r"))
 			}
 		}
 	case req.Files:
+		variant, enabled := paneVariantFor(panes.Files)
+		if !enabled {
+			return Response{Error: "Files panes are unavailable"}
+		}
 		if req.Cwd == "" {
 			return Response{Error: "open --files needs a directory"}
 		}
-		t = a.startFiles(req.Cwd)
+		t = variant.start(a, req.Cwd)
 	case req.Database:
+		variant, enabled := paneVariantFor(panes.Database)
+		if !enabled {
+			return Response{Error: "Database panes are unavailable"}
+		}
 		if req.Cwd == "" {
 			return Response{Error: "open --database needs a directory"}
 		}
-		t = a.startDatabase(req.Cwd)
+		t = variant.start(a, req.Cwd)
 	case req.URL != "":
+		if _, enabled := paneVariantFor(panes.Browser); !enabled {
+			return Response{Error: "Browser panes are unavailable"}
+		}
 		u, ok := normalizeURL(req.URL)
 		if !ok {
 			return Response{Error: fmt.Sprintf("%q isn't a web address", req.URL)}
 		}
 		t = a.startBrowser(u)
 	case req.Shell || req.Run != "":
+		if _, enabled := paneVariantFor(panes.Terminal); !enabled {
+			return Response{Error: "Terminal panes are unavailable"}
+		}
 		if req.Cwd == "" {
 			return Response{Error: "open needs a directory for the terminal"}
 		}
@@ -683,7 +698,7 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	st := a.tabStatus(t)
 	info := TabInfo{
 		ID: t.id, Path: t.path, Dir: t.dir, Title: a.tabTitle(t),
-		Kind: "larik", Run: t.run,
+		Kind: string(a.tabPaneKind(t)), Run: t.run,
 		State: string(st.State), Wants: string(st.Kind), Msg: st.Msg,
 		Ports:   a.ports[t.path],
 		Shown:   a.shown(t),
@@ -693,20 +708,8 @@ func (a *App) tabInfo(t *tab) TabInfo {
 	if w := a.workspaceOf(t); w != nil {
 		info.Workspace = w.id
 	}
-	if t.shell() {
-		info.Kind = "terminal"
-	}
-	if t.browser {
-		info.Kind, info.URL = "browser", t.url
-	}
-	if t.files != nil {
-		info.Kind = "files"
-	}
-	if t.database != nil {
-		info.Kind = "database"
-	}
-	if t.chooser {
-		info.Kind = "chooser"
+	if t.isBrowser() {
+		info.URL = t.browserState().URL
 	}
 	if s, _, ok := a.find(t.path); ok {
 		info.Session = s.ID

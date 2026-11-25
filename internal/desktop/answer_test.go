@@ -71,7 +71,7 @@ func TestAnswerInPlace(t *testing.T) {
 		t.Fatalf("answering: notice %q", a.notice)
 	}
 	mu.Unlock()
-	frameUntil(t, mu, tt, "the key in the tab", func() bool { return strings.Contains(tb.term.Text(), "got:1") })
+	frameUntil(t, mu, tt, "the key in the tab", func() bool { return strings.Contains(tb.terminal().Text(), "got:1") })
 
 	// larik takes it and goes on: nothing to say, and the buttons are
 	// back without waiting out the check.
@@ -199,5 +199,5 @@ func TestAnswerFromNotification(t *testing.T) {
 	}
 	mu.Unlock()
 	tt := ui.NewTester(a.view, 1240, 800)
-	frameUntil(t, mu, tt, "the key in the tab", func() bool { return strings.Contains(tb.term.Text(), "got:2") })
+	frameUntil(t, mu, tt, "the key in the tab", func() bool { return strings.Contains(tb.terminal().Text(), "got:2") })
 }

@@ -39,6 +39,12 @@ After changing code, refresh the knowledge graph used by the project's agent ins
 graphify update .
 ```
 
+## Desktop pane variants
+
+The Desktop window keeps tab identity, tiling, workspaces, and host transport in `internal/desktop`. `pane_registry.go` is the ordered list of enabled pane kinds and their creation and rendering adapters, including the Changes side pane. Tab-local Terminal, Browser, Database, Files, and Chooser state implements `panes.Content`, which gives the window a kind and cleanup method. Terminal, Browser, and Files state live under their respective `internal/desktop/panes/` packages; Terminal state owns the emulator for both Larik sessions and shell panes. Browser owns navigation, site permissions, downloads, and its chrome markup. Files owns its tree, preview, and dialog rendering, selection, context menu decisions, and local readers; window callbacks handle remote reads and file operations. The Changes side pane state, local Git reads and actions, and hunk transforms live in `panes/changes`; window callbacks remain in `desktop`. The Database package owns rendering, query operations, connection profiles, SQL completion, and CSV encoding. The shared Database state and saved-view types live in `panes/` so legacy state and disabled-pane adapters compile without the optional package. Only `pane_registry.go` imports `panes/database`. Pane descriptors supply the chooser and File menu in the same order; removing Database means deleting its folder and the Database registration in that file.
+
+Saved tabs, named layouts, and recently closed panes carry kind-tagged snapshots. The window still reads older saved fields. When a kind is unavailable, restoration skips that tab and keeps the other panes; its control command returns an unavailable error. Keep the exported Desktop command JSON stable when moving code across these packages.
+
 ## Add a built-in tool
 
 1. Implement `tools.Tool` in `internal/tools` (or in its own package if it has dependencies, like `web` or `lsp`):

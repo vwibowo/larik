@@ -119,7 +119,7 @@ func TestChangesPane(t *testing.T) {
 
 	heads := headCache{}
 	r := readChanges(filepath.Join(repo, "docs"), heads, compareCommit)
-	root, reads, more, err := r.root, r.snaps, r.more, r.err
+	root, reads, more, err := r.Root, r.Snaps, r.More, r.Err
 	if err != nil || more != 0 {
 		t.Fatal(err, more)
 	}
@@ -128,27 +128,27 @@ func TestChangesPane(t *testing.T) {
 	}
 	got := map[string]fileRead{}
 	for _, r := range reads {
-		got[r.path] = r
+		got[r.Path] = r
 	}
-	if m := got["main.go"]; strings.TrimSpace(m.code) != "M" || m.adds != 3 || m.dels != 1 || !strings.Contains(m.old, "func main() {}") || !strings.Contains(m.new, "println") {
+	if m := got["main.go"]; strings.TrimSpace(m.Code) != "M" || m.Adds != 3 || m.Dels != 1 || !strings.Contains(m.Old, "func main() {}") || !strings.Contains(m.New, "println") {
 		t.Errorf("main.go: %+v", m)
 	}
-	if g := got["gone.txt"]; strings.TrimSpace(g.code) != "D" || g.old != "bye\n" || g.new != "" {
+	if g := got["gone.txt"]; strings.TrimSpace(g.Code) != "D" || g.Old != "bye\n" || g.New != "" {
 		t.Errorf("gone.txt: %+v", g)
 	}
-	if n := got["docs/new file.md"]; n.code != "??" || n.new != "# New\n" || n.adds != 1 {
+	if n := got["docs/new file.md"]; n.Code != "??" || n.New != "# New\n" || n.Adds != 1 {
 		t.Errorf("new file: %+v", n)
 	}
-	if b := got["logo.bin"]; b.note != "binary" {
+	if b := got["logo.bin"]; b.Note != "binary" {
 		t.Errorf("binary: %+v", b)
 	}
 
 	a := New(Options{})
-	ch := &changes{dir: repo}
+	ch := newChanges(repo)
 	ch.apply(r)
-	first := ch.files[0].parts[0].diff
+	first := ch.Files[0].parts[0].diff
 	ch.apply(r)
-	if ch.files[0].parts[0].diff != first {
+	if ch.Files[0].parts[0].diff != first {
 		t.Error("a file keeps its viewer across reads")
 	}
 	tt := ui.NewTester(func(c *ui.Context) { a.changesPane(c, a.palette(ui.DarkTheme()), ch) }, 640, 800)
@@ -188,16 +188,16 @@ func TestChangesPane(t *testing.T) {
 	for key := range heads {
 		heads[key] = "from the cache\n"
 	}
-	again := readChanges(repo, heads, compareCommit).snaps
+	again := readChanges(repo, heads, compareCommit).Snaps
 	for _, r := range again {
-		if r.path == "main.go" && r.old != "from the cache\n" {
-			t.Errorf("main.go read HEAD again: %q", r.old)
+		if r.Path == "main.go" && r.Old != "from the cache\n" {
+			t.Errorf("main.go read HEAD again: %q", r.Old)
 		}
 	}
 	run("commit", "-qam", "next")
-	again = readChanges(repo, heads, compareCommit).snaps
+	again = readChanges(repo, heads, compareCommit).Snaps
 	for _, r := range again {
-		if r.path == "main.go" {
+		if r.Path == "main.go" {
 			t.Errorf("main.go still changed after committing it: %+v", r)
 		}
 	}
@@ -205,7 +205,7 @@ func TestChangesPane(t *testing.T) {
 		t.Errorf("the cache kept %d texts for %d changes", len(heads), len(again))
 	}
 
-	err = readChanges(t.TempDir(), headCache{}, compareCommit).err
+	err = readChanges(t.TempDir(), headCache{}, compareCommit).Err
 	if err == nil || !strings.Contains(err.Error(), "not in a git repository") {
 		t.Errorf("outside a repository: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	tt.SetDark(true)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "both panes' larik", func() bool {
-		return strings.Contains(main.term.Text(), "args:") && strings.Contains(right.term.Text(), "args: tab:"+right.id)
+		return strings.Contains(main.terminal().Text(), "args:") && strings.Contains(right.terminal().Text(), "args: tab:"+right.id)
 	})
 	mu.Lock()
 	tt.Frame()
@@ -306,7 +306,7 @@ func TestSplitAndChangesInTheWindow(t *testing.T) {
 	}
 	ch := a.changes
 	mu.Unlock()
-	frameUntil(t, mu, tt, "changes", func() bool { return ch.loaded })
+	frameUntil(t, mu, tt, "changes", func() bool { return ch.Loaded })
 	mu.Lock()
 	defer mu.Unlock()
 	tt.Frame()
@@ -476,7 +476,7 @@ func TestOpenInSplitAndFork(t *testing.T) {
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "forked larik", func() bool {
-		return strings.Contains(forked.term.Text(), "args:--resume "+site.ID+" --fork tab:")
+		return strings.Contains(forked.terminal().Text(), "args:--resume "+site.ID+" --fork tab:")
 	})
 }
 
@@ -596,11 +596,11 @@ func TestSearchKeyFromTheTerminal(t *testing.T) {
 	a.selectStart()
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
-	frameUntil(t, mu, tt, "larik to start", func() bool { return shownAt(a, 0).term.Text() != "" })
+	frameUntil(t, mu, tt, "larik to start", func() bool { return shownAt(a, 0).terminal().Text() != "" })
 	mu.Lock()
 	tt.Type("zq") // echoed only if the terminal has the keyboard
 	mu.Unlock()
-	frameUntil(t, mu, tt, "typing to reach the terminal", func() bool { return strings.Contains(shownAt(a, 0).term.Text(), "zq") })
+	frameUntil(t, mu, tt, "typing to reach the terminal", func() bool { return strings.Contains(shownAt(a, 0).terminal().Text(), "zq") })
 	mu.Lock()
 	defer mu.Unlock()
 	mod := ui.Ctrl | ui.Shift
@@ -609,8 +609,8 @@ func TestSearchKeyFromTheTerminal(t *testing.T) {
 	}
 	tt.Key(mod, ui.KeyK)
 	tt.Frame()
-	if !tt.Focused("Search sessions ("+keyLabel(false, "K")+")") || !strings.Contains(shownAt(a, 0).term.Text(), "zq") {
-		t.Fatalf("search focused %v, terminal %q", tt.Focused("Search sessions ("+keyLabel(false, "K")+")"), shownAt(a, 0).term.Text())
+	if !tt.Focused("Search sessions ("+keyLabel(false, "K")+")") || !strings.Contains(shownAt(a, 0).terminal().Text(), "zq") {
+		t.Fatalf("search focused %v, terminal %q", tt.Focused("Search sessions ("+keyLabel(false, "K")+")"), shownAt(a, 0).terminal().Text())
 	}
 }
 
@@ -691,15 +691,15 @@ func TestZoomSizesEveryTab(t *testing.T) {
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
 	frameUntil(t, mu, tt, "both terminals sized", func() bool {
-		l, _ := left.term.Size()
-		r, _ := right.term.Size()
+		l, _ := left.terminal().Size()
+		r, _ := right.terminal().Size()
 		return l > 0 && r > 0
 	})
 	mu.Lock()
 	defer mu.Unlock()
 	cols := func() (int, int) {
-		l, _ := left.term.Size()
-		r, _ := right.term.Size()
+		l, _ := left.terminal().Size()
+		r, _ := right.terminal().Size()
 		return l, r
 	}
 	l0, r0 := cols()
@@ -764,7 +764,7 @@ func TestFindInTheTerminal(t *testing.T) {
 	tb := shownAt(a, 0)
 	tt := ui.NewTester(a.view, 1240, 800)
 	mu.Unlock()
-	frameUntil(t, mu, tt, "larik to start", func() bool { return strings.Contains(tb.term.Text(), "dir:") })
+	frameUntil(t, mu, tt, "larik to start", func() bool { return strings.Contains(tb.terminal().Text(), "dir:") })
 	mod := ui.Ctrl | ui.Shift
 	if runtime.GOOS == "darwin" {
 		mod = ui.Super
@@ -1094,13 +1094,13 @@ func TestChangesFollowTheMainTab(t *testing.T) {
 	a.toggleChanges()
 	tt := ui.NewTester(a.view, 1240, 800)
 	tt.Frame()
-	if a.changes == nil || a.changes.dir != one {
+	if a.changes == nil || a.changes.Dir != one {
 		t.Fatalf("changes for %v", a.changes)
 	}
-	watcher := a.changes.stop
+	watcher := a.changes.Stop
 	a.activate(second)
 	tt.Frame()
-	if a.changes == nil || a.changes.dir != two {
+	if a.changes == nil || a.changes.Dir != two {
 		t.Fatalf("after switching tabs, changes for %v", a.changes)
 	}
 	select {
@@ -1431,7 +1431,7 @@ func TestRestartAFailedTab(t *testing.T) {
 	a.newTab(t.TempDir(), "", "")
 	a.selectSession(site.Path)
 	tb := a.focused()
-	first := tb.term
+	first := tb.terminal()
 	mu.Unlock()
 
 	first.Send([]byte("3\r"))
@@ -1447,7 +1447,7 @@ func TestRestartAFailedTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.exited || tb.term == first || len(a.tabs) != 2 || a.tabs[1] != tb || a.focused() != tb {
+	if tb.exited || tb.terminal() == first || len(a.tabs) != 2 || a.tabs[1] != tb || a.focused() != tb {
 		t.Fatalf("restarted: exited %v, %d panes, focused %v", tb.exited, len(a.tabs), a.focused())
 	}
 	if tt.HasText("Restart") {
@@ -1455,7 +1455,7 @@ func TestRestartAFailedTab(t *testing.T) {
 	}
 	mu.Unlock()
 	waitFor(t, mu, "larik resumed", func() bool {
-		return strings.Contains(tb.term.Text(), "args:--resume "+site.ID+" tab:"+tb.id)
+		return strings.Contains(tb.terminal().Text(), "args:--resume "+site.ID+" tab:"+tb.id)
 	})
 	// The first larik's end, already handled, doesn't end the new one.
 	mu.Lock()
@@ -1465,16 +1465,16 @@ func TestRestartAFailedTab(t *testing.T) {
 
 	// The tab menu restarts one too.
 	mu.Unlock()
-	tb.term.Send([]byte("4\r"))
+	tb.terminal().Send([]byte("4\r"))
 	waitFor(t, mu, "failed again", func() bool { return tb.exited })
 	mu.Lock()
-	second := tb.term
+	second := tb.terminal()
 	tt.Frame()
 	if err := tt.Click("Restart"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tb.exited || tb.term == second {
+	if tb.exited || tb.terminal() == second {
 		t.Fatal("the tab menu didn't restart it")
 	}
 }
@@ -2090,7 +2090,7 @@ func TestSettingsWindowAndAdvancedEditor(t *testing.T) {
 	}
 	mu.Unlock()
 	frameUntil(t, mu, tt, "larik /config", func() bool {
-		text := tab.term.Text()
+		text := tab.terminal().Text()
 		return strings.Contains(text, "args:/config tab:") && strings.Contains(text, filepath.Base(repo))
 	})
 }

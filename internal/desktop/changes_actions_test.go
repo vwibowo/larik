@@ -38,29 +38,29 @@ func TestChangesActions(t *testing.T) {
 	a, mu := serialApp(Options{})
 	var opened string
 	a.openExternal = func(url string) { opened = url }
-	ch := &changes{dir: repo, stop: make(chan struct{}), kick: make(chan struct{}, 1)}
+	ch := newChanges(repo)
 	read := func() {
 		t.Helper()
-		r := readChanges(repo, headCache{}, ch.against)
+		r := readChanges(repo, headCache{}, ch.Against)
 		mu.Lock()
 		ch.apply(r)
 		mu.Unlock()
 	}
 	done := func(what string) {
 		t.Helper()
-		waitFor(t, mu, what, func() bool { return ch.busy == "" })
+		waitFor(t, mu, what, func() bool { return ch.Busy == "" })
 		read()
 	}
 	codes := func() map[string]string {
 		m := map[string]string{}
-		for _, f := range ch.files {
+		for _, f := range ch.Files {
 			m[f.path] = f.code
 		}
 		return m
 	}
 	read()
-	if ch.branch != "feature" || ch.base != "main" || !ch.remote || !ch.canPullRequest() || len(ch.files) != 3 {
-		t.Fatalf("read: branch %q base %q remote %v, %v", ch.branch, ch.base, ch.remote, codes())
+	if ch.Branch != "feature" || ch.Base != "main" || !ch.Remote || !ch.canPullRequest() || len(ch.Files) != 3 {
+		t.Fatalf("read: branch %q base %q remote %v, %v", ch.Branch, ch.Base, ch.Remote, codes())
 	}
 	pane := ui.NewTester(func(c *ui.Context) { a.changesPane(c, a.palette(ui.DarkTheme()), ch) }, 640, 800)
 	pane.SetDark(true)
@@ -84,7 +84,7 @@ func TestChangesActions(t *testing.T) {
 		t.Fatalf("staged: %q", c)
 	}
 	mu.Lock()
-	ch.message = "Two lines"
+	ch.Message = "Two lines"
 	pane.Frame()
 	if err := pane.Click("Commit"); err != nil {
 		mu.Unlock()
@@ -93,13 +93,13 @@ func TestChangesActions(t *testing.T) {
 	mu.Unlock()
 	done("the commit")
 	mu.Lock()
-	if _, ok := codes()["a.txt"]; ok || len(ch.files) != 2 || !strings.HasPrefix(a.notice, "Committed ") || !strings.HasSuffix(a.notice, " Two lines.") || ch.message != "" {
+	if _, ok := codes()["a.txt"]; ok || len(ch.Files) != 2 || !strings.HasPrefix(a.notice, "Committed ") || !strings.HasSuffix(a.notice, " Two lines.") || ch.Message != "" {
 		mu.Unlock()
-		t.Fatalf("after the commit: %v %q %q", codes(), a.notice, ch.message)
+		t.Fatalf("after the commit: %v %q %q", codes(), a.notice, ch.Message)
 	}
 	// Discarding asks first: the new file goes, the deleted one comes back.
 	for _, name := range []string{"n.txt", "d.txt"} {
-		for _, f := range ch.files {
+		for _, f := range ch.Files {
 			if f.path == name {
 				a.askDiscard(ch, f)
 			}
@@ -119,7 +119,7 @@ func TestChangesActions(t *testing.T) {
 		mu.Lock()
 	}
 	mu.Unlock()
-	if len(ch.files) != 0 {
+	if len(ch.Files) != 0 {
 		t.Fatalf("after discarding: %v", codes())
 	}
 	if _, err := os.Stat(filepath.Join(repo, "n.txt")); !os.IsNotExist(err) {

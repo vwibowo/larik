@@ -68,8 +68,8 @@ func benchmarkChangedRepo(b *testing.B) (string, headCache) {
 		}
 	}
 	heads := headCache{}
-	if got := readChanges(dir, heads, compareCommit); got.err != nil || len(got.snaps) != maxChangedFiles {
-		b.Fatalf("warm read: %v, %d files", got.err, len(got.snaps))
+	if got := readChanges(dir, heads, compareCommit); got.Err != nil || len(got.Snaps) != maxChangedFiles {
+		b.Fatalf("warm read: %v, %d files", got.Err, len(got.Snaps))
 	}
 	return dir, heads
 }
@@ -81,8 +81,8 @@ func BenchmarkChangesIdle(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if got := readChanges(dir, heads, compareCommit); got.err != nil {
-			b.Fatal(got.err)
+		if got := readChanges(dir, heads, compareCommit); got.Err != nil {
+			b.Fatal(got.Err)
 		}
 	}
 }

@@ -45,7 +45,7 @@ type remoteFileReply struct {
 func wireEntries(entries []fileEntry) []remoteFileEntry {
 	out := make([]remoteFileEntry, len(entries))
 	for i, e := range entries {
-		out[i] = remoteFileEntry{Path: e.path, Dir: e.dir}
+		out[i] = remoteFileEntry{Path: e.Path, Dir: e.Dir}
 	}
 	return out
 }
@@ -53,7 +53,7 @@ func wireEntries(entries []fileEntry) []remoteFileEntry {
 func localEntries(entries []remoteFileEntry, host string) []fileEntry {
 	out := make([]fileEntry, len(entries))
 	for i, e := range entries {
-		out[i] = fileEntry{path: remotePath(host, e.Path), dir: e.Dir}
+		out[i] = fileEntry{Path: remotePath(host, e.Path), Dir: e.Dir}
 	}
 	return out
 }
@@ -98,12 +98,12 @@ func (h *host) fileRequest(req remoteFileRequest) (remoteFileReply, error) {
 		}
 		found := findFiles(ctx, req.Root, req.Query, req.Hidden, req.Ignored)
 		out.Tree = map[string][]remoteFileEntry{}
-		for path, entries := range found.tree {
+		for path, entries := range found.Tree {
 			out.Tree[path] = wireEntries(entries)
 		}
-		out.Matches, out.More = found.matches, found.more
-		if found.err != "" {
-			return out, errors.New(found.err)
+		out.Matches, out.More = found.Matches, found.More
+		if found.Err != "" {
+			return out, errors.New(found.Err)
 		}
 		return out, ctx.Err()
 	case "preview":

@@ -266,6 +266,9 @@ func (g *windowGroup) control(req Request) Response {
 		return Response{Error: "no such window"}
 	}
 	if req.Cmd == "database" {
+		if _, enabled := paneVariantFor("database"); !enabled {
+			return Response{Error: "Database panes are unavailable"}
+		}
 		if req.Op == "list" {
 			out := Response{Database: &DatabaseResponse{}}
 			for _, a := range g.apps() {
@@ -459,7 +462,7 @@ func (g *windowGroup) overflow(src *App, t *tab) bool {
 	}
 	// Non-hosted terminal processes cannot be moved between windows without
 	// restarting them. Keep those in the existing grid.
-	if t.term != nil && !t.hosted {
+	if t.terminal() != nil && !t.hosted {
 		return false
 	}
 	var e *windowEntry
@@ -489,25 +492,14 @@ func (g *windowGroup) overflow(src *App, t *tab) bool {
 	}
 	var opened *tab
 	switch {
-	case t.chooser:
+	case t.chooserState() != nil:
 		opened = b.newChooser(t.dir)
-	case t.browser:
-		opened = b.startBrowser(t.url)
-		if opened != nil {
-			opened.dir = t.dir
-		}
-	case t.files != nil:
-		opened = b.startFiles(t.dir)
-	case t.database != nil:
-		opened = b.startDatabase(t.dir)
-		restoreDatabaseView(opened.database, saveDatabaseView(t.database))
-		if opened.database.profile != "" {
-			b.loadDatabaseSchema(opened)
-		}
 	case t.hosted:
 		if h, ok := src.hostedTabs()[t.id]; ok {
 			opened = b.attachTab(h, t.path)
 		}
+	case t.path == "" && !t.shell():
+		opened = b.restoreSnapshot(src.snapshotTab(t), agentResume{})
 	}
 	if opened == nil {
 		if created {

@@ -32,7 +32,7 @@ func TestSavedPanesStayInTheirWindowDuringRestore(t *testing.T) {
 		t.Fatal("restoring a saved pane must not create another window")
 		return true
 	}
-	one, two := &tab{id: "one", chooser: true}, &tab{id: "two", chooser: true}
+	one, two := &tab{id: "one", pane: &choice{}}, &tab{id: "two", pane: &choice{}}
 	a.tabs = []*tab{one, two}
 	a.activate(one)
 	a.activate(two)
@@ -65,7 +65,7 @@ func TestWindowGroupReadsOwnedHostTabs(t *testing.T) {
 
 func TestWindowGroupRoutesAndReportsOneFocus(t *testing.T) {
 	main, child := New(Options{}), New(Options{})
-	one, two := &tab{id: "main-pane", browser: true, url: blankPage}, &tab{id: "child-pane", browser: true, url: blankPage}
+	one, two := &tab{id: "main-pane", pane: &browserState{URL: blankPage}}, &tab{id: "child-pane", pane: &browserState{URL: blankPage}}
 	main.tabs, child.tabs = []*tab{one}, []*tab{two}
 	main.activate(one)
 	child.activate(two)

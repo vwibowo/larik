@@ -76,7 +76,7 @@ func TestRenderedPlanRequestsChanges(t *testing.T) {
 		t.Fatalf("feedback prompt: notice %q, pending %v", a.notice, a.answered)
 	}
 	mu.Unlock()
-	frameUntil(t, mu, view, "request changes key", func() bool { return strings.Contains(tb.term.Text(), "got:n") })
+	frameUntil(t, mu, view, "request changes key", func() bool { return strings.Contains(tb.terminal().Text(), "got:n") })
 }
 
 func TestRenderedPlanApprovals(t *testing.T) {
@@ -119,7 +119,7 @@ func TestRenderedPlanApprovals(t *testing.T) {
 				t.Fatal(err)
 			}
 			mu.Unlock()
-			frameUntil(t, mu, view, "plan approval key", func() bool { return strings.Contains(tb.term.Text(), "got:"+tc.key) })
+			frameUntil(t, mu, view, "plan approval key", func() bool { return strings.Contains(tb.terminal().Text(), "got:"+tc.key) })
 		})
 	}
 }

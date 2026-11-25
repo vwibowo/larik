@@ -7,15 +7,15 @@ import (
 
 func TestSyncPageURLAfterClientSideNavigation(t *testing.T) {
 	a := &App{update: func(fn func()) { fn() }}
-	tab := &tab{url: "http://localhost/", addr: "http://localhost/"}
+	tab := &tab{pane: &browserState{URL: "http://localhost/", Address: "http://localhost/"}}
 	a.syncPageURL(tab, "http://localhost/route")
-	if tab.url != "http://localhost/route" || tab.addr != tab.url {
-		t.Fatalf("URL = %q, address = %q", tab.url, tab.addr)
+	if tab.browserState().URL != "http://localhost/route" || tab.browserState().Address != tab.browserState().URL {
+		t.Fatalf("URL = %q, address = %q", tab.browserState().URL, tab.browserState().Address)
 	}
-	tab.addr = "unfinished address"
+	tab.browserState().Address = "unfinished address"
 	a.syncPageURL(tab, "http://localhost/another")
-	if tab.url != "http://localhost/another" || tab.addr != "unfinished address" {
-		t.Fatalf("URL = %q, address = %q", tab.url, tab.addr)
+	if tab.browserState().URL != "http://localhost/another" || tab.browserState().Address != "unfinished address" {
+		t.Fatalf("URL = %q, address = %q", tab.browserState().URL, tab.browserState().Address)
 	}
 }
 

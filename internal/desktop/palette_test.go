@@ -56,8 +56,9 @@ func TestPaletteItems(t *testing.T) {
 	one := &tab{id: "t1", dir: "/work", path: fix.Path}
 	a.tabs = []*tab{one}
 	a.activate(one)
-	a.changes = &changes{loaded: true, branch: "larik/fix", base: "main", against: compareCommit,
-		files: []*fileChange{{path: "a.go", code: " M"}, {path: "b.go", code: "M "}}}
+	a.changes = &changes{}
+	a.changes.Loaded, a.changes.Branch, a.changes.Base, a.changes.Against = true, "larik/fix", "main", compareCommit
+	a.changes.Files = []*fileChange{{path: "a.go", code: " M"}, {path: "b.go", code: "M "}}
 	got = labels(a.paletteItems())
 	if got[0] != "Rename Session…" || got[1] != "Fork into a New Pane" {
 		t.Fatalf("the session's first: %q", got)

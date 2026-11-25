@@ -107,7 +107,7 @@ func (a *App) openRemotePort(path string, port int, external bool) {
 		return
 	}
 	for _, t := range a.tabs {
-		if t.browser && t.remotePort == key {
+		if t.isBrowser() && t.remotePort == key {
 			a.activate(t)
 			if t.remotePortLost {
 				a.startRemoteForward(key, false, t, path)
@@ -199,9 +199,9 @@ func (a *App) showRemotePort(key remotePortKey, local int, external bool, target
 		}
 		u += target.remoteBookmarkSuffix
 		target.remotePortLost = false
-		target.url, target.addr = u, u
-		if target.web != nil {
-			if err := target.web.Page().LoadURL(u); err != nil {
+		target.browserState().URL, target.browserState().Address = u, u
+		if target.browserState().Web != nil {
+			if err := target.browserState().Web.Page().LoadURL(u); err != nil {
 				a.notice = err.Error()
 			}
 		}
@@ -228,7 +228,7 @@ func (a *App) releaseRemoteForward(key remotePortKey) {
 		return
 	}
 	for _, t := range a.tabs {
-		if t.browser && t.remotePort == key {
+		if t.isBrowser() && t.remotePort == key {
 			return
 		}
 	}
@@ -250,7 +250,7 @@ func (a *App) dropRemoteForwards(name string) {
 		}
 	}
 	for _, t := range a.tabs {
-		if t.browser && t.remotePort.name == name {
+		if t.isBrowser() && t.remotePort.name == name {
 			t.remotePortLost = true
 		}
 	}
@@ -258,7 +258,7 @@ func (a *App) dropRemoteForwards(name string) {
 
 func (a *App) reconnectRemotePorts(srv *server) {
 	for _, t := range a.tabs {
-		if t.browser && t.remotePort.name == srv.name && t.remotePortLost {
+		if t.isBrowser() && t.remotePort.name == srv.name && t.remotePortLost {
 			a.startRemoteForward(t.remotePort, false, t, "")
 		}
 	}

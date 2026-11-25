@@ -5,15 +5,18 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"larik/internal/desktop/panes"
 )
 
 // savedState is what the window remembers across launches: the sessions
 // open as tabs, in order, how the panes showed them, and the sidebar.
 type savedState struct {
-	Version int         `json:"version,omitempty"`
-	Windows []string    `json:"windows,omitempty"` // other OS windows, in creation order
-	Recent  []closedTab `json:"recent,omitempty"`
-	Tabs    []string    `json:"tabs"` // transcript paths, "" for a terminal or browser tab
+	Version int                    `json:"version,omitempty"`
+	Windows []string               `json:"windows,omitempty"` // other OS windows, in creation order
+	Recent  []closedTab            `json:"recent,omitempty"`
+	Tabs    []string               `json:"tabs"`              // transcript paths, "" for a terminal or browser tab
+	Content map[int]panes.Snapshot `json:"content,omitempty"` // kind-tagged pane state; older fields remain readable
 	// Terminals are the terminal tabs, by their index in Tabs.
 	Terminals map[int]savedTerminal `json:"terminals,omitempty"`
 	// Browsers are the browser tabs' pages, by their index in Tabs, and
@@ -23,9 +26,9 @@ type savedState struct {
 	RemotePorts   map[int]savedRemotePort   `json:"remote_ports,omitempty"`
 	RemotePaths   map[int]string            `json:"remote_paths,omitempty"`
 	Agents        map[int]agentResume       `json:"agents,omitempty"`
-	Files         map[int]string            `json:"files,omitempty"`     // Files tab roots by tab index
+	Files         map[int]string            `json:"files,omitempty"`        // Files tab roots by tab index
 	FilesPinned   map[int]bool              `json:"files_pinned,omitempty"` // roots chosen in the Files pane
-	Databases     map[int]string            `json:"databases,omitempty"` // Database pane project roots by tab index
+	Databases     map[int]string            `json:"databases,omitempty"`    // Database pane project roots by tab index
 	DatabaseViews map[int]savedDatabaseView `json:"database_views,omitempty"`
 	Sites         map[string]bool           `json:"sites,omitempty"`
 	// Hosted are the tabs the host runs the programs of, their ids by their
@@ -94,45 +97,10 @@ type savedRemotePort struct {
 	Port int    `json:"port"`
 }
 
-type savedDatabaseView struct {
-	Profile        string  `json:"profile,omitempty"`
-	BrowserWidth   float32 `json:"browser_width,omitempty"`
-	InspectorWidth float32 `json:"inspector_width,omitempty"`
-	EditorHeight   float32 `json:"editor_height,omitempty"` // legacy percentage
-	EditorHeightPx float32 `json:"editor_height_px,omitempty"`
-	ActiveResult   int     `json:"active_result,omitempty"`
-	PageSize       int     `json:"page_size,omitempty"`
-	ShowBrowser    bool    `json:"show_browser"`
-	ShowDetails    bool    `json:"show_details"`
-}
+type savedDatabaseView = panes.DatabaseSavedView
 
-func saveDatabaseView(d *databaseState) savedDatabaseView {
-	return savedDatabaseView{Profile: d.profile, BrowserWidth: d.browserWidth, InspectorWidth: d.inspectorWidth, EditorHeightPx: d.editorHeight, ActiveResult: d.activeResult, PageSize: d.pageSize, ShowBrowser: d.showBrowser, ShowDetails: d.showDetails}
-}
-func restoreDatabaseView(d *databaseState, v savedDatabaseView) {
-	if v == (savedDatabaseView{}) {
-		return
-	}
-	d.profile = v.Profile
-	if v.BrowserWidth > 0 {
-		d.browserWidth = v.BrowserWidth
-	}
-	if v.InspectorWidth > 0 {
-		d.inspectorWidth = v.InspectorWidth
-	}
-	if v.EditorHeightPx > 0 {
-		d.editorHeight = v.EditorHeightPx
-	} else if v.EditorHeight > 0 {
-		d.legacyEditorPercent = v.EditorHeight
-	}
-	if v.ActiveResult >= databaseData && v.ActiveResult <= databaseAgent {
-		d.activeResult = v.ActiveResult
-	}
-	if v.PageSize == 25 || v.PageSize == 50 || v.PageSize == 100 || v.PageSize == 250 || v.PageSize == 500 {
-		d.pageSize = v.PageSize
-	}
-	d.showBrowser, d.showDetails = v.ShowBrowser, v.ShowDetails
-}
+func saveDatabaseView(d *databaseState) savedDatabaseView       { return panes.SaveDatabaseView(d) }
+func restoreDatabaseView(d *databaseState, v savedDatabaseView) { panes.RestoreDatabaseView(d, v) }
 
 func (a *App) statePath() string {
 	if a.windowID != "" {
@@ -144,7 +112,7 @@ func (a *App) statePath() string {
 // state is what to save now. Tabs that haven't started a session yet
 // have nothing to resume, so they are left out.
 func (a *App) state() savedState {
-	st := savedState{Version: 5, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
+	st := savedState{Version: 6, Recent: a.recent, Active: -1, Zoomed: a.zoomed, Width: a.sidebarW, Hidden: a.noSidebar, NoChooser: a.noChooser, Appearance: a.appearance, Accent: a.accent, Keys: a.keys, Font: a.fontSize, Open: map[string]bool{}}
 	if a.windowKeys != nil {
 		st.Windows = a.windowKeys()
 	}
@@ -169,7 +137,7 @@ func (a *App) state() savedState {
 	}
 	index := map[*tab]int{}
 	for _, t := range a.tabs {
-		if isRemote(t.dir) && t.files == nil && !t.browser {
+		if isRemote(t.dir) && t.filesState() == nil && !t.isBrowser() {
 			continue // the server's host has it, and the next connection shows it
 		}
 		path := t.path
@@ -186,7 +154,7 @@ func (a *App) state() savedState {
 				st.Agents[len(st.Tabs)] = t.agent
 			}
 			path = ""
-		case t.browser:
+		case t.isBrowser():
 			if st.Browsers == nil {
 				st.Browsers = map[int]string{}
 			}
@@ -194,7 +162,7 @@ func (a *App) state() savedState {
 				st.BrowserDirs = map[int]string{}
 			}
 			st.BrowserDirs[len(st.Tabs)] = t.dir
-			st.Browsers[len(st.Tabs)] = t.url
+			st.Browsers[len(st.Tabs)] = t.browserState().URL
 			if t.remotePort.port != 0 {
 				if st.RemotePorts == nil {
 					st.RemotePorts = map[int]savedRemotePort{}
@@ -209,19 +177,19 @@ func (a *App) state() savedState {
 				st.Browsers[len(st.Tabs)] = blankPage
 			}
 			path = ""
-		case t.files != nil:
+		case t.filesState() != nil:
 			if st.Files == nil {
 				st.Files = map[int]string{}
 			}
 			st.Files[len(st.Tabs)] = t.dir
-			if t.files.pinnedRoot {
+			if t.filesState().PinnedRoot {
 				if st.FilesPinned == nil {
 					st.FilesPinned = map[int]bool{}
 				}
 				st.FilesPinned[len(st.Tabs)] = true
 			}
 			path = ""
-		case t.database != nil:
+		case t.databaseState() != nil:
 			if st.Databases == nil {
 				st.Databases = map[int]string{}
 			}
@@ -229,7 +197,7 @@ func (a *App) state() savedState {
 				st.DatabaseViews = map[int]savedDatabaseView{}
 			}
 			st.Databases[len(st.Tabs)] = t.dir
-			st.DatabaseViews[len(st.Tabs)] = saveDatabaseView(t.database)
+			st.DatabaseViews[len(st.Tabs)] = saveDatabaseView(t.databaseState())
 			path = ""
 		case path == "":
 			continue
@@ -240,6 +208,10 @@ func (a *App) state() savedState {
 			}
 			st.Hosted[len(st.Tabs)] = t.id
 		}
+		if st.Content == nil {
+			st.Content = map[int]panes.Snapshot{}
+		}
+		st.Content[len(st.Tabs)] = a.snapshotTab(t)
 		if t == a.focused() {
 			st.Active = len(st.Tabs)
 		}
@@ -419,9 +391,15 @@ func (a *App) restore() bool {
 				continue
 			}
 		}
+		if content, ok := st.Content[i]; ok {
+			if content.Kind != panes.Session {
+				opened[i] = a.restoreSnapshot(content, st.Agents[i])
+				continue
+			}
+		}
 		if u, ok := st.Browsers[i]; ok {
 			if t := a.startBrowser(u); t != nil {
-				t.focusAddr = false
+				t.browserState().FocusAddress = false
 				if dir := st.BrowserDirs[i]; dir != "" {
 					t.dir = dir
 				}
@@ -438,14 +416,17 @@ func (a *App) restore() bool {
 		}
 		if dir, ok := st.Files[i]; ok {
 			opened[i] = a.startFiles(dir)
-			opened[i].files.pinnedRoot = st.FilesPinned[i]
+			opened[i].filesState().PinnedRoot = st.FilesPinned[i]
 			continue
 		}
 		if dir, ok := st.Databases[i]; ok {
+			if _, enabled := paneVariantFor(panes.Database); !enabled {
+				continue
+			}
 			opened[i] = a.startDatabase(dir)
 			if view, ok := st.DatabaseViews[i]; ok {
-				restoreDatabaseView(opened[i].database, view)
-				if opened[i].database.profile != "" {
+				restoreDatabaseView(opened[i].databaseState(), view)
+				if opened[i].databaseState().Profile != "" {
 					a.loadDatabaseSchema(opened[i])
 				}
 			}
@@ -509,7 +490,7 @@ func (a *App) restore() bool {
 		}
 		if a.focus != nil {
 			a.focusNext = a.focus.tab
-			if a.focus.tab.files == nil {
+			if a.focus.tab.filesState() == nil {
 				a.followFiles(a.focus.tab.dir)
 			}
 		}
@@ -552,7 +533,7 @@ func (a *App) restore() bool {
 			a.reconnectRemotePorts(srv)
 		}
 	}
-	if a.focus.tab.files == nil {
+	if a.focus.tab.filesState() == nil {
 		a.followFiles(a.focus.tab.dir)
 	}
 	return true

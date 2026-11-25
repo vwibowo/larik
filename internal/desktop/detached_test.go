@@ -83,7 +83,7 @@ func TestDetachTerminalSurvivesWindowAndReattaches(t *testing.T) {
 	}
 	mu2.Unlock()
 	frameUntil(t, mu2, uiTest, "same terminal screen", func() bool {
-		return strings.Contains(b.tabs[0].term.Text(), "DETACHED_ALIVE")
+		return strings.Contains(b.tabs[0].terminal().Text(), "DETACHED_ALIVE")
 	})
 	if h.list()[0].Detached {
 		t.Fatal("host still marks attached terminal detached")
@@ -204,7 +204,7 @@ func TestDetachMenuAvailability(t *testing.T) {
 	if fileHasDetach(a) {
 		t.Fatal("unhosted terminal offered Detach Pane")
 	}
-	a.activate(&tab{id: "browser", browser: true})
+	a.activate(&tab{id: "browser", pane: &browserState{}})
 	if fileHasDetach(a) {
 		t.Fatal("browser pane offered Detach Pane")
 	}

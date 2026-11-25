@@ -13,44 +13,44 @@ func paneFeedbackState(tb *tab) (message string, loading, failed bool) {
 	if tb == nil {
 		return "", false, false
 	}
-	if tb.browser {
-		if tb.pageError != "" {
-			return "Page load failed: " + tb.pageError, false, true
+	if tb.isBrowser() {
+		if tb.browserState().PageError != "" {
+			return "Page load failed: " + tb.browserState().PageError, false, true
 		}
-		if tb.loading {
+		if tb.browserState().Loading {
 			return "", true, false
 		}
 	}
-	if f := tb.files; f != nil {
-		if f.hasQuery() {
-			if f.search.err != "" {
-				return "File search failed: " + f.search.err, false, true
+	if f := tb.filesState(); f != nil {
+		if f.HasQuery() {
+			if f.Search.Err != "" {
+				return "File search failed: " + f.Search.Err, false, true
 			}
-			if f.search.loading {
+			if f.Search.Loading {
 				return "", true, false
 			}
 		}
-		if strings.HasPrefix(f.preview.note, "Can't ") {
-			return f.preview.note, false, true
+		if strings.HasPrefix(f.Preview.Note, "Can't ") {
+			return f.Preview.Note, false, true
 		}
-		if f.preview.loading {
+		if f.Preview.Loading {
 			return "", true, false
 		}
-		if root := f.dirs[f.root]; root != nil {
-			if root.err != "" {
-				return "Can't open folder: " + root.err, false, true
+		if root := f.Dirs[f.Root]; root != nil {
+			if root.Err != "" {
+				return "Can't open folder: " + root.Err, false, true
 			}
-			if root.loading {
+			if root.Loading {
 				return "", true, false
 			}
 		}
 	}
-	if d := tb.database; d != nil {
-		v := d.currentResult()
-		if d.loading {
+	if d := tb.databaseState(); d != nil {
+		v := d.CurrentResult()
+		if d.Loading {
 			return "", true, false
 		}
-		for _, status := range []string{d.status, d.functionStatus, v.status} {
+		for _, status := range []string{d.Status, d.FunctionStatus, v.Status} {
 			if strings.HasPrefix(status, "Loading ") {
 				return "", true, false
 			}

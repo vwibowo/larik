@@ -59,24 +59,27 @@ func (a *App) menuBar() []menuGroup { return a.bindKeys(a.menuDefaults()) }
 // Settings › Keyboard gave them (see keys.go).
 func (a *App) menuDefaults() []menuGroup {
 	newPane := command{label: "New Pane", key: "Cmd+T", run: a.openNew}
-	if t := a.focused(); t != nil && t.browser {
+	if t := a.focused(); t != nil && t.isBrowser() {
 		newPane = command{label: "New Browser Tab", key: "Cmd+T", run: a.newBrowserTab}
 	}
 	fileItems := []command{
 		newPane,
 		{label: "New Pane Beside", key: "Cmd+D", run: a.splitRight},
 		{label: "New Pane Below", key: splitBelowKey(), run: func() { a.splitNew(true) }},
-		{label: "New Larik Session", run: func() { a.newTab(a.currentDir(), "", "") }},
-		{label: "New Session in Worktree", key: "Alt+Cmd+T", run: func() { a.newWorktreeSession(a.currentDir()) }},
-		{label: "New Terminal", key: "Shift+Cmd+N", run: a.openShell},
-		{label: "New Browser Pane", key: "Alt+Cmd+N", run: func() { a.openBrowser("") }},
-		{label: "New Files Pane", run: func() { a.openFiles(a.currentDir()) }},
-		{label: "New Database Pane", run: func() { a.openDatabase(a.currentDir()) }},
-		{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
-		{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
-		{label: "Connect to Server…", run: a.askServer},
-		{},
 	}
+	for _, variant := range paneVariants {
+		if _, enabled := paneVariantFor(variant.Kind); !enabled || variant.menuOpen == nil {
+			continue
+		}
+		v := variant
+		fileItems = append(fileItems, command{label: v.menuTitle, key: v.menuKey, run: func() { v.menuOpen(a) }})
+	}
+	fileItems = append(fileItems,
+		command{label: "Open Location…", key: "Cmd+L", run: a.focusAddress},
+		command{label: "Open Folder…", key: "Cmd+O", run: a.openFolder},
+		command{label: "Connect to Server…", run: a.askServer},
+		command{},
+	)
 	if t := a.focused(); a.canDetach(t) {
 		fileItems = append(fileItems, command{label: "Detach Pane", run: func() { a.detachPane(t) }})
 	}

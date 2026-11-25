@@ -160,11 +160,11 @@ func TestTabsRunLarik(t *testing.T) {
 	mu.Unlock()
 
 	frameUntil(t, mu, tt, "larik resumes the session", func() bool {
-		return strings.Contains(resumed.term.Text(), "args:--resume "+s.ID+" tab:"+resumed.id)
+		return strings.Contains(resumed.terminal().Text(), "args:--resume "+s.ID+" tab:"+resumed.id)
 	})
 	mu.Lock()
-	if !strings.Contains(resumed.term.Text(), filepath.Base(repo)) {
-		t.Errorf("larik runs in the session's directory: %q", resumed.term.Text())
+	if !strings.Contains(resumed.terminal().Text(), filepath.Base(repo)) {
+		t.Errorf("larik runs in the session's directory: %q", resumed.terminal().Text())
 	}
 	if !tt.HasText("Refactor the parser and run the tests") {
 		t.Errorf("the tab and header name the session: %q", tt.Texts())
@@ -189,7 +189,7 @@ func TestTabsRunLarik(t *testing.T) {
 	}
 	mu.Unlock()
 	frameUntil(t, mu, tt, "larik starts fresh", func() bool {
-		return strings.Contains(fresh.term.Text(), "args: tab:"+fresh.id)
+		return strings.Contains(fresh.terminal().Text(), "args: tab:"+fresh.id)
 	})
 
 	created, err := session.Create(session.Dir(data, repo), session.Meta{Cwd: repo})
@@ -213,14 +213,14 @@ func TestTabsRunLarik(t *testing.T) {
 	mu.Unlock()
 
 	// Both failed and clean exits keep their panes for inspection.
-	fresh.term.Send([]byte("3\r"))
+	fresh.terminal().Send([]byte("3\r"))
 	waitFor(t, mu, "failed tab", func() bool { return fresh.exited })
 	mu.Lock()
 	if len(a.tabs) != 2 || a.tabStatus(fresh).State != status.Error {
 		t.Errorf("failed larik: %d tabs, %+v", len(a.tabs), a.tabStatus(fresh))
 	}
 	mu.Unlock()
-	resumed.term.Send([]byte("0\r"))
+	resumed.terminal().Send([]byte("0\r"))
 	waitFor(t, mu, "session exited", func() bool { return resumed.exited })
 	mu.Lock()
 	defer mu.Unlock()

@@ -2,12 +2,17 @@ package desktop
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 	"larik/internal/database"
+	"larik/internal/desktop/panes"
 )
+
+var databaseExecute = func(context.Context, *database.Manager, string, panes.DatabaseControlRequest) ([]database.Table, *database.Result, error) {
+	return nil, nil, errors.New("Database panes are unavailable")
+}
 
 // DatabasePaneInfo names one open pane whose selected connection is shared
 // with the agent. Credentials and connection paths never enter this response.
@@ -26,12 +31,12 @@ type DatabaseResponse struct {
 func (a *App) eligibleDatabasePanes() []DatabasePaneInfo {
 	var out []DatabasePaneInfo
 	for _, tb := range a.tabs {
-		if tb.database == nil || tb.database.profile == "" || a.paneOf(tb) == nil {
+		if tb.databaseState() == nil || tb.databaseState().Profile == "" || a.paneOf(tb) == nil {
 			continue
 		}
-		p, ok := a.databaseStore.get(tb.database.profile)
+		p, ok := a.databaseStore.Get(tb.databaseState().Profile)
 		if ok && p.AgentAccess {
-			out = append(out, DatabasePaneInfo{tb.id, tb.database.profile, p.Driver})
+			out = append(out, DatabasePaneInfo{tb.id, tb.databaseState().Profile, p.Driver})
 		}
 	}
 	return out
@@ -58,23 +63,23 @@ func (a *App) databaseControl(req Request) Response {
 			problem = "choose an open, agent-enabled Database pane ID"
 			return
 		}
-		if tb == nil || tb.database == nil || a.paneOf(tb) == nil {
+		if tb == nil || tb.databaseState() == nil || a.paneOf(tb) == nil {
 			problem = "Database pane is not open"
 			return
 		}
-		profile = tb.database.profile
-		p, ok := a.databaseStore.get(profile)
+		profile = tb.databaseState().Profile
+		p, ok := a.databaseStore.Get(profile)
 		if !ok || !p.AgentAccess {
 			problem = "Database connection is not available to the agent"
 			return
 		}
-		manager = a.databaseStore.manager
+		manager = a.databaseStore.Manager()
 		if manager == nil {
 			problem = "Database connections are unavailable"
 			return
 		}
-		seq = tb.database.seq
-		ctx = tb.database.ctx
+		seq = tb.databaseState().Seq
+		ctx = tb.databaseState().Ctx
 	}) {
 		return Response{Error: "Larik Desktop is closing"}
 	}
@@ -87,49 +92,36 @@ func (a *App) databaseControl(req Request) Response {
 	start := time.Now()
 	res := &DatabaseResponse{}
 	var err error
-	switch req.Op {
-	case "schema":
-		res.Tables, err = manager.Schema(ctx, profile, true)
-	case "rows":
-		var result database.Result
-		result, err = manager.Rows(ctx, profile, req.Schema, req.Table, req.Offset, req.Limit, true)
-		res.Result = &result
-	case "query":
-		var result database.Result
-		result, err = manager.Query(ctx, profile, req.SQL, req.Limit, true)
-		res.Result = &result
-	default:
-		return Response{Error: fmt.Sprintf("unknown Database operation %q", req.Op)}
-	}
+	res.Tables, res.Result, err = databaseExecute(ctx, manager, profile, panes.DatabaseControlRequest{Op: req.Op, Schema: req.Schema, Table: req.Table, SQL: req.SQL, Offset: req.Offset, Limit: req.Limit})
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
 	// Recheck access after I/O so a revoked or closed pane never returns data.
 	valid := false
 	if !a.onMain(func() {
-		p, ok := a.databaseStore.get(profile)
-		if !ok || !p.AgentAccess || tb.database == nil || tb.database.ctx.Err() != nil || tb.database.seq != seq || tb.database.profile != profile || a.paneOf(tb) == nil {
+		p, ok := a.databaseStore.Get(profile)
+		if !ok || !p.AgentAccess || tb.databaseState() == nil || tb.databaseState().Ctx.Err() != nil || tb.databaseState().Seq != seq || tb.databaseState().Profile != profile || a.paneOf(tb) == nil {
 			return
 		}
 		valid = true
-		d := tb.database
-		d.status = ""
+		d := tb.databaseState()
+		d.Status = ""
 		if req.Op == "schema" {
-			d.tables = res.Tables
+			d.Tables = res.Tables
 		}
 		if res.Result != nil {
-			v := &d.results[databaseAgent]
-			v.result, v.selectedRow, v.elapsed, v.status = *res.Result, -1, time.Since(start), ""
-			v.selection.Clear()
-			v.grid.Cells = ui.ColumnRange{}
-			v.source = "SQL query"
+			v := &d.Results[databaseAgent]
+			v.Result, v.SelectedRow, v.Elapsed, v.Status = *res.Result, -1, time.Since(start), ""
+			v.Selection.Clear()
+			v.Grid.Cells = ui.ColumnRange{}
+			v.Source = "SQL query"
 			if req.Op == "rows" {
-				v.source = req.Schema + "." + req.Table
-				v.offset = req.Offset
+				v.Source = req.Schema + "." + req.Table
+				v.Offset = req.Offset
 			} else {
-				v.offset = 0
+				v.Offset = 0
 			}
-			d.selectResult(databaseAgent)
+			d.SelectResult(databaseAgent)
 		}
 	}) || !valid {
 		return Response{Error: "Database pane is no longer available to the agent"}

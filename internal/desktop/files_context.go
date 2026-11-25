@@ -2,83 +2,38 @@ package desktop
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
+
+	filespane "larik/internal/desktop/panes/files"
 )
 
-// Files operations act on the menu's path, or on its selection for bulk
-// actions. The root itself can be opened and populated, but cannot be
-// renamed or moved from inside its own explorer.
 func (a *App) filesMenu(m *ui.Menu, tb *tab, path string, dir, root bool) {
-	if tb.files == nil || !filesWithinRoot(tb.files.root, path) {
+	f := tb.filesState()
+	if f == nil {
 		return
 	}
-	bulk := a.filesBulkAvailable(tb) && !root
-	if bulk && !slices.Contains(tb.files.picked, path) {
-		tb.files.picked, tb.files.anchor = []string{path}, path
-	}
-	if dir {
-		if m.Item("New File…").Chosen() {
-			a.beginFilesEdit(tb, path, "file")
-		}
-		if m.Item("New Folder…").Chosen() {
-			a.beginFilesEdit(tb, path, "folder")
-		}
-		m.Separator()
-	}
-	if !isRemote(tb.files.root) {
-		if m.Item("Open externally").Chosen() && a.openPath != nil {
-			a.openPath(path)
-		}
-		if m.Item(filesRevealLabel()).Chosen() && a.showFile != nil {
-			a.showFile(path)
-		}
-	}
-	if m.Item("Copy Path").Chosen() && a.copyText != nil {
-		a.copyText(path)
-	}
-	if !root {
-		paths := []string{path}
-		if bulk {
-			paths = slices.Clone(tb.files.picked)
-		}
-		if m.Item("Copy Relative Path").Chosen() && a.copyText != nil {
-			rel, _ := filepath.Rel(tb.files.root, path)
-			a.copyText(rel)
-		}
-		m.Separator()
-		if len(paths) == 1 && m.Item("Rename…").Chosen() {
-			a.beginFilesEdit(tb, path, "rename")
-		}
-		if len(paths) == 1 && m.Item("Duplicate").Chosen() {
-			a.duplicateFilesEntry(tb, path)
-		}
-		if bulk && m.Item("Move To…").Chosen() {
-			a.beginMoveFiles(tb, paths)
-		}
-		if m.Item("Move to Trash…").Chosen() {
+	filespane.Menu(m, filespane.MenuOptions{
+		State: f, Path: path, Dir: dir, Root: root,
+		Bulk: a.filesBulkAvailable(tb), Remote: isRemote(f.Root),
+		OpenPath: a.openPath, ShowFile: a.showFile, CopyText: a.copyText,
+		BeginEdit: func(path, kind string) { a.beginFilesEdit(tb, path, kind) },
+		Duplicate: func(path string) { a.duplicateFilesEntry(tb, path) },
+		Move:      func(paths []string) { a.beginMoveFiles(tb, paths) },
+		Trash: func(paths []string, bulk bool) {
 			if bulk {
 				a.askTrashFilesEntries(tb, paths)
 			} else {
 				a.askTrashFilesEntry(tb, path)
 			}
-		}
-	}
+		},
+	})
 }
 
-func filesWithinRoot(root, path string) bool {
-	if root == "" || path == "" {
-		return false
-	}
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
+func filesWithinRoot(root, path string) bool { return filespane.WithinRoot(root, path) }
 
 type filesEdit struct {
 	tb               *tab
@@ -101,40 +56,16 @@ func (a *App) filesEditDialog(c *ui.Context) {
 	if e == nil {
 		return
 	}
-	if e.tb.files == nil || !filesWithinRoot(e.tb.files.root, e.path) {
+	if e.tb.filesState() == nil || !filesWithinRoot(e.tb.filesState().Root, e.path) {
 		a.filesEdit = nil
 		return
 	}
-	title := "Rename"
-	switch e.kind {
-	case "file":
-		title = "New File"
-	case "folder":
-		title = "New Folder"
-	}
-	ui.Modal(c.Key("files-edit"), &e.open, func() {
-		ui.Column(c).Width(340).Gap(10).Children(func() {
-			ui.Text(c, title).FontSize(16).Bold()
-			ui.Text(c, filepath.Base(e.path)).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
-			field := ui.TextInput(c.Key("files-name"), &e.name).Label("Name").Placeholder("Name").FillWidth().
-				OnSubmit(func() { a.commitFilesEdit(e) })
-			if e.focus {
-				field.Focus().SetTextSelection(0, utf8.RuneCountInString(e.name))
-				e.focus = false
-			}
-			if e.err != "" {
-				ui.Text(c, e.err).FontSize(12).TextColor(c.Theme().Danger)
-			}
-			ui.Row(c).Gap(8).Justify(ui.End).AlignItems(ui.Center).Children(func() {
-				if ui.Button(c.Key("cancel"), "Cancel").Clicked() {
-					a.filesEdit = nil
-				}
-				if ui.Button(c.Key("commit"), title).Disabled(e.busy).Clicked() {
-					a.commitFilesEdit(e)
-				}
-			})
-		})
-	}).Label(title)
+	filespane.EditDialog(c, filespane.EditDialogOptions{
+		Open: &e.open, Path: e.path, Kind: e.kind, Name: &e.name,
+		Error: e.err, Busy: e.busy, Focus: &e.focus,
+		Commit: func() { a.commitFilesEdit(e) },
+		Cancel: func() { a.filesEdit = nil },
+	})
 	if !e.open && a.filesEdit == e {
 		a.filesEdit = nil
 	}
@@ -144,7 +75,7 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 	if e.busy {
 		return
 	}
-	if e.tb.files == nil || !filesWithinRoot(e.tb.files.root, e.path) {
+	if e.tb.filesState() == nil || !filesWithinRoot(e.tb.filesState().Root, e.path) {
 		a.filesEdit = nil
 		return
 	}
@@ -155,14 +86,14 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 	}
 	parent := e.path
 	if e.kind == "rename" {
-		if e.path == e.tb.files.root {
+		if e.path == e.tb.filesState().Root {
 			e.err = "The explorer folder cannot be renamed here."
 			return
 		}
 		parent = filepath.Dir(e.path)
 	}
 	dest := filepath.Join(parent, name)
-	if !filesWithinRoot(e.tb.files.root, dest) {
+	if !filesWithinRoot(e.tb.filesState().Root, dest) {
 		e.err = "The name must stay inside this folder."
 		return
 	}
@@ -170,16 +101,16 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 		a.filesEdit = nil
 		return
 	}
-	if isRemote(e.tb.files.root) {
+	if isRemote(e.tb.filesState().Root) {
 		e.busy = true
-		source := a.remoteFiles(e.tb.files.root)
+		source := a.remoteFiles(e.tb.filesState().Root)
 		op := map[string]string{"file": "create-file", "folder": "create-folder", "rename": "rename"}[e.kind]
-		root := e.tb.files.root
+		root := e.tb.filesState().Root
 		a.filesWork(func() {
 			reply, err := source.call(remoteFileRequest{Op: op, Path: e.path, Name: name})
 			a.filesResult(func() {
 				e.busy = false
-				if a.filesEdit != e || e.tb.files == nil || e.tb.files.root != root {
+				if a.filesEdit != e || e.tb.filesState() == nil || e.tb.filesState().Root != root {
 					return
 				}
 				if err != nil {
@@ -189,9 +120,9 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 				a.filesEdit = nil
 				a.refreshFiles(e.tb)
 				open := true
-				e.tb.files.open[parent] = &open
+				e.tb.filesState().Open[parent] = &open
 				if e.kind == "folder" {
-					e.tb.files.open[remotePath(source.name, reply.Dest)] = &open
+					e.tb.filesState().Open[remotePath(source.name, reply.Dest)] = &open
 				}
 				a.selectFile(e.tb, remotePath(source.name, reply.Dest), reply.Dir)
 			})
@@ -226,34 +157,31 @@ func (a *App) commitFilesEdit(e *filesEdit) {
 	}
 	a.filesEdit = nil
 	if e.kind == "rename" {
-		for old, expanded := range e.tb.files.open {
+		for old, expanded := range e.tb.filesState().Open {
 			if old == e.path || strings.HasPrefix(old, e.path+string(filepath.Separator)) {
-				e.tb.files.open[dest+strings.TrimPrefix(old, e.path)] = expanded
-				delete(e.tb.files.open, old)
+				e.tb.filesState().Open[dest+strings.TrimPrefix(old, e.path)] = expanded
+				delete(e.tb.filesState().Open, old)
 			}
 		}
 	}
 	a.refreshFiles(e.tb)
 	open := true
-	e.tb.files.open[parent] = &open
+	e.tb.filesState().Open[parent] = &open
 	if e.kind == "folder" {
-		e.tb.files.open[dest] = &open
+		e.tb.filesState().Open[dest] = &open
 	}
-	if filePathVisible(e.tb.files, dest) {
+	if filePathVisible(e.tb.filesState(), dest) {
 		a.selectFile(e.tb, dest, e.kind == "folder" || (e.kind == "rename" && isDirectory(dest)))
 	}
 }
 
-func isDirectory(path string) bool {
-	info, err := os.Lstat(path)
-	return err == nil && info.IsDir()
-}
+func isDirectory(path string) bool { return filespane.IsDirectory(path) }
 
 func (a *App) duplicateFilesEntry(tb *tab, path string) {
-	if tb.files == nil || path == tb.files.root || !filesWithinRoot(tb.files.root, path) {
+	if tb.filesState() == nil || path == tb.filesState().Root || !filesWithinRoot(tb.filesState().Root, path) {
 		return
 	}
-	root := tb.files.root
+	root := tb.filesState().Root
 	remote := isRemote(root)
 	var source remoteFiles
 	if remote {
@@ -276,9 +204,9 @@ func (a *App) duplicateFilesEntry(tb *tab, path string) {
 				a.notice = "Can't duplicate “" + filepath.Base(path) + "”: " + err.Error()
 				return
 			}
-			if tb.files != nil && tb.files.root == root {
+			if tb.filesState() != nil && tb.filesState().Root == root {
 				a.refreshFiles(tb)
-				if filePathVisible(tb.files, to) {
+				if filePathVisible(tb.filesState(), to) {
 					a.selectFile(tb, to, dir)
 				}
 			}
@@ -286,97 +214,23 @@ func (a *App) duplicateFilesEntry(tb *tab, path string) {
 	})
 }
 
-func duplicateFilesPath(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", err
-	}
-	name, ext := filepath.Base(path), ""
-	if !info.IsDir() {
-		ext = filepath.Ext(name)
-		name = strings.TrimSuffix(name, ext)
-	}
-	for n := 1; n < 10000; n++ {
-		suffix := " copy"
-		if n > 1 {
-			suffix = fmt.Sprintf(" copy %d", n)
-		}
-		to := filepath.Join(filepath.Dir(path), name+suffix+ext)
-		if _, err := os.Lstat(to); !os.IsNotExist(err) {
-			if err != nil {
-				return "", err
-			}
-			continue
-		}
-		if err := copyFilesPath(path, to, info); err != nil {
-			if !os.IsExist(err) {
-				_ = os.RemoveAll(to)
-			}
-			return "", err
-		}
-		return to, nil
-	}
-	return "", fmt.Errorf("too many copies already exist")
-}
+func duplicateFilesPath(path string) (string, error) { return filespane.DuplicatePath(path) }
 
 func copyFilesPath(from, to string, info os.FileInfo) error {
-	switch {
-	case info.Mode()&os.ModeSymlink != 0:
-		target, err := os.Readlink(from)
-		if err != nil {
-			return err
-		}
-		return os.Symlink(target, to)
-	case info.IsDir():
-		if err := os.Mkdir(to, info.Mode().Perm()); err != nil {
-			return err
-		}
-		entries, err := os.ReadDir(from)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			src := filepath.Join(from, entry.Name())
-			childInfo, err := os.Lstat(src)
-			if err != nil {
-				return err
-			}
-			if err := copyFilesPath(src, filepath.Join(to, entry.Name()), childInfo); err != nil {
-				return err
-			}
-		}
-		return nil
-	case info.Mode().IsRegular():
-		in, err := os.Open(from)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(out, in)
-		if closeErr := out.Close(); err == nil {
-			err = closeErr
-		}
-		return err
-	default:
-		return fmt.Errorf("this item type cannot be duplicated")
-	}
+	return filespane.CopyPath(from, to, info)
 }
 
 func (a *App) askTrashFilesEntry(tb *tab, path string) {
-	if tb.files == nil || path == tb.files.root || !filesWithinRoot(tb.files.root, path) {
+	if tb.filesState() == nil || path == tb.filesState().Root || !filesWithinRoot(tb.filesState().Root, path) {
 		return
 	}
-	remote := isRemote(tb.files.root)
+	remote := isRemote(tb.filesState().Root)
 	if a.trashItem == nil && !remote {
 		a.notice = "The system Trash is unavailable."
 		return
 	}
 	name := filepath.Base(path)
-	root := tb.files.root
+	root := tb.filesState().Root
 	var source remoteFiles
 	message := "You can restore it from the system Trash until the Trash is emptied."
 	if remote {
@@ -398,7 +252,7 @@ func (a *App) askTrashFilesEntry(tb *tab, path string) {
 						a.notice = "Can't move “" + name + "” to the Trash: " + err.Error()
 						return
 					}
-					if tb.files != nil && tb.files.root == root {
+					if tb.filesState() != nil && tb.filesState().Root == root {
 						a.refreshFiles(tb)
 					}
 				})

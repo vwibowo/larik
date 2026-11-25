@@ -3,13 +3,12 @@ package desktop
 import (
 	"cmp"
 	"fmt"
-	"net"
-	"net/url"
 	"runtime"
-	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	browserpane "larik/internal/desktop/panes/browser"
 )
 
 // Browser tabs show a web page beside the sessions: a dev server, the
@@ -21,24 +20,24 @@ import (
 // in to stays signed in, and they are someone else's (Untrusted): they
 // call none of the window's Go and get no permission.
 
-// browserSession keeps the browser tabs' cookies and storage, apart
-// from anything else's, from one run to the next.
-var browserSession = mygo.NewSession("larik-browser")
-
 // blankPage is what a new browser tab shows until you go somewhere.
-const blankPage = "about:blank"
+const blankPage = browserpane.BlankPage
 
 // webViewOptions are a browser tab's web view's, loading u.
 func webViewOptions(u string) mygo.WebViewOptions {
-	return mygo.WebViewOptions{URL: u, Page: mygo.PageOptions{
-		Session:         browserSession,
-		PreloadScript:   consoleErrorsScript,
-		Untrusted:       true,
-		SwipeNavigation: true,
-		PinchZoom:       true,
-		DevTools:        mygo.DevToolsEnabled,
-	}}
+	return browserpane.WebViewOptions(u)
 }
+
+type browserState = browserpane.State
+
+func (t *tab) browserState() *browserpane.State {
+	if t == nil {
+		return nil
+	}
+	b, _ := t.pane.(*browserpane.State)
+	return b
+}
+func (t *tab) isBrowser() bool { return t.browserState() != nil }
 
 // startBrowser opens a browser tab on u, which the address bar takes
 // the keyboard for when it's blank.
@@ -48,9 +47,9 @@ func (a *App) startBrowser(u string) *tab {
 		u = n
 	}
 	u = cmp.Or(u, blankPage)
-	t := &tab{id: newTabID(), dir: a.currentDir(), browser: true, url: u, addr: u}
+	t := &tab{id: newTabID(), dir: a.currentDir(), pane: &browserpane.State{URL: u, Address: u}}
 	if u == blankPage {
-		t.addr, t.focusAddr = "", true
+		t.browserState().Address, t.browserState().FocusAddress = "", true
 	}
 	if a.newWebView != nil {
 		v, err := a.newWebView(u)
@@ -58,7 +57,7 @@ func (a *App) startBrowser(u string) *tab {
 			a.notice = "Can't open a browser pane: " + err.Error()
 			return nil
 		}
-		t.web = v
+		t.browserState().Web = v
 		a.watchPage(t)
 		a.watchSite(t)
 	}
@@ -81,7 +80,7 @@ func (a *App) newBrowserTab() {
 	if t == nil {
 		return
 	}
-	if p != nil && p.tab != nil && p.tab.browser {
+	if p != nil && p.tab != nil && p.tab.isBrowser() {
 		p.tab = t
 		a.focusPane(p)
 		return
@@ -92,12 +91,12 @@ func (a *App) newBrowserTab() {
 // cycleBrowserTab selects the browser page before or after the focused one.
 func (a *App) cycleBrowserTab(by int) {
 	current := a.focused()
-	if current == nil || !current.browser {
+	if current == nil || !current.isBrowser() {
 		return
 	}
 	var pages []*tab
 	for _, page := range a.tabs {
-		if page.browser {
+		if page.isBrowser() {
 			pages = append(pages, page)
 		}
 	}
@@ -129,14 +128,14 @@ func (a *App) browserTabs(c *ui.Context, t *ui.Theme, current *tab) {
 	}
 	pageCount := 0
 	for _, page := range a.tabs {
-		if page.browser {
+		if page.isBrowser() {
 			pageCount++
 		}
 	}
 	index := 0
 	ui.Row(c.Key("browser-tabs")).Gap(3).Padding(4, 8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		for _, page := range a.tabs {
-			if !page.browser {
+			if !page.isBrowser() {
 				continue
 			}
 			page := page
@@ -178,26 +177,20 @@ func (a *App) browserTabs(c *ui.Context, t *ui.Theme, current *tab) {
 // watchPage follows what t's page does: where it went, its title, and
 // whether it's loading. A link opening a window opens a tab instead.
 func (a *App) watchPage(t *tab) {
-	p := t.web.Page()
+	p := t.browserState().Web.Page()
 	nav := func() {
 		u, back, fwd := p.URL(), p.CanGoBack(), p.CanGoForward()
 		a.update(func() {
-			if u != "" {
-				if t.addr == t.url || t.addr == "" && u != blankPage {
-					t.addr = u
-				}
-				t.url = u
-				if t.remotePort.port != 0 && u != blankPage {
-					t.remoteBookmarkSuffix = bookmarkSuffix(u)
-				}
+			t.browserState().ApplyNavigation(u, back, fwd)
+			if u != "" && t.remotePort.port != 0 && u != blankPage {
+				t.remoteBookmarkSuffix = bookmarkSuffix(u)
 			}
-			t.back, t.fwd = back, fwd
 		})
 	}
-	t.off = append(t.off,
+	t.browserState().Observers = append(t.browserState().Observers,
 		p.OnWillNavigate(func(*mygo.NavigateEvent) {}), // an untrusted page goes nowhere without one
 		p.OnDidNavigate(func(string) {
-			a.update(func() { t.loading, t.pageError = true, "" })
+			a.update(func() { t.browserState().Loading, t.browserState().PageError = true, "" })
 			nav()
 		}),
 		p.OnPageTitleUpdated(func(e *mygo.TitleEvent) {
@@ -205,7 +198,7 @@ func (a *App) watchPage(t *tab) {
 			a.update(func() { t.title = title })
 		}),
 		p.OnDidFinishLoad(func() {
-			a.update(func() { t.loading = false })
+			a.update(func() { t.browserState().Loading = false })
 			nav()
 		}),
 		p.OnDidFailLoad(func(err *mygo.LoadError) {
@@ -213,7 +206,7 @@ func (a *App) watchPage(t *tab) {
 			if message == "" {
 				message = err.Error()
 			}
-			a.update(func() { t.loading, t.pageError = false, message })
+			a.update(func() { t.browserState().Loading, t.browserState().PageError = false, message })
 			nav()
 		}),
 	)
@@ -241,98 +234,28 @@ func (a *App) openBrowserWindow(from *tab, req mygo.WindowOpenRequest) {
 	})
 }
 
-// closeBrowser stops following t's page and closes it.
-func (t *tab) closeBrowser() {
-	for _, off := range t.off {
-		off()
-	}
-	t.off = nil
-	if t.web != nil {
-		t.web.Destroy()
-	}
-}
-
 // goTo loads what the address bar says in t.
 func (a *App) goTo(t *tab) {
-	address := strings.TrimSpace(t.addr)
-	if address == "" {
-		a.searchWeb(t, "")
-		return
-	}
-	u, ok := normalizeURL(address)
-	if !ok {
-		a.searchWeb(t, address)
-		return
-	}
 	a.notice = ""
-	t.addr, t.url = u, u
-	if t.web != nil {
-		if err := t.web.Page().LoadURL(u); err != nil {
-			t.pageError = err.Error()
+	u, search, err := t.browserState().GoToAddress()
+	if err != nil {
+		if search {
+			a.notice = "Can't search Google: " + err.Error()
+		} else {
 			a.notice = "Can't open " + u + ": " + err.Error()
-			return
 		}
-		t.web.Focus()
 	}
 }
 
 // searchWeb searches Google for query, or opens its home page when empty.
 func (a *App) searchWeb(t *tab, query string) {
-	searchURL := "https://www.google.com/"
-	if query != "" {
-		searchURL += "search?q=" + url.QueryEscape(query)
-	}
-	if t == nil || !t.browser {
+	if t == nil || !t.isBrowser() {
 		return
 	}
-	t.addr, t.url = searchURL, searchURL
 	a.notice = ""
-	if t.web != nil {
-		if err := t.web.Page().LoadURL(searchURL); err != nil {
-			t.pageError = err.Error()
-			a.notice = "Can't search Google: " + err.Error()
-			return
-		}
-		t.web.Focus()
+	if _, err := t.browserState().Search(query); err != nil {
+		a.notice = "Can't search Google: " + err.Error()
 	}
-}
-
-// normalizeURL makes what's typed in an address bar a URL: one with a
-// scheme as it is, a host and maybe a path over https, or http for this
-// machine's.
-func normalizeURL(s string) (string, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.ContainsAny(s, " \t\n") {
-		return "", false
-	}
-	if u, err := url.Parse(s); err == nil {
-		switch scheme := strings.ToLower(u.Scheme); {
-		case scheme == "about" || scheme == "file":
-			return s, true
-		case (scheme == "http" || scheme == "https") && u.Host != "":
-			return s, true
-		}
-	}
-	host := s
-	if i := strings.IndexAny(host, "/?#"); i >= 0 {
-		host = host[:i]
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
-	switch {
-	case host == "localhost" || strings.HasSuffix(host, ".localhost"):
-		return "http://" + s, true
-	case net.ParseIP(host) != nil:
-		if ip := net.ParseIP(host); ip.IsLoopback() || ip.IsPrivate() {
-			return "http://" + s, true
-		}
-		return "https://" + s, true
-	case strings.Contains(host, ".") && !strings.HasPrefix(host, ".") && !strings.HasSuffix(host, "."):
-		return "https://" + s, true
-	}
-	return "", false
 }
 
 // openPort shows what the session at path serves on port: in the
@@ -349,7 +272,7 @@ func (a *App) openPort(path string, port int, external bool) {
 		return
 	}
 	for _, t := range a.tabs {
-		if t.browser && pageHost(t.url) == pageHost(u) {
+		if t.isBrowser() && pageHost(t.browserState().URL) == pageHost(u) {
 			a.activate(t)
 			return
 		}
@@ -375,19 +298,11 @@ func clickMod() string {
 	return "Ctrl"
 }
 
-// pageHost is the host of a browser tab's page, for where it is.
-func pageHost(u string) string {
-	if p, err := url.Parse(u); err == nil && p.Host != "" {
-		return p.Host
-	}
-	return u
-}
-
 // focusAddress gives the focused browser tab's address bar the
 // keyboard, or opens a browser tab when no browser tab has it.
 func (a *App) focusAddress() {
-	if t := a.focused(); t != nil && t.browser {
-		t.focusAddr = true
+	if t := a.focused(); t != nil && t.isBrowser() {
+		t.browserState().FocusAddress = true
 		return
 	}
 	a.openBrowser("")
@@ -395,8 +310,8 @@ func (a *App) focusAddress() {
 
 // browse runs fn on the focused browser tab's page, when it's one.
 func (a *App) browse(fn func(p *mygo.Page)) {
-	if t := a.focused(); t != nil && t.browser && t.web != nil {
-		fn(t.web.Page())
+	if t := a.focused(); t != nil && t.isBrowser() && t.browserState().Web != nil {
+		fn(t.browserState().Web.Page())
 	}
 }
 
@@ -407,14 +322,14 @@ func (a *App) refreshFocused() {
 		return
 	}
 	switch {
-	case t.browser:
-		if t.web != nil {
+	case t.isBrowser():
+		if t.browserState().Web != nil {
 			a.browse((*mygo.Page).Reload)
 		}
-	case t.files != nil:
+	case t.filesState() != nil:
 		a.refreshFiles(t)
-	case t.database != nil:
-		if !t.database.loading {
+	case t.databaseState() != nil:
+		if !t.databaseState().Loading {
 			a.loadDatabaseSchema(t)
 		}
 	}
@@ -422,50 +337,22 @@ func (a *App) refreshFocused() {
 
 // addressBar is a browser tab's back, forward and reload buttons, its
 // address, and a button opening the page in your browser.
-func (a *App) addressBar(c *ui.Context, t *ui.Theme, tb *tab) {
-	ui.Row(c.Key("address")).Gap(4).Padding(5, 10, 5, 8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		page := func(fn func(p *mygo.Page)) func() {
-			return func() {
-				if tb.web != nil {
-					fn(tb.web.Page())
-				}
-			}
+func (a *App) addressBar(c *ui.Context, theme *ui.Theme, tb *tab) {
+	remoteLabel := ""
+	if tb.remotePort.port != 0 {
+		remoteLabel = fmt.Sprintf("%s:%d", tb.remotePort.name, tb.remotePort.port)
+		if tb.remotePortLost {
+			remoteLabel += " disconnected"
 		}
-		a.navButton(c, t, "back", iconBack, "Back ("+keyText("Cmd+[")+")", tb.back, page((*mygo.Page).GoBack))
-		a.navButton(c, t, "forward", iconForward, "Forward ("+keyText("Cmd+]")+")", tb.fwd, page((*mygo.Page).GoForward))
-		if tb.loading {
-			a.navButton(c, t, "stop", iconClose, "Stop loading", true, page((*mygo.Page).Stop))
-		} else {
-			a.navButton(c, t, "reload", iconReload, "Refresh Pane ("+keyText("Cmd+R")+")", true, page((*mygo.Page).Reload))
-		}
-		field := ui.TextInput(c.Key("field"), &tb.addr).Placeholder("Enter a web address").Label("Address").Grow(1).
-			OnSubmit(func() { a.goTo(tb) }).
-			OnShortcut(0, ui.KeyEscape, func() {
-				tb.addr = tb.url
-				if tb.url == blankPage {
-					tb.addr = ""
-				}
-				if tb.web != nil {
-					tb.web.Focus()
-				}
-			})
-		if tb.focusAddr {
-			field.Focus()
-			tb.focusAddr = false
-		}
-		if tb.remotePort.port != 0 {
-			label := fmt.Sprintf("%s:%d", tb.remotePort.name, tb.remotePort.port)
-			if tb.remotePortLost {
-				label += " disconnected"
-			}
-			ui.Text(c, label).FontSize(11).TextColor(t.TextMuted)
-		}
-		a.navButton(c, t, "external", iconExternal, "Open in your browser", tb.url != "" && tb.url != blankPage, func() { a.openURL(tb.url) })
-		if b, ok := bookmarkForTab(tb); ok && a.bookmarks.has(b) {
-			a.navButton(c, t, "bookmark", iconStarFilled, "Remove bookmark", true, func() { a.toggleBookmark(tb) })
-		} else {
-			a.navButton(c, t, "bookmark", iconStar, "Bookmark this page", ok, func() { a.toggleBookmark(tb) })
-		}
+	}
+	bookmark, canBookmark := bookmarkForTab(tb)
+	browserpane.AddressBar(c, theme, browserpane.AddressBarOptions{
+		State: tb.browserState(), RemoteLabel: remoteLabel,
+		BackIcon: iconBack, ForwardIcon: iconForward, StopIcon: iconClose, ReloadIcon: iconReload,
+		ExternalIcon: iconExternal, StarIcon: iconStar, StarFilledIcon: iconStarFilled,
+		BackShortcut: keyText("Cmd+["), ForwardShortcut: keyText("Cmd+]"), ReloadShortcut: keyText("Cmd+R"),
+		GoTo: func() { a.goTo(tb) }, OpenExternal: a.openURL, ToggleBookmark: func() { a.toggleBookmark(tb) },
+		BookmarkAvailable: canBookmark, Bookmarked: canBookmark && a.bookmarks.has(bookmark),
 	})
 }
 
@@ -480,14 +367,14 @@ func (a *App) pageMenu(m *ui.Menu, tb *tab) {
 			a.toggleBookmark(tb)
 		}
 	}
-	if m.Item("Refresh Pane").Chosen() && tb.web != nil {
-		tb.web.Page().Reload()
+	if m.Item("Refresh Pane").Chosen() && tb.browserState().Web != nil {
+		tb.browserState().Web.Page().Reload()
 	}
 	if m.Item("Copy Address").Chosen() && a.copyText != nil {
-		a.copyText(tb.url)
+		a.copyText(tb.browserState().URL)
 	}
 	if m.Item("Open in Your Browser").Chosen() {
-		a.openURL(tb.url)
+		a.openURL(tb.browserState().URL)
 	}
 }
 
@@ -496,19 +383,19 @@ func (a *App) pageMenu(m *ui.Menu, tb *tab) {
 // thread, as the page answers.
 func (a *App) findPage(t *tab, next, back bool) {
 	text := t.find
-	if t.web == nil {
+	if t.browserState().Web == nil {
 		return
 	}
 	if text == "" {
 		a.endPageFind(t)
 		return
 	}
-	p := t.web.Page()
+	p := t.browserState().Web.Page()
 	go func() {
 		res, err := p.FindInPage(text, mygo.FindOptions{FindNext: next, Backward: back})
 		a.update(func() {
 			if err == nil && t.find == text {
-				t.found = res
+				t.browserState().Found = res
 			}
 		})
 	}()
@@ -516,9 +403,9 @@ func (a *App) findPage(t *tab, next, back bool) {
 
 // endPageFind takes the find bar's highlights off t's page.
 func (a *App) endPageFind(t *tab) {
-	t.found = mygo.FindResult{}
-	if t.web != nil {
-		t.web.Page().StopFindInPage()
+	t.browserState().Found = mygo.FindResult{}
+	if t.browserState().Web != nil {
+		t.browserState().Web.Page().StopFindInPage()
 	}
 }
 
@@ -539,10 +426,10 @@ func (a *App) pageFindBar(c *ui.Context, t *ui.Theme, tb *tab) {
 		var count string
 		switch {
 		case tb.find == "":
-		case tb.found.Matches == 0:
+		case tb.browserState().Found.Matches == 0:
 			count = "No matches"
 		default:
-			count = fmt.Sprintf("%d of %d", tb.found.Active, tb.found.Matches)
+			count = fmt.Sprintf("%d of %d", tb.browserState().Found.Active, tb.browserState().Found.Matches)
 		}
 		ui.Text(c, count).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		ui.Spacer(c)
@@ -554,21 +441,9 @@ func (a *App) pageFindBar(c *ui.Context, t *ui.Theme, tb *tab) {
 
 // navButton is a borderless icon button, dimmed and doing nothing while
 // it's off.
-func (a *App) navButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, label string, on bool, fn func()) {
-	color := t.TextMuted
-	if !on {
-		color = t.TextMuted.Alpha(0.35)
-	}
-	b := ui.Box(c.Key(key)).Padding(4).Radius(5).Label(label).Tooltip(label).Children(func() {
-		ui.Icon(c, icon).FontSize(13).TextColor(color)
-	})
-	if !on {
-		return
-	}
-	if b.Hovered() {
-		b.Background(t.Text.Alpha(0.06))
-	}
-	if b.Clicked() {
-		fn()
-	}
+func (a *App) navButton(c *ui.Context, theme *ui.Theme, key string, icon *ui.SVG, label string, on bool, fn func()) {
+	browserpane.NavButton(c, theme, key, icon, label, on, fn)
 }
+
+func normalizeURL(s string) (string, bool) { return browserpane.NormalizeURL(s) }
+func pageHost(u string) string             { return browserpane.PageHost(u) }

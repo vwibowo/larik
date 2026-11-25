@@ -180,7 +180,7 @@ func TestRemoteServer(t *testing.T) {
 	}
 	mu.Unlock()
 	frameUntil(t, mu, tt, "larik there", func() bool {
-		text := tb.term.Text()
+		text := tb.terminal().Text()
 		return strings.Contains(text, "args:--resume") && strings.Contains(text, filepath.Base(repo))
 	})
 
@@ -244,14 +244,14 @@ func TestRemoteReconnectKeepsTabAndPane(t *testing.T) {
 		t.Fatal("remote terminal did not start")
 	}
 	a.activate(tb)
-	oldTerm, oldPane := tb.term, a.paneOf(tb)
+	oldTerm, oldPane := tb.terminal(), a.paneOf(tb)
 	mu.Unlock()
 	first <- errors.New("link dropped")
 	frameUntil(t, mu, tt, "disconnected", func() bool { return tb.disconnected && a.dialOf(a.servers[0]) == nil })
 	frameUntil(t, mu, tt, "reconnected", func() bool { return !tb.disconnected && a.dialOf(a.servers[0]) != nil })
 	mu.Lock()
 	defer mu.Unlock()
-	if a.tabByID(tb.id) != tb || tb.term == oldTerm || a.paneOf(tb) != oldPane || len(a.tabs) != 1 || len(h.list()) != 1 {
+	if a.tabByID(tb.id) != tb || tb.terminal() == oldTerm || a.paneOf(tb) != oldPane || len(a.tabs) != 1 || len(h.list()) != 1 {
 		t.Fatalf("reconnect duplicated or moved the tab: tabs=%d host=%d", len(a.tabs), len(h.list()))
 	}
 	if connects != 2 {
@@ -323,9 +323,9 @@ func TestSSHLive(t *testing.T) {
 	a.activate(tb)
 	id := tb.id
 	mu.Unlock()
-	frameUntil(t, mu, tt, "the shell there", func() bool { return strings.Contains(tb.term.Text(), "larik-ssh-ok") })
+	frameUntil(t, mu, tt, "the shell there", func() bool { return strings.Contains(tb.terminal().Text(), "larik-ssh-ok") })
 	mu.Lock()
-	t.Logf("the tab there shows %q", strings.TrimSpace(tb.term.Text()))
+	t.Logf("the tab there shows %q", strings.TrimSpace(tb.terminal().Text()))
 	a.disconnectServer(name)
 	a.connectServer(name)
 	mu.Unlock()

@@ -114,7 +114,7 @@ func (a *App) resumeAgent(t *tab) {
 		a.notice = err.Error()
 		return
 	}
-	oldDir, oldRun, oldTerm := t.dir, t.run, t.term
+	oldDir, oldRun, oldTerm := t.dir, t.run, t.terminal()
 	t.dir, t.run = t.agent.Dir, command
 	if !a.run(t, "") {
 		t.dir, t.run = oldDir, oldRun

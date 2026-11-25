@@ -344,7 +344,7 @@ func (a *App) reconnectRemoteTabs(srv *server) {
 		}
 		t.agent = agentForTab(t, h.Agent)
 		t.reattach = true
-		old := t.term
+		old := t.terminal()
 		if a.run(t, "") {
 			t.disconnected, t.exited, t.code = false, false, 0
 			if old != nil {

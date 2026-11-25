@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"encoding/csv"
 	"errors"
 	"strings"
 	"testing"
@@ -10,28 +9,16 @@ import (
 	"larik/internal/database"
 )
 
-func TestDatabaseCSVLoadedRows(t *testing.T) {
-	r := database.Result{Columns: []string{"name", "note", "missing"}, Rows: [][]any{{"a,b", "line\n\"two\"", nil}, {"NULL", "", "ok"}}, Truncated: true}
-	data, err := databaseCSV(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, err := csv.NewReader(strings.NewReader(string(data))).ReadAll()
-	if err != nil || len(rows) != 3 || rows[1][0] != "a,b" || rows[1][1] != "line\n\"two\"" || rows[1][2] != "NULL" || rows[2][0] != "NULL" || rows[2][1] != "" {
-		t.Fatalf("CSV rows %q, error %v", rows, err)
-	}
-}
-
 func TestDatabaseGridCopyAndExport(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
 	tb := a.focused()
-	v := &tb.database.results[databaseData]
+	v := &tb.databaseState().Results[databaseData]
 	var exportedName, exportedCSV string
 	a.saveDatabaseCSV = func(name string, data []byte, done func(string, error)) {
 		exportedName, exportedCSV = name, string(data)
@@ -46,8 +33,8 @@ func TestDatabaseGridCopyAndExport(t *testing.T) {
 	if got := tt.Clipboard(); got != "hello" {
 		t.Fatalf("copied cell %q, want hello", got)
 	}
-	if v.selectedRow != 0 || v.selection.Len() != 1 {
-		t.Fatalf("cell selection: row %d, count %d", v.selectedRow, v.selection.Len())
+	if v.SelectedRow != 0 || v.Selection.Len() != 1 {
+		t.Fatalf("cell selection: row %d, count %d", v.SelectedRow, v.Selection.Len())
 	}
 	if err := tt.Click("Copy selected cells"); err != nil {
 		t.Fatal(err)
@@ -65,11 +52,11 @@ func TestDatabaseGridCopyAndExport(t *testing.T) {
 	if got := tt.Clipboard(); got != "hello\nworld" {
 		t.Fatalf("copied range: %q", got)
 	}
-	v.result.Rows[1][1] = "line\nwith\ttab"
+	v.Result.Rows[1][1] = "line\nwith\ttab"
 	if got := databaseTSV(v, false); got != "hello\n\"line\nwith\ttab\"" {
 		t.Fatalf("escaped TSV range: %q", got)
 	}
-	v.result.Rows[1][1] = "world"
+	v.Result.Rows[1][1] = "world"
 	if err := tt.Click("Export loaded rows as CSV"); err != nil {
 		t.Fatal(err)
 	}
@@ -94,21 +81,21 @@ func TestDatabaseExportCancelAndFailure(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
 	tb := a.focused()
-	v := &tb.database.results[databaseData]
+	v := &tb.databaseState().Results[databaseData]
 	a.saveDatabaseCSV = func(_ string, _ []byte, done func(string, error)) { done("", nil) }
 	a.exportDatabaseResult(tb)
-	if v.status != "" {
-		t.Fatalf("canceled export status: %q", v.status)
+	if v.Status != "" {
+		t.Fatalf("canceled export status: %q", v.Status)
 	}
 	a.saveDatabaseCSV = func(_ string, _ []byte, done func(string, error)) { done("", errors.New("disk full")) }
 	a.exportDatabaseResult(tb)
-	if v.status != "Export failed: disk full" {
-		t.Fatalf("failed export status: %q", v.status)
+	if v.Status != "Export failed: disk full" {
+		t.Fatalf("failed export status: %q", v.Status)
 	}
 }
 
@@ -116,7 +103,7 @@ func TestDatabaseObjectExportUsesLoadedPageOrLoadsFirstPage(t *testing.T) {
 	project, path := databaseFixture(t)
 	a := New(Options{Cwd: project})
 	defer a.Close()
-	if err := a.databaseStore.save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
+	if err := a.databaseStore.Save(map[string]database.ConnectionConfig{"local": {Driver: "sqlite", Path: path}}); err != nil {
 		t.Fatal(err)
 	}
 	a.openDatabaseProfile("local")
@@ -127,16 +114,16 @@ func TestDatabaseObjectExportUsesLoadedPageOrLoadsFirstPage(t *testing.T) {
 		done(name, nil)
 	}
 	object := database.Table{Schema: "main", Name: "notes", Type: "table"}
-	loaded := &tb.database.results[databaseData]
-	loaded.source = "main.notes"
-	loaded.result = database.Result{Columns: []string{"body"}, Rows: [][]any{{"current page"}}}
+	loaded := &tb.databaseState().Results[databaseData]
+	loaded.Source = "main.notes"
+	loaded.Result = database.Result{Columns: []string{"body"}, Rows: [][]any{{"current page"}}}
 	a.exportDatabaseObject(tb, object)
 	if exportedName != "notes.csv" || !strings.Contains(exportedCSV, "body\ncurrent page\n") {
 		t.Fatalf("loaded page export %q: %q", exportedName, exportedCSV)
 	}
 
 	exportedName, exportedCSV = "", ""
-	loaded.source = ""
+	loaded.Source = ""
 	a.exportDatabaseObject(tb, object)
 	if exportedName != "notes.csv" || !strings.Contains(exportedCSV, "id,body\n1,hello\n") {
 		t.Fatalf("first page export %q: %q", exportedName, exportedCSV)

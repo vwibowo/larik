@@ -88,25 +88,25 @@ func (a *App) paletteItems() []paletteItem {
 		}
 	}
 	// The changes pane's, while it's open.
-	if ch := a.changes; ch != nil && ch.loaded && ch.err == "" && ch.busy == "" {
-		where := "Changes in " + cmp.Or(ch.branch, "the checkout")
-		if ch.against == compareCommit && len(ch.files) > 0 {
-			if ch.stagedCount() < len(ch.files) {
+	if ch := a.changes; ch != nil && ch.Loaded && ch.Err == "" && ch.Busy == "" {
+		where := "Changes in " + cmp.Or(ch.Branch, "the checkout")
+		if ch.Against == compareCommit && len(ch.Files) > 0 {
+			if ch.stagedCount() < len(ch.Files) {
 				add("Stage All", where, "", func() { a.stageAll(ch, true) })
 			}
 			if ch.stagedCount() > 0 {
 				add("Unstage All", where, "", func() { a.stageAll(ch, false) })
 			}
 		}
-		if ch.base != "" {
-			if ch.against == compareCommit {
-				add("Compare Since "+ch.base, where, "", func() { ch.compare(compareBase) })
+		if ch.Base != "" {
+			if ch.Against == compareCommit {
+				add("Compare Since "+ch.Base, where, "", func() { ch.compare(compareBase) })
 			} else {
 				add("Compare Uncommitted", where, "", func() { ch.compare(compareCommit) })
 			}
 		}
 		if ch.canPullRequest() {
-			add("Pull Request…", ch.branch+" into "+strings.TrimPrefix(ch.base, "origin/"), "", func() { a.askPullRequest(ch) })
+			add("Pull Request…", ch.Branch+" into "+strings.TrimPrefix(ch.Base, "origin/"), "", func() { a.askPullRequest(ch) })
 		}
 	}
 	// The menu bar's, but for AppKit's roles, which only its menus run,
