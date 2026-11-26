@@ -233,6 +233,10 @@ func TestInstallLauncher(t *testing.T) {
 		if icon, err := os.ReadFile(filepath.Join(where, "Contents", "Resources", "larik.icns")); err != nil || string(icon[:4]) != "icns" {
 			t.Errorf("icon: %v", err)
 		}
+		plist := filepath.Join(where, "Contents", "Info.plist")
+		if out, err := exec.Command("plutil", "-extract", "NSAppTransportSecurity.NSAllowsArbitraryLoadsInWebContent", "raw", "-o", "-", plist).CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "true" {
+			t.Errorf("browser HTTP transport policy: %q, %v", out, err)
+		}
 		quoted = `"$(cd "$(dirname "$0")" && pwd)/larik"`
 	}
 	if runtime.GOOS == "linux" {
