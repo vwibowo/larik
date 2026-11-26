@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.37.1
+
+<p class="release-meta"><time datetime="2026-11-26">November 26, 2026</time></p>
+
+### Fixed
+
+- Desktop Browser panes on macOS now open explicit `http://` URLs, including public sites without HTTPS.
+
+### Changed
+
+- Desktop pane implementations now live in separate domain packages behind a shared registry. Saved layouts continue restoring available panes when an unknown or disabled pane kind is present.
+- Refined the Desktop titlebar highlight and removed the New label from pane controls.
+
 ## v0.37.0
 
 <p class="release-meta"><time datetime="2026-11-11">November 11, 2026</time></p>
